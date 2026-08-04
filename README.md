@@ -43,6 +43,8 @@ $env:ANTHROPIC_API_KEY = "..."
 
 Provider 的模型、地址和 `api_key_env` 在 `workflow/continuous/config.yaml` 的 `agent.providers` 配置；支持 `codex`、`anthropic`、`openai_compatible` 和自定义 `command`。仓库与 Session 只记录环境变量名，不记录 Key。策略定义集中在 `strategy_profiles.yaml`；V2 是平衡探索，V3 在探索期确定性要求 2～3 个独立参数并采用更小的局部细化步长。策略和 Provider 在 Session 创建时冻结，`-Resume` 不允许覆盖，避免续跑语义漂移。
 
+失败重试、规则兜底、Agent 候选重选以及 V2/V3 的完整差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+
 ## 从 GitHub 克隆后的启动流程
 
 ### 1. 启动前配置
