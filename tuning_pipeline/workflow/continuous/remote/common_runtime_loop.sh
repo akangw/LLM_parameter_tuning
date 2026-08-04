@@ -25,6 +25,14 @@ fi
 # candidate.env is generated locally from a strict whitelist and copied into
 # this unique run directory before task submission.
 source "${PARAM_FILE}"
+LAUNCH_PROFILE="${LAUNCH_PROFILE:-explicit_candidate}"
+case "${LAUNCH_PROFILE}" in
+  official_source_defaults|explicit_candidate) ;;
+  *)
+    echo "Unsupported LAUNCH_PROFILE=${LAUNCH_PROFILE}" >&2
+    exit 2
+    ;;
+esac
 BENCHMARK_MODE="${BENCHMARK_MODE:-legacy_random_32k1k}"
 ENABLE_CHUNKED_PREFILL="${ENABLE_CHUNKED_PREFILL:-false}"
 MAX_CUDAGRAPH_CAPTURE_SIZE="${MAX_CUDAGRAPH_CAPTURE_SIZE:-192}"
@@ -36,6 +44,9 @@ DECODE_CONTEXT_PARALLEL_SIZE="${DECODE_CONTEXT_PARALLEL_SIZE:-1}"
 ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1="${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1:-false}"
 ADDITIONAL_CONFIG_ENABLE_MLAPO="${ADDITIONAL_CONFIG_ENABLE_MLAPO:-true}"
 ADDITIONAL_CONFIG_ENABLE_FUSED_MC2="${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2:-0}"
+SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
+SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
+SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
 source /models/share/init_env.sh
 source /usr/local/Ascend/cann/set_env.sh
 
@@ -55,16 +66,32 @@ export HCCL_IF_IP="${NODE_IP}"
 export GLOO_SOCKET_IFNAME="${NIC_NAME}"
 export TP_SOCKET_IFNAME="${NIC_NAME}"
 export HCCL_SOCKET_IFNAME="${NIC_NAME}"
-export HCCL_OP_EXPANSION_MODE=AIV
-export VLLM_ASCEND_BALANCE_SCHEDULING=0
-export OMP_PROC_BIND=false
-export OMP_NUM_THREADS=1
-export HCCL_BUFFSIZE=400
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 unset VLLM_ASCEND_ENABLE_MLAPO
 unset VLLM_ASCEND_ENABLE_FLASHCOMM1
 unset VLLM_ASCEND_ENABLE_FUSED_MC2
-export ASCEND_LAUNCH_BLOCKING=0
+
+# B0 deliberately keeps only the compatibility, logging, timeout and network
+# contract needed to launch the pinned image on the fixed two-node topology.
+# The explicit-candidate path retains the already validated deployment settings
+# used by Agent rounds.  Keeping these branches separate prevents inherited
+# expert settings from silently contaminating the official-default baseline.
+if [[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]]; then
+  unset HCCL_OP_EXPANSION_MODE
+  unset VLLM_ASCEND_BALANCE_SCHEDULING
+  unset OMP_PROC_BIND
+  unset OMP_NUM_THREADS
+  unset HCCL_BUFFSIZE
+  unset PYTORCH_NPU_ALLOC_CONF
+  unset ASCEND_LAUNCH_BLOCKING
+else
+  export HCCL_OP_EXPANSION_MODE=AIV
+  export VLLM_ASCEND_BALANCE_SCHEDULING=0
+  export OMP_PROC_BIND=false
+  export OMP_NUM_THREADS=1
+  export HCCL_BUFFSIZE=400
+  export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+  export ASCEND_LAUNCH_BLOCKING=0
+fi
 
 bool_flag() {
   [[ "${1}" == "true" ]]
@@ -76,26 +103,33 @@ VLLM_COMMON_ARGS=(
   --data-parallel-address "${MASTER_IP}"
   --data-parallel-rpc-port 12980
   --tensor-parallel-size 16
-  --decode-context-parallel-size "${DECODE_CONTEXT_PARALLEL_SIZE}"
-  --seed 1024
   --served-model-name glm-5
-  --max-num-seqs "${MAX_NUM_SEQS}"
-  --max-model-len "${MAX_MODEL_LEN}"
-  --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
   --trust-remote-code
-  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
   --quantization ascend
 )
 
-bool_flag "${ENABLE_EXPERT_PARALLEL}" && VLLM_COMMON_ARGS+=(--enable-expert-parallel)
-bool_flag "${ENABLE_PREFIX_CACHING}" && VLLM_COMMON_ARGS+=(--enable-prefix-caching)
-bool_flag "${ASYNC_SCHEDULING}" && VLLM_COMMON_ARGS+=(--async-scheduling)
-if bool_flag "${ENABLE_CHUNKED_PREFILL}"; then
-  VLLM_COMMON_ARGS+=(--enable-chunked-prefill)
-else
-  VLLM_COMMON_ARGS+=(--no-enable-chunked-prefill)
-fi
-COMPILATION_CONFIG_JSON=$(
+if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
+  VLLM_COMMON_ARGS+=(
+    --decode-context-parallel-size "${DECODE_CONTEXT_PARALLEL_SIZE}"
+    --seed 1024
+    --max-num-seqs "${MAX_NUM_SEQS}"
+    --max-model-len "${MAX_MODEL_LEN}"
+    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
+    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
+    --safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"
+    --safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"
+    --safetensors-prefetch-block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
+  )
+
+  bool_flag "${ENABLE_EXPERT_PARALLEL}" && VLLM_COMMON_ARGS+=(--enable-expert-parallel)
+  bool_flag "${ENABLE_PREFIX_CACHING}" && VLLM_COMMON_ARGS+=(--enable-prefix-caching)
+  bool_flag "${ASYNC_SCHEDULING}" && VLLM_COMMON_ARGS+=(--async-scheduling)
+  if bool_flag "${ENABLE_CHUNKED_PREFILL}"; then
+    VLLM_COMMON_ARGS+=(--enable-chunked-prefill)
+  else
+    VLLM_COMMON_ARGS+=(--no-enable-chunked-prefill)
+  fi
+  COMPILATION_CONFIG_JSON=$(
   python - "${COMPILATION_MODE}" "${MAX_CUDAGRAPH_CAPTURE_SIZE}" \
     "${COMPILATION_ENABLE_SP}" "${CUDAGRAPH_CAPTURE_SIZES_JSON}" <<'PY'
 import json
@@ -112,9 +146,9 @@ if sizes is not None:
     config["cudagraph_capture_sizes"] = sizes
 print(json.dumps(config, separators=(",", ":")))
 PY
-)
-VLLM_COMMON_ARGS+=(--compilation-config "${COMPILATION_CONFIG_JSON}")
-ADDITIONAL_CONFIG_JSON=$(
+  )
+  VLLM_COMMON_ARGS+=(--compilation-config "${COMPILATION_CONFIG_JSON}")
+  ADDITIONAL_CONFIG_JSON=$(
   python - "${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1}" \
     "${ADDITIONAL_CONFIG_ENABLE_MLAPO}" \
     "${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}" <<'PY'
@@ -132,22 +166,23 @@ config = {
 }
 print(json.dumps(config, separators=(",", ":")))
 PY
-)
-VLLM_COMMON_ARGS+=(--additional-config "${ADDITIONAL_CONFIG_JSON}")
-if bool_flag "${ENABLE_EPLB}"; then
-  VLLM_COMMON_ARGS+=(--enable-eplb)
-  VLLM_COMMON_ARGS+=(--eplb-config "{\"num_redundant_experts\":${EPLB_NUM_REDUNDANT_EXPERTS}}")
-elif (( EPLB_NUM_REDUNDANT_EXPERTS > 0 )); then
-  echo "EPLB_NUM_REDUNDANT_EXPERTS requires ENABLE_EPLB=true" >&2
-  exit 2
-fi
+  )
+  VLLM_COMMON_ARGS+=(--additional-config "${ADDITIONAL_CONFIG_JSON}")
+  if bool_flag "${ENABLE_EPLB}"; then
+    VLLM_COMMON_ARGS+=(--enable-eplb)
+    VLLM_COMMON_ARGS+=(--eplb-config "{\"num_redundant_experts\":${EPLB_NUM_REDUNDANT_EXPERTS}}")
+  elif (( EPLB_NUM_REDUNDANT_EXPERTS > 0 )); then
+    echo "EPLB_NUM_REDUNDANT_EXPERTS requires ENABLE_EPLB=true" >&2
+    exit 2
+  fi
 
-if (( NUM_SPECULATIVE_TOKENS > 0 )); then
-  MTP_DRAFT_MODEL_PATH="${MTP_DRAFT_MODEL_PATH:?MTP_DRAFT_MODEL_PATH is required when speculative decoding is enabled}"
-  VLLM_COMMON_ARGS+=(--speculative-config "{\"model\":\"${MTP_DRAFT_MODEL_PATH}\",\"num_speculative_tokens\":${NUM_SPECULATIVE_TOKENS},\"method\":\"mtp\"}")
-fi
-if (( LONG_PREFILL_TOKEN_THRESHOLD > 0 )); then
-  VLLM_COMMON_ARGS+=(--long-prefill-token-threshold "${LONG_PREFILL_TOKEN_THRESHOLD}")
+  if (( NUM_SPECULATIVE_TOKENS > 0 )); then
+    MTP_DRAFT_MODEL_PATH="${MTP_DRAFT_MODEL_PATH:?MTP_DRAFT_MODEL_PATH is required when speculative decoding is enabled}"
+    VLLM_COMMON_ARGS+=(--speculative-config "{\"model\":\"${MTP_DRAFT_MODEL_PATH}\",\"num_speculative_tokens\":${NUM_SPECULATIVE_TOKENS},\"method\":\"mtp\"}")
+  fi
+  if (( LONG_PREFILL_TOKEN_THRESHOLD > 0 )); then
+    VLLM_COMMON_ARGS+=(--long-prefill-token-threshold "${LONG_PREFILL_TOKEN_THRESHOLD}")
+  fi
 fi
 
 {

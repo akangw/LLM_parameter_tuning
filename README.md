@@ -10,14 +10,162 @@
 - 新 Session 搜索空间：16 个合格可调参数，12 Active、4 Reserve、6 Fixed、1 Rejected。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
+- B0 已定义为“目标版本源码/启动日志中的官方默认值”，当前状态为等待项目负责人下令提交，尚未运行。
 
-## 快速入口
+## 两个稳定扩展接口
+
+### 更换 vLLM / vllm-ascend 版本
+
+只提供两个 tag、分支或 commit，即可抓取源码、解析参数表面、执行 Stage-1 迁移并建立隔离画像队列：
 
 ```powershell
-# 只做本地前置检查
+# 只准备和审计，不调用 Agent；建议先执行这一条
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -PrepareOnly
+
+# 默认用已登录的 Codex 完成画像队列
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref>
+
+# 也可使用 Anthropic；Key 只放环境变量
+$env:ANTHROPIC_API_KEY = "..."
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -Provider anthropic
+```
+
+每对源码提交写入 `portrait_pipeline/build/version_migrations/<commit-pair>/`，不会覆盖当前正式画像。人工审计并明确激活之前，下游 Tags、Search Limits 和在线 Session 均保持原版本，避免版本漂移。迁移实现已内置在仓库中，不依赖旧 `vllmTKB0706` 或本机 `cjx_space`。
+
+### 切换 Agent Provider 与选参策略
+
+在线闭环默认使用 `codex + best_anchor_coverage_v2`。新建 Session 时可显式选择策略或 Provider：
+
+```powershell
+.\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
+.\一键启动.ps1 -NewSession -AgentProvider anthropic
+```
+
+Provider 的模型、地址和 `api_key_env` 在 `workflow/continuous/config.yaml` 的 `agent.providers` 配置；支持 `codex`、`anthropic`、`openai_compatible` 和自定义 `command`。仓库与 Session 只记录环境变量名，不记录 Key。策略定义集中在 `strategy_profiles.yaml`；V2 是平衡探索，V3 在探索期确定性要求 2～3 个独立参数并采用更小的局部细化步长。策略和 Provider 在 Session 创建时冻结，`-Resume` 不允许覆盖，避免续跑语义漂移。
+
+## 从 GitHub 克隆后的启动流程
+
+### 1. 启动前配置
+
+```powershell
+git clone https://github.com/chenasir/Auto_vllm_parameter.git
+cd Auto_vllm_parameter
+
+# Python 3.11+ 运行依赖
+python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
+
+# 恢复不进入本仓库的固定版本源码
+.\scripts\fetch-sources.ps1
+```
+
+接着确认：
+
+1. `C:\Users\<用户名>\.ssh\config` 中存在 SSH 别名：
+
+   ```sshconfig
+   Host hetao-npu
+       HostName 10.1.30.201
+       Port 31222
+       User demo1
+   ```
+
+2. `ssh hetao-npu` 可以连接。
+3. 默认模式下 `codex --version` 可用且 Codex 已登录；若选择 API Provider，则对应 Key 环境变量已设置。
+4. `tuning_pipeline/workflow/continuous/config.yaml` 中的远端项目、模型、MTP、Benchmark 和 Lease 配置仍适用于目标服务器。
+5. `activation.approved.yaml` 中的镜像、vLLM 和 vllm-ascend 身份与服务器一致。
+6. 只读 `liuxin-workspace` 依赖仍可访问。
+
+最后执行不提交任务的预检：
+
+```powershell
+.\一键启动.ps1 -CheckOnly
+```
+
+### 2. Lease 是否需要重新创建
+
+先查看现有 Lease：
+
+```powershell
+ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190 && ktp-lab status --lease vllmtkb-418bd627-32c8cf190-glm52-a3-32npu"
+```
+
+按结果处理：
+
+| Lease 状态 | 操作 |
+|---|---|
+| `active`、`nodes=2/2 Ready`、`idle=2` | 直接复用，不要重新创建 |
+| Lease 不存在 | 运行 `.\scripts\prepare-remote.ps1` 创建一次 |
+| Service slot 为 `running` 或不是 `idle=2` | 不启动重叠实验，先确认当前操作者和任务 |
+| 服务镜像、Digest、节点资源或 Lease 模板发生变化 | 修改为新的版本化 Lease 名称，再创建新 Lease；不要用旧名称冒充新环境 |
+
+`prepare-remote.ps1` 会同步远端受管脚本并提交 Lease 创建，因此只在 Lease 不存在或明确升级 Lease 身份时使用。
+
+### 3. 新建 Session 实验
+
+适用情况：
+
+- 只从 GitHub 克隆，没有收到历史 `state.json` 和 Session 目录；
+- 希望用当前全局配置和最新 Search Limits 开始一条新实验链；
+- 旧 Session 已结束或已经完成交接归档。
+
+确认 Lease 为 `idle=2` 后运行：
+
+```powershell
+# 后台运行
+.\一键启动.ps1 -NewSession
+
+# 或前台运行，便于直接观察日志
+.\一键启动.ps1 -NewSession -Foreground
+
+# 可选：为这个新 Session 冻结另一套 Agent 选参策略
+.\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
+```
+
+新建时会生成：
+
+```text
+tuning_pipeline/workflow/continuous/state.json
+tuning_pipeline/workflow/continuous/experiments/<new-session>/
+```
+
+如果本地已有旧 `state.json`，`-NewSession` 会把状态入口切换到新 Session，但不会删除旧的 `experiments/<old-session>/`。操作前应确认旧 Session 不再需要续跑，并单独保存其 `state.json`。
+
+### 4. 恢复续跑 Session 实验
+
+GitHub 仓库默认不包含运行状态。要在另一台电脑续跑，必须额外交付并放回：
+
+```text
+tuning_pipeline/workflow/continuous/state.json
+tuning_pipeline/workflow/continuous/experiments/<session>/
+```
+
+如果新电脑的仓库绝对路径不同，还要把 `state.json` 中的 `session_dir` 改为新电脑上该 Session 的实际绝对路径。然后依次执行：
+
+```powershell
+# 先确认本地状态、Session 文件、依赖和远端 Lease
+.\一键启动.ps1 -CheckOnly
+.\scripts\status.ps1
+
+# Lease 必须存在，且没有另一台电脑正在控制同一个 Session
+.\一键启动.ps1 -Resume
+
+# 或前台恢复
+.\一键启动.ps1 -Resume -Foreground
+```
+
+`-Resume` 始终读取 Session 内冻结的 `session_config.yaml` 和 `00_search_space/`，不会用新的全局默认值静默改变旧实验。如果状态是 `paused_for_human`，先查看 `failure.yaml` 和 Controller 日志；只有完成外部修复并确认允许同候选重试后，才使用：
+
+```powershell
+.\一键启动.ps1 -RetryPausedCurrent
+```
+
+### 5. 日常操作
+
+```powershell
+# 只检查，不提交任务
 .\一键启动.ps1 -CheckOnly
 
-# 自动判断新建或续跑
+# 自动判断：有可恢复状态则 Resume，否则新建
 .\一键启动.ps1
 
 # 查看状态
@@ -27,23 +175,12 @@
 .\scripts\stop.ps1
 ```
 
-首次准备远端独立 Lease：
-
-```powershell
-.\scripts\prepare-remote.ps1
-```
-
-上游源码不提交到本仓库，可按固定提交恢复：
-
-```powershell
-.\scripts\fetch-sources.ps1
-```
-
 ## 项目层级
 
 ```text
 Auto_vllm_parameter/
 ├─ README.md                     项目总入口
+├─ 框架.md                       三大板块的交接讲解
 ├─ docs/                         架构、运行、产物和交接文档
 ├─ scripts/                      面向操作者的稳定入口
 ├─ portrait_pipeline/            离线参数画像构建
@@ -54,6 +191,7 @@ Auto_vllm_parameter/
 └─ tuning_pipeline/              标签、搜索空间与在线调优
    ├─ tag_params/output/params/  340 份五维标签成品
    ├─ search_limits/             最新独立编译产物
+   ├─ logs/                      本地总控日志入口
    └─ workflow/
       ├─ search_space_compiler/  Search Limits 编译器
       ├─ sidecars/               画像检索和运行规则
@@ -72,9 +210,10 @@ Benchmark 运行阶段仍以只读方式挂载：
 
 ## 文档
 
+- [框架总览](框架.md)：交接时优先阅读，讲清画像、在线闭环和产物。
 - [架构与数据流](docs/ARCHITECTURE.md)
 - [运行与恢复](docs/OPERATIONS.md)
-- [产物目录](docs/ARTIFACTS.md)
+- [产物与日志索引](docs/ARTIFACTS.md)
 - [交接清单](docs/HANDOFF.md)
 - [外部依赖](docs/DEPENDENCIES.md)
 - [当前实验摘要](docs/CURRENT_SESSION.md)

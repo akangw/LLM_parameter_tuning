@@ -9,6 +9,7 @@ artifacts are never deleted by this program.
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime as dt
 import hashlib
 import json
@@ -30,8 +31,10 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
+    from .agent_provider import run_structured_agent, validate_agent_credentials
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
+    from agent_provider import run_structured_agent, validate_agent_credentials
 from workflow.search_space_compiler.compiler import (
     validate_candidate as validate_search_space_candidate,
 )
@@ -43,7 +46,12 @@ KB_ROOT = HERE.parent.parent
 ARCHIVE_ROOT = HERE / "experiments"
 STATE_FILE = HERE / "state.json"
 STOP_FILE = HERE / "STOP_REQUESTED"
-LOG_FILE = Path(os.environ.get("VLLMTKB_CONTROLLER_LOG", HERE / "controller.log"))
+LOG_FILE = Path(
+    os.environ.get(
+        "VLLMTKB_CONTROLLER_LOG",
+        HERE / "logs" / "controller" / "controller.log",
+    )
+)
 LOCK_FILE = HERE / "controller.lock"
 IMAGE_MANIFEST_FILE = HERE / "remote" / "image_version_manifest.yaml"
 REMOTE_ARTIFACTS = (
@@ -53,6 +61,8 @@ REMOTE_ARTIFACTS = (
     "vllm_common_command.txt",
     "models_response.json",
     "run_status.json",
+    "server_run_manifest.yaml",
+    "startup_timeline.jsonl",
     "master.log",
     "worker.log",
     "warmup.log",
@@ -76,6 +86,7 @@ REMOTE_ARTIFACTS = (
 )
 REMOTE_SCRIPT_NAMES = (
     "WORKSPACE_MANIFEST.md",
+    "ARTIFACT_LAYOUT.md",
     "common_runtime_loop.sh",
     "run_master_loop.sh",
     "run_worker_loop.sh",
@@ -225,7 +236,48 @@ class Controller:
             config.get("partial_exit_grace_seconds", 120)
         )
         self.execution_mode = config.get("execution_mode", "ktp")
+        agent_section = dict(config.get("agent", {}))
+        agent_provider = str(agent_section.get("provider", "codex"))
+        provider_profiles = dict(agent_section.get("providers", {}))
+        if agent_provider in provider_profiles:
+            agent_settings = dict(provider_profiles[agent_provider])
+        else:
+            agent_settings = dict(
+                agent_section.get(
+                    "settings", {"command": config.get("codex_command", "auto")}
+                )
+            )
+        self.agent_config = {
+            "provider": agent_provider,
+            "settings": agent_settings,
+        }
+        if agent_provider not in {
+            "codex", "anthropic", "openai_compatible", "command"
+        }:
+            raise ValueError("Unsupported agent.provider")
         self.mtp_draft_model = str(config.get("mtp_draft_model", "")).strip()
+        self.model_loading = dict(config.get("model_loading", {}))
+        self.safetensors_load_strategy = str(
+            self.model_loading.get("safetensors_load_strategy", "prefetch")
+        ).strip()
+        self.safetensors_prefetch_num_threads = int(
+            self.model_loading.get("safetensors_prefetch_num_threads", 8)
+        )
+        self.safetensors_prefetch_block_size = int(
+            self.model_loading.get("safetensors_prefetch_block_size", 16 * 1024 * 1024)
+        )
+        if self.safetensors_load_strategy not in {"prefetch", "eager", "lazy"}:
+            raise ValueError(
+                "model_loading.safetensors_load_strategy must be prefetch, eager, or lazy"
+            )
+        if not 1 <= self.safetensors_prefetch_num_threads <= 32:
+            raise ValueError(
+                "model_loading.safetensors_prefetch_num_threads must be between 1 and 32"
+            )
+        if not 1024 * 1024 <= self.safetensors_prefetch_block_size <= 1024**3:
+            raise ValueError(
+                "model_loading.safetensors_prefetch_block_size must be between 1 MiB and 1 GiB"
+            )
         self.lab = config.get("lab", {})
         self.image_manifest = load_yaml(IMAGE_MANIFEST_FILE)
         target = self.image_manifest.get("target_image", {})
@@ -289,6 +341,54 @@ class Controller:
                 if not 0 <= retry_limit <= 3:
                     raise ValueError(f"aligned L1 {field} must be between 0 and 3")
         self.change_policy = config.get("change_policy", {})
+        strategy_settings = dict(config.get("strategy", {}))
+        profiles_path = Path(
+            strategy_settings.get(
+                "profiles_file", "workflow/continuous/strategy_profiles.yaml"
+            )
+        )
+        if not profiles_path.is_absolute():
+            profiles_path = KB_ROOT / profiles_path
+        profiles_doc = load_yaml(profiles_path)
+        self.strategy_profile_name = str(
+            strategy_settings.get("profile") or profiles_doc.get("default_strategy")
+        )
+        strategies = profiles_doc.get("strategies", {})
+        if self.strategy_profile_name not in strategies:
+            raise ValueError(
+                f"Unknown strategy profile {self.strategy_profile_name!r}; "
+                f"available={sorted(strategies)}"
+            )
+        self.strategy_profile = dict(strategies[self.strategy_profile_name])
+        if self.strategy_profile.get("status") != "integrated":
+            raise ValueError(f"Strategy {self.strategy_profile_name!r} is not integrated")
+        exploration_profile = dict(self.strategy_profile.get("exploration", {}))
+        refinement_profile = dict(
+            self.strategy_profile.get("local_refinement")
+            or self.strategy_profile.get("refinement", {})
+        )
+        adaptive = self.change_policy.setdefault("adaptive", {})
+        # A selected profile is an explicit strategy choice, so its phase
+        # limits must remain active even in minimal/custom configurations.
+        adaptive["enabled"] = True
+        for phase, profile, fallback in (
+            ("exploration", exploration_profile, [2, 3]),
+            ("refinement", refinement_profile, [1, 2]),
+        ):
+            if not profile:
+                continue
+            preferred = profile.get("independent_parameters_per_round", fallback)
+            adaptive.setdefault(phase, {}).update(
+                preferred_parameters_per_round=preferred,
+                minimum_parameters_per_round=int(
+                    profile.get("minimum_independent_parameters", 1)
+                ),
+                max_parameters_per_round=max(preferred),
+                max_grid_steps_per_parameter=profile.get(
+                    "max_grid_steps_per_parameter", 2
+                ),
+                max_total_grid_steps=profile.get("max_total_grid_steps", 6),
+            )
         self.max_parameters_per_round = int(
             self.change_policy.get("max_parameters_per_round", 3)
         )
@@ -874,6 +974,14 @@ class Controller:
 
     def candidate_env(self, label: str, candidate: dict[str, Any]) -> str:
         lines = [f"ROUND_LABEL={shlex.quote(label)}"]
+        initial_baseline = self.config.get("initial_baseline", {})
+        initial_label = str(initial_baseline.get("label", "a0"))
+        launch_profile = (
+            str(initial_baseline.get("launch_profile", "explicit_candidate"))
+            if label == initial_label
+            else "explicit_candidate"
+        )
+        lines.append(f"LAUNCH_PROFILE={shlex.quote(launch_profile)}")
         for key, env_name in self.param_to_env.items():
             value = candidate[key]
             if isinstance(value, bool):
@@ -884,6 +992,18 @@ class Controller:
                 text = str(value)
             lines.append(f"{env_name}={shlex.quote(text)}")
         lines.append(f"MTP_DRAFT_MODEL_PATH={shlex.quote(self.mtp_draft_model)}")
+        lines.append(
+            "SAFETENSORS_LOAD_STRATEGY="
+            + shlex.quote(self.safetensors_load_strategy)
+        )
+        lines.append(
+            "SAFETENSORS_PREFETCH_NUM_THREADS="
+            + str(self.safetensors_prefetch_num_threads)
+        )
+        lines.append(
+            "SAFETENSORS_PREFETCH_BLOCK_SIZE="
+            + str(self.safetensors_prefetch_block_size)
+        )
         lines.append(f"BENCHMARK_MODE={shlex.quote(self.benchmark_mode)}")
         if self.benchmark_mode == "aligned_l1":
             aligned = self.benchmark["aligned_l1"]
@@ -1356,6 +1476,9 @@ class Controller:
                 "preferred_parameters_per_round",
                 [1, self.max_parameters_per_round],
             ),
+            "minimum_parameters_per_round": int(
+                phase_config.get("minimum_parameters_per_round", 1)
+            ),
             "max_grid_steps_per_parameter": int(
                 phase_config.get(
                     "max_grid_steps_per_parameter",
@@ -1400,10 +1523,12 @@ class Controller:
         effective_policy = policy or self.effective_change_policy()
         derived_changes = self.derived_changes(actual_changes, effective_policy)
         active_changes = [key for key in actual_changes if key not in derived_changes]
+        min_parameters = int(effective_policy.get("minimum_parameters_per_round", 1))
         max_parameters = int(effective_policy["max_parameters_per_round"])
-        if not 1 <= len(active_changes) <= max_parameters:
+        if not min_parameters <= len(active_changes) <= max_parameters:
             raise ValueError(
-                "Each round must change between 1 and "
+                f"Each {effective_policy.get('phase', 'active')} round must change "
+                f"between {min_parameters} and "
                 f"{max_parameters} active parameters; active={active_changes}, "
                 f"derived={sorted(derived_changes)}"
             )
@@ -2039,6 +2164,132 @@ class Controller:
         save_json(round_dir / "05_results" / "comparison.json", payload)
         return payload
 
+    def reconcile_official_source_default_baseline(
+        self,
+        session_dir: Path,
+        round_dir: Path,
+        state: dict[str, Any],
+    ) -> None:
+        """Replace B0 bookkeeping estimates with values resolved by vLLM.
+
+        B0 intentionally omits serving-performance flags.  The Agent must not
+        receive the typed pre-launch estimates as if they were observed values,
+        so the first successful round is reconciled from the engine log before
+        analysis or candidate generation can begin.
+        """
+        initial = self.config.get("initial_baseline", {})
+        if (
+            state.get("round_label") != str(initial.get("label", "a0"))
+            or initial.get("launch_profile") != "official_source_defaults"
+            or state.get("official_source_defaults_reconciled")
+        ):
+            return
+
+        log_path = round_dir / "04_runtime" / "master.log"
+        if not log_path.is_file():
+            raise RuntimeError("B0 completed without master.log; defaults cannot be audited")
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        resolved = dict(state["current_candidate"])
+        evidence: dict[str, Any] = {
+            "launch_profile": "official_source_defaults",
+            "authoritative_log": str(log_path),
+            "source_defaults": {
+                "max_num_seqs": 256,
+                "gpu_memory_utilization": 0.92,
+                "async_scheduling": False,
+                "enable_expert_parallel": False,
+                "num_speculative_tokens": 0,
+                "long_prefill_token_threshold": 0,
+                "enable_eplb": False,
+                "flashcomm1": False,
+                "mlapo": True,
+                "fused_mc2": 0,
+            },
+            "log_resolved": {},
+        }
+
+        def required_int(name: str, pattern: str) -> int:
+            match = re.search(pattern, log_text)
+            if not match:
+                raise RuntimeError(
+                    f"B0 master.log does not expose resolved {name}; refusing Agent handoff"
+                )
+            value = int(match.group(1))
+            evidence["log_resolved"][name] = value
+            return value
+
+        resolved["max_model_len"] = required_int(
+            "max_model_len", r"\bmax_seq_len=(\d+)"
+        )
+        resolved["max_num_batched_tokens"] = required_int(
+            "max_num_batched_tokens", r"max_num_batched_tokens=(\d+)"
+        )
+        resolved["max_num_seqs"] = 256
+        resolved["gpu_memory_utilization"] = 0.92
+        resolved["async_scheduling"] = "Asynchronous scheduling is enabled" in log_text
+        resolved["enable_expert_parallel"] = False
+        resolved["num_speculative_tokens"] = 0
+        resolved["long_prefill_token_threshold"] = 0
+        resolved["enable_eplb"] = False
+        resolved["eplb_num_redundant_experts"] = 0
+        resolved["compilation_enable_sp"] = False
+        resolved["flashcomm1"] = False
+        if "mlapo" in resolved:
+            resolved["mlapo"] = True
+        if "fused_mc2" in resolved:
+            resolved["fused_mc2"] = 0
+
+        for field, pattern in (
+            ("enable_prefix_caching", r"enable_prefix_caching=(True|False)"),
+            ("enable_chunked_prefill", r"enable_chunked_prefill=(True|False)"),
+        ):
+            match = re.search(pattern, log_text)
+            if not match:
+                raise RuntimeError(
+                    f"B0 master.log does not expose resolved {field}; refusing Agent handoff"
+                )
+            resolved[field] = match.group(1) == "True"
+            evidence["log_resolved"][field] = resolved[field]
+
+        mode = re.search(r"'cudagraph_mode': <CUDAGraphMode\.([A-Z_]+)", log_text)
+        maximum = re.search(r"'max_cudagraph_capture_size': (\d+)", log_text)
+        sizes = re.search(r"'cudagraph_capture_sizes': (\[[^\]]*\]|None)", log_text)
+        if not (mode and maximum and sizes):
+            raise RuntimeError(
+                "B0 master.log does not expose resolved compilation defaults; "
+                "refusing Agent handoff"
+            )
+        resolved["compilation_mode"] = mode.group(1)
+        resolved["max_cudagraph_capture_size"] = int(maximum.group(1))
+        resolved["cudagraph_capture_sizes"] = (
+            None if sizes.group(1) == "None" else ast.literal_eval(sizes.group(1))
+        )
+        evidence["log_resolved"].update(
+            compilation_mode=resolved["compilation_mode"],
+            max_cudagraph_capture_size=resolved["max_cudagraph_capture_size"],
+            cudagraph_capture_sizes=resolved["cudagraph_capture_sizes"],
+        )
+
+        for name, value in resolved.items():
+            limits = self.config["search_limits"][name]
+            if value not in limits:
+                self.config["search_limits"][name] = [value, *limits]
+
+        save_yaml(round_dir / "02_parameters" / "candidate_params.yaml", resolved)
+        save_yaml(round_dir / "02_parameters" / "b0_effective_resolution.yaml", evidence)
+        effective_path = round_dir / "02_parameters" / "effective_config.yaml"
+        effective = load_yaml(effective_path) if effective_path.is_file() else {}
+        effective["launch_profile"] = "official_source_defaults"
+        effective["authoritative_effective_service"] = resolved
+        effective["authoritative_source"] = "master.log plus pinned-source defaults"
+        save_yaml(effective_path, effective)
+        save_yaml(session_dir / "session_config.yaml", self.config)
+        state["current_candidate"] = resolved
+        state["official_source_defaults_reconciled"] = True
+        state["official_source_defaults_evidence"] = str(
+            round_dir / "02_parameters" / "b0_effective_resolution.yaml"
+        )
+
     def assess_measurement(
         self,
         history: list[dict[str, Any]],
@@ -2380,43 +2631,32 @@ the exact violations while preserving the measured evidence and Search Limits:
                 prompt,
                 encoding="utf-8",
             )
-            command = [
-                resolve_codex_command(self.config.get("codex_command")),
-                "exec",
-                "--ignore-user-config",
-                "-C",
-                str(KB_ROOT),
-                "--add-dir",
-                str(round_dir),
-                "--sandbox",
-                "read-only",
-                "--skip-git-repo-check",
-                "--output-schema",
-                str(
-                    self.decision_schema_path(
-                        session_dir, "agent_decision.schema.json"
-                    )
+            result = run_structured_agent(
+                self.agent_config,
+                prompt=prompt,
+                schema_path=self.decision_schema_path(
+                    session_dir, "agent_decision.schema.json"
                 ),
-                "--output-last-message",
-                str(decision_path),
-                "--json",
-                "-",
-            ]
-            result = run_process(command, cwd=KB_ROOT, stdin=prompt, timeout=1800)
-            events_path = analysis_dir / f"codex_events.attempt_{attempt:02d}.jsonl"
-            stderr_path = analysis_dir / f"codex_stderr.attempt_{attempt:02d}.log"
+                output_path=decision_path,
+                cwd=KB_ROOT,
+                allowed_dir=round_dir,
+            )
+            events_path = analysis_dir / f"agent_events.attempt_{attempt:02d}.jsonl"
+            stderr_path = analysis_dir / f"agent_stderr.attempt_{attempt:02d}.log"
             events_path.write_text(result.stdout, encoding="utf-8")
             stderr_path.write_text(result.stderr, encoding="utf-8")
-            (analysis_dir / "codex_events.jsonl").write_text(
+            (analysis_dir / "agent_events.jsonl").write_text(
                 result.stdout,
                 encoding="utf-8",
             )
-            (analysis_dir / "codex_stderr.log").write_text(
+            (analysis_dir / "agent_stderr.log").write_text(
                 result.stderr,
                 encoding="utf-8",
             )
             if result.returncode != 0 or not decision_path.exists():
-                raise RuntimeError(f"Codex analysis failed: {result.stderr[-2000:]}")
+                raise RuntimeError(
+                    f"{result.provider} Agent analysis failed: {result.stderr[-2000:]}"
+                )
 
             decision = json.loads(decision_path.read_text(encoding="utf-8"))
             try:
@@ -2542,6 +2782,8 @@ set.
 
 Return only JSON matching the supplied schema. Set action=continue when another
 evidence-based experiment is warranted. Preserve the complete current candidate.
+The frozen Agent strategy profile is {self.strategy_profile_name}:
+{yaml.safe_dump(self.strategy_profile, allow_unicode=True, sort_keys=False)}
 The active selection phase and limits are:
 {yaml.safe_dump(selection_policy, allow_unicode=True, sort_keys=False)}
 In exploration, prefer the configured 2-3 active parameters when evidence supports
@@ -2730,37 +2972,26 @@ Embedded evidence:
         prompt_path = analysis_dir / "failure_agent_prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         decision_path = analysis_dir / "failure_decision.json"
-        command = [
-            resolve_codex_command(self.config.get("codex_command")),
-            "exec",
-            "--ignore-user-config",
-            "-C",
-            str(KB_ROOT),
-            "--add-dir",
-            str(round_dir),
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--output-schema",
-            str(
-                self.decision_schema_path(
-                    session_dir, "failure_decision.schema.json"
-                )
+        result = run_structured_agent(
+            self.agent_config,
+            prompt=prompt,
+            schema_path=self.decision_schema_path(
+                session_dir, "failure_decision.schema.json"
             ),
-            "--output-last-message",
-            str(decision_path),
-            "--json",
-            "-",
-        ]
-        result = run_process(command, cwd=KB_ROOT, stdin=prompt, timeout=1800)
-        (analysis_dir / "failure_codex_events.jsonl").write_text(
+            output_path=decision_path,
+            cwd=KB_ROOT,
+            allowed_dir=round_dir,
+        )
+        (analysis_dir / "failure_agent_events.jsonl").write_text(
             result.stdout, encoding="utf-8"
         )
-        (analysis_dir / "failure_codex_stderr.log").write_text(
+        (analysis_dir / "failure_agent_stderr.log").write_text(
             result.stderr, encoding="utf-8"
         )
         if result.returncode != 0 or not decision_path.exists():
-            raise RuntimeError(f"Codex failure analysis failed: {result.stderr[-2000:]}")
+            raise RuntimeError(
+                f"{result.provider} failure analysis failed: {result.stderr[-2000:]}"
+            )
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
         self.validate_failure_decision(session_dir, decision, current)
         self.write_selected_portrait_evidence(
@@ -2995,38 +3226,25 @@ Embedded evidence:
         prompt_path = analysis_dir / "recovery_agent_prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         decision_path = analysis_dir / "recovery_decision.json"
-        command = [
-            resolve_codex_command(self.config.get("codex_command")),
-            "exec",
-            "--ignore-user-config",
-            "-C",
-            str(KB_ROOT),
-            "--add-dir",
-            str(failed_round_dir),
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--output-schema",
-            str(
-                self.decision_schema_path(
-                    session_dir, "agent_decision.schema.json"
-                )
+        result = run_structured_agent(
+            self.agent_config,
+            prompt=prompt,
+            schema_path=self.decision_schema_path(
+                session_dir, "agent_decision.schema.json"
             ),
-            "--output-last-message",
-            str(decision_path),
-            "--json",
-            "-",
-        ]
-        result = run_process(command, cwd=KB_ROOT, stdin=prompt, timeout=1800)
-        (analysis_dir / "recovery_codex_events.jsonl").write_text(
+            output_path=decision_path,
+            cwd=KB_ROOT,
+            allowed_dir=failed_round_dir,
+        )
+        (analysis_dir / "recovery_agent_events.jsonl").write_text(
             result.stdout, encoding="utf-8"
         )
-        (analysis_dir / "recovery_codex_stderr.log").write_text(
+        (analysis_dir / "recovery_agent_stderr.log").write_text(
             result.stderr, encoding="utf-8"
         )
         if result.returncode != 0 or not decision_path.exists():
             raise RuntimeError(
-                f"Codex recovery analysis failed: {result.stderr[-2000:]}"
+                f"{result.provider} recovery analysis failed: {result.stderr[-2000:]}"
             )
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
         if decision["action"] == "stop_complete":
@@ -3117,7 +3335,7 @@ Embedded evidence:
             "status": "initialized",
             "round_index": 0,
             "candidate_index": 0,
-            "round_label": "a0",
+            "round_label": str(self.config.get("initial_baseline", {}).get("label", "a0")),
             "active_task_id": None,
             "active_run_id": None,
             "execution_mode": self.execution_mode,
@@ -3125,6 +3343,8 @@ Embedded evidence:
             "search_limits_mode": self.config.get("resolved_search_space", {}).get(
                 "mode", "manual"
             ),
+            "strategy_profile": self.strategy_profile_name,
+            "agent_provider": self.agent_config.get("provider", "codex"),
             "active_search_parameters": list(
                 self.config.get("resolved_search_space", {}).get(
                     "active_tunable_parameters",
@@ -3372,7 +3592,10 @@ Embedded evidence:
                             "start an overlapping tuning session."
                         )
             session_dir, state = self.create_session()
-            round_dir = self.round_dir(session_dir, 0, "a0")
+            initial_label = str(
+                self.config.get("initial_baseline", {}).get("label", "a0")
+            )
+            round_dir = self.round_dir(session_dir, 0, initial_label)
             self.write_context(round_dir, state)
             self.run_query(round_dir)
             save_yaml(
@@ -3380,7 +3603,7 @@ Embedded evidence:
                 state["current_candidate"],
             )
             task_id, run_id = self.submit(
-                round_dir, "a0", state["current_candidate"], dry_run=False
+                round_dir, initial_label, state["current_candidate"], dry_run=False
             )
             state.update(
                 status="running",
@@ -3389,7 +3612,7 @@ Embedded evidence:
                 round_submitted_at=now(),
             )
             self.save_state(state)
-            log(f"Submitted A0 task={task_id} run={run_id}")
+            log(f"Submitted {initial_label.upper()} task={task_id} run={run_id}")
 
         while True:
             stop_requested = STOP_FILE.exists()
@@ -3427,6 +3650,10 @@ Embedded evidence:
                     self.save_state(state)
                     log("Active round completed and was archived; controller stopped.")
                     return
+                self.reconcile_official_source_default_baseline(
+                    session_dir, round_dir, state
+                )
+                self.save_state(state)
                 log(f"Round {state['round_label']} completed; invoking Codex analysis.")
                 decision = None
                 if state.get("analysis_status") == "ready":
@@ -3770,6 +3997,15 @@ def parse_args() -> argparse.Namespace:
         help="retry the paused candidate after an operator-authorized external fix",
     )
     group.add_argument("--status", action="store_true", help="print controller state")
+    parser.add_argument(
+        "--strategy-profile",
+        help="strategy profile for a new Session; resume uses the frozen Session value",
+    )
+    parser.add_argument(
+        "--agent-provider",
+        choices=["codex", "anthropic", "openai_compatible", "command"],
+        help="Agent provider for a new Session; credentials stay in environment variables",
+    )
     return parser.parse_args()
 
 
@@ -3787,6 +4023,11 @@ def main() -> int:
         or args.reanalyze_current
         or args.retry_paused_current
     ) and STATE_FILE.exists():
+        if args.strategy_profile or args.agent_provider:
+            raise RuntimeError(
+                "Strategy profile and Agent provider are frozen in session_config.yaml; "
+                "start a new Session to change them"
+            )
         frozen_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         frozen_config = Path(frozen_state["session_dir"]) / "session_config.yaml"
         if not frozen_config.is_file():
@@ -3795,8 +4036,13 @@ def main() -> int:
             )
         config = load_yaml(frozen_config)
     else:
+        raw_config = load_yaml(HERE / "config.yaml")
+        if args.strategy_profile:
+            raw_config.setdefault("strategy", {})["profile"] = args.strategy_profile
+        if args.agent_provider:
+            raw_config.setdefault("agent", {})["provider"] = args.agent_provider
         config, search_space_result = resolve_search_limits(
-            load_yaml(HERE / "config.yaml"),
+            raw_config,
             project_root=KB_ROOT,
             archive_root=ARCHIVE_ROOT,
         )
@@ -3805,6 +4051,7 @@ def main() -> int:
         dry_run=args.dry_run,
         search_space_result=search_space_result,
     )
+    validate_agent_credentials(controller.agent_config)
     lock_descriptor = acquire_controller_lock()
     try:
         if args.prepare_lab:

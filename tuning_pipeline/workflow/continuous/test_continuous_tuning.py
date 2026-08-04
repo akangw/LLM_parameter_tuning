@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -119,6 +120,58 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(2, policy["max_parameters_per_round"])
         self.assertEqual(3, policy["max_total_grid_steps"])
 
+    def test_strategy_profile_can_switch_for_a_new_session(self) -> None:
+        configured = config()
+        configured["strategy"] = {
+            "profile": "best_anchor_coverage_v3",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        self.assertEqual("best_anchor_coverage_v3", controller.strategy_profile_name)
+        self.assertEqual(
+            [2, 3],
+            controller.change_policy["adaptive"]["exploration"][
+                "preferred_parameters_per_round"
+            ],
+        )
+        self.assertEqual(
+            2,
+            controller.effective_change_policy()["minimum_parameters_per_round"],
+        )
+        with self.assertRaisesRegex(ValueError, "between 2 and 3"):
+            controller.validate_candidate(
+                self.baseline,
+                dict(self.baseline, max_num_seqs=64),
+                [{
+                    "parameter": "max_num_seqs",
+                    "before": 48,
+                    "after": 64,
+                    "rationale": "A single change is invalid under V3 exploration.",
+                }],
+            )
+        configured["strategy"]["profile"] = "missing"
+        with self.assertRaisesRegex(ValueError, "Unknown strategy profile"):
+            tuning.Controller(configured)
+
+    def test_agent_provider_selects_its_named_settings_profile(self) -> None:
+        configured = config()
+        configured["agent"] = {
+            "provider": "anthropic",
+            "providers": {
+                "codex": {"command": "auto"},
+                "anthropic": {
+                    "model": "test-claude",
+                    "api_key_env": "TEST_ANTHROPIC_KEY",
+                },
+            },
+        }
+        controller = tuning.Controller(configured)
+        self.assertEqual("anthropic", controller.agent_config["provider"])
+        self.assertEqual(
+            "TEST_ANTHROPIC_KEY",
+            controller.agent_config["settings"]["api_key_env"],
+        )
+
     def test_candidate_rejection_is_reselected_and_audited(self) -> None:
         configured = config()
         configured["change_policy"]["max_candidate_reselections"] = 2
@@ -139,22 +192,21 @@ class ControllerTests(unittest.TestCase):
             ]
             prompts: list[str] = []
 
-            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-                prompts.append(str(kwargs["stdin"]))
-                output = Path(command[command.index("--output-last-message") + 1])
+            def fake_run(agent: dict, **kwargs: object) -> SimpleNamespace:
+                prompts.append(str(kwargs["prompt"]))
+                output = Path(kwargs["output_path"])
                 output.write_text(
                     json.dumps(decisions[len(prompts) - 1]), encoding="utf-8"
                 )
-                return subprocess.CompletedProcess(command, 0, "events", "")
+                return SimpleNamespace(
+                    provider="codex", returncode=0, stdout="events", stderr=""
+                )
 
             def validate(decision: dict) -> None:
                 if decision["candidate"]["id"] == "bad":
                     raise ValueError("synthetic rejection")
 
-            with (
-                patch.object(tuning, "resolve_codex_command", return_value="codex"),
-                patch.object(tuning, "run_process", side_effect=fake_run),
-            ):
+            with patch.object(tuning, "run_structured_agent", side_effect=fake_run):
                 accepted = controller.run_agent_decision_with_reselection(
                     session, round_dir, "base prompt", validate
                 )
@@ -286,14 +338,80 @@ class ControllerTests(unittest.TestCase):
         controller = tuning.Controller(configured)
         controller.validate_deployment_configuration()
         self.assertEqual(controller.benchmark_mode, "aligned_l1")
-        env_text = controller.candidate_env("a0", configured["baseline"])
+        env_text = controller.candidate_env("b0", configured["baseline"])
+        self.assertIn("LAUNCH_PROFILE=official_source_defaults", env_text)
         self.assertIn("BENCHMARK_MODE=aligned_l1", env_text)
-        self.assertIn("BENCHMARK_REPETITIONS=1", env_text)
+        self.assertIn("BENCHMARK_REPETITIONS=3", env_text)
         self.assertIn(
             "BENCHMARK_SUITE='01_调优_结构化定长-v4.yaml'",
             env_text,
         )
         self.assertIn('"schema_files_sha256"', env_text)
+        self.assertIn("SAFETENSORS_LOAD_STRATEGY=prefetch", env_text)
+        self.assertIn("SAFETENSORS_PREFETCH_NUM_THREADS=8", env_text)
+        self.assertIn("SAFETENSORS_PREFETCH_BLOCK_SIZE=16777216", env_text)
+
+        runtime = (tuning.HERE / "remote" / "common_runtime_loop.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"', runtime)
+        self.assertIn(
+            '--safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"',
+            runtime,
+        )
+        self.assertIn(
+            'if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime
+        )
+
+    def test_model_loading_contract_rejects_unsafe_prefetch_settings(self) -> None:
+        configured = config()
+        configured["model_loading"] = {
+            "safetensors_load_strategy": "unknown",
+            "safetensors_prefetch_num_threads": 8,
+            "safetensors_prefetch_block_size": 16 * 1024 * 1024,
+        }
+        with self.assertRaisesRegex(ValueError, "safetensors_load_strategy"):
+            tuning.Controller(configured)
+
+        configured["model_loading"]["safetensors_load_strategy"] = "prefetch"
+        configured["model_loading"]["safetensors_prefetch_num_threads"] = 64
+        with self.assertRaisesRegex(ValueError, "prefetch_num_threads"):
+            tuning.Controller(configured)
+
+    def test_b0_reconciles_source_resolved_values_before_agent_handoff(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        controller = tuning.Controller(configured)
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "session"
+            round_dir = session / "round_000_b0"
+            (round_dir / "02_parameters").mkdir(parents=True)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "04_runtime" / "master.log").write_text(
+                "Chunked prefill is enabled with max_num_batched_tokens=2048.\n"
+                "Initializing a V1 LLM engine with config: max_seq_len=131072, "
+                "enable_prefix_caching=True, enable_chunked_prefill=True, "
+                "compilation_config={'cudagraph_mode': "
+                "<CUDAGraphMode.FULL_AND_PIECEWISE: (1, 1)>, "
+                "'cudagraph_capture_sizes': [16, 32, 64, 128, 256], "
+                "'max_cudagraph_capture_size': 256}\n",
+                encoding="utf-8",
+            )
+            state = {
+                "round_label": "b0",
+                "current_candidate": dict(configured["baseline"]),
+            }
+            controller.reconcile_official_source_default_baseline(
+                session, round_dir, state
+            )
+            self.assertTrue(state["official_source_defaults_reconciled"])
+            self.assertEqual(131072, state["current_candidate"]["max_model_len"])
+            self.assertEqual(
+                [16, 32, 64, 128, 256],
+                state["current_candidate"]["cudagraph_capture_sizes"],
+            )
+            self.assertTrue(
+                (round_dir / "02_parameters" / "b0_effective_resolution.yaml").is_file()
+            )
 
     def test_default_automated_search_space_resolves_and_manual_fallback_remains(self) -> None:
         project_root = tuning.KB_ROOT
@@ -331,14 +449,16 @@ class ControllerTests(unittest.TestCase):
                 [64000], resolved["search_limits"]["max_model_len"]
             )
             self.assertEqual(
-                [True], resolved["search_limits"]["async_scheduling"]
+                [raw["baseline"]["async_scheduling"]],
+                resolved["search_limits"]["async_scheduling"],
             )
             self.assertEqual(
-                [True], resolved["search_limits"]["enable_expert_parallel"]
+                [raw["baseline"]["enable_expert_parallel"]],
+                resolved["search_limits"]["enable_expert_parallel"],
             )
             self.assertEqual(
                 [
-                    raw["baseline"]["cudagraph_capture_sizes"],
+                    [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192],
                     None,
                 ],
                 resolved["search_limits"]["cudagraph_capture_sizes"],
@@ -351,6 +471,9 @@ class ControllerTests(unittest.TestCase):
             controller = tuning.Controller(resolved)
             mismatched_graph = dict(resolved["baseline"])
             mismatched_graph["max_cudagraph_capture_size"] = 256
+            mismatched_graph["cudagraph_capture_sizes"] = [
+                16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192
+            ]
             with self.assertRaisesRegex(
                 ValueError, "must equal the largest explicit"
             ):
@@ -443,7 +566,7 @@ class ControllerTests(unittest.TestCase):
                 },
                 "l1": {
                     "all_repetitions_gate_passed": True,
-                    "repetition_count": 1,
+                    "repetition_count": configured["benchmark"]["aligned_l1"]["repetitions"],
                     "primary_concurrency": 32,
                     "primary_aggregate_output_tps_geomean": score,
                     "primary_score_cv_percent": cv,
@@ -498,7 +621,7 @@ class ControllerTests(unittest.TestCase):
                 candidate_cases.append(candidate)
         base_l1 = {
             "all_repetitions_gate_passed": True,
-            "repetition_count": 1,
+            "repetition_count": configured["benchmark"]["aligned_l1"]["repetitions"],
             "primary_concurrency": 32,
             "primary_aggregate_output_tps_geomean": 100.0,
             "primary_score_cv_percent": 0.5,
@@ -748,7 +871,7 @@ SLOT  service
                 "benchmark_mode": "aligned_l1",
                 "l1": {
                     "all_repetitions_gate_passed": True,
-                    "repetition_count": 1,
+                    "repetition_count": configured["benchmark"]["aligned_l1"]["repetitions"],
                     "primary_concurrency": 32,
                     "primary_aggregate_output_tps_geomean": score,
                     "primary_score_cv_percent": 0.0,

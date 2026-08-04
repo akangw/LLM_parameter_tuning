@@ -13,7 +13,19 @@
 - `build/migration_pipeline/`：结构化提取、覆盖审计、Stage-1 与迁移程序。
 - `build/parse_params/`：ParameterYAML Schema 和验证工具。
 - `build/codex_portrait_pipeline/`：Codex 画像队列、上下文与审计日志。
+- `build/version_migrations/`：按两份源码 commit 隔离的新版本迁移运行区（可复现、本地生成、不入 Git）。
 - `build/target-context.snapshot.yaml`：目标版本和场景快照。
+
+## 新版本迁移接口
+
+从仓库根目录运行：
+
+```powershell
+.\scripts\migrate-versions.ps1 -Vllm <tag-or-commit> -VllmAscend <tag-or-commit> -PrepareOnly
+.\scripts\migrate-versions.ps1 -Vllm <tag-or-commit> -VllmAscend <tag-or-commit>
+```
+
+第一条只完成源码抓取、结构化提取、覆盖审计、Stage-1 和 Codex 队列准备；第二条继续用 Codex 生成并审计画像。所有结果进入 commit-qualified 隔离目录，不会直接替换 `outputs/ParameterYAML/`。迁移提取器、Schema 和队列程序均在本仓库内，克隆后无需旧项目目录。只有人工审计并明确激活新画像后，才重新生成 Tags 和 Search Limits。
 
 固定源码版本：
 

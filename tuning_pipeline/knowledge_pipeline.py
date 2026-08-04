@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent
 STATUS = ROOT / "build-status.json"
 TAG_OUTPUT = ROOT / "tag_params" / "output"
 SEARCH_OUTPUT = ROOT / "search_limits"
+PIPELINE_LOGS = TAG_OUTPUT / "logs" / "pipeline"
 
 
 def utc_now() -> str:
@@ -39,10 +40,10 @@ def run_stage(
     check: bool = True,
 ) -> int:
     write_status(name, command=command)
-    TAG_OUTPUT.mkdir(parents=True, exist_ok=True)
+    PIPELINE_LOGS.mkdir(parents=True, exist_ok=True)
     with (
-        (TAG_OUTPUT / stdout_name).open("a", encoding="utf-8") as stdout,
-        (TAG_OUTPUT / stderr_name).open("a", encoding="utf-8") as stderr,
+        (PIPELINE_LOGS / stdout_name).open("a", encoding="utf-8") as stdout,
+        (PIPELINE_LOGS / stderr_name).open("a", encoding="utf-8") as stderr,
     ):
         result = subprocess.run(
             command,

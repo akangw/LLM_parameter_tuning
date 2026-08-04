@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import importlib
 import json
-import sys
 from pathlib import Path
 
 from .coverage import audit_extraction_coverage, augment_indirect_surfaces
+from .stage1 import filter_parameters
+from .structured_extractor import extract_parameters
 
 
 def _fallback_default(parameter: dict) -> tuple[object, str]:
@@ -121,17 +121,13 @@ def _augment_config_value_fallbacks(extraction: dict, ascend_root: Path) -> dict
     return document
 
 
-def extract_and_filter(cjx_root: Path, vllm_root: Path, ascend_root: Path) -> tuple[dict, dict]:
-    root = str(cjx_root.resolve())
-    if not (cjx_root / "cjx_pipeline" / "extract.py").is_file():
-        raise SystemExit(f"cjx_space extractor not found: {cjx_root / 'cjx_pipeline'}")
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    # Import the reviewed implementation itself: no reduced reimplementation
-    # and no silent policy drift between the 415-candidate baseline and this run.
-    extractor = importlib.import_module("cjx_pipeline.extract")
-    analyzer = importlib.import_module("cjx_pipeline.analyze")
-    extraction = extractor.extract_parameters(vllm_root, ascend_root)
+def extract_and_filter(vllm_root: Path, ascend_root: Path) -> tuple[dict, dict]:
+    """Extract and filter using the repository-owned implementation.
+
+    Keeping this implementation inside portrait_pipeline makes a GitHub clone
+    self-contained.  The provenance hash still detects future policy drift.
+    """
+    extraction = extract_parameters(vllm_root, ascend_root)
     # Retain the original focused augmentation for backward-compatible tests,
     # then apply the generic independent pass for subscript and environment
     # spellings.  The second pass is idempotent by (type, name).
@@ -163,7 +159,7 @@ def extract_and_filter(cjx_root: Path, vllm_root: Path, ascend_root: Path) -> tu
     # EPLB activation and inference performance.  The 0706 portraits and the
     # pinned Ascend implementation both confirm that they require Stage-2
     # review even though a free-form path will not become a numeric search axis.
-    hard_keep = list(analyzer.DEFAULT_FILTER["hard_keep_name_patterns"]) + [
+    hard_keep = [
         # This is a real high-impact memory lifecycle switch (and was a high
         # impact portrait in 0706), not an incidental operational "mode".
         r"^--enable-sleep-mode$",
@@ -187,9 +183,25 @@ def extract_and_filter(cjx_root: Path, vllm_root: Path, ascend_root: Path) -> tu
         r"^(?:TASK_QUEUE_ENABLE|CPU_AFFINITY_CONF|OMP_NUM_THREADS|OMP_PROC_BIND)$",
         r"^ASCEND_(?:BUFFER_POOL|CONNECT_TIMEOUT|TRANSFER_TIMEOUT)$",
     ]
-    return extraction, analyzer.stage1_filter(
-        extraction, policy={"hard_keep_name_patterns": hard_keep}
+    passed, skipped, counts = filter_parameters(
+        extraction["parameters"], extra_keep_patterns=hard_keep
     )
+    payload = json.dumps(
+        passed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return extraction, {
+        "schema_version": "portrait-stage1-worklist/v1",
+        "filter_policy_version": "repository-stage1/v1",
+        "parameters": passed,
+        "skipped": skipped,
+        "filter_summary": {
+            "input": len(extraction["parameters"]),
+            "passed": len(passed),
+            "skipped": len(skipped),
+            "decision_reasons": counts,
+        },
+        "worklist_hash": hashlib.sha256(payload.encode()).hexdigest(),
+    }
 
 
 def legacy_projection(parameters: list[dict]) -> list[dict]:

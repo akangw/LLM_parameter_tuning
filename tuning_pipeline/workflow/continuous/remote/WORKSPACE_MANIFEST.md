@@ -30,11 +30,15 @@ part of the runtime contract.
 
 ## Ownership of artifacts
 
-- Local Windows project: parameter knowledge base, controller state, complete
+- Local Windows project: parameter knowledge base, controller state, core
   round archives, Codex decisions, and orchestration code.
 - This server workspace: synchronized runtime scripts, lease templates,
   candidate files, raw logs, complete ServeBench results, consolidated
   benchmark outputs, and metrics.
+
+The authoritative server-side directory and log naming convention is documented
+in `workflow/auto/ARTIFACT_LAYOUT.md`. Every new run also writes its own
+`server_run_manifest.yaml`.
 
 The image is paired with a parameter portrait built from vLLM
 `418bd6273c03bf48d5066733769e0a74bdc51694` and vllm-ascend

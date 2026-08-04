@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import argparse
+import os
+import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -12,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RUN = Path(__file__).resolve().parent / "run"
 INDEX = RUN / "index.json"
 LOGS = RUN / "worker_logs"
-CODEX_CMD = Path.home() / "AppData" / "Roaming" / "npm" / "codex.cmd"
+CODEX_CMD = ""
 
 
 def now() -> str:
@@ -67,14 +70,17 @@ def write_status(value: dict) -> None:
 
 
 def worker_prompt(task_id: str) -> str:
+    relative_run = RUN.resolve().relative_to(ROOT.resolve()).as_posix()
     return f"""You are one worker in the offline ParameterYAML portrait queue.
 Read build/codex_portrait_pipeline/AGENT_INSTRUCTIONS.md.
 Process only task {task_id}.
 The draft file already exists as a placeholder. Overwrite that exact file using
 PowerShell/.NET file writing if apply_patch is unavailable in the Windows sandbox.
 Claim the task, inspect its task/context and both pinned source repositories,
-write build/codex_portrait_pipeline/run/drafts/{task_id}.yaml, then run the accept
-command and fix every validation error. Do not process any other task. Do not
+write {relative_run}/drafts/{task_id}.yaml, then run this accept command and fix
+every validation error:
+python -m build.codex_portrait_pipeline --run-dir {relative_run} accept {task_id} {relative_run}/drafts/{task_id}.yaml
+Do not process any other task. Do not
 edit build/parse_params, ../tuning_pipeline, or the pinned source trees. Finish
 only after accept succeeds.
 """
@@ -98,7 +104,8 @@ def run_one(row: dict) -> int:
         "sequence": row["sequence"], "started_at": now(),
     })
     args = [
-        "cmd.exe", "/d", "/c", str(CODEX_CMD), "exec", "--ephemeral",
+        *(["cmd.exe", "/d", "/c"] if os.name == "nt" and CODEX_CMD.lower().endswith((".cmd", ".bat")) else []),
+        CODEX_CMD, "exec", "--ephemeral",
         "--skip-git-repo-check", "--sandbox", "workspace-write",
         "-C", str(ROOT), "-",
     ]
@@ -125,6 +132,22 @@ def run_one(row: dict) -> int:
 
 
 def main() -> None:
+    global RUN, INDEX, LOGS, CODEX_CMD
+    parser = argparse.ArgumentParser(description="Drain an offline portrait queue with Codex")
+    parser.add_argument("--run-dir", type=Path, default=RUN)
+    parser.add_argument("--codex-command", default="auto")
+    args = parser.parse_args()
+    RUN = args.run_dir.resolve()
+    INDEX = RUN / "index.json"
+    LOGS = RUN / "worker_logs"
+    requested = os.environ.get("VLLMTKB_CODEX_COMMAND", "").strip() or args.codex_command
+    CODEX_CMD = (
+        shutil.which("codex.cmd") or shutil.which("codex") or ""
+        if requested == "auto"
+        else (str(Path(requested).expanduser()) if Path(requested).expanduser().is_file() else shutil.which(requested) or "")
+    )
+    if not CODEX_CMD:
+        raise SystemExit("Codex CLI not found; login/install it or set VLLMTKB_CODEX_COMMAND")
     recovered = recover_interrupted_tasks()
     if recovered:
         write_status({

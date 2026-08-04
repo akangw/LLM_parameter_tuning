@@ -1,6 +1,5 @@
 # Strategy profiles are deliberately separate from config.yaml. The live
-# controller continues to use best_anchor_coverage_v2 until an operator opts in
-# during a future V3 integration.
+# controller freezes the selected profile into each Session.
 default_strategy: best_anchor_coverage_v2
 
 strategies:
@@ -19,19 +18,17 @@ strategies:
       max_total_grid_steps: 3
 
   best_anchor_coverage_v3:
-    status: standalone_not_integrated
+    status: integrated
     purpose: >-
-      Hierarchical search for expensive rounds: use a fixed C32 screen to rank
-      candidates, fully validate only screened winners, then refine locally.
+      More aggressive hierarchical parameter-selection policy. It prefers
+      coupled 2-3 parameter probes and tighter local refinement. Every submitted
+      candidate still runs the full frozen L1 matrix; the screening helpers are
+      reserved for a future reduced-cost benchmark stage.
     exploration:
       independent_parameters_per_round: [2, 3]
       minimum_independent_parameters: 2
       max_grid_steps_per_parameter: 2
       max_total_grid_steps: 6
-      # A one-parameter probe remains allowed only when every valid two-parameter
-      # probe would violate a hard rule, or when testing an explicit high-risk
-      # hypothesis. The decision must record that exception.
-      one_parameter_exception_required: true
       probe_templates:
         - name: scheduler_capacity
           parameters: [max_num_seqs, max_num_batched_tokens]

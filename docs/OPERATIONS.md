@@ -49,6 +49,31 @@
 - 当前平台不允许 Agent 启用上游 `--enable-eplb`。
 - 同一项目不得同时运行两个 Controller；旧项目和新项目分别使用自己的锁与 Lease。
 
+## 模型权重加载慢
+
+模型位于 DTFS。固定 vLLM 版本的自动识别只把 NFS/Lustre 当作网络文件系统，
+因此默认会退回 Safetensors lazy mmap；在当前 182-shard、TP16/节点的部署中，
+历史日志显示权重加载约需 22～29 分钟。
+
+项目现已把以下设置冻结为服务启动契约：
+
+```yaml
+model_loading:
+  safetensors_load_strategy: prefetch
+  safetensors_prefetch_num_threads: 8
+  safetensors_prefetch_block_size: 16777216
+```
+
+每轮的 `candidate.env`、`effective_config.yaml`、`vllm_common_command.txt` 和
+`startup_timeline.jsonl` 都会记录实际设置。若日志仍出现
+`Auto-prefetch is disabled`，说明远端脚本或 Session 配置未同步，应停止提交
+新轮次并先执行脚本哈希核对。不要直接提高线程数：两个节点会同时读取 DTFS，
+过高并发可能反而放大共享存储抖动。
+
+镜像拉取和模型权重读取是两件事。当前使用持久 Lease，普通
+`ktp-lab run` 不会重建 Pod；只有创建新 Lease 或改变镜像身份时才应出现
+ImagePull/ContainerCreating。
+
 ## 远端只读检查
 
 ```powershell

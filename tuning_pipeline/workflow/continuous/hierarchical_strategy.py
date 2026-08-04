@@ -1,8 +1,8 @@
-"""Pure planning and assessment helpers for the optional V3 search profile.
+"""Pure planning and assessment helpers for the V3 search profile.
 
 This module intentionally has no SSH, task-submission, or Controller imports.
-It can be tested and reviewed independently before V3 is connected to the live
-continuous controller.
+The live Controller enforces V3's selection limits while these future screening
+helpers remain isolated until a reviewed Screen-to-Full state machine exists.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def validate_exploration_change_count(
     *,
     exception_reason: str | None = None,
 ) -> None:
-    """Enforce V3's multi-parameter exploration rule before controller wiring."""
+    """Enforce V3's multi-parameter exploration rule for isolated planning."""
     exploration = profile["exploration"]
     lower, upper = [
         int(value) for value in exploration["independent_parameters_per_round"]

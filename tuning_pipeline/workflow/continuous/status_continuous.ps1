@@ -27,7 +27,7 @@ if (Test-Path -LiteralPath $statePath) {
 }
 
 Write-Host "`nRecent controller log:"
-$logPath = Join-Path $root "controller.log"
+$logPath = Join-Path $root "logs\controller\controller.log"
 if (Test-Path -LiteralPath $logPath) {
     Get-Content -LiteralPath $logPath -Tail 20
 }

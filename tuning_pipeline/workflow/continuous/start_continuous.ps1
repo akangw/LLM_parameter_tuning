@@ -4,7 +4,10 @@ param(
     [switch]$Resume,
     [switch]$RetryPausedCurrent,
     [switch]$NewSession,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [string]$StrategyProfile,
+    [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
+    [string]$AgentProvider
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +17,9 @@ $pipelineRoot = Split-Path -Parent $downstreamRoot
 
 if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
     throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
+}
+if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider)) {
+    throw "Strategy/Agent provider are frozen in a Session and cannot be overridden during resume."
 }
 
 function Get-ControllerProcess {
@@ -127,15 +133,19 @@ foreach ($requiredIdentity in @(
 $python = Resolve-Python
 & $python -c "import yaml, paramiko; print('Python dependencies: OK')"
 if ($LASTEXITCODE -ne 0) {
-    throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r requirements-runtime.txt"
+    throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r .\tuning_pipeline\requirements-runtime.txt"
 }
 
-$codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
-if ($null -eq $codex) {
-    $codex = Get-Command codex -ErrorAction SilentlyContinue
-}
-if (($null -eq $codex) -and (-not $env:VLLMTKB_CODEX_COMMAND)) {
-    throw "Codex CLI was not found. Put it on PATH or set VLLMTKB_CODEX_COMMAND."
+$configText = Get-Content -Raw -LiteralPath (Join-Path $root "config.yaml")
+$effectiveProvider = if ($AgentProvider) { $AgentProvider } elseif ($configText -match '(?ms)^agent:\s*.*?^\s+provider:\s*([^\s#]+)') { $Matches[1] } else { "codex" }
+if ($effectiveProvider -eq "codex") {
+    $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
+    if ($null -eq $codex) {
+        $codex = Get-Command codex -ErrorAction SilentlyContinue
+    }
+    if (($null -eq $codex) -and (-not $env:VLLMTKB_CODEX_COMMAND)) {
+        throw "Codex CLI was not found. Put it on PATH or set VLLMTKB_CODEX_COMMAND."
+    }
 }
 
 $mode = "--start"
@@ -178,14 +188,18 @@ if (Test-Path -LiteralPath $stopFile) {
 }
 
 $arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
+if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
+if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
 if ($Foreground) {
     & $python @arguments
     exit $LASTEXITCODE
 }
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$stdout = Join-Path $root "controller_process_$timestamp.stdout.log"
-$stderr = Join-Path $root "controller_process_$timestamp.stderr.log"
+$processLogDir = Join-Path $root "logs\controller\process"
+New-Item -ItemType Directory -Path $processLogDir -Force | Out-Null
+$stdout = Join-Path $processLogDir "controller_process_$timestamp.stdout.log"
+$stderr = Join-Path $processLogDir "controller_process_$timestamp.stderr.log"
 $process = Start-Process -FilePath $python -ArgumentList $arguments `
     -WorkingDirectory $root -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr

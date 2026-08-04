@@ -43,9 +43,6 @@ def _parser() -> argparse.ArgumentParser:
                         help="Isolated ParameterYAML directory; never use parse_params/output here.")
     parser.add_argument("--target-context", type=Path,
                         default=BUILD_ROOT / "target-context.snapshot.yaml")
-    parser.add_argument("--cjx-root", type=Path,
-                        default=PROJECT_ROOT.parent.parent / "cjx_space",
-                        help="cjx_space checkout containing the reviewed structured extractor and Stage-1 policy.")
     parser.add_argument("--with-claude", action="store_true",
                         help="Also use the original optional document extractor during extraction.")
     parser.add_argument("--dry-run", action="store_true",
@@ -166,11 +163,8 @@ async def _run(args: argparse.Namespace) -> None:
         handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%H:%M:%S"))
         logger.addHandler(handler)
 
-    # Stage-1 is deliberately executed over cjx_space's rich extraction, not
-    # the old shallow list.  This is the exact structural extraction + mirror
-    # de-duplication policy which yields the 415-style candidate worklist.
     extraction, worklist = extract_and_filter(
-        args.cjx_root.resolve(), args.vllm_src.resolve(), args.vllm_ascend_src.resolve())
+        args.vllm_src.resolve(), args.vllm_ascend_src.resolve())
     rich_params = list(extraction["parameters"])
     selected_rich = list(worklist["parameters"])
     params = legacy_projection(rich_params)

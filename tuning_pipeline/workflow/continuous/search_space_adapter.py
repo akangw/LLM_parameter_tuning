@@ -140,11 +140,15 @@ def resolve_search_limits(
         raise ValueError(
             f"Resolved automated baseline mismatch; missing={missing}, extra={extra}"
         )
+    # A source-default B0 may resolve to a value outside the curated Agent
+    # proposal grid (for example max_num_seqs=256 while the useful tuning grid
+    # starts at 8..64). Preserve that measured starting point as the first
+    # whitelisted value without pretending the compiler proposed it.
+    source_default_anchors: list[str] = []
     for name, value in baseline.items():
         if value not in effective_limits[name]:
-            raise ValueError(
-                f"Resolved baseline {name}={value!r} is outside {effective_limits[name]!r}"
-            )
+            effective_limits[name] = [value, *effective_limits[name]]
+            source_default_anchors.append(name)
 
     result["integration"]["connected_to_mainflow"] = True
     result["integration"]["approval_source"] = (
@@ -170,6 +174,7 @@ def resolve_search_limits(
             if name not in result["active_search_limits"]
             and name not in derived_runtime_parameters
         ],
+        "source_default_anchor_parameters": source_default_anchors,
         "rotation_swaps": result["rotation_audit"]["swaps"],
     }
     return config, result

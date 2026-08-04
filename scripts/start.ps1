@@ -4,7 +4,10 @@ param(
     [switch]$Resume,
     [switch]$RetryPausedCurrent,
     [switch]$NewSession,
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+    [string]$StrategyProfile,
+    [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
+    [string]$AgentProvider
 )
 
 $ErrorActionPreference = "Stop"

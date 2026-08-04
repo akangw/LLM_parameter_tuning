@@ -57,7 +57,7 @@
         "status": "verified",
         "source": "existing_continuous_controller_contract_2026-07-31"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\max_model_len.yaml",
+      "knowledge_file": "tag_params/output/params/max_model_len.yaml",
       "constraints_evidence": [
         "The value must be >= -1; -1 or auto uses automatic derivation, while an omitted value is also derived from model configuration.",
         "A value above the model-derived maximum is rejected unless VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 is set; exceeding positional limits can be unsafe.",
@@ -106,7 +106,7 @@
         "status": "verified",
         "source": "existing_continuous_controller_contract_2026-07-31"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\async_scheduling.yaml",
+      "knowledge_file": "tag_params/output/params/async_scheduling.yaml",
       "constraints_evidence": [
         "Explicit async scheduling requires an executor backend whose executor class reports async-scheduling support.",
         "With speculative decoding, explicit async scheduling supports EAGLE, MTP, draft-model, or NGram-GPU methods; other methods raise a configuration error.",
@@ -154,7 +154,7 @@
         "status": "verified",
         "source": "existing_continuous_controller_contract_2026-07-31"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\enable_expert_parallel.yaml",
+      "knowledge_file": "tag_params/output/params/enable_expert_parallel.yaml",
       "constraints_evidence": [
         "Expert parallelism is meaningful only for MoE layers; it does not change dense-layer parallelism.",
         "--enable-eplb requires --enable-expert-parallel (vllm/config/parallel.py:446).",
@@ -205,7 +205,7 @@
         "status": "unverified_for_current_image",
         "source": "registry_and_knowledge_only"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\additional_config.eplb_config.num_redundant_experts.yaml",
+      "knowledge_file": "tag_params/output/params/additional_config.eplb_config.num_redundant_experts.yaml",
       "constraints_evidence": [
         "The value must be an integer greater than or equal to zero; booleans pass Python's integer type check but should not be used as counts.",
         "Dynamic EPLB requires expert parallelism with ep_size greater than one.",
@@ -248,7 +248,7 @@
         "status": "unverified_for_current_image",
         "source": "registry_and_knowledge_only"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\all2all_backend.yaml",
+      "knowledge_file": "tag_params/output/params/all2all_backend.yaml",
       "constraints_evidence": [
         "When --enable-dbo activates microbatching, --all2all-backend must be deepep_low_latency or deepep_high_throughput.",
         "The legacy naive and pplx values are removed and are converted to allgather_reducescatter during configuration validation.",
@@ -293,7 +293,7 @@
         "status": "unverified_for_current_image",
         "source": "registry_and_knowledge_only"
       },
-      "knowledge_file": "C:\\Users\\25308\\Desktop\\vllmTKB\\tuning_pipeline\\tag_params\\output\\params\\offload_group_size.yaml",
+      "knowledge_file": "tag_params/output/params/offload_group_size.yaml",
       "constraints_evidence": [
         "The value must be an integer greater than or equal to 0.",
         "Zero disables group-based prefetch offloading when --offload-backend is auto.",

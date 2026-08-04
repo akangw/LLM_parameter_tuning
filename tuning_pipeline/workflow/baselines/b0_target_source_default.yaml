@@ -1,14 +1,14 @@
-# B0 is an isolated calibration specification.  It is deliberately outside
-# workflow/continuous so it cannot enter the A0/A1/A2/... Controller history.
+# B0 is the official-source-default starting point for a new Controller
+# Session. It contains no inherited A0/0706 expert-performance settings.
 schema_version: 1
 baseline_id: b0-target-source-default
-status: frozen_spec_not_submitted
+status: defined_awaiting_owner_submission
 
 purpose: >-
   Measure the target-image source-default style deployment against the same
   fixed L1 workload. This is the external reference for reporting the value of
-  the inherited deployment knowledge plus the later Agent tuning. It is not a
-  replacement for A0, which remains the Controller's accepted tuning anchor.
+  the inherited deployment knowledge plus the later Agent tuning. It is the
+  starting point from which the Agent must establish measured improvements.
 
 target_identity:
   image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
@@ -17,15 +17,14 @@ target_identity:
   vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
 
 isolation:
-  controller_session: separate_baseline_calibration_session
-  lease: separate_baseline_calibration_lease
-  output_root: separate_baseline_calibration_output_root
-  may_not_write_to: workflow/continuous/experiments
-  may_not_be_added_to: A0/A1/A2/A3_controller_history
+  controller_session: new_session_with_round_000_b0
+  lease: may_reuse_the_idle_version_pinned_lease
+  output_root: workflow/continuous/experiments/<session>/round_000_b0
+  may_not_import_history_from: legacy_A0/A1/A2/A3_sessions
 
 # These are deployment and measurement invariants, rather than parameters whose
-# performance effect B0 is intended to tune. max_model_len=64000 is retained so
-# B0, A0, and Best have the same advertised context-length contract.
+# performance effect B0 is intended to tune. max_model_len is deliberately
+# omitted and resolved from the model configuration, like a first-time user.
 required_launch_contract:
   model: /models/share/GLM-5.2-w8a8
   quantization: ascend
@@ -36,8 +35,6 @@ required_launch_contract:
   tensor_parallel_size: 16
   data_parallel_address: platform_assigned_master_ip
   data_parallel_rpc_port: 12980
-  max_model_len: 64000
-  seed: 1024
   deployment_environment: >-
     Reuse the pinned image's CANN/HCCL/NIC/runtime initialization needed to run
     on this 2x16 NPU topology, but do not add performance-feature environment
@@ -49,6 +46,8 @@ required_launch_contract:
 source_default_parameters:
   omit_cli_flags:
     - max_num_seqs
+    - max_model_len
+    - seed
     - max_num_batched_tokens
     - gpu_memory_utilization
     - enable_prefix_caching
@@ -62,11 +61,19 @@ source_default_parameters:
     - eplb_config
     - compilation_config
     - additional_config
+    - safetensors_load_strategy
+    - safetensors_prefetch_num_threads
+    - safetensors_prefetch_block_size
   omit_environment_overrides:
     - VLLM_ASCEND_ENABLE_FLASHCOMM1
     - VLLM_ASCEND_ENABLE_MLAPO
     - VLLM_ASCEND_ENABLE_FUSED_MC2
     - VLLM_ASCEND_BALANCE_SCHEDULING
+    - HCCL_OP_EXPANSION_MODE
+    - HCCL_BUFFSIZE
+    - OMP_PROC_BIND
+    - OMP_NUM_THREADS
+    - PYTORCH_NPU_ALLOC_CONF
 
 # These values are documented source expectations, not values to inject. The
 # runner must capture effective_config.yaml and vllm_common_command.txt and use
@@ -92,20 +99,10 @@ benchmark_contract:
   repetitions_per_configuration: 3
   required_formal_cases_per_repetition: 12
   warmups_per_repetition: 12
-  compare_with:
-    - A0_revalidation_same_contract_x3
-    - final_best_candidate_same_contract_x3
-  execution_order: interleave_B0_and_A0_to_reduce_time_drift
-  recommended_order:
-    - B0_rep1
-    - A0_rep1
-    - B0_rep2
-    - A0_rep2
-    - B0_rep3
-    - A0_rep3
+  next_step: invoke_agent_after_B0_metrics_pass_the_absolute_evidence_gate
 
 acceptance_and_reporting:
-  b0_is_a_reference_not_an_agent_acceptance_anchor: true
+  b0_is_the_new_session_acceptance_anchor: true
   record:
     - exact_launch_command
     - effective_config

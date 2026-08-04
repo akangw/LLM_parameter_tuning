@@ -17,18 +17,18 @@ experiments/glm52_continuous_<timestamp>/
     03_submission/       submitted task YAML, task ID and submit output
     04_runtime/          Master/Worker/benchmark-runner logs and status
     05_results/          metrics.json or failure.json
-    06_agent_analysis/   Codex prompt, JSONL events, analysis decision and next candidate
+    06_agent_analysis/   Agent prompt, events/stderr, analysis decision and next candidate
   round_001_a1/
   ...
 ```
 
-The next round is started only after `metrics.json` exists and the Codex
+The next round is started only after `metrics.json` exists and the Agent
 decision passes strict whitelist, grid-distance, evidence, and constraint
-validation. Codex chooses the smallest defensible set of one to three changes.
+validation. The Agent chooses the smallest defensible set allowed by the frozen strategy.
 Multi-parameter proposals must identify a real interaction, provide evidence
 for every changed parameter, and document the relevant constraint checks.
 Independent guesses must remain separate experiments.
-Codex may return `stop_complete` when no useful, safe, untested change remains;
+The Agent may return `stop_complete` when no useful, safe, untested change remains;
 the controller then archives the decision without submitting another task.
 
 ## Search Limits modes
@@ -81,6 +81,13 @@ fields. A candidate that attempts to enable EPLB is rejected before submission.
 
 Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The two-node
 TP16/DP2 topology remains fixed across all tuning rounds.
+
+The model checkpoint is on DTFS. The pinned vLLM build auto-detects only
+NFS/Lustre for Safetensors prefetch, so the workflow explicitly freezes
+`--safetensors-load-strategy=prefetch`, 8 prefetch threads, and a 16 MiB read
+block. This replaces the observed 16-worker lazy-mmap access pattern without
+changing any post-startup serving or benchmark parameter. Each run archives a
+`startup_timeline.jsonl` so process-start-to-API-ready time can be compared.
 
 This project uses the isolated persistent lease
 `vllmtkb-418bd627-32c8cf190-glm52-a3-32npu`; it does not share the historical
@@ -143,7 +150,7 @@ enforces `round_timeout_minutes`, prevents concurrent controller instances and
 overlap with a task referenced by the previous state, verifies explicit remote
 return-code markers, and size-checks downloaded artifacts.
 
-Codex analysis receives a controller-built read-only evidence bundle containing
+Agent analysis receives a controller-built read-only evidence bundle containing
 the candidate, verified image digest and source commits, submitted task,
 effective command, metrics, comparison, deterministic measurement assessment,
 current-session history, relevant logs, tag knowledge, the compact natural-
@@ -151,7 +158,7 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-Candidate exploration uses `best_anchor_coverage_v2`. Each new proposal is anchored
+The default strategy is `best_anchor_coverage_v2`. Each new proposal is anchored
 to the highest-scoring configuration that passed the deterministic baseline-relative
 throughput and latency gate. The evidence bundle includes per-parameter tested and
 untested values, causal single-parameter observations, and separately classified
@@ -159,12 +166,18 @@ multi-parameter observations. Exploration prefers 2-3 independent changes; after
 trusted improvement it narrows to 1-2. Rejected branches therefore remain evidence
 but do not silently become the base configuration for subsequent rounds.
 
-The optional `best_anchor_coverage_v3` definition is retained in
-`strategy_profiles.yaml`, with pure screening helpers in
-`hierarchical_strategy.py`. It is intentionally not imported by this Controller.
-The live and frozen Session configurations remain on V2; a C32 screen cannot be
-used for acceptance without a future, explicitly reviewed Screen-to-Full state
-machine and complete aligned-L1 verification.
+`best_anchor_coverage_v3` is also integrated. It deterministically requires 2-3
+independent changes during exploration and narrows local refinement to one grid
+step. Both strategies still run the complete aligned-L1 matrix for every candidate;
+the screening helpers in `hierarchical_strategy.py` are reserved for a future
+reviewed Screen-to-Full state machine and cannot accept an improvement today.
+
+The provider and strategy are selected in `config.yaml` and frozen into each new
+Session. `codex` is the default provider; `anthropic`, `openai_compatible`, and a
+structured-stdout `command` adapter are available through `agent.providers`.
+Credentials are referenced only by environment-variable name. New Sessions may
+override the selection with `-AgentProvider` and `-StrategyProfile`; resume/retry
+reject overrides so an existing experiment cannot drift.
 
 Before every submission, the candidate must pass the frozen runtime rule store
 in addition to the existing Controller checks. Completed history is fed back
@@ -216,6 +229,10 @@ python .\continuous_tuning.py --dry-run
 
 ```powershell
 .\start_continuous.ps1
+
+# Optional new-Session selections
+.\start_continuous.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
+.\start_continuous.ps1 -NewSession -AgentProvider anthropic
 ```
 
 Use `-Foreground` if you want the controller attached to the current terminal.
@@ -226,7 +243,7 @@ Resume the task/run recorded in `state.json` after a local controller restart:
 .\start_continuous.ps1 -Resume
 ```
 
-Re-run Codex analysis from the archived current-round metrics without launching
+Re-run Agent analysis from the archived current-round metrics without launching
 a new experiment:
 
 ```powershell

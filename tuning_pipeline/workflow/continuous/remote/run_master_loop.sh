@@ -13,6 +13,13 @@ write_status() {
   printf '{"run_id":"%s","phase":"%s","outcome":"%s","updated_at":"%s"}\n' \
     "${EXPERIMENT_RUN_ID}" "${phase}" "${outcome}" "$(date -Iseconds)" > "${RUN_DIR}/run_status.json"
 }
+write_startup_event() {
+  local event="$1"
+  printf '{"event":"%s","at":"%s","safetensors_load_strategy":"%s","prefetch_threads":%s,"prefetch_block_size":%s}\n' \
+    "${event}" "$(date -Iseconds)" "${SAFETENSORS_LOAD_STRATEGY}" \
+    "${SAFETENSORS_PREFETCH_NUM_THREADS}" "${SAFETENSORS_PREFETCH_BLOCK_SIZE}" \
+    >> "${RUN_DIR}/startup_timeline.jsonl"
+}
 finish_experiment() {
   local code=$?
   touch "${RUN_DIR}/MASTER_DONE"
@@ -32,9 +39,11 @@ write_status "starting_vllm"
 
 cat > "${RUN_DIR}/effective_config.yaml" <<EOF
 experiment_id: ${EXPERIMENT_RUN_ID}
+launch_profile: ${LAUNCH_PROFILE}
 model: ${MODEL_PATH}
 topology: {pods: 2, npu_per_pod: 16, data_parallel_size: 2, tensor_parallel_size: 16}
 service:
+  value_origin: $([[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]] && printf 'source_resolved_from_omitted_flags' || printf 'explicit_candidate_env')
   max_num_seqs: ${MAX_NUM_SEQS}
   max_model_len: ${MAX_MODEL_LEN}
   max_num_batched_tokens: ${MAX_NUM_BATCHED_TOKENS}
@@ -55,11 +64,46 @@ service:
   flashcomm1: ${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1}
   mlapo: ${ADDITIONAL_CONFIG_ENABLE_MLAPO}
   fused_mc2: ${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}
+  safetensors_load_strategy: ${SAFETENSORS_LOAD_STRATEGY}
+  safetensors_prefetch_num_threads: ${SAFETENSORS_PREFETCH_NUM_THREADS}
+  safetensors_prefetch_block_size: ${SAFETENSORS_PREFETCH_BLOCK_SIZE}
 benchmark:
   mode: ${BENCHMARK_MODE}
   temperature: 0
 EOF
 
+cat > "${RUN_DIR}/server_run_manifest.yaml" <<EOF
+schema_version: 1
+run_id: ${EXPERIMENT_RUN_ID}
+run_root: ${RUN_DIR}
+naming: <candidate-label>_<YYYYMMDD_HHMMSS>
+authoritative_server_artifacts:
+  configuration:
+    - candidate.env
+    - effective_config.yaml
+    - vllm_common_command.txt
+    - task.yaml
+  service_logs:
+    - master.log
+    - worker.log
+    - run_status.json
+    - startup_timeline.jsonl
+  benchmark_logs:
+    - benchmark_runner.log
+    - benchmark_watchdog.log
+    - servebench/
+  result:
+    - metrics.json
+    - SERVICE_READY
+    - BENCHMARK_STARTED
+    - BENCHMARK_DONE
+    - BENCHMARK_FAILED
+    - MASTER_DONE
+ktp_outer_logs: ${PROJECT_DIR}/workflow/auto/lab_runs/${EXPERIMENT_RUN_ID}/service/rank-<000|001>.log
+local_policy: core_logs_and_metrics_only
+EOF
+
+write_startup_event "vllm_process_start"
 vllm serve "${MODEL_PATH}" --host 0.0.0.0 --port 8000 "${VLLM_COMMON_ARGS[@]}" &
 VLLM_PID=$!
 
@@ -83,6 +127,7 @@ for attempt in $(seq 1 "${READY_MAX_ATTEMPTS}"); do
   sleep 10
 done
 [[ "${READY}" == 1 ]] || { echo "Timed out waiting for vLLM API."; exit 1; }
+write_startup_event "api_ready"
 
 if [[ "${BENCHMARK_MODE}" == "legacy_random_32k1k" ]]; then
   write_status "legacy_warmup"

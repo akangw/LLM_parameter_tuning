@@ -4,12 +4,38 @@ remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vl
 poll_seconds: 60
 round_timeout_minutes: 750
 partial_exit_grace_seconds: 120
-# Resolve from PATH on the handoff machine. VLLMTKB_CODEX_COMMAND can override it.
-codex_command: auto
+# Codex is the default. Alternate providers reference credential environment
+# variable names; secrets are never stored in this file or Session artifacts.
+agent:
+  provider: codex
+  providers:
+    codex:
+      command: auto
+    anthropic:
+      model: claude-sonnet-4-6
+      api_key_env: ANTHROPIC_API_KEY
+    openai_compatible:
+      base_url: https://api.openai.com/v1
+      model: configure-model-name
+      api_key_env: OPENAI_API_KEY
+    command:
+      command: configure-structured-json-command
+strategy:
+  profile: best_anchor_coverage_v2
+  profiles_file: workflow/continuous/strategy_profiles.yaml
 execution_mode: ktp_lab
 # The sliced MTP-only checkpoint made by the deployment owner. Set the exact
 # server path before preparing the lease; leaving it empty fails closed.
 mtp_draft_model: /models/share/GLM-5.2-w8a8-mtp-only-vllm0.25.1-image46d8bbb4
+# DTFS is a network filesystem, but the pinned vLLM build only auto-detects
+# NFS/Lustre. Force the supported page-cache prefetch path to avoid 16 TP
+# workers performing high-latency lazy mmap reads across 182 checkpoint shards.
+# Keep the upstream conservative defaults: each of the two lease nodes runs
+# one 8-thread prefetch, with 16 MiB sequential reads.
+model_loading:
+  safetensors_load_strategy: prefetch
+  safetensors_prefetch_num_threads: 8
+  safetensors_prefetch_block_size: 16777216
 lab:
   # Versioned lease name prevents reuse of Pods created from the previous image.
   lease_name: vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
@@ -29,7 +55,7 @@ benchmark:
     # One complete repetition still runs all 24 GuideLLM configs (12 formal
     # cases plus their warmups). Historical A0 calibration measured 1.06% CV
     # for the C32 geometric-mean score, so continuous screening uses one pass.
-    repetitions: 1
+    repetitions: 3
     # Retry budgets are frozen into each candidate.env for auditability.
     # Targeted case retry is cheap; full runtime/metrics reruns remain bounded.
     case_retry_limit: 2
@@ -88,30 +114,33 @@ fixed_scenario:
   request_rate: 0.2
   temperature: 0
   primary_metric: output_throughput
+initial_baseline:
+  label: b0
+  launch_profile: official_source_defaults
+  definition: workflow/baselines/b0_target_source_default.yaml
 baseline:
-  max_num_seqs: 48
+  # Typed pre-launch estimates only. The B0 launch omits all of these
+  # serving-performance flags. After a successful run, the Controller replaces
+  # model/platform-dependent estimates from master.log before Agent analysis.
+  max_num_seqs: 256
   max_model_len: 64000
-  max_num_batched_tokens: 4096
-  gpu_memory_utilization: 0.93
+  max_num_batched_tokens: 2048
+  gpu_memory_utilization: 0.92
   enable_prefix_caching: true
-  async_scheduling: true
-  enable_expert_parallel: true
-  compilation_mode: FULL_DECODE_ONLY
-  num_speculative_tokens: 3
+  async_scheduling: false
+  enable_expert_parallel: false
+  compilation_mode: FULL_AND_PIECEWISE
+  num_speculative_tokens: 0
   long_prefill_token_threshold: 0
   enable_chunked_prefill: true
-  max_cudagraph_capture_size: 192
+  max_cudagraph_capture_size: 256
   enable_eplb: false
   eplb_num_redundant_experts: 0
   compilation_enable_sp: false
-  # Baseline-effective-config replay: this is the capture list observed in the
-  # successful 0706 A0 engine log, not a guessed search value.  Keep it fixed
-  # for the initial calibration so the new pipeline does not silently rely on
-  # a different runtime auto-expansion when the source/image are identical.
-  cudagraph_capture_sizes: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
-  # Use the supported additional-config interface.  The 0706 service had the
-  # equivalent FlashComm1 behaviour through its inherited environment.
-  flashcomm1: true
+  # null means source/platform resolution; no capture list is passed for B0.
+  cudagraph_capture_sizes: null
+  # Source default is false; B0 omits --additional-config altogether.
+  flashcomm1: false
 # New Sessions resolve this default through workflow/search_space_compiler.
 # Set to manual to reproduce the original fixed pool below. A Session freezes
 # its resolved limits in session_config.yaml, so changing this file never
@@ -143,14 +172,14 @@ sidecars:
 # Preserved manual fallback pool. It is used unchanged when
 # search_limits_mode is set to manual.
 search_limits:
-  max_num_seqs: [8, 16, 32, 48, 64]
+  max_num_seqs: [256, 8, 16, 32, 48, 64, 96, 128]
   max_model_len: [64000]
-  max_num_batched_tokens: [4096, 8192, 16384, 32768]
-  gpu_memory_utilization: [0.85, 0.90, 0.93, 0.95]
+  max_num_batched_tokens: [2048, 4096, 8192, 16384, 32768]
+  gpu_memory_utilization: [0.92, 0.85, 0.90, 0.93, 0.95]
   enable_prefix_caching: [false, true]
-  async_scheduling: [true]
-  enable_expert_parallel: [true]
-  compilation_mode: [FULL_DECODE_ONLY, PIECEWISE]
+  async_scheduling: [false, true]
+  enable_expert_parallel: [false, true]
+  compilation_mode: [FULL_AND_PIECEWISE, FULL_DECODE_ONLY, PIECEWISE]
   num_speculative_tokens: [0, 1, 2, 3]
   long_prefill_token_threshold: [0, 1024, 2048, 4096]
   enable_chunked_prefill: [true, false]
@@ -161,15 +190,12 @@ search_limits:
   enable_eplb: [false]
   eplb_num_redundant_experts: [0]
   compilation_enable_sp: [false, true]
-  # Keep FlashComm1 searchable after the replay A0; true is deliberately the
-  # baseline and false is the controlled ablation, not an inherited default.
-  flashcomm1: [true, false]
+  # B0 starts with source-default false; true is an Agent candidate.
+  flashcomm1: [false, true]
   cudagraph_capture_sizes:
-    # A coupled compilation profile.  It remains a reserve dimension during
-    # initial search; the A0 replay value is explicit and the automatic null
-    # behaviour is retained only as a later comparison candidate.
-    - [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+    # null is the B0 source resolution; the explicit profile is searchable.
     - null
+    - [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
 change_policy:
   strategy_version: best_anchor_coverage_v2
   max_parameters_per_round: 4
@@ -224,7 +250,7 @@ measurement_policy:
   maximum_tpot_regression_percent: 10.0
   aligned_l1:
     require_all_repetitions: true
-    minimum_repetitions: 1
+    minimum_repetitions: 3
     minimum_throughput_gain_percent: 3.0
     noise_cv_multiplier: 2.0
     maximum_single_workload_throughput_regression_percent: 5.0

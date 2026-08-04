@@ -29,18 +29,27 @@ NON_ASCEND = re.compile(
 ASCEND_KEEP = re.compile(r"^(?:VLLM_ASCEND_|HCCL_|ASCEND_)|^additional_config\.", re.IGNORECASE)
 
 
-def filter_parameters(params: list[dict]) -> tuple[list[dict], list[dict], dict[str, int]]:
+def filter_parameters(
+    params: list[dict], *, extra_keep_patterns: list[str] | None = None
+) -> tuple[list[dict], list[dict], dict[str, int]]:
     """Return retained params, skipped audit records, and reason counts.
 
     The filter intentionally keeps public CLI options after hard exclusions so
     Stage 2, not a keyword-only heuristic, makes the final relevance decision.
     """
     passed, skipped, counts = [], [], {}
+    extra_keep = (
+        re.compile("|".join(f"(?:{item})" for item in extra_keep_patterns), re.IGNORECASE)
+        if extra_keep_patterns
+        else None
+    )
     for param in params:
         name = str(param.get("name", ""))
         desc = str(param.get("description") or "")
         text = f"{name} {desc}"
-        if ASCEND_KEEP.search(name):
+        if extra_keep and extra_keep.search(name):
+            keep, reason = True, "explicit_high_impact_keep"
+        elif ASCEND_KEEP.search(name):
             keep, reason = True, "ascend_runtime_tuning_surface"
         elif param.get("type") == "env" and NON_ASCEND.search(name):
             keep, reason = False, "non_ascend_backend"

@@ -18,6 +18,17 @@ PROJECT_ROOT = MODULE_DIR.parent.parent
 CONTINUOUS_DIR = MODULE_DIR.parent / "continuous"
 
 
+def portable_path(path: Path | None) -> str | None:
+    """Store repository-relative provenance when an input belongs to this clone."""
+    if path is None:
+        return None
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def read_yaml(path: Path) -> dict[str, Any]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -96,7 +107,7 @@ def load_knowledge_base(params_dir: Path) -> list[dict[str, Any]]:
         logical_name = str(value["name"])
         if allowed_names is not None and logical_name not in allowed_names:
             continue
-        value["_knowledge_file"] = str(path)
+        value["_knowledge_file"] = portable_path(path)
         by_name[logical_name] = value
     return list(by_name.values())
 
@@ -825,21 +836,19 @@ class SearchSpaceCompiler:
             "compiler_mode": "compiled_offline_and_integrated_at_session_creation",
             "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
             "inputs": {
-                "scenario": str(self.scenario_path),
+                "scenario": portable_path(self.scenario_path),
                 "scenario_sha256": file_sha256(self.scenario_path),
-                "registry": str(self.registry_path),
+                "registry": portable_path(self.registry_path),
                 "registry_sha256": file_sha256(self.registry_path),
-                "policy": str(self.policy_path),
+                "policy": portable_path(self.policy_path),
                 "policy_sha256": file_sha256(self.policy_path),
-                "knowledge_dir": str(self.knowledge_dir),
-                "history": str(self.history_path) if self.history_path else None,
+                "knowledge_dir": portable_path(self.knowledge_dir),
+                "history": portable_path(self.history_path),
                 "history_sha256": (
                     file_sha256(self.history_path) if self.history_path else None
                 ),
                 "previous_selection": (
-                    str(self.previous_selection_path)
-                    if self.previous_selection_path
-                    else None
+                    portable_path(self.previous_selection_path)
                 ),
                 "previous_selection_sha256": (
                     file_sha256(self.previous_selection_path)

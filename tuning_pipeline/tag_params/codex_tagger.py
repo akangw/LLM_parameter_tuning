@@ -39,6 +39,14 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def project_relative(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -296,15 +304,15 @@ def write_manifest(
         "prompt_sha256": prompt_sha256(),
         "output_schema_sha256": file_sha256(SCHEMA_PATH),
         "tag_definition_sha256": file_sha256(TAGS_DEFINITION_PATH),
-        "input_params_dir": str(input_dir),
-        "output_params_dir": str(output_root / "params"),
+        "input_params_dir": project_relative(input_dir),
+        "output_params_dir": project_relative(output_root / "params"),
         "tagging_results": progress["summary"],
         "tag_distribution": distribution,
         "source_commits": {
             "vllm": VLLM_COMMIT,
             "vllm-ascend": VLLM_ASCEND_COMMIT,
         },
-        "target_context": str(TARGET_CONTEXT),
+        "target_context": project_relative(TARGET_CONTEXT),
     }
     (output_root / "manifest.yaml").write_text(
         yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
@@ -360,7 +368,7 @@ def main() -> None:
     ensure_portrait_queue_complete(input_dir, args.allow_incomplete_portraits)
     files = load_parameter_files(input_dir)
     output_dir = output_root / "params"
-    logs_dir = output_root / "logs"
+    logs_dir = output_root / "logs" / "parameters"
     output_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     progress_path = output_root / "progress.json"

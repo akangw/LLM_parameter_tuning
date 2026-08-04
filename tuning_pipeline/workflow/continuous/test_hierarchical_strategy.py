@@ -15,7 +15,7 @@ class HierarchicalStrategyTests(unittest.TestCase):
             profiles = yaml.safe_load(handle)
         self.assertEqual(profiles["default_strategy"], "best_anchor_coverage_v2")
         self.profile = profiles["strategies"]["best_anchor_coverage_v3"]
-        self.assertEqual(self.profile["status"], "standalone_not_integrated")
+        self.assertEqual(self.profile["status"], "integrated")
         self.anchor = [
             {"workload": "chat-1024-256", "concurrency": 32, "aggregate_output_tps": 100},
             {"workload": "prefill-8192-512", "concurrency": 32, "aggregate_output_tps": 100},
@@ -36,21 +36,16 @@ class HierarchicalStrategyTests(unittest.TestCase):
         self.assertEqual(result["next_stage"], "full_verification")
         self.assertEqual(strategy.next_stage_after_full_verification({}), "exploration")
 
-    def test_exploration_requires_two_independent_parameters_unless_excepted(self) -> None:
+    def test_exploration_requires_two_independent_parameters(self) -> None:
         strategy.validate_exploration_change_count(
             self.profile,
             ["max_num_seqs", "max_num_batched_tokens"],
         )
-        with self.assertRaisesRegex(ValueError, "explicit exception"):
+        with self.assertRaisesRegex(ValueError, "requires 2 to 3"):
             strategy.validate_exploration_change_count(
                 self.profile,
                 ["gpu_memory_utilization"],
             )
-        strategy.validate_exploration_change_count(
-            self.profile,
-            ["gpu_memory_utilization"],
-            exception_reason="high-risk memory limit needs isolated confirmation",
-        )
 
     def test_screen_rejects_workload_regression_or_error(self) -> None:
         candidate = [dict(case, aggregate_output_tps=101) for case in self.anchor]
