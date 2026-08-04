@@ -26,6 +26,26 @@ class AgentResult:
     stderr: str
 
 
+def resolve_agent_profile(
+    agent_section: dict[str, Any] | None,
+    *,
+    legacy_command: str = "auto",
+) -> dict[str, Any]:
+    """Resolve one provider's settings without exposing credentials."""
+    section = dict(agent_section or {})
+    provider = str(section.get("provider", "codex"))
+    profiles = dict(section.get("providers", {}))
+    if provider in profiles:
+        settings = dict(profiles[provider])
+    else:
+        settings = dict(
+            section.get("settings", {"command": legacy_command})
+        )
+    if provider not in {"codex", "anthropic", "openai_compatible", "command"}:
+        raise ValueError(f"Unsupported agent.provider={provider!r}")
+    return {"provider": provider, "settings": settings}
+
+
 def _extract_json(text: str) -> Any:
     text = text.strip()
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)

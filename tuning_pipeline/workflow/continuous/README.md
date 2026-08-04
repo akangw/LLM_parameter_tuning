@@ -179,6 +179,13 @@ Credentials are referenced only by environment-variable name. New Sessions may
 override the selection with `-AgentProvider` and `-StrategyProfile`; resume/retry
 reject overrides so an existing experiment cannot drift.
 
+Benchmark selection is an independent frozen axis. `benchmark_profiles.yaml`
+maps a stable profile name to one complete definition in `config.yaml`.
+`aligned_l1_v4` is the formal default and `legacy_random_32k1k` is retained for
+historical reproduction. A new Session may use `-BenchmarkProfile`; resume and
+retry reject Benchmark overrides so measurements from different contracts are
+never silently mixed.
+
 Before every submission, the candidate must pass the frozen runtime rule store
 in addition to the existing Controller checks. Completed history is fed back
 conservatively: a single-parameter `parameter_invalid`/`parameter_oom` failure
@@ -233,6 +240,7 @@ python .\continuous_tuning.py --dry-run
 # Optional new-Session selections
 .\start_continuous.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\start_continuous.ps1 -NewSession -AgentProvider anthropic
+.\start_continuous.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
 ```
 
 Use `-Foreground` if you want the controller attached to the current terminal.

@@ -20,6 +20,9 @@
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
+# 新建 Session 时选择 Benchmark；续跑不可切换
+.\一键启动.ps1 -NewSession -BenchmarkProfile aligned_l1_v4
+
 # 续跑当前 Session
 .\一键启动.ps1 -Resume
 

@@ -6,6 +6,7 @@ param(
     [switch]$NewSession,
     [switch]$CheckOnly,
     [string]$StrategyProfile,
+    [string]$BenchmarkProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
     [string]$AgentProvider
 )

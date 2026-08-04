@@ -14,7 +14,7 @@ from pathlib import Path
 import yaml
 
 from .cjx_bridge import extract_and_filter, legacy_projection
-from .migration import add_migration_context, classify
+from .migration import add_migration_context, classify, rebuild
 
 
 BUILD_ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +35,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--legacy-dir", type=Path,
                         default=BUILD_ROOT / "parse_params" / "output" / "params",
                         help="Existing ParameterYAML directory used as migration input.")
+    parser.add_argument(
+        "--portrait-mode",
+        choices=["migrate", "rebuild"],
+        default="migrate",
+        help="migrate uses legacy hints; rebuild derives every portrait from current source",
+    )
     parser.add_argument("--extract-output", type=Path,
                         default=BUILD_ROOT / "extracted_parameters",
                         help="Isolated current-version parameters.json and provenance directory.")
@@ -147,7 +153,7 @@ async def _run(args: argparse.Namespace) -> None:
     context = _load_context(args.target_context)
     _validate_sources(args, context)
     _configure_legacy_modules(args, context)
-    if not args.legacy_dir.is_dir():
+    if args.portrait_mode == "migrate" and not args.legacy_dir.is_dir():
         raise SystemExit(f"Legacy ParameterYAML directory not found: {args.legacy_dir}")
 
     output = args.output.resolve()
@@ -190,7 +196,11 @@ async def _run(args: argparse.Namespace) -> None:
 
     skipped = list(worklist.get("skipped", []))
     reasons = dict(worklist.get("filter_summary", {}).get("decision_reasons", {}))
-    manifest = classify(params, selected, args.legacy_dir.resolve())
+    manifest = (
+        classify(params, selected, args.legacy_dir.resolve())
+        if args.portrait_mode == "migrate"
+        else rebuild(selected)
+    )
     reports = output / "reports"
     reports.mkdir(exist_ok=True)
     (reports / "stage1-skipped.json").write_text(

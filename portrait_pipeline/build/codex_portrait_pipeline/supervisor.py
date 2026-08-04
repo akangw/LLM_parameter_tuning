@@ -71,12 +71,15 @@ def write_status(value: dict) -> None:
 
 def worker_prompt(task_id: str) -> str:
     relative_run = RUN.resolve().relative_to(ROOT.resolve()).as_posix()
+    roots = load_index().get("inputs", {}).get("source_roots", {})
     return f"""You are one worker in the offline ParameterYAML portrait queue.
 Read build/codex_portrait_pipeline/AGENT_INSTRUCTIONS.md.
 Process only task {task_id}.
 The draft file already exists as a placeholder. Overwrite that exact file using
 PowerShell/.NET file writing if apply_patch is unavailable in the Windows sandbox.
-Claim the task, inspect its task/context and both pinned source repositories,
+Claim the task, inspect its task/context and these exact pinned source repositories:
+vLLM: {roots.get('vllm')}
+vLLM-Ascend: {roots.get('vllm_ascend')}
 write {relative_run}/drafts/{task_id}.yaml, then run this accept command and fix
 every validation error:
 python -m build.codex_portrait_pipeline --run-dir {relative_run} accept {task_id} {relative_run}/drafts/{task_id}.yaml

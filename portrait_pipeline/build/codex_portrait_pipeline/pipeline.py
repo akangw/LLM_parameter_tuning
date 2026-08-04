@@ -129,6 +129,10 @@ def prepare(extraction_path: Path, manifest_path: Path, run_dir: Path) -> None:
             "structured_extraction": str(extraction_path.resolve()),
             "migration_manifest": str(manifest_path.resolve()),
             "extraction_hash": extraction.get("extraction_hash"),
+            "source_roots": {
+                "vllm": extraction.get("sources", {}).get("vllm", {}).get("path"),
+                "vllm_ascend": extraction.get("sources", {}).get("vllm_ascend", {}).get("path"),
+            },
         },
         "summary": {"total": len(rows), "pending": len(rows), "completed": 0, "skipped": 0, "error": 0},
         "tasks": rows,
@@ -235,14 +239,15 @@ def materialize_context(run_dir: Path, task_id: str) -> Path:
             "symbol": source.get("symbol"),
             "excerpt": source.get("excerpt"),
         })
+    vllm_root, ascend_root = _source_roots(run_dir)
     context = {
         "schema_version": "codex-portrait-context/v1",
         "task_id": task_id,
         "name": name,
         "definition_evidence": evidence,
         "search_hits": {
-            "vllm_ascend": _rg_hits(ASCEND_ROOT, patterns),
-            "vllm": _rg_hits(VLLM_ROOT, patterns),
+            "vllm_ascend": _rg_hits(ascend_root, patterns),
+            "vllm": _rg_hits(vllm_root, patterns),
         },
         "instructions": [
             "Treat pinned source code as ground truth.",
@@ -299,19 +304,32 @@ def _validate_quality(raw: dict) -> None:
             raise ValueError(f"suggested_values[{number}].reason must not be empty")
 
 
-def _source_reference_candidates(reference: str) -> list[Path]:
+def _source_roots(run_dir: Path) -> tuple[Path, Path]:
+    inputs = _load_index(run_dir).get("inputs", {})
+    roots = inputs.get("source_roots", {})
+    vllm = Path(roots.get("vllm") or VLLM_ROOT).resolve()
+    ascend = Path(roots.get("vllm_ascend") or ASCEND_ROOT).resolve()
+    if not (vllm / "vllm").is_dir() or not (ascend / "vllm_ascend").is_dir():
+        raise ValueError(
+            f"Portrait queue source roots are invalid: vllm={vllm}, ascend={ascend}"
+        )
+    return vllm, ascend
+
+
+def _source_reference_candidates(run_dir: Path, reference: str) -> list[Path]:
     """Resolve a repo-relative ``path:line`` source reference."""
     relative = re.sub(r":\d+(?::\d+)?$", "", reference.replace("\\", "/")).lstrip("./")
+    vllm_root, ascend_root = _source_roots(run_dir)
     if relative.startswith("vllm/"):
-        return [VLLM_ROOT / relative]
+        return [vllm_root / relative]
     if relative.startswith("vllm_ascend/"):
-        return [ASCEND_ROOT / relative]
+        return [ascend_root / relative]
     if relative.startswith("docs/"):
-        return [ASCEND_ROOT / relative, VLLM_ROOT / relative]
-    return [ASCEND_ROOT / relative, VLLM_ROOT / relative]
+        return [ascend_root / relative, vllm_root / relative]
+    return [ascend_root / relative, vllm_root / relative]
 
 
-def _validate_source_references(raw: dict) -> None:
+def _validate_source_references(run_dir: Path, raw: dict) -> None:
     """Require every reported source/usage path to exist in a pinned repo."""
     references = list(raw.get("source_file") or [])
     references.extend(
@@ -321,7 +339,10 @@ def _validate_source_references(raw: dict) -> None:
     )
     invalid = []
     for reference in references:
-        if not reference or not any(path.is_file() for path in _source_reference_candidates(str(reference))):
+        if not reference or not any(
+            path.is_file()
+            for path in _source_reference_candidates(run_dir, str(reference))
+        ):
             invalid.append(str(reference))
     if invalid:
         raise ValueError(
@@ -358,7 +379,7 @@ def accept(run_dir: Path, task_id: str, draft: Path) -> None:
             destination = _skipped_output_dir(run_dir) / row["output_filename"]
             status = "skipped"
         else:
-            _validate_source_references(raw)
+            _validate_source_references(run_dir, raw)
             raw.setdefault("analysis_date", date.today().isoformat())
             model = ParameterYAML(**raw)
             destination = _parameter_output_dir(run_dir) / row["output_filename"]
@@ -402,7 +423,7 @@ def audit(run_dir: Path) -> None:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
             if row["status"] == "completed":
                 ParameterYAML(**data)
-                _validate_source_references(data)
+                _validate_source_references(run_dir, data)
             else:
                 SkippedParamYAML(**data)
         except Exception as exc:

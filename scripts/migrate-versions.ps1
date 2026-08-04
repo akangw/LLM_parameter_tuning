@@ -3,6 +3,11 @@ param(
     [Parameter(Mandatory=$true)][string]$Vllm,
     [Parameter(Mandatory=$true)][string]$VllmAscend,
     [ValidateSet("codex", "anthropic")][string]$Provider = "codex",
+    [ValidateSet("migrate", "rebuild")][string]$PortraitMode = "migrate",
+    [string]$LegacyPortraitDir,
+    [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
+    [string]$TagProvider,
+    [string]$Scenario,
     [switch]$PrepareOnly,
     [switch]$Resume,
     [int]$Concurrency = 8
@@ -14,9 +19,13 @@ $arguments = @(
     "--vllm", $Vllm,
     "--vllm-ascend", $VllmAscend,
     "--provider", $Provider,
+    "--portrait-mode", $PortraitMode,
     "--concurrency", $Concurrency
 )
 if ($PrepareOnly) { $arguments += "--prepare-only" }
 if ($Resume) { $arguments += "--resume" }
+if ($TagProvider) { $arguments += @("--tag-provider", $TagProvider) }
+if ($Scenario) { $arguments += @("--scenario", $Scenario) }
+if ($LegacyPortraitDir) { $arguments += @("--legacy-dir", $LegacyPortraitDir) }
 & python @arguments
 exit $LASTEXITCODE

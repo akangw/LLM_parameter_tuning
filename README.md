@@ -16,21 +16,35 @@
 
 ### 更换 vLLM / vllm-ascend 版本
 
-只提供两个 tag、分支或 commit，即可抓取源码、解析参数表面、执行 Stage-1 迁移并建立隔离画像队列：
+只提供两个 tag、分支或 commit，即可抓取源码并依次完成参数提取、Stage-1、画像、Tags、场景召回和 Search Limits：
 
 ```powershell
-# 只准备和审计，不调用 Agent；建议先执行这一条
+# 只完成确定性提取、Stage-1 和画像队列准备，不调用 Agent
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -PrepareOnly
 
-# 默认用已登录的 Codex 完成画像队列
+# 默认用已登录的 Codex 完成全链路
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref>
+
+# 路线一：复用现有画像作为迁移提示（默认）；缺少画像会拒绝启动
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
+  -PortraitMode migrate -LegacyPortraitDir .\portrait_pipeline\outputs\ParameterYAML
+
+# 路线二：不读取旧画像，完全根据新源码重新画像
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
+  -PortraitMode rebuild
+
+# 替换场景后会重新进行 Tags 召回并产生该场景的 Search Limits
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
+  -Scenario .\path\to\scenario.yaml
 
 # 也可使用 Anthropic；Key 只放环境变量
 $env:ANTHROPIC_API_KEY = "..."
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -Provider anthropic
 ```
 
-每对源码提交写入 `portrait_pipeline/build/version_migrations/<commit-pair>/`，不会覆盖当前正式画像。人工审计并明确激活之前，下游 Tags、Search Limits 和在线 Session 均保持原版本，避免版本漂移。迁移实现已内置在仓库中，不依赖旧 `vllmTKB0706` 或本机 `cjx_space`。
+`migrate` 会校验并哈希旧画像，将其仅作为需要新源码复核的提示；`rebuild` 的全部任务均为 `CURRENT_ONLY`，不会把任何旧画像内容送给 Agent。源码版本、两类 Provider、场景和旧画像哈希都会进入隔离运行身份。每次运行的 `00_sources → 01_extract → 02_portrait_plan → 03_portrait_queue → 04_tags → 05_search_limits` 构成完整产物链，不会覆盖当前正式画像；人工审计并明确激活之前，在线 Session 仍保持原版本。若新源码尚未对应到经过验证的运行镜像，生成的 Search Limits 会保留为离线提案并清空自动验证能力，不会冒充可直接上线的配置。
+
+画像生成当前支持 `codex`、`anthropic`；Tags 和在线调参还支持 `openai_compatible` 与自定义 `command`。Provider 的凭证都只从环境变量或本地配置引用，不写入产物。
 
 ### 切换 Agent Provider 与选参策略
 
@@ -39,11 +53,16 @@ $env:ANTHROPIC_API_KEY = "..."
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\一键启动.ps1 -NewSession -AgentProvider anthropic
+.\一键启动.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
 ```
 
-Provider 的模型、地址和 `api_key_env` 在 `workflow/continuous/config.yaml` 的 `agent.providers` 配置；支持 `codex`、`anthropic`、`openai_compatible` 和自定义 `command`。仓库与 Session 只记录环境变量名，不记录 Key。策略定义集中在 `strategy_profiles.yaml`；V2 是平衡探索，V3 在探索期确定性要求 2～3 个独立参数并采用更小的局部细化步长。策略和 Provider 在 Session 创建时冻结，`-Resume` 不允许覆盖，避免续跑语义漂移。
+Provider 的模型、地址和 `api_key_env` 在 `workflow/continuous/config.yaml` 的 `agent.providers` 配置；支持 `codex`、`anthropic`、`openai_compatible` 和自定义 `command`。仓库与 Session 只记录环境变量名，不记录 Key。策略定义集中在 `strategy_profiles.yaml`；Benchmark 入口集中在 `benchmark_profiles.yaml`。Agent 策略、Provider 和 Benchmark Profile 都在 Session 创建时冻结，`-Resume` 不允许覆盖，避免续跑语义漂移。
 
 失败重试、规则兜底、Agent 候选重选以及 V2/V3 的完整差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+
+### Git 克隆后可直接复用的知识产物
+
+仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因、Tags 与 Search Limits；接手者无需先重新调用 Agent 才能阅读或复用它们。源码 checkout、迁移运行目录、Session、临时队列和日志属于可再生产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
 
 ## 从 GitHub 克隆后的启动流程
 

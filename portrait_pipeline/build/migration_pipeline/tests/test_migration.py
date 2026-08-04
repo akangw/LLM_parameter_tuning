@@ -12,11 +12,25 @@ from build.migration_pipeline.coverage import (
     augment_indirect_surfaces,
 )
 from build.migration_pipeline import cjx_bridge
-from build.migration_pipeline.migration import add_migration_context, classify
+from build.migration_pipeline.migration import add_migration_context, classify, rebuild
 from build.migration_pipeline.stage1 import filter_parameters
 
 
 class MigrationTests(unittest.TestCase):
+    def test_rebuild_mode_never_attaches_legacy_hints(self) -> None:
+        current = [
+            {"name": "--max-model-len"},
+            {"name": "--new-parameter"},
+        ]
+        manifest = rebuild(current)
+        self.assertEqual("rebuild", manifest["portrait_mode"])
+        self.assertIsNone(manifest["legacy_directory"])
+        self.assertTrue(all(
+            item["migration_class"] == "CURRENT_ONLY"
+            and item["legacy_profiles"] == []
+            for item in manifest["candidate_plan"]
+        ))
+
     def test_high_impact_legacy_sleep_switch_is_rescued(self) -> None:
         # Regression guard for a real 0706 high-impact portrait that the base
         # hard-skip list classifies as an operational mode.

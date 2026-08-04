@@ -23,9 +23,20 @@
 ```powershell
 .\scripts\migrate-versions.ps1 -Vllm <tag-or-commit> -VllmAscend <tag-or-commit> -PrepareOnly
 .\scripts\migrate-versions.ps1 -Vllm <tag-or-commit> -VllmAscend <tag-or-commit>
+.\scripts\migrate-versions.ps1 -Vllm <tag-or-commit> -VllmAscend <tag-or-commit> -PortraitMode rebuild
 ```
 
-第一条只完成源码抓取、结构化提取、覆盖审计、Stage-1 和 Codex 队列准备；第二条继续用 Codex 生成并审计画像。所有结果进入 commit-qualified 隔离目录，不会直接替换 `outputs/ParameterYAML/`。迁移提取器、Schema 和队列程序均在本仓库内，克隆后无需旧项目目录。只有人工审计并明确激活新画像后，才重新生成 Tags 和 Search Limits。
+第一条只完成源码抓取、结构化提取、覆盖审计、Stage-1 和确定性画像计划；Codex 路线还会准备待执行队列。第二条默认走 `migrate`，要求现有 ParameterYAML 并将其作为待源码复核的迁移提示；第三条走 `rebuild`，完全不读取旧画像。两条路线随后都生成并审计画像、生成 Tags、按场景召回并编译 Search Limits。可用 `-Scenario <yaml>` 替换场景模板。所有源码与结果进入 commit-qualified 隔离目录，不会直接替换 `outputs/ParameterYAML/`。
+
+```text
+build/version_migrations/<commit-pair>/
+├─ 00_sources/          该运行独占的固定提交源码
+├─ 01_extract/          结构化参数表面与覆盖证据
+├─ 02_portrait_plan/    Stage-1、迁移/重建计划和 Anthropic 画像产物
+├─ 03_portrait_queue/   Codex 画像队列及画像产物
+├─ 04_tags/             五维 Tags、进度、日志和审计
+└─ 05_search_limits/    指定场景的召回与 Search Limits
+```
 
 固定源码版本：
 

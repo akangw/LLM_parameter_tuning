@@ -152,6 +152,7 @@ def classify(current: list[dict], selected: list[dict], legacy_dir: Path) -> dic
         })
     return {
         "schema_version": "portrait-migration-manifest/v1",
+        "portrait_mode": "migrate",
         "legacy_directory": str(legacy_dir.resolve()),
         "summary": {
             "legacy_profiles": len(rows), "current_candidates": len(selected),
@@ -159,6 +160,34 @@ def classify(current: list[dict], selected: list[dict], legacy_dir: Path) -> dic
             "candidate_plan_counts": dict(Counter(row["migration_class"] for row in plan)),
         },
         "profiles": rows, "candidate_plan": plan,
+    }
+
+
+def rebuild(selected: list[dict]) -> dict:
+    """Build a source-only plan with no legacy portrait hints."""
+    plan = [
+        {
+            "name": str(param["name"]),
+            "migration_class": "CURRENT_ONLY",
+            "legacy_profiles": [],
+            "legacy_files": [],
+        }
+        for param in selected
+    ]
+    return {
+        "schema_version": "portrait-migration-manifest/v1",
+        "portrait_mode": "rebuild",
+        "legacy_directory": None,
+        "summary": {
+            "legacy_profiles": 0,
+            "current_candidates": len(selected),
+            "legacy_grade_counts": {},
+            "candidate_plan_counts": dict(
+                Counter(row["migration_class"] for row in plan)
+            ),
+        },
+        "profiles": [],
+        "candidate_plan": plan,
     }
 
 

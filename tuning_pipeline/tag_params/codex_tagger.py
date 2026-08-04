@@ -1,4 +1,4 @@
-"""Resumable five-dimensional tag generation using Codex CLI authentication."""
+"""Resumable five-dimensional tag generation through a structured Agent provider."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
-import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -19,6 +17,11 @@ import yaml
 
 from .schema import Tags, generate_tags_schema_text
 from .utils import sanitize_filename
+from workflow.continuous.agent_provider import (
+    resolve_agent_profile,
+    run_structured_agent,
+    validate_agent_credentials,
+)
 
 
 MODULE_DIR = Path(__file__).resolve().parent
@@ -30,9 +33,7 @@ DEFAULT_OUTPUT = MODULE_DIR / "output"
 SCHEMA_PATH = MODULE_DIR / "tags-output.schema.json"
 TAGS_DEFINITION_PATH = MODULE_DIR / "resources" / "tags.yaml"
 TARGET_CONTEXT = PORTRAIT_ROOT / "build" / "target-context.snapshot.yaml"
-VLLM_COMMIT = "418bd6273c03bf48d5066733769e0a74bdc51694"
-VLLM_ASCEND_COMMIT = "32c8cf190f596b47f0d0b965e64aea9f2b789ad4"
-TAGGER_VERSION = "codex-five-dimension/v2"
+TAGGER_VERSION = "structured-five-dimension/v3"
 
 
 def utc_now() -> str:
@@ -143,34 +144,6 @@ def refresh_summary(progress: dict[str, Any]) -> None:
     progress["updated_at"] = utc_now()
 
 
-def resolve_codex() -> str:
-    for name in ("codex.cmd", "codex"):
-        found = shutil.which(name)
-        if found:
-            return found
-    raise FileNotFoundError("Codex CLI was not found on PATH.")
-
-
-def command_for_executable(executable: str, arguments: list[str]) -> list[str]:
-    command = [executable, *arguments]
-    if executable.lower().endswith((".cmd", ".bat")):
-        return ["cmd.exe", "/d", "/c", *command]
-    return command
-
-
-def codex_version(codex: str) -> str:
-    result = subprocess.run(
-        command_for_executable(codex, ["--version"]),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=PIPELINE_ROOT,
-        timeout=30,
-    )
-    return (result.stdout or result.stderr).strip() or "unknown"
-
-
 def build_prompt(parameter_text: str) -> str:
     tag_schema = generate_tags_schema_text(TAGS_DEFINITION_PATH)
     return f"""You are an expert in vLLM performance tuning on Huawei Ascend NPU.
@@ -215,17 +188,8 @@ def prompt_sha256() -> str:
     return sha256_bytes(build_prompt("<PARAMETER_YAML>").encode("utf-8"))
 
 
-def codex_command(codex: str, output_path: Path) -> list[str]:
-    return command_for_executable(codex, [
-        "exec", "--ephemeral", "--skip-git-repo-check",
-        "--sandbox", "read-only", "-C", str(PIPELINE_ROOT),
-        "--output-schema", str(SCHEMA_PATH),
-        "--output-last-message", str(output_path), "-",
-    ])
-
-
 def tag_one(
-    codex: str,
+    agent: dict[str, Any],
     source: Path,
     output_dir: Path,
     logs_dir: Path,
@@ -238,30 +202,25 @@ def tag_one(
 
     logical_name = str(parameter["name"])
     safe_name = sanitize_filename(logical_name)
-    response_path = logs_dir / f"{safe_name}.response.json"
+    response_path = logs_dir / f"{safe_name}.attempt-{attempt}.response.json"
     stdout_path = logs_dir / f"{safe_name}.attempt-{attempt}.stdout.log"
     stderr_path = logs_dir / f"{safe_name}.attempt-{attempt}.stderr.log"
-    response_path.unlink(missing_ok=True)
-    with (
-        stdout_path.open("w", encoding="utf-8") as stdout,
-        stderr_path.open("w", encoding="utf-8") as stderr,
-    ):
-        result = subprocess.run(
-            codex_command(codex, response_path),
-            input=build_prompt(parameter_text),
-            stdout=stdout,
-            stderr=stderr,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            cwd=PIPELINE_ROOT,
-        )
+    result = run_structured_agent(
+        agent,
+        prompt=build_prompt(parameter_text),
+        schema_path=SCHEMA_PATH,
+        output_path=response_path,
+        cwd=PIPELINE_ROOT,
+        allowed_dir=source.parent,
+    )
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
     if result.returncode != 0:
         raise RuntimeError(
-            f"Codex exited with {result.returncode}; see {stderr_path.name}"
+            f"{result.provider} exited with {result.returncode}; see {stderr_path.name}"
         )
     if not response_path.is_file():
-        raise RuntimeError("Codex returned success without a structured response")
+        raise RuntimeError("Agent returned success without a structured response")
     raw = json.loads(response_path.read_text(encoding="utf-8"))
     tags_value = raw.get("tags", raw)
     tags = Tags(**tags_value).model_dump()
@@ -281,8 +240,11 @@ def write_manifest(
     output_root: Path,
     input_dir: Path,
     progress: dict[str, Any],
-    cli_version: str,
+    agent_identity: str,
+    target_context: Path,
 ) -> None:
+    context = yaml.safe_load(target_context.read_text(encoding="utf-8"))
+    release = context.get("release", {}) if isinstance(context, dict) else {}
     distribution: dict[str, dict[str, int]] = {}
     for item in progress["items"].values():
         if item.get("status") != "completed" or not item.get("output_file"):
@@ -296,11 +258,11 @@ def write_manifest(
             for value in values or []:
                 bucket[value] = bucket.get(value, 0) + 1
     manifest = {
-        "schema_version": "codex-tag-manifest/v2",
+        "schema_version": "tag-manifest/v3",
         "build_timestamp": utc_now(),
-        "builder": "Codex CLI (authenticated local agent)",
+        "builder": "structured Agent provider",
         "tagger_version": TAGGER_VERSION,
-        "codex_cli_version": cli_version,
+        "agent_identity": agent_identity,
         "prompt_sha256": prompt_sha256(),
         "output_schema_sha256": file_sha256(SCHEMA_PATH),
         "tag_definition_sha256": file_sha256(TAGS_DEFINITION_PATH),
@@ -309,10 +271,10 @@ def write_manifest(
         "tagging_results": progress["summary"],
         "tag_distribution": distribution,
         "source_commits": {
-            "vllm": VLLM_COMMIT,
-            "vllm-ascend": VLLM_ASCEND_COMMIT,
+            "vllm": release.get("vllm_commit"),
+            "vllm-ascend": release.get("vllm_ascend_commit"),
         },
-        "target_context": project_relative(TARGET_CONTEXT),
+        "target_context": project_relative(target_context),
     }
     (output_root / "manifest.yaml").write_text(
         yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
@@ -322,10 +284,21 @@ def write_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate the original five-dimensional tags with Codex CLI."
+        description="Generate five-dimensional tags with the selected structured Agent provider."
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--target-context", type=Path, default=TARGET_CONTEXT)
+    parser.add_argument(
+        "--agent-config",
+        type=Path,
+        default=PIPELINE_ROOT / "workflow" / "continuous" / "config.yaml",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["codex", "anthropic", "openai_compatible", "command"],
+        help="override the provider selected in --agent-config",
+    )
     parser.add_argument("--max-params", type=int, default=0)
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=3)
@@ -333,7 +306,7 @@ def parse_args() -> argparse.Namespace:
         "--workers",
         type=int,
         default=1,
-        help="Number of independent Codex CLI calls (each parameter remains one agent task).",
+        help="Number of independent Agent calls (each parameter remains one task).",
     )
     parser.add_argument(
         "--allow-incomplete-portraits",
@@ -379,8 +352,16 @@ def main() -> None:
                 item["status"] = "pending"
     refresh_summary(progress)
     atomic_json(progress_path, progress)
-    codex = resolve_codex()
-    cli_version = codex_version(codex)
+    agent_document = yaml.safe_load(args.agent_config.read_text(encoding="utf-8"))
+    agent_section = dict(agent_document.get("agent", {}))
+    if args.provider:
+        agent_section["provider"] = args.provider
+    agent = resolve_agent_profile(agent_section)
+    validate_agent_credentials(agent)
+    agent_identity = str(agent["provider"])
+    if agent["settings"].get("model"):
+        agent_identity += ":" + str(agent["settings"]["model"])
+    target_context = args.target_context.resolve()
 
     eligible = []
     for source in files:
@@ -408,7 +389,7 @@ def main() -> None:
                 persist()
             try:
                 tags, name, output_file = tag_one(
-                    codex, source, output_dir, logs_dir, attempt_number
+                    agent, source, output_dir, logs_dir, attempt_number
                 )
                 with state_lock:
                     item.update(
@@ -447,7 +428,9 @@ def main() -> None:
                 print(f"[error] {source_name}: {last_error}", file=sys.stderr, flush=True)
             with state_lock:
                 persist()
-                write_manifest(output_root, input_dir, progress, cli_version)
+                write_manifest(
+                    output_root, input_dir, progress, agent_identity, target_context
+                )
                 summary = dict(progress["summary"])
             print(
                 f"{summary['completed']}/{summary['total']} completed, "
@@ -457,7 +440,7 @@ def main() -> None:
 
     refresh_summary(progress)
     atomic_json(progress_path, progress)
-    write_manifest(output_root, input_dir, progress, cli_version)
+    write_manifest(output_root, input_dir, progress, agent_identity, target_context)
     summary = progress["summary"]
     if not args.max_params and any(summary[key] for key in ("pending", "in_progress", "error")):
         raise SystemExit(1)

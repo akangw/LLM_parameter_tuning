@@ -15,6 +15,14 @@
 | Tags 审计 | `tuning_pipeline/tag_params/output/audit.json` | 数量、分布、召回与错误 |
 | Search Limits | `tuning_pipeline/search_limits/` | 最新编译边界和审批证据 |
 
+以上正式知识产物纳入版本控制并随 Git 克隆分发。当前仓库基线包含 340 份参数
+画像、105 份跳过说明、340 份 Tags，以及 Search Limits 目录内的编译产物与证据。
+计数变化时以仓库实际文件和各阶段 manifest/audit 为准。
+
+新版本试迁移不会覆盖上表正式产物；其完整镜像链位于
+`portrait_pipeline/build/version_migrations/<commit-pair>/00_sources..05_search_limits/`。
+场景快照和 `run-manifest.json` 记录版本、Provider、场景与各阶段位置。
+
 Search Limits 文件：
 
 - `agent_search_limits.yaml`：只给 Agent 的 Active 搜索轴。
@@ -33,7 +41,7 @@ Search Limits 文件：
 | 同上 | `<task>.err.log` | 画像任务执行轨迹与错误 |
 | `portrait_pipeline/build/codex_portrait_pipeline/run/` | `index.json`、`supervisor-status.json` | 445 个画像任务总体状态 |
 | `tuning_pipeline/tag_params/output/logs/parameters/` | `<param>.attempt-N.{stdout,stderr}.log` | 单参数 Tags 尝试 |
-| 同上 | `<param>.response.json` | Tags Agent 原始响应 |
+| 同上 | `<param>.attempt-N.response.json` | Tags Agent 结构化响应 |
 | `tuning_pipeline/tag_params/output/logs/pipeline/` | `pipeline-tagging.*.log` | Tags 总流水线 |
 | 同上 | `pipeline-audit.*.log` | Tags 审计 |
 | 同上 | `pipeline-search-limits.*.log` | Search Limits 编译 |

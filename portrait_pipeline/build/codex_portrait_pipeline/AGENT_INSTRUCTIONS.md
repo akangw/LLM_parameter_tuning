@@ -4,8 +4,10 @@ For each claimed task:
 
 1. Read `build/codex_portrait_pipeline/run/tasks/<task_id>.json` and
    `build/codex_portrait_pipeline/run/contexts/<task_id>.json`.
-2. Inspect the pinned repositories under `sources/vllm-ascend` and
-   `sources/vllm`; Ascend behavior has precedence.
+2. Inspect the exact pinned repositories recorded in the queue `index.json`
+   under `inputs.source_roots`; Ascend behavior has precedence. The default
+   production queue uses `sources/`, while version-migration queues use their
+   isolated source checkouts.
    Every `source_file` and `usage_locations.file` value must be relative to
    its repository root. Ascend package code starts with `vllm_ascend/`, while
    Ascend documentation starts with `docs/` (never `vllm_ascend/docs/`).

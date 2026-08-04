@@ -44,6 +44,14 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 .\一键启动.ps1 -CheckOnly
 ```
 
+若接手者需要迁移新版本，先使用 `-PrepareOnly` 审计确定性候选，再续跑
+完整命令。新版本链只有在画像、Tags、场景 Search Limits 和对应运行镜像
+身份全部审计后才能激活；生成离线提案不代表服务器已支持该版本。
+
+Git 克隆已经包含当前正式画像、跳过清单、Tags 和 Search Limits，可直接作为
+知识库复用。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
+Git 分发；它们应由入口脚本按所选版本和场景重新生成。
+
 然后确认：
 
 - SSH 别名 `hetao-npu` 指向正确服务器；

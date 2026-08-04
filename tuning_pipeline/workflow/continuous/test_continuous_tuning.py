@@ -149,6 +149,12 @@ class ControllerTests(unittest.TestCase):
                     "rationale": "A single change is invalid under V3 exploration.",
                 }],
             )
+        frozen = controller.config
+        frozen["strategy"]["profiles_file"] = "missing-after-session.yaml"
+        self.assertEqual(
+            "best_anchor_coverage_v3",
+            tuning.Controller(frozen).strategy_profile_name,
+        )
         configured["strategy"]["profile"] = "missing"
         with self.assertRaisesRegex(ValueError, "Unknown strategy profile"):
             tuning.Controller(configured)
@@ -171,6 +177,31 @@ class ControllerTests(unittest.TestCase):
             "TEST_ANTHROPIC_KEY",
             controller.agent_config["settings"]["api_key_env"],
         )
+
+    def test_benchmark_profile_selects_and_freezes_one_definition(self) -> None:
+        configured = config()
+        configured["benchmark"] = {
+            "profile": "legacy_random_32k1k",
+            "profiles_file": "workflow/continuous/benchmark_profiles.yaml",
+            "legacy_random_32k1k": {
+                "model": "test-model",
+                "input_tokens": 32000,
+                "output_tokens": 1000,
+            },
+        }
+        controller = tuning.Controller(configured)
+        self.assertEqual("legacy_random_32k1k", controller.benchmark_profile_name)
+        self.assertEqual("legacy_random_32k1k", controller.benchmark_mode)
+        self.assertEqual("test-model", controller.benchmark["legacy_random_32k1k"]["model"])
+        frozen = controller.config
+        frozen["benchmark"]["profiles_file"] = "missing-after-session.yaml"
+        self.assertEqual(
+            "legacy_random_32k1k",
+            tuning.Controller(frozen).benchmark_profile_name,
+        )
+        configured["benchmark"]["profile"] = "missing"
+        with self.assertRaisesRegex(ValueError, "Unknown benchmark profile"):
+            tuning.Controller(configured)
 
     def test_candidate_rejection_is_reselected_and_audited(self) -> None:
         configured = config()

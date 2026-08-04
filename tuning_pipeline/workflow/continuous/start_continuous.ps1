@@ -6,6 +6,7 @@ param(
     [switch]$NewSession,
     [switch]$CheckOnly,
     [string]$StrategyProfile,
+    [string]$BenchmarkProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
     [string]$AgentProvider
 )
@@ -18,8 +19,8 @@ $pipelineRoot = Split-Path -Parent $downstreamRoot
 if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
     throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
 }
-if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider)) {
-    throw "Strategy/Agent provider are frozen in a Session and cannot be overridden during resume."
+if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider -or $BenchmarkProfile)) {
+    throw "Strategy/Agent/Benchmark profiles are frozen in a Session and cannot be overridden during resume."
 }
 
 function Get-ControllerProcess {
@@ -72,6 +73,9 @@ if ($null -ne $running) {
 $requiredFiles = @(
     "continuous_tuning.py",
     "config.yaml",
+    "agent_provider.py",
+    "strategy_profiles.yaml",
+    "benchmark_profiles.yaml",
     "agent_decision.schema.json",
     "failure_decision.schema.json",
     "remote\image_version_manifest.yaml"
@@ -190,6 +194,7 @@ if (Test-Path -LiteralPath $stopFile) {
 $arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
 if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
 if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
+if ($BenchmarkProfile) { $arguments += @("--benchmark-profile", $BenchmarkProfile) }
 if ($Foreground) {
     & $python @arguments
     exit $LASTEXITCODE

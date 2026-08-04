@@ -42,9 +42,9 @@ lab:
   lease_yaml: workflow/auto/lease_loop.yaml
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/lab_runs
 benchmark:
-  # Keep both implementations. New sessions use the frozen L1 standard; set
-  # mode to legacy_random_32k1k only when reproducing historical runs.
-  mode: aligned_l1
+  # The selected profile and its definition are frozen into each Session.
+  profile: aligned_l1_v4
+  profiles_file: workflow/continuous/benchmark_profiles.yaml
   aligned_l1:
     # Pin the exact standard filename so a future central alias update cannot
     # silently change the experiment matrix.

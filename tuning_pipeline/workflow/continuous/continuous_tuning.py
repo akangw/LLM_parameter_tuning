@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -31,10 +32,18 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
-    from .agent_provider import run_structured_agent, validate_agent_credentials
+    from .agent_provider import (
+        resolve_agent_profile,
+        run_structured_agent,
+        validate_agent_credentials,
+    )
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
-    from agent_provider import run_structured_agent, validate_agent_credentials
+    from agent_provider import (
+        resolve_agent_profile,
+        run_structured_agent,
+        validate_agent_credentials,
+    )
 from workflow.search_space_compiler.compiler import (
     validate_candidate as validate_search_space_candidate,
 )
@@ -206,7 +215,8 @@ class Controller:
         dry_run: bool = False,
         search_space_result: dict[str, Any] | None = None,
     ):
-        self.config = config
+        self.config = copy.deepcopy(config)
+        config = self.config
         self.dry_run = dry_run
         self.search_space_result = search_space_result
         if set(config["baseline"]) != set(config["search_limits"]):
@@ -236,25 +246,10 @@ class Controller:
             config.get("partial_exit_grace_seconds", 120)
         )
         self.execution_mode = config.get("execution_mode", "ktp")
-        agent_section = dict(config.get("agent", {}))
-        agent_provider = str(agent_section.get("provider", "codex"))
-        provider_profiles = dict(agent_section.get("providers", {}))
-        if agent_provider in provider_profiles:
-            agent_settings = dict(provider_profiles[agent_provider])
-        else:
-            agent_settings = dict(
-                agent_section.get(
-                    "settings", {"command": config.get("codex_command", "auto")}
-                )
-            )
-        self.agent_config = {
-            "provider": agent_provider,
-            "settings": agent_settings,
-        }
-        if agent_provider not in {
-            "codex", "anthropic", "openai_compatible", "command"
-        }:
-            raise ValueError("Unsupported agent.provider")
+        self.agent_config = resolve_agent_profile(
+            config.get("agent", {}),
+            legacy_command=str(config.get("codex_command", "auto")),
+        )
         self.mtp_draft_model = str(config.get("mtp_draft_model", "")).strip()
         self.model_loading = dict(config.get("model_loading", {}))
         self.safetensors_load_strategy = str(
@@ -293,12 +288,73 @@ class Controller:
                 f"Incomplete image identity in {IMAGE_MANIFEST_FILE}"
             )
         self.measurement_policy = config.get("measurement_policy", {})
-        self.benchmark = config.get("benchmark", {})
-        self.benchmark_mode = str(
-            self.benchmark.get("mode", "legacy_random_32k1k")
-        )
+        benchmark_settings = dict(config.get("benchmark", {}))
+        if not benchmark_settings:
+            benchmark_settings = {
+                "profile": "legacy_random_32k1k",
+                "legacy_random_32k1k": dict(config.get("fixed_scenario", {})),
+            }
+        elif not benchmark_settings.get("profile") and benchmark_settings.get("mode"):
+            legacy_mode = str(benchmark_settings["mode"])
+            benchmark_settings["profile"] = (
+                "aligned_l1_v4" if legacy_mode == "aligned_l1" else legacy_mode
+            )
+        frozen_benchmark_profile = benchmark_settings.get("resolved_profile")
+        if isinstance(frozen_benchmark_profile, dict):
+            self.benchmark_profile_name = str(benchmark_settings["profile"])
+            self.benchmark_profile = dict(frozen_benchmark_profile)
+        else:
+            benchmark_profiles_path = Path(
+                benchmark_settings.get(
+                    "profiles_file", "workflow/continuous/benchmark_profiles.yaml"
+                )
+            )
+            if not benchmark_profiles_path.is_absolute():
+                benchmark_profiles_path = KB_ROOT / benchmark_profiles_path
+            benchmark_profiles_doc = load_yaml(benchmark_profiles_path)
+            self.benchmark_profile_name = str(
+                benchmark_settings.get("profile")
+                or benchmark_profiles_doc.get("default_profile")
+            )
+            benchmark_profiles = benchmark_profiles_doc.get("profiles", {})
+            if self.benchmark_profile_name not in benchmark_profiles:
+                raise ValueError(
+                    f"Unknown benchmark profile {self.benchmark_profile_name!r}; "
+                    f"available={sorted(benchmark_profiles)}"
+                )
+            self.benchmark_profile = dict(
+                benchmark_profiles[self.benchmark_profile_name]
+            )
+        if self.benchmark_profile.get("status") != "integrated":
+            raise ValueError(
+                f"Benchmark profile {self.benchmark_profile_name!r} is not integrated"
+            )
+        self.benchmark_mode = str(self.benchmark_profile.get("mode", ""))
         if self.benchmark_mode not in {"aligned_l1", "legacy_random_32k1k"}:
             raise ValueError(f"Unsupported benchmark.mode={self.benchmark_mode!r}")
+        definition_key = str(
+            self.benchmark_profile.get("definition_key", self.benchmark_mode)
+        )
+        definition = benchmark_settings.get(definition_key)
+        if not isinstance(definition, dict):
+            raise ValueError(
+                f"benchmark.{definition_key} must configure profile "
+                f"{self.benchmark_profile_name!r}"
+            )
+        # Normalize the selected definition so existing execution paths consume
+        # only the frozen profile, not an accidental global mode toggle.
+        self.benchmark = {
+            "profile": self.benchmark_profile_name,
+            "mode": self.benchmark_mode,
+            self.benchmark_mode: dict(definition),
+        }
+        self.config.setdefault("benchmark", {})["profile"] = (
+            self.benchmark_profile_name
+        )
+        self.config["benchmark"][definition_key] = dict(definition)
+        self.config["benchmark"]["resolved_profile"] = dict(
+            self.benchmark_profile
+        )
         if self.benchmark_mode == "aligned_l1":
             aligned = self.benchmark.get("aligned_l1")
             if not isinstance(aligned, dict):
@@ -342,26 +398,33 @@ class Controller:
                     raise ValueError(f"aligned L1 {field} must be between 0 and 3")
         self.change_policy = config.get("change_policy", {})
         strategy_settings = dict(config.get("strategy", {}))
-        profiles_path = Path(
-            strategy_settings.get(
-                "profiles_file", "workflow/continuous/strategy_profiles.yaml"
+        frozen_strategy_profile = strategy_settings.get("resolved_profile")
+        if isinstance(frozen_strategy_profile, dict):
+            self.strategy_profile_name = str(strategy_settings["profile"])
+            self.strategy_profile = dict(frozen_strategy_profile)
+        else:
+            profiles_path = Path(
+                strategy_settings.get(
+                    "profiles_file", "workflow/continuous/strategy_profiles.yaml"
+                )
             )
-        )
-        if not profiles_path.is_absolute():
-            profiles_path = KB_ROOT / profiles_path
-        profiles_doc = load_yaml(profiles_path)
-        self.strategy_profile_name = str(
-            strategy_settings.get("profile") or profiles_doc.get("default_strategy")
-        )
-        strategies = profiles_doc.get("strategies", {})
-        if self.strategy_profile_name not in strategies:
-            raise ValueError(
-                f"Unknown strategy profile {self.strategy_profile_name!r}; "
-                f"available={sorted(strategies)}"
+            if not profiles_path.is_absolute():
+                profiles_path = KB_ROOT / profiles_path
+            profiles_doc = load_yaml(profiles_path)
+            self.strategy_profile_name = str(
+                strategy_settings.get("profile") or profiles_doc.get("default_strategy")
             )
-        self.strategy_profile = dict(strategies[self.strategy_profile_name])
+            strategies = profiles_doc.get("strategies", {})
+            if self.strategy_profile_name not in strategies:
+                raise ValueError(
+                    f"Unknown strategy profile {self.strategy_profile_name!r}; "
+                    f"available={sorted(strategies)}"
+                )
+            self.strategy_profile = dict(strategies[self.strategy_profile_name])
         if self.strategy_profile.get("status") != "integrated":
             raise ValueError(f"Strategy {self.strategy_profile_name!r} is not integrated")
+        self.config.setdefault("strategy", {})["profile"] = self.strategy_profile_name
+        self.config["strategy"]["resolved_profile"] = dict(self.strategy_profile)
         exploration_profile = dict(self.strategy_profile.get("exploration", {}))
         refinement_profile = dict(
             self.strategy_profile.get("local_refinement")
@@ -915,6 +978,7 @@ class Controller:
 
     def write_context(self, round_dir: Path, state: dict[str, Any]) -> None:
         scenario = {
+            "benchmark_profile": self.benchmark_profile_name,
             "benchmark_mode": self.benchmark_mode,
             "definition": self.benchmark.get(self.benchmark_mode, {}),
         }
@@ -933,6 +997,9 @@ class Controller:
                 "remote_run_id": state.get("active_run_id"),
                 "task_id": state.get("active_task_id"),
                 "execution_mode": state.get("execution_mode", self.execution_mode),
+                "benchmark_profile": state.get(
+                    "benchmark_profile", self.benchmark_profile_name
+                ),
                 "image_identity": state.get("image_identity", self.image_identity),
             },
         )
@@ -3345,6 +3412,7 @@ Embedded evidence:
             ),
             "strategy_profile": self.strategy_profile_name,
             "agent_provider": self.agent_config.get("provider", "codex"),
+            "benchmark_profile": self.benchmark_profile_name,
             "active_search_parameters": list(
                 self.config.get("resolved_search_space", {}).get(
                     "active_tunable_parameters",
@@ -4006,6 +4074,10 @@ def parse_args() -> argparse.Namespace:
         choices=["codex", "anthropic", "openai_compatible", "command"],
         help="Agent provider for a new Session; credentials stay in environment variables",
     )
+    parser.add_argument(
+        "--benchmark-profile",
+        help="benchmark profile for a new Session; resume uses the frozen Session value",
+    )
     return parser.parse_args()
 
 
@@ -4023,9 +4095,10 @@ def main() -> int:
         or args.reanalyze_current
         or args.retry_paused_current
     ) and STATE_FILE.exists():
-        if args.strategy_profile or args.agent_provider:
+        if args.strategy_profile or args.agent_provider or args.benchmark_profile:
             raise RuntimeError(
-                "Strategy profile and Agent provider are frozen in session_config.yaml; "
+                "Strategy, Agent provider, and Benchmark profile are frozen in "
+                "session_config.yaml; "
                 "start a new Session to change them"
             )
         frozen_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -4041,6 +4114,8 @@ def main() -> int:
             raw_config.setdefault("strategy", {})["profile"] = args.strategy_profile
         if args.agent_provider:
             raw_config.setdefault("agent", {})["provider"] = args.agent_provider
+        if args.benchmark_profile:
+            raw_config.setdefault("benchmark", {})["profile"] = args.benchmark_profile
         config, search_space_result = resolve_search_limits(
             raw_config,
             project_root=KB_ROOT,
