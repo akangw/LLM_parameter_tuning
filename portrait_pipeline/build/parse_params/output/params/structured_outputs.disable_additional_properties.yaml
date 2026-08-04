@@ -1,0 +1,75 @@
+name: structured_outputs.disable_additional_properties
+type: nested
+category: other
+scope: vllm
+source_file:
+- vllm/v1/structured_output/backend_guidance.py:92
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether the `guidance` structured output backend includes `additionalProperties` in
+  the generated JSON schema. When set to `True`, the schema is simplified, which can reduce grammar compilation time and the
+  complexity of the finite-state automaton used for token masking. A simpler grammar may result in marginally faster per-token
+  mask evaluation during guided generation. However, the effect is limited to the `guidance` backend only and does not affect
+  the default `outlines` or `xgrammar` backends. On Ascend NPU, the token masking logic runs on CPU (as part of the structured
+  output backend), so this parameter does not directly interact with NPU-specific execution. The performance impact is therefore
+  small and only observable when using the `guidance` backend with JSON schema constraints.
+
+  '
+usage_locations:
+- file: vllm/v1/structured_output/backend_guidance.py:92
+  context: 'Read from vllm_config.structured_outputs_config and stored as instance attribute `self.disable_additional_properties`
+    during GuidanceBackend.__post_init__.
+
+    '
+- file: vllm/v1/structured_output/backend_guidance.py:110
+  context: 'Passed to serialize_guidance_grammar() to control whether additionalProperties is included in the JSON schema
+    used for grammar compilation.
+
+    '
+related_parameters:
+- name: structured_outputs.disable_any_whitespace
+  relation: 'Companion parameter also specific to the guidance backend; controls whitespace flexibility in the generated grammar.
+
+    '
+- name: structured_outputs.backend
+  relation: 'This parameter only has effect when the backend is set to ''guidance''.
+
+    '
+constraints:
+- This parameter is only effective when the structured output backend is set to 'guidance'.
+- Setting this to true may cause the guidance backend to reject JSON outputs that include extra properties, aligning its behavior
+  with outlines and xgrammar.
+tuning_advice:
+  summary: 'Enable only when using the guidance backend and you need strict schema compliance matching outlines/xgrammar behavior;
+    otherwise leave at default.
+
+    '
+  suggested_values:
+  - scenario: Using guidance backend and need strict JSON schema compliance
+    value: true
+    reason: 'Aligns guidance backend behavior with outlines and xgrammar by disallowing extra properties, and may slightly
+      reduce grammar complexity.
+
+      '
+  - scenario: Default or using outlines/xgrammar backends
+    value: false
+    reason: 'Parameter has no effect on non-guidance backends; leaving it false preserves the guidance backend''s default
+      permissive behavior.
+
+      '
+  caveats:
+  - Only affects the guidance backend; has no impact on outlines or xgrammar backends.
+  - The performance gain from simpler grammars is typically negligible compared to model inference time.
+  quick_guide: 'Set to true only if using the guidance backend and you need strict JSON schema compliance; otherwise ignore.
+
+    '
+analysis_date: '2026-07-06'

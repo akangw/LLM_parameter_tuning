@@ -1,0 +1,123 @@
+name: CompilationConfig.compile_ranges_endpoints
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:554
+- vllm/config/compilation.py:1494
+- vllm/config/vllm.py:1208
+- vllm/config/vllm.py:1648
+- vllm_ascend/ascend_config.py:371
+- vllm_ascend/platform.py:405
+- vllm_ascend/worker/worker.py:500
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:36
+- vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:154
+value_type: list[int]
+default: null
+valid_choices: null, an empty list, or a list of positive integer endpoints. During VllmConfig normalization, only user endpoints
+  greater than 1 and below scheduler_config.max_num_batched_tokens remain effective.
+cli_example: --compilation-config '{"compile_ranges_endpoints":[256,512,1024]}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: The effective endpoints partition token counts into inclusive Inductor compile ranges such as [1, 256], [257,
+  512], and [513, max_num_batched_tokens]. Each range permits a separately compiled dynamic graph, so split points can let
+  compiler passes apply only where their token-count assumptions hold and can improve steady-state latency or throughput for
+  those ranges. More ranges also mean more graph variants to compile and warm up, increasing engine startup work. On Ascend,
+  the platform normally adds the all-reduce/RMSNorm fusion threshold 512 when that fusion is enabled; the fusion pass is then
+  applied only to ranges whose start is above 512. Ascend's worker also performs a dummy-run at the end of every compile range
+  not already represented by a compile or graph-capture size. The upstream finalization pass always adds max_num_batched_tokens,
+  retains user split points strictly between 1 and that maximum, sorts the result, and can add other pass-specific boundaries.
+usage_locations:
+- file: vllm/config/compilation.py:554
+  context: Defines the optional endpoint list and documents how endpoints form inclusive Inductor compile ranges.
+- file: vllm/config/compilation.py:1494
+  context: Deduplicates and sorts the effective endpoints and converts them into consecutive inclusive Range objects.
+- file: vllm/config/vllm.py:1208
+  context: Recomputes compile ranges after platform-specific configuration updates.
+- file: vllm/config/vllm.py:1648
+  context: Adds the scheduler maximum and compiler-pass boundaries, validates user endpoints, filters ineffective values,
+    and sorts the final list.
+- file: vllm_ascend/ascend_config.py:379
+  context: Adds Ascend's all-reduce/RMSNorm fusion threshold to the endpoint list when the corresponding fusion path is enabled.
+- file: vllm_ascend/worker/worker.py:500
+  context: Adds a warm-up dummy-run at a range endpoint when no existing compile or graph-capture size covers that range.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:36
+  context: Runs only the Ascend compiler passes whose applicability check accepts the current compile range.
+- file: vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:154
+  context: Restricts the Ascend all-reduce/RMSNorm fusion to compile ranges beginning above the threshold.
+related_parameters:
+- name: scheduler_config.max_num_batched_tokens
+  relation: Sets the mandatory final endpoint and causes user endpoints at or above it to be discarded.
+- name: CompilationConfig.compile_sizes
+  relation: Adds separately prioritized single-size compilations that can overlap a dynamic compile range.
+- name: CompilationConfig.mode
+  relation: Determines whether compiled execution is active; range tuning has no useful runtime effect when compilation is
+    disabled.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Ascend warm-up skips adding a range endpoint when an existing graph-capture size already falls inside that range.
+- name: CompilationConfig.pass_config
+  relation: Enabled fusion and sequence-parallel passes can add their own required boundaries during normalization.
+- name: ascend_compilation_config.fuse_allreduce_rms
+  relation: When enabled on Ascend, causes the platform to add the 512 split needed to isolate the range where that fusion
+    applies.
+constraints:
+- Every supplied item must be an integer greater than zero; zero or a negative endpoint raises an assertion during configuration
+  finalization.
+- User endpoints equal to 1, equal to the scheduler maximum, or above the scheduler maximum do not survive as additional split
+  points.
+- The effective list is not merely the user list; vLLM adds max_num_batched_tokens and may add boundaries required by enabled
+  compiler passes.
+- Duplicate endpoints do not create duplicate ranges because get_compile_ranges sorts a set of the final endpoint list.
+- A useful split must align with a real compiler-pass threshold or workload shape; arbitrary extra endpoints add compilation
+  and warm-up work without a source-backed guarantee of faster execution.
+tuning_advice:
+  summary: Leave the setting null unless a compiler pass or measured token-count distribution justifies additional boundaries;
+    on Ascend, preserve the automatically injected pass thresholds and benchmark before adding more.
+  suggested_values:
+  - scenario: General vLLM or Ascend serving without a measured need for custom ranges
+    value: <unset>
+    reason: vLLM constructs the mandatory range endpoint and enabled passes add the boundaries they require automatically.
+  - scenario: Custom compiler pass whose behavior changes at known token counts
+    value:
+    - 256
+    - 512
+    - 1024
+    reason: Explicit boundaries can isolate the token-count regions for which a pass is valid, but the actual values should
+      match that pass and remain below max_num_batched_tokens.
+  - scenario: Ascend all-reduce/RMSNorm fusion using its default threshold behavior
+    value: <unset>
+    reason: Ascend adds the 512 boundary automatically when the fusion path is enabled, so manually repeating it is unnecessary.
+  caveats:
+  - Extra ranges increase cold-start compilation and warm-up work, and may create additional cached compiled artifacts.
+  - Narrower ranges do not inherently improve performance; benefit depends on whether range information enables better compilation
+    or range-specific passes.
+  - The normalized effective endpoints can differ from the supplied list because scheduler and pass configuration contribute
+    boundaries and out-of-range user values are removed.
+  - If max_num_batched_tokens is 512 or lower, Ascend's 512 fusion boundary does not remain as an internal split after upstream
+    normalization.
+  quick_guide: Start null, inspect the normalized endpoint list, and add only boundaries tied to a known pass threshold or
+    benchmarked token-count regime. Compare cold-start time plus steady-state latency and throughput, then remove splits that
+    do not produce a repeatable gain.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

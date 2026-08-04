@@ -1,0 +1,103 @@
+name: compilation.static_forward_context
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:2121
+- vllm_ascend/worker/kvcomp_utils.py:642
+- vllm_ascend/worker/model_runner_v1.py:1930
+- vllm_ascend/worker/model_runner_v1.py:3570
+- vllm_ascend/_310p/model_runner_310p.py:633
+- vllm_ascend/attention/mla_v1.py:996
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1696
+- vllm_ascend/models/layer/attention/layer.py:121
+- vllm_ascend/ops/dsa.py:161
+- vllm/v1/attention/backends/mla/prefill/flashinfer.py:103
+- vllm/v1/attention/backends/mla/sparse_swa.py:66
+- vllm/v1/attention/backends/rocm_aiter_fa.py:503
+- vllm/v1/worker/gpu/model_runner.py:421
+- vllm/v1/worker/gpu/shutdown.py:17
+- vllm/v1/worker/gpu_model_runner.py:918
+- vllm/v1/worker/gpu_model_runner.py:1048
+- vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py:330
+value_type: dict
+default: '{}'
+valid_choices: <computed at runtime>
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: "`compilation.static_forward_context` is a runtime-populated dictionary that maps layer names (e.g., \"model.layers.0.self_attn\"\
+  ) to their corresponding module objects (Attention, MLAAttention, FusedMoE, DSA, etc.). It is NOT a user-facing configuration\
+  \ knob — it is filled automatically during model initialization when each layer registers itself (see vllm_ascend/models/layer/attention/layer.py:121-123\
+  \ and vllm_ascend/ops/dsa.py:161-163). Duplicate layer names raise ValueError.\nOn Ascend NPU, this context is critical\
+  \ for performance because it is the primary mechanism by which vllm-ascend accesses layer objects outside the normal forward\
+  \ pass. Key Ascend-specific performance paths that depend on it:\n1. **KV cache binding** (vllm_ascend/_310p/model_runner_310p.py:633):\
+  \ binds\n   allocated KV cache tensors to each attention layer via\n   `bind_kv_cache(kv_caches, static_forward_context,\
+  \ ...)`. Without this,\n   KV cache memory would not be accessible to attention kernels.\n\n2. **HashK cache binding for\
+  \ MLA models** (vllm_ascend/worker/kvcomp_utils.py:642):\n   binds hash-based KV compression caches to attention layers.\
+  \ This is an\n   Ascend-specific optimization for DeepSeek-V2/V3 MLA models that reduces\n   KV cache memory and speeds\
+  \ up attention.\n\n3. **Mamba state preprocessing** (vllm_ascend/worker/model_runner_v1.py:1930):\n   passes the context\
+  \ to `preprocess_mamba()` for state copy operations.\n\n4. **Routed experts capturer** (vllm_ascend/worker/model_runner_v1.py:3570):\n\
+  \   iterates over all layers to find FusedMoE instances and attaches Ascend-specific\n   expert routing capturers (`_ascend_routed_experts_capturer`).\
+  \ This is needed\n   because Ascend's `select_experts` bypasses upstream's `BaseRouter` hook.\n\n5. **MLA weight processing**\
+  \ (vllm_ascend/attention/mla_v1.py:996,1014): looks up\n   the attention layer to read quantization scales (`quant_kscale`,\
+  \ `fak_descale_float`,\n   `fak_descale_reciprocal`) needed for fused FA-quant and MLAPO kernels.\n\n6. **KV transfer with\
+  \ C8 quantization** (vllm_ascend/distributed/kv_transfer/kv_p2p/\n   mooncake_layerwise_connector.py:1696): reads per-layer\
+  \ C8 quantization scales\n   (`_c8_k_inv_scale`, `_c8_k_offset`) from the context for KV cache compression\n   during P2P\
+  \ transfer.\n\nThe context is also used upstream for MLA hyperparameter resolution, FP8 scale initialization, KV block zeroing,\
+  \ and shutdown cleanup. While the dict itself is not directly tunable, its contents determine which layers are accessible\
+  \ for Ascend-specific optimizations. If a layer fails to register (e.g., due to custom model code), all Ascend optimizations\
+  \ that depend on layer lookup will silently skip that layer, potentially causing significant performance degradation.\n"
+usage_locations:
+- file: vllm_ascend/models/layer/attention/layer.py:121
+  context: Attention layer registers itself into static_forward_context during __init__
+- file: vllm_ascend/ops/dsa.py:161
+  context: DSA (DeepSeek Sparse Attention) layer registers itself into static_forward_context
+- file: vllm_ascend/worker/kvcomp_utils.py:642
+  context: Binds hash-based KV compression caches to attention layers for MLA models
+- file: vllm_ascend/worker/model_runner_v1.py:1930
+  context: Passes context to preprocess_mamba for Mamba state management
+- file: vllm_ascend/worker/model_runner_v1.py:3570
+  context: Iterates layers to attach Ascend-specific routed experts capturer to FusedMoE
+- file: vllm_ascend/_310p/model_runner_310p.py:633
+  context: Binds KV cache tensors to attention layers on 310P devices
+- file: vllm_ascend/attention/mla_v1.py:996
+  context: Looks up attention layer for FA-quant quantization scales on A5 devices
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1696
+  context: Reads per-layer C8 quantization scales for KV transfer compression
+- file: vllm/v1/worker/gpu_model_runner.py:918
+  context: Iterates attention layers to reset FP8 KV cache scales after wake-from-sleep
+- file: vllm/v1/worker/gpu_model_runner.py:1048
+  context: Passes context to KVBlockZeroer for zeroing freed KV cache blocks
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: static_forward_context is used alongside cudagraph capture to identify layers that need special handling
+- name: model_config.use_mla
+  relation: When use_mla is True, hash-based KV compression caches are bound to layers via static_forward_context
+- name: cache_config.cache_dtype
+  relation: Quantized KV cache dtype determines which per-layer scales are read from static_forward_context
+- name: kv_transfer_config
+  relation: KV transfer connectors use static_forward_context to access per-layer quantization parameters
+constraints:
+- Each layer name (prefix) must be unique within static_forward_context; duplicate registration raises ValueError
+- Layers must register themselves during model initialization before any code attempts to look them up
+tuning_advice:
+  summary: This is an internal runtime structure, not a user-tunable parameter. Ensure all model layers register correctly
+    to avoid silently skipping Ascend-specific optimizations.
+  suggested_values:
+  - scenario: Default (all models)
+    value: <automatically populated>
+    reason: The context is filled automatically during model initialization; no user action is needed
+  caveats:
+  - If a custom model does not call the standard layer registration (e.g., custom Attention subclass that bypasses vllm_ascend's
+    layer.py), that layer will be missing from static_forward_context, causing Ascend-specific KV cache binding, MLA optimizations,
+    and MoE expert capturing to silently skip that layer
+  - On 310P devices, missing layers in static_forward_context will prevent KV cache binding, leading to runtime errors or
+    zero output
+  - The context is cleared during shutdown (vllm/v1/worker/gpu/shutdown.py:17); any code that accesses it after shutdown will
+    find an empty dict
+  quick_guide: No tuning needed — this is an internal data structure automatically populated at model load time
+analysis_date: '2026-07-06'

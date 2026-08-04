@@ -1,0 +1,6 @@
+name: --mm-encoder-attn-backend
+type: cli
+performance_impact: none
+skip_reason: On vllm-ascend, platform configuration warns that Ascend uses a different multi-modal attention mechanism and
+  resets any supplied mm_encoder_attn_backend override to null before runtime; therefore it cannot affect target latency,
+  throughput, or memory.

@@ -1,0 +1,72 @@
+name: --mm-encoder-fp8-scale-path
+type: cli
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:167
+- vllm/engine/arg_utils.py:1207
+- vllm/config/model.py:335
+- vllm/model_executor/layers/attention/mm_encoder_attention.py:404
+value_type: str
+default: 'null'
+valid_choices: A file path to a JSON file containing per-layer FP8 Q/K/V scales, or null
+cli_example: --mm-encoder-fp8-scale-path /path/to/scales.json
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether the ViT encoder attention uses static or dynamic FP8 scaling. When a scale
+  path is provided (with mm_encoder_attn_dtype="fp8"), static scaling is used: pre-calibrated per-layer Q/K/V scales are loaded
+  from the JSON file and applied directly, avoiding the runtime overhead of computing amax values and updating scales dynamically.
+  When omitted, dynamic scaling is used: the attention layer maintains an amax history buffer (_FP8_AMAX_HISTORY_LEN) and
+  recomputes scales at each forward pass, which adds per-step computation overhead. On Ascend NPU, this dynamic path may be
+  particularly costly because the amax reduction and scale update operations may not be as well-optimized as on CUDA (FlashInfer
+  cuDNN backend). Using a pre-calibrated scale file eliminates this runtime overhead entirely, improving both latency and
+  throughput for multimodal models with ViT encoders. The parameter also interacts with mm_encoder_fp8_scale_save_path: the
+  save path can be used during a calibration run (dynamic scaling) to capture scales, which can then be fed back via this
+  parameter for production inference with static scaling.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/attention/mm_encoder_attention.py:404
+  context: 'Determines whether dynamic or static FP8 scaling is used: _fp8_dynamic_scale = mm_cfg.mm_encoder_fp8_scale_path
+    is None'
+- file: vllm/model_executor/layers/attention/mm_encoder_attention.py:444
+  context: Loads per-layer FP8 scales from the JSON file during process_weights_after_loading when scale_path is not None
+- file: vllm/config/multimodal.py:257
+  context: 'Validation: mm_encoder_fp8_scale_path requires mm_encoder_attn_dtype=''fp8'' and cannot be used with mm_encoder_fp8_scale_save_path'
+related_parameters:
+- name: --mm-encoder-attn-dtype
+  relation: Must be set to 'fp8' for this parameter to have any effect; otherwise raises ValueError
+- name: --mm-encoder-fp8-scale-save-path
+  relation: 'Mutually exclusive: cannot be used together (saving requires dynamic scaling, loading implies static scaling)'
+- name: --mm-encoder-fp8-scale-save-margin
+  relation: Used when saving scales via mm_encoder_fp8_scale_save_path; the saved file can later be used as mm_encoder_fp8_scale_path
+constraints:
+- mm_encoder_attn_dtype must be set to 'fp8' when using mm_encoder_fp8_scale_path
+- mm_encoder_fp8_scale_path and mm_encoder_fp8_scale_save_path cannot be used together
+- The JSON file must contain per-layer Q/K/V scales keyed by layer name matching the ViT encoder layers
+- Requires FlashInfer cuDNN backend with cuDNN >= 9.17.1 on hardware with native FP8 support
+tuning_advice:
+  summary: Use a pre-calibrated scale file for production inference to eliminate dynamic FP8 scaling overhead on Ascend NPU.
+  suggested_values:
+  - scenario: Production inference with known workload distribution
+    value: /path/to/pre_calibrated_scales.json
+    reason: Eliminates per-step amax computation and scale update overhead, reducing ViT encoder latency
+  - scenario: Calibration run to generate scales for later use
+    value: null (omit this flag, use --mm-encoder-fp8-scale-save-path instead)
+    reason: Dynamic scaling must be active during calibration to observe amax values and save calibrated scales
+  - scenario: Rapid prototyping or varying input distributions
+    value: null (omit this flag)
+    reason: Dynamic scaling adapts automatically to different activation ranges without requiring pre-calibration
+  caveats:
+  - On Ascend NPU, the dynamic FP8 scaling path may have higher overhead than on CUDA due to less optimized amax reduction
+    kernels; static scaling is strongly preferred for production.
+  - The scale file must be generated on the same model architecture and with representative input data; using scales from
+    a different model or data distribution may cause accuracy degradation or FP8 overflow.
+  - This parameter only affects ViT encoder attention layers in multimodal models; it has no effect on language model layers
+    or non-ViT encoders.
+  quick_guide: For production multimodal inference on Ascend NPU, pre-calibrate FP8 scales and provide them via --mm-encoder-fp8-scale-path
+    to avoid dynamic scaling overhead.
+analysis_date: '2026-07-06'

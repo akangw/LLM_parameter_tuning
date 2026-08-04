@@ -1,0 +1,100 @@
+name: eplb.communicator
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/config/parallel.py:893
+- vllm/distributed/eplb/eplb_communicator.py:609
+- vllm/distributed/eplb/eplb_state.py:450
+- vllm/distributed/eplb/eplb_utils.py:75
+- vllm/distributed/elastic_ep/elastic_execute.py:414
+value_type: str
+default: <computed>
+valid_choices:
+- torch_nccl
+- torch_gloo
+- pynccl
+- nixl
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter selects the communication backend used to transfer expert weights between GPUs during Expert
+  Parallel Load Balancing (EPLB) rebalancing operations. The choice of backend directly affects the speed of weight transfers,
+  which in turn impacts the latency of EPLB rebalancing steps and overall inference throughput when EPLB is enabled. On Ascend
+  NPU, the "torch_nccl" backend relies on HCCL (via torch.distributed), while "torch_gloo" uses CPU-side communication. The
+  "pynccl" backend is required for stateless (elastic EP) mode and provides lower-level NCCL control. The default is computed
+  at runtime based on other EPLB configuration settings: "if elastic EP is enabled, it defaults to \"pynccl\"; if async EPLB
+  is" enabled, it defaults to "torch_gloo" to avoid NCCL multi-thread conflicts; otherwise it defaults to "torch_nccl". On
+  Ascend, "torch_nccl" maps to HCCL operations, and the vllm-ascend project has introduced a "pyhccl" communicator for direct
+  CANN HCCL library calls, though it is not yet integrated into the EPLB communicator selection logic.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:893
+  context: Default communicator selection logic based on elastic EP and async EPLB settings
+- file: vllm/distributed/eplb/eplb_state.py:450
+  context: Creates EPLB communicator during EPLB state initialization
+- file: vllm/distributed/elastic_ep/elastic_execute.py:414
+  context: Creates EPLB communicator during elastic EP reconfiguration
+- file: vllm/distributed/eplb/eplb_utils.py:75
+  context: Checks if communicator is NCCL-based to decide NCCL_MAX_CTAS override
+related_parameters:
+- name: enable_eplb
+  relation: Must be enabled for this parameter to have any effect
+- name: eplb_config.use_async
+  relation: When true, defaults communicator to "torch_gloo" to avoid NCCL conflicts
+- name: enable_elastic_ep
+  relation: When true, defaults communicator to "pynccl" for stateless mode support
+- name: all2all_backend
+  relation: When set to "deepep_low_latency" with NCCL-based communicator, triggers NCCL_MAX_CTAS override
+constraints:
+- The "pynccl" backend only supports CUDA-like devices and will raise a RuntimeError if tensors are on CPU.
+- Stateless (elastic EP) groups only support "torch_nccl" and "pynccl" backends; "torch_nccl" is silently promoted to "pynccl"
+  in that case.
+- When using "nixl" backend, all MoE layers must have the same tensor count, shapes, and dtypes as the first layer used for
+  buffer pre-allocation.
+tuning_advice:
+  summary: 'On Ascend NPU, use the default computed value unless you encounter specific issues. The default logic automatically
+    selects the safest backend based on your EPLB configuration.
+
+    '
+  suggested_values:
+  - scenario: Default (no elastic EP, no async EPLB)
+    value: torch_nccl
+    reason: 'Uses HCCL via torch.distributed for efficient GPU-to-GPU weight transfers. This is the standard path and works
+      well on Ascend NPU.
+
+      '
+  - scenario: Async EPLB enabled (eplb_config.use_async=true)
+    value: torch_gloo
+    reason: 'Avoids potential hangs caused by NCCL/HCCL multi-thread conflicts when EPLB weight exchange runs in a background
+      thread. Uses CPU-side communication which is safer for async scenarios.
+
+      '
+  - scenario: Elastic EP enabled (enable_elastic_ep=true)
+    value: pynccl
+    reason: 'Required for stateless mode in elastic EP. torch.distributed.batch_isend_irecv does not support stateless mode,
+      so PyNCCL is used instead.
+
+      '
+  caveats:
+  - 'On Ascend NPU, "torch_nccl" maps to HCCL operations. If you experience hangs with async EPLB and DeepEP low-latency all2all,
+    the code automatically sets NCCL_MAX_CTAS=8 to prevent deadlocks, but this may not apply to HCCL.
+
+    '
+  - 'The "torch_gloo" backend uses CPU process groups, which means expert weights must be moved to CPU before transfer and
+    back to NPU after. This adds overhead but avoids HCCL contention.
+
+    '
+  - 'vllm-ascend has introduced a "pyhccl" communicator for direct CANN HCCL calls, but it is not yet integrated into the
+    EPLB communicator selection. Future releases may offer better Ascend-native performance through this backend.
+
+    '
+  quick_guide: 'Leave at default (auto-selected) unless you have a specific reason to override. The default logic handles
+    the common cases correctly for Ascend NPU.
+
+    '
+analysis_date: '2026-07-06'

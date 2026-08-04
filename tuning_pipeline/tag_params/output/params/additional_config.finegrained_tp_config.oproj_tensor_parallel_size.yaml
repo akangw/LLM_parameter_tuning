@@ -1,0 +1,124 @@
+name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:418
+- vllm_ascend/distributed/parallel_state.py:135
+- vllm_ascend/ops/linear_op.py:223
+- docs/source/user_guide/feature_guide/Fine_grained_TP.md:60
+value_type: int
+default: 0
+valid_choices: 0 to disable, or a positive integer that evenly divides parallel_config.data_parallel_size
+cli_example: vllm serve deepseek-ai/DeepSeek-R1 --data-parallel-size 16 --tensor-parallel-size 1 --enable-expert-parallel
+  --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer"}' --additional-config '{"finegrained_tp_config":{"oproj_tensor_parallel_size":8}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: A value greater than zero selects an Ascend-specific row-parallel operator for attention o_proj layers and
+  shards each o_proj input dimension and weight across a dedicated group carved from the data-parallel dimension. Each invocation
+  performs an all-to-all before the local projection and a reduce-scatter afterward. Sharding reduces per-NPU weight storage,
+  weight traffic, and local GEMM work, but the extra collectives can increase latency and reduce throughput. In the pinned
+  guide's DeepSeek-R1-W8A8 DP32/EP32 disaggregated-decode experiment, o_proj TP size 8 saved 5.8 GB per device but worsened
+  TPOT by 1.5 ms at batch size 24, demonstrating that the memory gain is not automatically a speedup. Results depend on model,
+  batch, topology, and group size. Upstream vLLM has no implementation of this nested setting.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:418
+  context: Reads the nested integer with default 0; values greater than zero enter the o_proj-specific validation path.
+- file: vllm_ascend/ascend_config.py:425
+  context: Rejects enabled use in eager mode or outside a PD-disaggregated KV consumer (decode-node) deployment.
+- file: vllm_ascend/ascend_config.py:445
+  context: Shared fine-grained TP validation rejects enabled sizes for non-MoE models and sizes that do not divide data_parallel_size.
+- file: vllm_ascend/distributed/parallel_state.py:117
+  context: Builds module-specific process groups by chunking the data-parallel dimension independently for every pipeline-
+    and global-TP coordinate.
+- file: vllm_ascend/distributed/parallel_state.py:135
+  context: Creates the otp group when oproj_tensor_parallel_size is greater than zero.
+- file: vllm_ascend/utils.py:970
+  context: Enables the custom o_proj path exactly when the configured value is greater than zero.
+- file: vllm_ascend/ops/linear_op.py:223
+  context: OProjRowParallelOp uses the dedicated group for an input all-to-all, local projection, and output reduce-scatter.
+- file: vllm_ascend/ops/linear_op.py:670
+  context: Selects OProjRowParallelOp for row-parallel layers whose prefix contains o_proj.
+- file: vllm_ascend/ops/linear.py:296
+  context: Uses the selected group's rank and size to partition the o_proj input dimension and create the sharded weight.
+- file: vllm_ascend/quantization/method_adapters.py:147
+  context: Uses the dedicated o_proj group rank when applying quantized row-parallel weights.
+- file: vllm_ascend/utils.py:1338
+  context: Rejects simultaneous use with the separate FlashComm2 o_proj parallel path.
+- file: docs/source/user_guide/feature_guide/Fine_grained_TP.md:91
+  context: Reports the per-device memory saving and TPOT regression for o_proj TP 8 in a specific disaggregated-decode benchmark.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: The otp groups are carved from the DP dimension, and an enabled size must evenly divide data_parallel_size.
+- name: model_config.enforce_eager
+  relation: Must be false because o_proj fine-grained TP is graph-mode only.
+- name: kv_transfer_config
+  relation: Must be configured with is_kv_consumer true, restricting this feature to the decode node in a PD-disaggregated
+    deployment.
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: Drives the alternative FlashComm2 o_proj parallel path and cannot be positive at the same time as this setting.
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling module-specific TP control; equal group sizes reuse the cached process group created from the DP dimension.
+- name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+  relation: Sibling fine-grained TP control for eligible dense MLP layers.
+constraints:
+- Values greater than 0 enable the feature; use 0 to disable it.
+- When enabled, model_config.enforce_eager must be false.
+- When enabled, kv_transfer_config must exist and its is_kv_consumer property must be true, so the setting is limited to the
+  decode node in PD disaggregation.
+- When enabled, model_config.is_moe must be true or initialization raises an AssertionError.
+- When enabled, parallel_config.data_parallel_size modulo oproj_tensor_parallel_size must equal 0.
+- It cannot be enabled simultaneously with the FlashComm2 o_proj parallel setting derived from additional_config.enable_flashcomm2_parallel_size.
+- Negative integers are not explicitly rejected, but greater-than-zero gates treat them as disabled; use 0 rather than relying
+  on that behavior.
+- The setting is Ascend-only and has no upstream vLLM counterpart in the pinned source.
+tuning_advice:
+  summary: Use o_proj fine-grained TP when per-device attention-projection weight memory is the binding constraint on an MoE
+    PD decode node. Benchmark exact divisors of data_parallel_size and retain a positive value only when its memory benefit
+    justifies the all-to-all and reduce-scatter cost for the target workload.
+  suggested_values:
+  - scenario: Disabled baseline or any unsupported deployment
+    value: 0
+    reason: This avoids the custom collectives and is required for eager mode, non-MoE models, and nodes that are not PD KV
+      consumers.
+  - scenario: Initial MoE PD decode-node trial with an even data_parallel_size
+    value: 2
+    reason: When it divides DP size, this is a conservative first sharding step that limits collective width while testing
+      whether weight-memory relief is useful.
+  - scenario: Memory-constrained DeepSeek-style decode with data_parallel_size divisible by 8
+    value: 8
+    reason: This matches the pinned DP32/EP32 experiment that saved 5.8 GB per device, but it should be kept only if the measured
+      TPOT tradeoff is acceptable.
+  caveats:
+  - Larger groups reduce each rank's o_proj weight shard but widen the all-to-all and reduce-scatter; latency and throughput
+    can regress.
+  - The documented size-8 result saved substantial memory while worsening TPOT, so do not assume this feature reduces communication
+    overhead.
+  - The feature guide describes broad model support, but pinned runtime validation rejects positive fine-grained TP sizes
+    when model_config.is_moe is false; runtime code is the operational ground truth.
+  - Graph mode and a PD-disaggregated KV-consumer decode node are mandatory for this particular fine-grained TP component.
+  - Shared validation errors mention lmhead parallel even when this setting causes the MoE or DP-divisibility failure.
+  quick_guide: Keep 0 as the baseline. On a graph-mode MoE PD decode node, try 2 and then larger exact divisors such as 8,
+    selecting by measured NPU memory, TPOT, and throughput rather than group size alone.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

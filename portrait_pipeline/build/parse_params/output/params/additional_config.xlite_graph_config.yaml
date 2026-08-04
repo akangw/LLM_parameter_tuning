@@ -1,0 +1,82 @@
+name: additional_config.xlite_graph_config
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:36-37
+value_type: dict
+default: '''{}'''
+valid_choices: 'dict with keys: enabled (bool), full_mode (bool)'
+cli_example: '''--additional-config ''''{"xlite_graph_config": {"enabled": true, "full_mode": true}}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'XliteGraph is an Ascend-specific graph compilation mode that replaces the default vLLM execution path with
+  Xlite-compiled graphs. When enabled, it triggers a compilation phase that fuses operators and optimizes the execution graph
+  for the Ascend NPU. The `full_mode` sub-option controls whether the entire model is compiled as a single graph (full_mode=true)
+  or only partial subgraphs are compiled (full_mode=false). Full graph mode can significantly reduce kernel launch overhead
+  and improve NPU utilization, directly impacting latency and throughput. However, it also increases compilation time and
+  may consume more device memory for graph caching. The parameter is read in AscendConfig.__init__ (vllm_ascend/ascend_config.py:36-37)
+  and passed to XliteGraphConfig, which controls the Xlite compilation pipeline. Documentation confirms it is supported for
+  Llama, Qwen dense, Qwen MoE, and Qwen3-VL model series.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:36-37
+  context: XliteGraphConfig instantiated from additional_config['xlite_graph_config']
+- file: tests/e2e/pull_request/one_card/test_xlite.py:52
+  context: E2E test enabling xlite_graph_config with enabled=true
+- file: tests/e2e/generate_coverage_md.py:1208-1210
+  context: Coverage report checks for xlite_graph_config presence in additional_config
+related_parameters:
+- name: additional_config.enable_npugraph_ex
+  relation: Alternative graph compilation mode; mutually exclusive in practice — only one graph mode should be active
+- name: additional_config.enable_mlapo
+  relation: MLAPO optimization may interact with Xlite graph compilation; both affect operator fusion on Ascend NPU
+constraints:
+- XliteGraph requires Xlite to be installed separately (pip install xlite)
+- XliteGraph is only supported for Llama, Qwen dense series, Qwen MoE series, and Qwen3-VL model series
+- XliteGraph and npugraph_ex should not be enabled simultaneously
+tuning_advice:
+  summary: 'Enable XliteGraph with full_mode=true for maximum throughput on supported Llama/Qwen models; use full_mode=false
+    for faster compilation during development.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with Llama or Qwen dense models on multi-NPU
+    value:
+      enabled: true
+      full_mode: true
+    reason: 'Full graph mode eliminates per-operator kernel launch overhead and maximizes NPU compute utilization, yielding
+      the best throughput and lowest latency for supported model architectures.
+
+      '
+  - scenario: Development or testing with frequent model/configuration changes
+    value:
+      enabled: true
+      full_mode: false
+    reason: 'Partial graph mode reduces compilation time while still providing some operator fusion benefits, making iteration
+      faster during development.
+
+      '
+  - scenario: Unsupported model architectures or first-time deployment
+    value:
+      enabled: false
+    reason: 'Disabling XliteGraph avoids compilation errors on unsupported models and uses the default vLLM execution path,
+      which is more broadly compatible.
+
+      '
+  caveats:
+  - XliteGraph compilation occurs on first inference and can take several minutes; subsequent runs reuse cached graphs
+  - Full graph mode (full_mode=true) may increase device memory consumption due to larger compiled graph artifacts
+  - Xlite must be installed separately — the feature silently falls back to default execution if Xlite is not available
+  - Only supported on Llama, Qwen dense, Qwen MoE, and Qwen3-VL model families; other models will fail or fall back
+  - Do not enable simultaneously with npugraph_ex — they are competing graph compilation paths
+  quick_guide: 'For production Llama/Qwen inference on Ascend NPU, enable XliteGraph with full_mode=true via --additional-config
+    ''{"xlite_graph_config": {"enabled": true, "full_mode": true}}''.
+
+    '
+analysis_date: '2026-07-06'

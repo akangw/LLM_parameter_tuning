@@ -1,0 +1,96 @@
+name: --compilation-config
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1427
+- vllm/config/vllm.py:100
+- vllm/config/vllm.py:150
+- vllm_ascend/platform.py:182
+- vllm_ascend/platform.py:222
+- vllm_ascend/ascend_config.py:39
+value_type: dict
+default: CompilationConfig()
+valid_choices: JSON dict with CompilationConfig fields (e.g., cudagraph_mode, cudagraph_capture_sizes, max_cudagraph_capture_size,
+  pass_config, use_inductor_graph_partition, splitting_ops, custom_ops)
+cli_example: '--compilation-config ''{"cudagraph_mode": "PIECEWISE"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls torch.compile and CUDA/NPU graph capture behavior for the model. On Ascend NPU, vllm-ascend
+  overrides the default max_cudagraph_capture_size to min(max_num_seqs * decode_query_len, 512) instead of the upstream CUDA-oriented
+  default (which multiplies by 2). This directly affects how many batch sizes are pre-captured as NPU graphs, which determines
+  decode-phase latency and memory usage. The cudagraph_mode field controls whether graph capture is NONE, PIECEWISE, FULL,
+  FULL_DECODE_ONLY, or FULL_AND_PIECEWISE — each mode has different memory/latency tradeoffs. The pass_config sub-field enables
+  sequence parallelism (enable_sp) and controls its minimum token threshold (sp_min_token_num), which vllm-ascend auto-configures
+  if not set. The use_inductor_graph_partition and splitting_ops fields affect whether custom ops like rotary_embedding and
+  rms_norm are fused with KV cache updates, impacting both throughput and memory bandwidth utilization. The custom_ops field
+  controls which operations use custom (Ascend-optimized) implementations vs native Inductor codegen.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:222
+  context: apply_config_platform_defaults() reads pass_config.enable_sp and sets sp_min_token_num if not configured
+- file: vllm_ascend/platform.py:182
+  context: _get_default_max_cudagraph_capture_size() overrides max_cudagraph_capture_size for Ascend when user hasn't set
+    it
+- file: vllm/config/vllm.py:100
+  context: enable_norm_fusion() checks compilation_config.is_custom_op_enabled('rms_norm') and ('quant_fp8')
+- file: vllm/config/vllm.py:150
+  context: enable_rope_kvcache_fusion() checks compilation_config.is_custom_op_enabled('rotary_embedding') and use_inductor_graph_partition
+- file: vllm/engine/arg_utils.py:702
+  context: __post_init__ converts dict to CompilationConfig object
+related_parameters:
+- name: --cudagraph-capture-sizes
+  relation: Explicit list of batch sizes for graph capture; overrides max_cudagraph_capture_size behavior
+- name: --max-cudagraph-capture-size
+  relation: Upper bound for auto-generated capture sizes; vllm-ascend overrides default to min(max_num_seqs * decode_query_len,
+    512)
+- name: --additional-config
+  relation: vllm-ascend's ascend_compilation_config (enable_npugraph_ex) is nested under additional_config, separate from
+    --compilation-config
+- name: --max-num-seqs
+  relation: vllm-ascend uses max_num_seqs to compute default max_cudagraph_capture_size
+- name: --speculative-config
+  relation: num_speculative_tokens affects decode_query_len used in default max_cudagraph_capture_size calculation
+constraints:
+- cudagraph_mode must be one of NONE, PIECEWISE, FULL, FULL_DECODE_ONLY, or FULL_AND_PIECEWISE
+- When cudagraph_capture_sizes is explicitly set, max_cudagraph_capture_size is ignored for size list generation
+- pass_config.enable_sp requires sequence parallelism support in the model and CANN compiler
+tuning_advice:
+  summary: Set cudagraph_mode to PIECEWISE or FULL_DECODE_ONLY for best Ascend NPU performance; use pass_config.enable_sp
+    for large models with sequence parallelism
+  suggested_values:
+  - scenario: General Ascend NPU deployment (v1 and v2 workers)
+    value: '{"cudagraph_mode": "PIECEWISE"}'
+    reason: PIECEWISE mode captures graphs for individual pieces of the model, providing good latency reduction with lower
+      memory overhead than FULL mode. Recommended by vllm-ascend documentation as the primary graph mode for Ascend.
+  - scenario: Decode-only workloads with stable batch sizes (v1 and v2 workers)
+    value: '{"cudagraph_mode": "FULL_DECODE_ONLY"}'
+    reason: Captures full model graph only for decode phase, avoiding prefill capture overhead. Best latency for pure decode
+      serving when batch sizes are predictable.
+  - scenario: Large models with sequence parallelism (v1 and v2 workers)
+    value: '{"pass_config": {"enable_sp": true}}'
+    reason: Enables sequence parallelism pass during compilation, reducing per-device memory for long sequences. vllm-ascend
+      auto-configures sp_min_token_num based on model and hardware.
+  - scenario: Debugging or memory-constrained environments (v1 and v2 workers)
+    value: '{"cudagraph_mode": "NONE"}'
+    reason: Disables all graph capture, minimizing memory usage at the cost of higher latency. Useful for initial deployment
+      or when encountering graph capture errors.
+  caveats:
+  - vllm-ascend overrides the default max_cudagraph_capture_size to min(max_num_seqs * decode_query_len, 512) instead of the
+    upstream CUDA default. If you set max_cudagraph_capture_size explicitly, this override is skipped.
+  - FULL and FULL_AND_PIECEWISE modes consume significantly more NPU memory than PIECEWISE or FULL_DECODE_ONLY. On Ascend
+    910B with limited HBM, PIECEWISE is generally preferred.
+  - The pass_config.enable_sp setting triggers vllm-ascend to auto-compute sp_min_token_num if not provided. Manually setting
+    sp_min_token_num too low may cause graph capture failures; too high may miss optimization opportunities.
+  - Custom ops (rms_norm, quant_fp8, rotary_embedding) controlled via custom_ops field affect whether Ascend-optimized kernels
+    are used. Disabling them falls back to Inductor codegen which may be slower on NPU.
+  - vllm-ascend's ascend_compilation_config (under --additional-config) is separate from --compilation-config. The enable_npugraph_ex
+    flag in ascend_compilation_config controls an alternative NPU graph mode distinct from CUDA graph modes.
+  quick_guide: 'Use --compilation-config ''{"cudagraph_mode": "PIECEWISE"}'' as the default for Ascend NPU; add "pass_config":
+    {"enable_sp": true} for models with sequence parallelism.'
+analysis_date: '2026-07-06'

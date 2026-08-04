@@ -1,0 +1,96 @@
+name: OnlineQuantizationConfigArgs.moe_scheme_override
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/quantization.py:12
+- vllm/config/quantization.py:45
+- vllm/config/quantization.py:53
+- vllm/config/quantization.py:65
+- docs/features/quantization/online.md:43
+- vllm_ascend/platform.py:118
+value_type: str
+default: null
+valid_choices:
+- fp8_per_tensor
+- fp8_per_block
+- int8_per_channel_weight_only
+- mxfp8
+cli_example: 'quantization_config={"moe_scheme_override": "fp8_per_block"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This nullable field overrides the online-quantization recipe specifically for FusedMoE layers. When null,
+  FusedMoE uses global_scheme; when set, the override selects a per-tensor FP8, 128x128 per-block FP8, per-channel weight-only
+  INT8, or block-32 MXFP8 MoE implementation. Those implementations load full-precision expert weights and quantize them during
+  model loading, then construct scheme-specific FusedMoE quantization metadata and kernels. The choice therefore changes expert-weight
+  representation and scale storage, startup conversion work, memory footprint and bandwidth, supported backend selection,
+  latency, throughput, and numerical quality for every eligible MoE layer. Dense LinearBase layers continue to use their linear
+  override or global recipe. Ascend behavior takes precedence for NPU deployments: the pinned plugin''s supported-quantization
+  list excludes upstream online quantization and all four scheme aliases.'
+usage_locations:
+- file: vllm/config/quantization.py:12
+  context: Defines the four accepted OnlineQuantScheme values and their scaling recipes.
+- file: vllm/config/quantization.py:45
+  context: Declares the nullable override and limits its target to FusedMoE layers.
+- file: vllm/config/quantization.py:53
+  context: Coerces a supplied string to OnlineQuantScheme and rejects values outside the enum.
+- file: docs/features/quantization/online.md:43
+  context: Documents separate dense and MoE recipes and demonstrates this override.
+- file: vllm_ascend/platform.py:118
+  context: Lists NPU-supported quantization methods and excludes upstream online quantization.
+related_parameters:
+- name: OnlineQuantizationConfigArgs.global_scheme
+  relation: Supplies the fallback recipe for FusedMoE layers when this override is null.
+- name: OnlineQuantizationConfigArgs.linear_scheme_override
+  relation: Independently overrides the recipe for LinearBase layers.
+- name: OnlineQuantizationConfigArgs.ignore
+  relation: An ignore match bypasses the selected MoE recipe and leaves the matched FusedMoE unquantized.
+- name: EngineArgs.quantization
+  relation: Must select online or one of the four OnlineQuantScheme aliases for the containing configuration to be accepted.
+- name: ModelConfig.dtype
+  relation: Online quantization accepts BF16 and FP16 source models and activations.
+constraints:
+- At least one of global_scheme, linear_scheme_override, or moe_scheme_override must be set for an online quantization configuration.
+- String values must be one of fp8_per_tensor, fp8_per_block, int8_per_channel_weight_only, or mxfp8.
+- The containing quantization_config is accepted by EngineArgs only when quantization is online or one of the four online
+  scheme aliases.
+- A null value delegates FusedMoE layers to global_scheme; a non-null value takes precedence for that layer family.
+- The online quantization configuration supports only torch.bfloat16 and torch.float16 activation dtypes and declares minimum
+  GPU compute capability 7.5.
+- MXFP8 MoE requires both hidden size and intermediate size per partition to be divisible by 32.
+- The pinned vllm-ascend platform supports only ascend, compressed-tensors, fp8, and deepseek_v4_fp8 methods, so this upstream
+  override is not a supported NPU tuning path.
+tuning_advice:
+  summary: Benchmark a uniform online-quantization baseline first, then override MoE only when expert layers need a different
+    memory, quality, or kernel tradeoff from dense layers.
+  suggested_values:
+  - scenario: Straightforward online FP8 baseline for MoE experts
+    value: fp8_per_tensor
+    reason: It uses one FP8 scale per expert weight tensor and provides the simplest FP8 recipe for comparison.
+  - scenario: MoE experts that benefit from finer-grained FP8 scaling
+    value: fp8_per_block
+    reason: It uses 128x128 weight blocks, which changes scale granularity, metadata, and available kernel behavior relative
+      to per-tensor FP8.
+  - scenario: MoE expert weight-only compression
+    value: int8_per_channel_weight_only
+    reason: This recipe quantizes each expert-weight row to INT8 while retaining per-channel FP32 scales and dynamically quantizing
+      activations per token.
+  - scenario: Supported hardware and MoE dimensions divisible by 32
+    value: mxfp8
+    reason: MXFP8 stores expert weights with block-32 microscaling and selects its dedicated MoE backend.
+  caveats:
+  - Finer scaling granularity does not guarantee lower latency or higher throughput; backend availability, model architecture,
+    request shapes, and hardware dominate many results.
+  - Every recipe can alter numerical accuracy, so validate production outputs as well as load time, peak memory, latency,
+    and throughput.
+  - Online conversion adds startup work even when lower-precision expert weights reduce steady-state memory traffic.
+  - Models without FusedMoE layers receive no performance benefit from this override.
+  - Ignore patterns take precedence, and broad exclusions can erase much of the override's memory and kernel effect.
+  - Do not assume these upstream GPU recipes work on Ascend NPU; the pinned plugin excludes the online method and its aliases.
+  quick_guide: Keep null for the global recipe, compare per-tensor and per-block FP8 on the target MoE model, use INT8 for
+    expert weight-only compression, and select MXFP8 only when its backend and dimension constraints are satisfied.
+analysis_date: '2026-07-31'

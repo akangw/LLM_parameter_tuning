@@ -1,0 +1,81 @@
+name: compilation.pass_config.fuse_attn_quant
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:1092
+- vllm/config/compilation.py:1190
+- vllm/compilation/passes/pass_manager.py:177
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '--compilation-config ''{"pass_config": {"fuse_attn_quant": true}}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this flag activates two torch.compile fusion passes: AttnQuantFusionPass and MLAAttnQuantFusionPass.
+  These passes fuse the custom attention operation (or MLA attention for DeepSeek-style models) with subsequent quantization
+  operations into a single compiled kernel. This eliminates intermediate tensor materialization and reduces kernel launch
+  overhead, which can improve latency and throughput for quantized models (e.g., FP8). However, enabling this flag has a significant
+  side effect: it forces cudagraph_mode to FULL (disabling piecewise cudagraphs) when use_inductor_graph_partition is off,
+  because the fused attention+quant op is incompatible with piecewise cudagraph capture boundaries. On Ascend NPU, vllm-ascend
+  currently only supports sequence parallelism in eager mode (noted in set_splitting_ops_for_v1), so the interaction between
+  this fusion pass and Ascend''s compilation pipeline may differ from GPU behavior. The flag also ensures that attention ops
+  are removed from splitting_ops, which affects how the FX graph is partitioned for compilation.
+
+  '
+usage_locations:
+- file: vllm/config/compilation.py:1092
+  context: 'In set_splitting_ops_for_v1: when fuse_attn_quant is True and use_inductor_graph_partition is False, calls set_splitting_ops_for_attn_fusion()
+    to configure graph splitting boundaries.'
+- file: vllm/config/compilation.py:1190
+  context: 'In set_splitting_ops_for_attn_fusion: asserts fuse_attn_quant is True, then forces cudagraph_mode to FULL if piecewise
+    cudagraphs were configured, and ensures attention ops are not in splitting_ops.'
+- file: vllm/compilation/passes/pass_manager.py:177
+  context: 'In PostGradPassManager.__init__: when fuse_attn_quant is True, adds AttnQuantFusionPass and MLAAttnQuantFusionPass
+    to the compilation pipeline.'
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: When fuse_attn_quant is True and use_inductor_graph_partition is False, piecewise cudagraph mode is forcibly overridden
+    to FULL.
+- name: compilation_config.use_inductor_graph_partition
+  relation: When True, the cudagraph mode override does not occur; the fusion pass works with inductor's own graph partitioning.
+- name: compilation_config.splitting_ops
+  relation: When fuse_attn_quant is True, attention ops are removed from splitting_ops to avoid conflicts with the fused kernel.
+- name: compilation_config.custom_ops
+  relation: Typically used with '+quant_fp8' to enable FP8 quantization ops that the fusion pass combines with attention.
+constraints:
+- fuse_attn_quant requires compilation mode to be VLLM_COMPILE (torch.compile enabled); it has no effect in eager mode.
+- When fuse_attn_quant is True, splitting_ops must not contain any attention ops (raises AssertionError if they do).
+- When fuse_attn_quant is True and use_inductor_graph_partition is False, piecewise cudagraph mode is incompatible and will
+  be forcibly changed to FULL with a warning.
+tuning_advice:
+  summary: Enable fuse_attn_quant for FP8 quantized models with torch.compile to fuse attention and quantization kernels,
+    but be aware it forces full cudagraph mode when inductor graph partition is off.
+  suggested_values:
+  - scenario: FP8 quantized model with torch.compile enabled, using inductor graph partition
+    value: true
+    reason: Fuses attention and FP8 quantization into a single kernel, reducing memory bandwidth and kernel launch overhead
+      without forcing cudagraph mode changes.
+  - scenario: FP8 quantized model with torch.compile but without inductor graph partition, and piecewise cudagraphs are acceptable
+      to lose
+    value: true
+    reason: Provides kernel fusion benefits; piecewise cudagraphs will be auto-upgraded to FULL cudagraphs.
+  - scenario: Non-quantized model or eager mode execution
+    value: false
+    reason: The fusion pass targets quantized attention paths; enabling it without quantization provides no benefit and may
+      unnecessarily restrict cudagraph options.
+  caveats:
+  - On Ascend NPU, vllm-ascend currently only supports sequence parallelism in eager mode. The interaction between this fusion
+    pass and Ascend's torch.compile backend may differ from CUDA GPUs — test thoroughly.
+  - Enabling this flag silently forces cudagraph_mode to FULL when use_inductor_graph_partition is False, which may increase
+    memory usage and cause issues if the attention backend does not support full cudagraphs.
+  - This flag is only meaningful when custom_ops includes '+quant_fp8' or similar quantization operations; without quant ops
+    in the graph, the fusion pass has nothing to fuse.
+  quick_guide: Set to true only for FP8 quantized models with torch.compile; pair with use_inductor_graph_partition=true to
+    avoid cudagraph mode override.
+analysis_date: '2026-07-06'

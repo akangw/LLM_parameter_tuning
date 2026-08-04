@@ -1,0 +1,57 @@
+name: pooler.max_embed_len
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/entrypoints/pooling/embed/protocol.py:48
+value_type: int
+default: null
+valid_choices: positive integer or null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the maximum input length for embedding generation in pooling models. When set, it
+  allows inputs longer than max_embed_len to be accepted, with the excess handled by the original max_model_len validation
+  logic. The primary performance impact is indirect: it affects how max_total_tokens and max_output_tokens are computed in
+  _get_max_total_output_tokens() (vllm/entrypoints/pooling/embed/protocol.py:48). When pooler_config.enable_chunked_processing
+  is False, max_embed_len (or max_total_tokens if max_embed_len is None) is subtracted from max_total_tokens to determine
+  max_output_tokens. This influences scheduling decisions and memory allocation for embedding requests. On Ascend NPU, the
+  impact is minimal because this parameter primarily affects request validation and token budget calculation rather than direct
+  hardware execution. No vllm-ascend overrides were found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/entrypoints/pooling/embed/protocol.py:48
+  context: Used to compute max_output_tokens as max_total_tokens - max_embed_len when chunked processing is disabled
+related_parameters:
+- name: pooler_config.enable_chunked_processing
+  relation: When enable_chunked_processing is True, max_embed_len is bypassed and max_total_tokens returns None
+- name: model_config.max_model_len
+  relation: max_embed_len defaults to max_model_len when not explicitly set; max_output_tokens is derived from the difference
+constraints:
+- max_embed_len must be a positive integer or null (None)
+- max_embed_len should not exceed max_model_len, otherwise max_output_tokens becomes negative
+tuning_advice:
+  summary: 'Set max_embed_len only when you need to limit embedding input length below max_model_len; otherwise leave as default
+    (null) to use max_model_len directly.
+
+    '
+  suggested_values:
+  - scenario: Default behavior — no explicit embedding length limit needed
+    value: null
+    reason: Uses max_model_len as the effective max_embed_len, avoiding unnecessary token budget constraints
+  - scenario: Embedding requests have shorter inputs than generation requests and you want to reserve token budget for outputs
+    value: <shorter than max_model_len>
+    reason: Reduces max_embed_len to increase max_output_tokens budget, allowing more output tokens for generation
+  caveats:
+  - Setting max_embed_len larger than max_model_len causes max_output_tokens to become negative, which may lead to request
+    rejection or unexpected behavior
+  - This parameter has no effect when pooler_config.enable_chunked_processing is True
+  - On Ascend NPU, the performance impact is negligible compared to GPU; focus tuning efforts on memory and parallelism parameters
+    instead
+  quick_guide: Leave as default (null) unless you need to explicitly constrain embedding input length to reserve token budget
+    for outputs
+analysis_date: '2026-07-06'

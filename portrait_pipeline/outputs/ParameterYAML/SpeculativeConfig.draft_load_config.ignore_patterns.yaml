@@ -1,0 +1,79 @@
+name: SpeculativeConfig.draft_load_config.ignore_patterns
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:100
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+value_type: list[str]
+default:
+- original/**/*
+valid_choices: A glob pattern string or a list of glob pattern strings accepted by the configured remote model hub downloader.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: This field filters files during remote draft-model weight acquisition. The default excludes original/**/* to
+  avoid repeatedly downloading or loading duplicate Llama checkpoint content. The pinned Ascend proposer passes draft_load_config
+  to get_model for the draft model, so upstream loaders used on Ascend inherit the setting; vllm-ascend does not override
+  its semantics. More selective patterns can reduce draft-model download traffic, local cache growth, and initialization latency
+  when a remote repository contains redundant matching weights. They have no effect for an already-local model path, and no
+  source evidence shows an effect on steady-state token latency, throughput, or accelerator memory.
+usage_locations:
+- file: vllm/config/load.py:100
+  context: Defines the string-or-list field, defaults it to original/**/*, and documents that the default avoids repeated
+    loading of Llama checkpoints.
+- file: vllm/config/load.py:139
+  context: Validates the value after parsing and logs non-default, non-empty patterns; it imposes no field-specific glob validation.
+- file: vllm/config/speculative.py:186
+  context: Nests LoadConfig under SpeculativeConfig for draft-model loading and falls back to the target model's load configuration
+    when the parent field is absent.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads the speculative draft_load_config and passes it to get_model while constructing the Ascend draft proposer.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Classifies draft_load_config as an internal field populated by vLLM and not intended to be set by users.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config
+  relation: Parent internal load configuration; when absent, speculative decoding uses the target model's load configuration.
+- name: SpeculativeConfig.draft_model_config
+  relation: Identifies the draft model repository or local path whose weights are acquired.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: Selects the loader and allowed weight-file patterns to which these exclusions are applied.
+- name: LoadConfig.download_dir
+  relation: Selects the cache directory receiving remote weight files that survive the filters.
+constraints:
+- draft_load_config and this nested field are internal speculative-decoding configuration, not supported user-facing keys
+  for --speculative-config in the pinned documentation.
+- Patterns use the remote hub downloader's glob semantics and must not exclude every usable draft weight or index file.
+- Filtering applies during remote model acquisition; local model directories bypass the remote download path.
+- A bare string is accepted by the field, but a list is the documented default shape and is clearer when supplying multiple
+  exclusions.
+tuning_advice:
+  summary: Keep the default for normal draft-model repositories; change this internal field only when a repository's redundant
+    weight layout is known and the resulting download has been tested.
+  suggested_values:
+  - scenario: Standard or converted draft-model repository with an original/ backup tree
+    value:
+    - original/**/*
+    reason: Preserves the built-in exclusion that prevents duplicate checkpoint content under original/ from participating
+      in remote weight acquisition.
+  - scenario: Framework developer integrating a repository with additional redundant weight trees
+    value:
+    - original/**/*
+    - backup/**/*
+    reason: Excluding a verified backup tree can reduce remote transfer and cache use during draft initialization without
+      changing inference execution.
+  caveats:
+  - Over-broad patterns can leave no compatible draft weights, omit an index or shard, and make model loading fail.
+  - Empty patterns or narrower exclusions can download redundant checkpoint copies and increase startup time and disk-cache
+    consumption.
+  - Benefits depend on a remote repository actually containing files that match both the loader's allowed patterns and these
+    exclusions.
+  - This is not a steady-state speculative-decoding performance knob, and changing it cannot improve token acceptance rate
+    or execution throughput.
+  quick_guide: Leave ["original/**/*"] in place. For a custom remote repository, inspect its file tree, add only known backup-weight
+    paths, and verify a cold-cache draft-model load.
+analysis_date: '2026-07-31'

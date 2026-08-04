@@ -1,0 +1,83 @@
+name: profiler.torch_profiler_dir
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/config/profiler.py:134
+- vllm_ascend/profiler/torch_npu_profiler.py:41
+- vllm_ascend/worker/worker.py:712
+value_type: str
+default: '''""'''
+valid_choices: any absolute directory path (string)
+cli_example: --profiler-config.torch_profiler_dir=/path/to/traces
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter specifies the output directory for torch profiler traces. It does not directly affect inference
+  performance — it only controls where profiling data is written when profiling is active. However, when profiling IS enabled
+  (profiler="torch"), the act of profiling itself introduces significant runtime overhead on Ascend NPU: "the torch_npu profiler
+  captures CPU and" NPU activities, which adds instrumentation cost to every operator. The directory path itself has no performance
+  impact; the performance cost comes from enabling profiling, which is gated by the `profiler` parameter, not this directory
+  setting. On Ascend, the vllm-ascend TorchNPUProfilerWrapper (vllm_ascend/profiler/torch_npu_profiler.py:41) validates that
+  this directory is non-empty when profiler="torch" and raises RuntimeError if it is empty. The directory must be an absolute
+  path — relative paths are converted to absolute via os.path.abspath() in the upstream ProfilerConfig validator (vllm/config/profiler.py:145).
+  On Ascend, the profiler uses torch_npu.profiler.profile() with CPU and NPU activities, and traces are saved via tensorboard_trace_handler
+  to this directory.
+
+  '
+usage_locations:
+- file: vllm/config/profiler.py:134
+  context: Validator checks that torch_profiler_dir is set when profiler='torch', and converts relative paths to absolute
+- file: vllm_ascend/profiler/torch_npu_profiler.py:41
+  context: TorchNPUProfilerWrapper._create_profiler() validates torch_profiler_dir is non-empty before creating NPU profiler
+- file: vllm_ascend/worker/worker.py:712
+  context: NPUWorker.profile() error message references torch_profiler_dir in usage example
+- file: vllm/v1/engine/async_llm.py:182
+  context: AsyncLLM uses torch_profiler_dir as output path for CPU trace collection via tensorboard_trace_handler
+- file: vllm/profiler/wrapper.py:172
+  context: TorchProfilerWrapper reads torch_profiler_dir to configure trace handler output directory
+- file: vllm/profiler/wrapper.py:252
+  context: TorchProfilerWrapper._write_profiler_table() writes profiler summary table to torch_profiler_dir
+related_parameters:
+- name: profiler_config.profiler
+  relation: Must be set to 'torch' for torch_profiler_dir to take effect; otherwise raises ValueError
+- name: profiler_config.ignore_frontend
+  relation: When ignore_frontend=False and profiler='torch', AsyncLLM CPU traces are also collected to this directory
+- name: profiler_config.torch_profiler_with_stack
+  relation: Controls whether stack traces are included in the profiler output written to this directory
+- name: profiler_config.torch_profiler_with_memory
+  relation: Controls whether memory profiling data is included in NPU traces saved to this directory
+- name: profiler_config.torch_profiler_use_gzip
+  relation: Controls whether trace files saved to this directory are gzip-compressed
+- name: VLLM_ASCEND_MSMONITOR_USE_DAEMON
+  relation: Cannot be enabled simultaneously with torch profiler; TorchNPUProfilerWrapper raises RuntimeError if both are
+    active
+constraints:
+- torch_profiler_dir must be set (non-empty) when profiler is 'torch'
+- torch_profiler_dir is only applicable when profiler is set to 'torch'; setting it with any other profiler raises ValueError
+- The path must be an absolute path; relative paths are automatically converted to absolute via os.path.abspath()
+- MSMONITOR_USE_DAEMON and torch profiler cannot be both enabled at the same time on Ascend NPU
+tuning_advice:
+  summary: Set to an absolute path with sufficient disk space when torch profiling is needed; has no performance impact when
+    profiling is disabled.
+  suggested_values:
+  - scenario: Profiling disabled (normal inference)
+    value: '''""'''
+    reason: Empty string is the default; profiling is off and no traces are collected, so no directory is needed
+  - scenario: Profiling enabled for performance debugging on Ascend NPU
+    value: '''"/tmp/vllm_profiler_traces"'''
+    reason: Use a local absolute path with fast I/O to minimize trace writing overhead; ensure sufficient disk space for large
+      trace files
+  - scenario: Production profiling with persistent storage
+    value: '''"/data/profiler/traces"'''
+    reason: Use a dedicated high-performance storage path to avoid filling up system partitions with large trace files
+  caveats:
+  - Profiling with torch_npu.profiler introduces significant runtime overhead on Ascend NPU — only enable during debugging,
+    not in production serving
+  - Trace files can be very large; ensure the directory has sufficient free disk space before starting a profiling session
+  - On Ascend, the profiler captures both CPU and NPU activities, which may produce larger traces than GPU-only profiling
+  - MSMONITOR_USE_DAEMON must be disabled when using torch profiler on Ascend, or a RuntimeError will be raised
+  quick_guide: Set to an absolute writable directory path only when torch profiling is needed; leave empty for normal inference.
+analysis_date: '2026-07-06'

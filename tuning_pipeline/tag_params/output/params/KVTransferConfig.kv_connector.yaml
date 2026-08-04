@@ -1,0 +1,130 @@
+name: KVTransferConfig.kv_connector
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:26
+- vllm/config/vllm.py:701
+- vllm_ascend/distributed/kv_transfer/__init__.py:21
+- docs/source/user_guide/feature_guide/lmcache_ascend_deployment.md:72
+value_type: str
+default: null
+valid_choices:
+- null
+- A connector name registered with KVConnectorFactory on the target platform.
+- A connector class name supplied by KVTransferConfig.kv_connector_module_path.
+cli_example: vllm serve <model> --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_both"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This field selects the implementation used to move or offload KV-cache blocks. The null default leaves connector-backed
+  KV transfer disabled when no KVTransferConfig is supplied. A non-null name, together with a valid kv_role, makes the configuration
+  a producer, consumer, or both and causes connector-specific scheduler and worker paths to load or store external KV. That
+  can avoid prefill recomputation in disaggregated serving or extend effective KV capacity through CPU or external storage,
+  but adds connector-specific transfer, synchronization, metadata, and memory costs. Ascend gives the name additional platform-specific
+  meaning by registering Mooncake, AscendStore, UCM, and LMCache implementations, replacing MultiConnector, and overriding
+  SimpleCPUOffloadConnector with an NPU adaptation. Consequently there is no globally fastest value: latency, throughput,
+  and host/device memory effects depend on the selected connector, transport, KV role, topology, cache-hit rate, and extra
+  configuration.'
+usage_locations:
+- file: vllm/config/kv_transfer.py:103
+  context: Rejects a non-null connector when kv_role is omitted; the following properties use the connector plus role to classify
+    transfer, producer, and consumer instances.
+- file: vllm/config/vllm.py:701
+  context: Selects an offloading connector automatically when KV offloading is enabled, supplies connector-specific CPU capacity,
+    and sets kv_role to kv_both.
+- file: vllm/config/vllm.py:720
+  context: Treats a null connector as disabling connector compatibility checks; configured connectors are rejected with CUDA
+    expandable segments unless sleep mode provides stable KV allocations.
+- file: vllm_ascend/distributed/kv_transfer/__init__.py:21
+  context: Registers the Ascend connector-name mappings, overrides MultiConnector, and conditionally replaces SimpleCPUOffloadConnector
+    with its NPU implementation.
+- file: vllm_ascend/worker/model_runner_v1.py:452
+  context: Derives producer and consumer execution flags from the configured KV-transfer instance, changing how newly scheduled
+    requests use KV data.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:91
+  context: Reads the selected name at connector construction and warns that the MooncakeConnectorStoreV1 alias should be replaced
+    by AscendStoreConnector.
+- file: docs/source/user_guide/feature_guide/kv_cache_cpu_offload.md:49
+  context: Shows the Ascend CPU-offload configuration and documents the associated CPU block allocation, block size, and NPU
+    offload spec.
+related_parameters:
+- name: KVTransferConfig.kv_role
+  relation: Required whenever kv_connector is non-null and determines whether the instance produces, consumes, or both produces
+    and consumes KV cache.
+- name: KVTransferConfig.kv_connector_extra_config
+  relation: Supplies implementation-specific transport, capacity, block, and behavior settings, so it determines much of the
+    selected connector's performance.
+- name: KVTransferConfig.kv_connector_module_path
+  relation: When set, loads an external module and interprets kv_connector as the class name instead of using the internal
+    registry.
+- name: CacheConfig.kv_offloading_size
+  relation: Enables automatic selection of an offloading connector and sizes its CPU allocation.
+- name: SchedulerConfig.disable_hybrid_kv_cache_manager
+  relation: Must be enabled for a connector that does not support the hybrid KV-cache manager.
+constraints:
+- A non-null connector requires kv_role to be kv_producer, kv_consumer, or kv_both; omission of the role raises ValueError.
+- The name must resolve through the connector registry for the installed platform, or through kv_connector_module_path; availability
+  therefore differs between upstream vLLM and vllm-ascend.
+- External connector classes must exist in kv_connector_module_path and accept kv_cache_config as their third constructor
+  argument.
+- Connectors without hybrid-memory-allocation support require disable_hybrid_kv_cache_manager.
+- Upstream rejects any configured KV connector with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True unless sleep mode is
+  enabled, because remapping can invalidate registered KV memory.
+- Encoder-decoder models are not currently supported by the connector-backed scheduler path.
+tuning_advice:
+  summary: Leave KV transfer unconfigured for a conventional single-engine deployment; otherwise choose the connector required
+    by the intended disaggregation or offload architecture, then benchmark it with the real topology and hit rate.
+  suggested_values:
+  - scenario: Conventional serving without KV sharing or offload
+    value: unset
+    reason: Avoids connector initialization, transfer synchronization, metadata, and auxiliary memory when external KV reuse
+      is not needed.
+  - scenario: Ascend prefill/decode disaggregation using Mooncake
+    value: MooncakeConnectorV1
+    reason: Selects the Ascend Mooncake point-to-point implementation registered by the platform; pair it with the role and
+      transport settings prescribed for each prefill and decode instance.
+  - scenario: Ascend external or pooled KV storage
+    value: AscendStoreConnector
+    reason: Selects the Ascend store implementation directly and avoids the deprecated MooncakeConnectorStoreV1 alias.
+  - scenario: Ascend deployment integrated with LMCache-Ascend
+    value: LMCacheAscendConnector
+    reason: Selects the platform-registered LMCache adapter when the required LMCache-Ascend package and configuration are
+      installed.
+  caveats:
+  - Connector benefits require reusable external KV; low hit rates or slow links can make transfer overhead exceed the saved
+    prefill computation.
+  - 'Connector names are not portable by themselves: dependencies, supported models, cache layouts, roles, ports, ranks, and
+    extra configuration must match across participating instances.'
+  - Offloading can reduce NPU KV pressure but consumes CPU or external-store capacity and introduces load/store latency.
+  - Do not infer that an upstream connector name has the same implementation on Ascend; the platform registry overrides some
+    names and adds others.
+  quick_guide: Keep it unset unless the serving design explicitly needs KV transfer; on Ascend use the connector named by
+    the relevant feature guide, configure matching roles and extras on every participant, and compare end-to-end time-to-first-token,
+    inter-token latency, throughput, hit rate, and memory.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

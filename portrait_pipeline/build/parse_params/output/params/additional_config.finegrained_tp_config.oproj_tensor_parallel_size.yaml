@@ -1,0 +1,81 @@
+name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:418
+value_type: int
+default: '0'
+valid_choices: non-negative integer; must divide data_parallel_size when > 0
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When set to a positive value, this parameter enables fine-grained tensor parallelism specifically for the
+  output projection (o_proj) layer in MoE models on Ascend NPU. It creates a dedicated communication group (_OTP) of the specified
+  size via `_create_or_get_group` in vllm_ascend/distributed/parallel_state.py:135-143, which is then used by AscendRowParallelLinear
+  for the o_proj layer (tests/ut/ops/test_linear.py:126-134). This allows the o_proj computation to be parallelized across
+  a subset of devices independently from the global tensor parallel size, reducing communication overhead for this specific
+  layer. The feature is designed for Prefill-Decode (PD) disaggregation scenarios on Ascend NPU, specifically for the decode
+  (D) node, and requires graph mode (enforce_eager must be False). It is only supported for MoE models. Performance improvement
+  comes from reducing the all-reduce communication cost for the o_proj layer by using a smaller communication group than the
+  global tensor parallel group, which is particularly beneficial for DeepSeek models as noted in the release notes (PR #2167).
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:418
+  context: Parsed from finegrained_tp_config dict with default 0
+- file: vllm_ascend/ascend_config.py:425-434
+  context: 'Validation: requires graph mode and PD D-node scenario'
+- file: vllm_ascend/distributed/parallel_state.py:135
+  context: Creates _OTP communication group when size > 0
+- file: vllm_ascend/utils.py:971
+  context: oproj_tp_enable() helper checks if size > 0
+- file: vllm_ascend/utils.py:1338-1341
+  context: Mutual exclusion check with flashcomm2_oproj_tensor_parallel_size
+related_parameters:
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for lm_head layer
+- name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for MLP layers
+- name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for embedding layer
+- name: additional_config.finegrained_tp_config.olora_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for o_lora layer
+- name: flashcomm2_oproj_tensor_parallel_size
+  relation: Mutually exclusive; cannot be enabled simultaneously
+- name: --enforce-eager
+  relation: Must be False (graph mode required) when oproj_tensor_parallel_size > 0
+- name: --data-parallel-size
+  relation: oproj_tensor_parallel_size must divide data_parallel_size
+constraints:
+- oproj_tensor_parallel_size must be 0 or a positive integer.
+- When oproj_tensor_parallel_size > 0, enforce_eager must be False (graph mode is required).
+- When oproj_tensor_parallel_size > 0, the model must be an MoE model (is_moe must be True).
+- When oproj_tensor_parallel_size > 0, kv_transfer_config must be set and is_kv_consumer must be True (PD D-node scenario
+  only).
+- oproj_tensor_parallel_size must divide data_parallel_size evenly.
+- oproj_tensor_parallel_size cannot be enabled simultaneously with flashcomm2_oproj_tensor_parallel_size.
+tuning_advice:
+  summary: 'Enable oproj_tensor_parallel_size for MoE models (especially DeepSeek) in PD disaggregation decode nodes to reduce
+    o_proj all-reduce communication overhead and improve throughput.
+
+    '
+  suggested_values:
+  - scenario: Default / feature disabled
+    value: '0'
+    reason: Disables fine-grained TP for o_proj; safe default for all scenarios.
+  - scenario: MoE model (e.g., DeepSeek) in PD disaggregation D-node with graph mode
+    value: '2'
+    reason: 'Enables o_proj TP with a group size of 2, reducing communication overhead for the output projection layer. This
+      is the value used in tests and aligns with the documented improvement for DeepSeek models (PR #2167).'
+  caveats:
+  - This feature is only supported for MoE models — attempting to use it with dense models will raise an AssertionError.
+  - Requires PD (Prefill-Decode) disaggregation deployment and must be set on the D (decode) node only.
+  - Graph mode is mandatory (enforce_eager=False); eager mode will raise an AssertionError.
+  - Mutually exclusive with flashcomm2_oproj_tensor_parallel_size — choose one approach for o_proj optimization.
+  - The oproj_tensor_parallel_size must divide data_parallel_size evenly, otherwise an AssertionError is raised.
+  quick_guide: Set to 2 for DeepSeek MoE models on Ascend PD D-nodes with graph mode to reduce o_proj communication overhead.
+analysis_date: '2026-07-06'

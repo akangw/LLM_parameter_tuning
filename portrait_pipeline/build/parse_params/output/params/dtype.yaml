@@ -1,0 +1,93 @@
+name: --dtype
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:772
+value_type: str
+default: auto
+valid_choices:
+- auto
+- half
+- float16
+- bfloat16
+- float
+- float32
+cli_example: --dtype bfloat16
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "--dtype controls the data type used for model weights and activations during inference. On Ascend NPU, this\
+  \ directly determines: 1. **Memory footprint**: float32 uses 4 bytes per element, float16/bfloat16 use 2 bytes.\n   For\
+  \ a 7B model, this is ~14 GB vs ~28 GB for weights alone.\n2. **Compute throughput**: Ascend NPUs (Da Vinci architecture)\
+  \ have specialized hardware\n   units for float16 and bfloat16 computation. Using float32 forces the NPU to use slower\n\
+  \   general-purpose compute paths, significantly reducing token generation speed.\n3. **Attention mask generation**: In\
+  \ vllm-ascend's 310P backend, attention masks are\n   explicitly created as float16 tensors (vllm_ascend/_310p/attention/attention_mask.py:59),\n\
+  \   and intermediate computations in MoE routing cast topk_weights to the hidden_states dtype\n   (vllm_ascend/_310p/fused_moe/fused_moe.py:108,\
+  \ token_dispatcher.py:53). Using float32\n   would cause dtype mismatches and additional conversion overhead.\n4. **Kernel\
+  \ compatibility**: Many Ascend-optimized kernels (fused MoE, attention) expect\n   float16 or bfloat16 inputs. Using float32\
+  \ may fall back to less optimized code paths\n   or cause errors.\nThe \"auto\" default selects FP16 for FP32/FP16 models\
+  \ and BF16 for BF16 models, which is the recommended behavior for Ascend NPUs.\n"
+usage_locations:
+- file: vllm/engine/arg_utils.py:772
+  context: CLI argument registration for ModelConfig
+- file: vllm_ascend/_310p/attention/attention_mask.py:59
+  context: Causal attention mask created as float16 tensor on 310P
+- file: vllm_ascend/_310p/fused_moe/fused_moe.py:108
+  context: MoE topk_weights cast to hidden_states dtype before expert computation
+- file: vllm_ascend/_310p/fused_moe/token_dispatcher.py:53
+  context: Router weight application casts topk_weights to hidden_states dtype
+related_parameters:
+- name: --quantization
+  relation: Quantization methods (AWQ, GPTQ) typically require float16. Using float32 with quantization may cause errors.
+- name: --kv-cache-dtype
+  relation: KV cache dtype should match or be compatible with model dtype for optimal performance.
+- name: --override-attention-dtype
+  relation: Can override attention computation dtype independently from model dtype.
+constraints:
+- AWQ quantization requires float16 (half) dtype.
+- Using float32 on Ascend NPU may cause dtype mismatch errors in attention mask generation and MoE routing.
+- The dtype must be compatible with the model's original training precision to avoid accuracy degradation.
+tuning_advice:
+  summary: 'Always use bfloat16 or float16 on Ascend NPU for optimal performance. Avoid float32 unless debugging numerical
+    issues.
+
+    '
+  suggested_values:
+  - scenario: General production inference on Ascend NPU
+    value: bfloat16
+    reason: 'bfloat16 provides the same dynamic range as float32 with half the memory, and Ascend NPUs have native hardware
+      support for bfloat16 compute. It is more numerically stable than float16 for large models.
+
+      '
+  - scenario: AWQ quantized models
+    value: half
+    reason: 'AWQ quantization is designed for float16 precision. Using other dtypes may cause loading errors or incorrect
+      results.
+
+      '
+  - scenario: Debugging numerical accuracy issues
+    value: float32
+    reason: 'float32 provides full precision for comparing outputs against reference implementations. Expect significantly
+      lower throughput and higher memory usage.
+
+      '
+  - scenario: Default/auto-detect
+    value: auto
+    reason: 'Automatically selects FP16 for FP32/FP16 models and BF16 for BF16 models, which is the safest choice when model
+      precision is unknown.
+
+      '
+  caveats:
+  - float32 on Ascend NPU causes 2x memory usage and significantly lower throughput due to lack of hardware acceleration for
+    FP32 matrix operations.
+  - Mixing dtypes (e.g., float32 model with float16 KV cache) may cause silent numerical errors or explicit dtype mismatch
+    exceptions in vllm-ascend's 310P attention and MoE kernels.
+  - The 310P backend hardcodes float16 for attention masks; using float32 model dtype forces runtime dtype conversions that
+    add overhead.
+  - Some Ascend-optimized fused kernels only support float16/bfloat16 inputs and will raise errors with float32.
+  quick_guide: Use --dtype bfloat16 for best Ascend NPU performance; use --dtype half for AWQ models; avoid float32 in production.
+analysis_date: '2026-07-06'

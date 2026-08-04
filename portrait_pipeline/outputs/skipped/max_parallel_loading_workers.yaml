@@ -1,0 +1,6 @@
+name: --max-parallel-loading-workers
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source, ParallelConfig.__post_init__ warns that a non-null max_parallel_loading_workers value
+  is unsupported and ignored. The pinned vLLM-Ascend repository contains no override or use of this setting, so it has no
+  current latency, throughput, or memory effect.

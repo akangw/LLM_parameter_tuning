@@ -1,0 +1,106 @@
+name: OnlineQuantizationConfigArgs.ignore
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/quantization.py:48
+- vllm/config/quantization.py:65
+- vllm/config/model.py:209
+- vllm/engine/arg_utils.py:724
+- docs/features/quantization/online.md:78
+value_type: list[str]
+default: []
+valid_choices: 'Exact layer names or regular-expression patterns prefixed with re:'
+cli_example: 'quantization_config={"ignore": ["model.layers.1.self_attn.o_proj", "re:.*[qkv]_proj"]}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This list selectively keeps matching LinearBase and FusedMoE layers at their original BF16/FP16 precision while
+  the rest of a model uses online quantization. OnlineQuantizationConfig copies the entries into ignored_layers and returns
+  UnquantizedLinearMethod or UnquantizedFusedMoEMethod for a matching layer instead of the configured FP8, MXFP8, or INT8
+  method. Consequently, broader exclusions retain more full-precision weight memory and memory traffic, reduce the online
+  conversion and quantize/dequantize work for those layers, and can materially change model-load cost, runtime latency, throughput,
+  peak device memory, and numerical quality. The empty default excludes nothing. A narrowly targeted list may have a modest
+  effect, while a regex matching most supported layers can largely remove the memory and kernel benefits of online quantization,
+  so the possible performance impact is high.
+usage_locations:
+- file: vllm/config/quantization.py:48
+  context: Declares the empty-list default and accepts exact layer names or re:-prefixed regular expressions.
+- file: vllm/config/quantization.py:65
+  context: Resolves the containing online quantization configuration from EngineArgs quantization and quantization_config
+    values.
+- file: vllm/config/model.py:209
+  context: Carries the resolved OnlineQuantizationConfigArgs object, including ignore, in ModelConfig.
+- file: vllm/engine/arg_utils.py:724
+  context: Resolves and validates the containing online quantization configuration before ModelConfig construction.
+- file: docs/features/quantization/online.md:78
+  context: Documents exact-name and regex exclusions and warns that fused layers must be addressed using unfused shard names.
+related_parameters:
+- name: EngineArgs.quantization
+  relation: Must select online quantization or an OnlineQuantScheme before this exclusion list can influence layer methods.
+- name: OnlineQuantizationConfigArgs.global_scheme
+  relation: Supplies the fallback scheme for supported layers that are not ignored.
+- name: OnlineQuantizationConfigArgs.linear_scheme_override
+  relation: Selects the LinearBase recipe, but an ignore match takes precedence and leaves that linear layer unquantized.
+- name: OnlineQuantizationConfigArgs.moe_scheme_override
+  relation: Selects the FusedMoE recipe, but an ignore match takes precedence and leaves that MoE layer unquantized.
+constraints:
+- The default empty list matches no layers and therefore does not alter the configured online quantization recipes.
+- 'Entries without re: are matched as exact full layer prefixes; entries beginning with re: are interpreted as regular expressions.'
+- For fused modules such as qkv_proj or gate_up_proj, patterns must match the unfused checkpoint shard names rather than only
+  the fused module name.
+- All shards belonging to a fused layer must make the same ignore decision; a pattern that matches only some shards raises
+  ValueError because vLLM requires them to use one quantization scheme.
+- This field is effective only within a valid online quantization configuration, which requires at least one of global_scheme,
+  linear_scheme_override, or moe_scheme_override.
+- The pinned vllm-ascend repository contains no direct consumer of OnlineQuantizationConfigArgs or this ignore field; upstream
+  behavior and performance benefits must not be assumed available on Ascend NPU.
+tuning_advice:
+  summary: Keep the list empty for the maximum online-quantization coverage, then exclude only layers whose measured quality
+    loss justifies the added full-precision memory and bandwidth cost.
+  suggested_values:
+  - scenario: Maximum online-quantization coverage and memory reduction
+    value: []
+    reason: The default leaves every supported LinearBase and FusedMoE layer eligible for the configured low-precision method.
+  - scenario: Preserve one known accuracy-sensitive projection
+    value:
+    - model.layers.1.self_attn.o_proj
+    reason: An exact full prefix limits the full-precision fallback to one identified layer and makes the performance tradeoff
+      easier to measure.
+  - scenario: Preserve all query, key, and value projection shards
+    value:
+    - re:.*[qkv]_proj
+    reason: This documented pattern addresses unfused shard names, which is required for qkv_proj-style fused modules, but
+      may retain many weights at full precision.
+  caveats:
+  - Excluding layers can improve numerical quality but reduces online quantization's weight-memory and bandwidth savings.
+  - Regexes can match much more of the model than intended; inspect model layer prefixes and compare peak memory before and
+    after each pattern change.
+  - A fused-layer regex that selects only a subset of its unfused shards is invalid rather than a partial exclusion.
+  - Avoid assuming that skipping quantization improves latency. The result depends on the balance between conversion or scaling
+    overhead, lower-precision kernel efficiency, memory bandwidth, model architecture, and batch shape.
+  - The pinned Ascend plugin implements separate checkpoint quantization paths but does not reference this upstream online-quantization
+    exclusion list, so validate support independently before using it on NPU.
+  quick_guide: Start with [], add exact full layer prefixes for isolated quality fixes, use re:-prefixed patterns only after
+    checking their matches, and benchmark accuracy, model-load time, latency, throughput, and peak memory on the target backend.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

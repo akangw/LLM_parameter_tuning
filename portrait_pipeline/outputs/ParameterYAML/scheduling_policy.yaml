@@ -1,0 +1,81 @@
+name: --scheduling-policy
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:22
+- vllm/config/scheduler.py:109
+- vllm/engine/arg_utils.py:1347
+- vllm/engine/arg_utils.py:1975
+- vllm/v1/request.py:302
+- vllm_ascend/core/recompute_scheduler.py:350
+- vllm_ascend/core/scheduler_dynamic_batch.py:238
+value_type: str
+default: fcfs
+valid_choices:
+- fcfs
+- priority
+cli_example: --scheduling-policy priority
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This option selects the ordering and preemption policy used by the V1 scheduler. The default "fcfs" policy
+  orders waiting requests by arrival, whereas "priority" orders them by ascending numeric request priority and then arrival
+  time; the Request comparison adds request ID as a deterministic tie-breaker. Under queueing or KV-cache pressure, priority
+  mode can admit important requests earlier and, when space cannot be allocated, preempt the running request with the least-favorable
+  (largest) priority and latest arrival. This redistributes queueing and tail latency between request classes, but does not
+  change token budgets, model kernels, or KV-cache capacity, so its direct aggregate-throughput effect is normally low. Ascend
+  custom schedulers inherit the configured policy, build policy-aware waiting queues, and retain the priority-specific preemption
+  branch, so the behavior also applies to vllm-ascend.
+usage_locations:
+- file: vllm/config/scheduler.py:109
+  context: Defines SchedulerConfig.policy, its "fcfs" default, the two accepted policies, and the lower-number-is-earlier
+    priority semantics.
+- file: vllm/engine/arg_utils.py:1347
+  context: Registers --scheduling-policy from the SchedulerConfig field metadata.
+- file: vllm/engine/arg_utils.py:1975
+  context: Copies the CLI value into SchedulerConfig.policy during engine configuration.
+- file: vllm/v1/request.py:302
+  context: Defines priority-queue ordering by priority, arrival time, request ID, and finally object identity.
+- file: vllm_ascend/core/recompute_scheduler.py:350
+  context: Ascend recompute scheduling uses the priority policy to select the least-favorable running request for preemption.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:305
+  context: Ascend dynamic batching creates its temporary waiting queue with the inherited policy.
+related_parameters:
+- name: --max-num-seqs
+  relation: A smaller concurrency ceiling creates a waiting backlog sooner, making request ordering and priority preemption
+    more visible.
+- name: --max-num-batched-tokens
+  relation: The per-step token budget constrains how many ordered requests can be admitted in one scheduling iteration.
+- name: --scheduler-cls
+  relation: A custom scheduler class must honor SchedulerConfig.policy for these ordering guarantees to remain valid.
+constraints:
+- The value must be exactly "fcfs" or "priority".
+- In priority mode, a lower integer request priority is scheduled before a higher integer value.
+- Requests default to priority 0, so differentiated ordering requires clients to submit distinct priority values.
+tuning_advice:
+  summary: Keep "fcfs" for undifferentiated traffic; use "priority" only when request classes have explicit latency importance
+    and clients reliably populate request priorities.
+  suggested_values:
+  - scenario: General serving where requests have equal importance
+    value: fcfs
+    reason: It preserves arrival-oriented ordering and avoids introducing latency preference between otherwise equivalent
+      requests.
+  - scenario: Mixed-SLA serving with a persistent waiting queue
+    value: priority
+    reason: It lets lower-valued priorities move ahead in the waiting queue and influences which running request is preempted
+      under allocation pressure.
+  caveats:
+  - Priority changes latency distribution rather than compute capacity; benchmark per-class P50/P99 latency and throughput
+    at the intended load.
+  - If every client leaves priority at its default 0, priority ordering falls back to arrival time and provides no class differentiation.
+  - Sustained high-priority arrivals can delay lower-priority traffic; enforce admission control or quotas when bounded latency
+    is required for every class.
+  - The upstream scheduling loop can skip a temporarily constrained request, so neither policy is an absolute guarantee that
+    every iteration follows queue order without exception.
+  - Third-party scheduler classes may interpret or ignore the policy; verify custom implementations separately.
+  quick_guide: Start with fcfs. Select priority only after defining request priority classes, then load-test latency for both
+    favored and unfavored classes.
+analysis_date: '2026-07-27'

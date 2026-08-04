@@ -1,0 +1,68 @@
+name: eplb.log_balancedness_interval
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/distributed/eplb/eplb_state.py:511
+- vllm/distributed/eplb/eplb_state.py:622
+value_type: int
+default: '300'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls how often (in steps) the EPLB (Expert Parallelism Load Balancing) balancedness metrics
+  are logged. At each interval, the system synchronizes expert load statistics across ranks and computes balancedness ratios.
+  The primary performance impact is indirect: "when log_stats is enabled, the `_should_record_current_step` method uses" this
+  interval to determine whether to enable expert load recording for upcoming logging steps. Recording requires maintaining
+  a sliding window of expert load data, which consumes additional memory and compute. A smaller interval increases logging
+  frequency and may cause more steps to fall within the recording window, slightly increasing overhead. However, this parameter
+  does not affect the actual expert rearrangement logic — it only governs observability and the recording window for logging
+  purposes.
+
+  '
+usage_locations:
+- file: vllm/distributed/eplb/eplb_state.py:511
+  context: Used as divisor to check if current step should trigger balancedness logging and metric synchronization across
+    ranks.
+- file: vllm/distributed/eplb/eplb_state.py:622
+  context: Used to compute steps_until_next_log, which determines whether expert load recording should be enabled for the
+    current step.
+related_parameters:
+- name: eplb.expert_load_window_size
+  relation: Recording for logging is enabled when steps_until_next_log <= expert_load_window_size. A larger window combined
+    with a small log interval increases recording overhead.
+- name: eplb.rearrange_step_interval
+  relation: Recording is also enabled for rearrangement purposes. The log interval and rearrange interval independently trigger
+    recording windows.
+constraints:
+- Must be a positive integer.
+tuning_advice:
+  summary: Use the default value (300) for most deployments; increase to reduce logging overhead, decrease only if frequent
+    balancedness monitoring is needed for debugging.
+  suggested_values:
+  - scenario: Production deployment with stable expert load
+    value: 300
+    reason: Default value provides sufficient observability without meaningful overhead. Logging every 300 steps is infrequent
+      enough that the recording window overhead is negligible.
+  - scenario: Debugging expert load imbalance issues
+    value: 50
+    reason: More frequent logging helps diagnose load balancing problems quickly. The slight increase in recording overhead
+      is acceptable during debugging.
+  - scenario: Maximizing throughput with minimal observability overhead
+    value: 1000
+    reason: Reduces the frequency of balancedness logging and the associated recording window activation, minimizing any potential
+      throughput impact.
+  caveats:
+  - This parameter only affects logging and the recording window for logging purposes; it does not control when expert rearrangement
+    actually occurs.
+  - The overhead from recording is proportional to expert_load_window_size, not the log interval itself. A small log interval
+    combined with a large window size can cause recording to be active on most steps.
+  - On Ascend NPU, the synchronization of expert load statistics across ranks (all-reduce or similar collective) at each logging
+    step adds communication overhead proportional to the number of experts and MoE layers.
+  quick_guide: Keep the default 300 unless debugging load imbalance; the performance impact of logging is minimal compared
+    to rearrangement operations.
+analysis_date: '2026-07-06'

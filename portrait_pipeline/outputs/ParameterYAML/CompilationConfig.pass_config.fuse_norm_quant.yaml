@@ -1,0 +1,92 @@
+name: CompilationConfig.pass_config.fuse_norm_quant
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/compilation.py:121
+- vllm/config/vllm.py:96
+- vllm/config/vllm.py:198
+- docs/design/fusions.md:317
+- vllm_ascend/platform.py:143
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+value_type: bool
+default: <computed>
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'In upstream vLLM, true registers the RMSNormQuantFusionPass (and the AITER variant on ROCm) in the post-gradient
+  compilation pipeline. Matching plain RMSNorm or fused residual-add RMSNorm followed by supported FP8/FP4 quantization is
+  replaced by a fused operation. This avoids materializing and rereading a full-precision activation and reduces kernel launches,
+  improving steady-state latency and throughput and reducing transient activation traffic; upstream documentation reports
+  a conditional 1-4% end-to-end speedup. False leaves the operations to Inductor or separate custom kernels. The effective
+  default is computed after platform and optimization-level initialization: O0 sets false, while O1 through O3 call enable_norm_fusion,
+  which enables the pass only when rms_norm or quant_fp8 is a custom op, or the selected RMSNorm IR implementation is non-native.
+  On NVIDIA with native ops, Inductor''s own generated fusion is faster, so the custom pass normally remains off. On the pinned
+  Ascend plugin this field has no effect: Ascend replaces the upstream pass manager and its analogous AddRMSNormQuantFusionPass
+  is controlled by the distinct additional_config.ascend_compilation_config.fuse_norm_quant key, enabled by default except
+  on 310P.'
+usage_locations:
+- file: vllm/config/compilation.py:121
+  context: Defines the delayed boolean field for fusing custom RMSNorm and quantization operations.
+- file: vllm/config/vllm.py:96
+  context: Computes the O1-O3 default from custom-op enablement and the selected RMSNorm IR implementation.
+- file: vllm/config/vllm.py:198
+  context: Assigns the conditional default at optimization level O1; O2 and O3 use the same function, while O0 assigns false.
+- file: vllm_ascend/platform.py:143
+  context: Selects Ascend's GraphFusionPassManager in place of the upstream pass manager that reads this field.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+  context: Shows that Ascend gates its analogous pass with the separate additional_config key and skips it on 310P.
+related_parameters:
+- name: optimization_level
+  relation: O0 supplies false; O1, O2, and O3 supply a hardware- and kernel-dependent default unless this field was explicitly
+    set.
+- name: CompilationConfig.custom_ops
+  relation: Enabling rms_norm or quant_fp8 as a custom op makes the computed O1-O3 default true.
+- name: CompilationConfig.pass_config.eliminate_noops
+  relation: Disabling no-op elimination can prevent RMSNorm-plus-quant patterns from matching; the configuration emits a warning
+    when both settings conflict.
+- name: additional_config.ascend_compilation_config.fuse_norm_quant
+  relation: This separate Ascend-only key controls the analogous NPU graph fusion because Ascend does not consume this upstream
+    PassConfig field.
+constraints:
+- The upstream custom pass runs only in a vLLM compilation path that installs the post-gradient pass manager; eager execution
+  cannot apply it.
+- Fusion changes only graph regions containing a supported RMSNorm or fused-add RMSNorm immediately followed by a supported
+  quantization pattern.
+- The pinned upstream patterns register only epsilon values 1e-5 and 1e-6 and require RMSNorm input and weight dtypes to match.
+- This parameter does not enable or disable the analogous fusion on Ascend; use additional_config.ascend_compilation_config.fuse_norm_quant
+  there.
+tuning_advice:
+  summary: Leave the computed default in place; force true only for a supported upstream custom-op path after benchmarking,
+    and do not use this field to tune Ascend.
+  suggested_values:
+  - scenario: Upstream vLLM with native NVIDIA RMSNorm and quantization operators
+    value: false
+    reason: Inductor can generate the faster fusion itself, which is why the computed default does not register the custom
+      pass for this path.
+  - scenario: Upstream vLLM using a supported custom RMSNorm or quant_fp8 operator
+    value: true
+    reason: The custom pass can remove the intermediate full-precision activation and separate kernel launch, with a documented
+      conditional 1-4% end-to-end gain.
+  - scenario: Ascend deployment
+    value: false
+    reason: Either boolean value is ineffective on Ascend; tune the separate additional_config.ascend_compilation_config.fuse_norm_quant
+      key instead.
+  caveats:
+  - Explicit true does not guarantee a match; unsupported quantization layouts, epsilon values, dtype combinations, or graph
+    shapes remain unfused.
+  - Disabling eliminate_noops can leave reshapes that prevent matching even when this field is true.
+  - The memory benefit is intermediate activation traffic and lifetime, not a documented reduction in model weights or KV-cache
+    capacity.
+  - On Ascend, the separate fusion is enabled by default on non-310P devices and forcibly skipped on 310P, independently of
+    this value.
+  quick_guide: Keep the automatic upstream value, verify pass match logs and benchmark before overriding it, and use the Ascend-specific
+    additional_config key on NPU deployments.
+analysis_date: '2026-07-30'

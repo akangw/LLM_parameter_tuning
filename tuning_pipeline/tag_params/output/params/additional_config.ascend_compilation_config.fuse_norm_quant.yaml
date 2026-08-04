@@ -1,0 +1,110 @@
+name: additional_config.ascend_compilation_config.fuse_norm_quant
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:485
+- vllm_ascend/compilation/compiler_interface.py:259
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+- vllm_ascend/compilation/passes/norm_quant_fusion_pass.py:477
+- docs/source/user_guide/configuration/additional_config.md:134
+- docs/source/tutorials/hardwares/310p.md:122
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":false,"fuse_norm_quant":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On the custom Ascend fusion-pass compiler path, enabling this option registers AddRMSNormQuantFusionPass.
+  The pass pattern-matches supported residual-add/RMSNorm followed by static or dynamic quantization and replaces the sequence
+  with fused Ascend NPU operators; sequence-parallel variants move the all-gather to the quantized output. Successful matches
+  can reduce operator launches and full-precision intermediate memory traffic, improving steady-state latency and throughput.
+  The effect is conditional: the explicit pass-manager path is selected only when enable_npugraph_ex is false, 310P suppresses
+  registration regardless of this value, only FP16 or BF16 model dtypes register patterns, and a graph must match one of the
+  implemented patterns. With enable_npugraph_ex true, current Ascend compiler code does not consume this flag in its npugraph_ex/TorchAir
+  backend configuration. Upstream vLLM has a similarly named PassConfig option, but it uses different CUDA/HIP passes and
+  kernels and therefore does not define this Ascend option''s behavior.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:485
+  context: Defines the nested boolean with a true default and stores it on AscendCompilationConfig.
+- file: vllm_ascend/platform.py:399
+  context: Normalizes the typed Ascend compilation settings into additional_config so downstream dictionary consumers see
+    the declared default.
+- file: vllm_ascend/compilation/compiler_interface.py:259
+  context: Selects npugraph_ex compilation when enable_npugraph_ex is true and the custom fusion-pass compiler, where this
+    flag is consumed, when it is false.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+  context: Registers AddRMSNormQuantFusionPass when this value is true and the hardware is not 310P.
+- file: vllm_ascend/compilation/passes/norm_quant_fusion_pass.py:477
+  context: Registers FP16/BF16 static-quant and dynamic-quant patterns, including bias and sequence-parallel variants where
+    supported, and applies their fused replacements.
+- file: docs/source/tutorials/hardwares/310p.md:122
+  context: Demonstrates explicitly setting the option false in documented 310P serving configurations.
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: A false value selects the custom fusion-pass compiler that consumes fuse_norm_quant; when true, current npugraph_ex/TorchAir
+    backend configuration does not read this flag.
+- name: dtype
+  relation: The pass registers patterns only when the model dtype is torch.float16 or torch.bfloat16.
+- name: quantization
+  relation: A supported norm-to-quant graph is required for a match; graphs without the implemented static or dynamic quantization
+    patterns receive no rewrite.
+- name: compilation_config.pass_config.enable_sp
+  relation: The pass includes sequence-parallel patterns that quantize before the maybe_all_gather_and_maybe_unpad operation
+    when those graph shapes match.
+constraints:
+- The explicit fusion pass is used only on the custom fusion-pass compiler path, which requires enable_npugraph_ex=false in
+  current Ascend compiler code.
+- On 310P, GraphFusionPassManager skips AddRMSNormQuantFusionPass regardless of the configured value.
+- Pattern registration requires a model dtype of FP16 or BF16; other dtypes leave the pass with no registered patterns.
+- A gain requires an implemented residual-add/RMSNorm plus quantization pattern to occur in the compiled FX graph; enabling
+  the flag does not guarantee a match.
+tuning_advice:
+  summary: Keep true on non-310P FP16/BF16 deployments using the custom fusion-pass compiler when supported norm-to-quant
+    patterns occur; otherwise the setting is inert and can be left false for clarity or pass isolation.
+  suggested_values:
+  - scenario: Non-310P FP16/BF16 quantized serving with enable_npugraph_ex=false
+    value: true
+    reason: Allows matching norm-and-quant sequences to be replaced by fused Ascend operators, reducing launches and intermediate
+      full-precision traffic.
+  - scenario: 310P serving
+    value: false
+    reason: The pass manager suppresses this fusion on 310P, and the pinned 310P examples explicitly disable the option.
+  - scenario: Diagnosing numerical or compilation behavior in a matching quantized model
+    value: false
+    reason: Prevents registration of this rewrite, helping isolate the fused operator from the unfused graph behavior on the
+      custom compiler path.
+  caveats:
+  - With the default enable_npugraph_ex=true, this flag has no direct consumer in the current npugraph_ex/TorchAir backend
+    setup; evaluate the effective compiler path before attributing a benchmark change to it.
+  - Static-quant variants depend on Ascend custom-op availability, while dynamic variants are registered independently; exact
+    coverage varies with the emitted graph.
+  - The fusion affects transient activation traffic and execution overhead, not model-weight size or KV-cache capacity.
+  - Benchmark representative prefill/decode shapes because pattern occurrence and the value of reduced launch or communication
+    overhead are workload-dependent.
+  quick_guide: Use true for eligible non-310P fallback-compiler quantized graphs, false on 310P or while isolating the rewrite,
+    and expect no effect when npugraph_ex remains on.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

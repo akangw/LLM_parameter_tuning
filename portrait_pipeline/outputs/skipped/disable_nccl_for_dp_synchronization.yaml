@@ -1,0 +1,6 @@
+name: --disable-nccl-for-dp-synchronization
+type: cli
+performance_impact: none
+skip_reason: The current pinned vLLM source parses and propagates this value and assigns a runtime default, but contains no
+  consumer of it; the documented vllm/v1/worker/dp_utils.py implementation is absent. The pinned vLLM-Ascend source has no
+  reference. Therefore this option has no verified latency, throughput, or memory effect in the pinned sources.

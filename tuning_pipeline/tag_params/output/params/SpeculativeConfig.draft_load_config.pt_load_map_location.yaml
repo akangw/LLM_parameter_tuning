@@ -1,0 +1,86 @@
+name: SpeculativeConfig.draft_load_config.pt_load_map_location
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:106
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:139
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+value_type: str
+default: cpu
+valid_choices: A torch.load map_location device string, or a dictionary mapping source device strings to destination device
+  strings.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This nested LoadConfig field is the map_location supplied when PyTorch checkpoint shards for the draft model
+  are deserialized. The default cpu keeps the serialized tensors in host memory during the one-time draft-model load; choosing
+  another device or a device-remapping dictionary changes where those tensors are materialized and can therefore shift startup
+  latency and peak host/device memory. It does not change speculative decoding throughput or per-token latency after loading,
+  and it is irrelevant to checkpoint formats whose loader does not call torch.load. The pinned Ascend proposer passes draft_load_config
+  to the model loader without overriding this field.
+usage_locations:
+- file: vllm/config/load.py:106
+  context: Defines the field, its cpu default, and the accepted string or device-map dictionary forms used as torch.load map_location.
+- file: vllm/config/speculative.py:186
+  context: Nests LoadConfig under SpeculativeConfig for loading the draft model and documents inheritance from the target
+    model load configuration when the draft configuration is not supplied.
+- file: docs/features/speculative_decoding/README.md:139
+  context: Classifies draft_load_config as an internal field populated by vLLM rather than a supported user key of --speculative-config.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads the draft LoadConfig and passes it unchanged into get_model for the Ascend draft-model loading path.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config
+  relation: Parent LoadConfig; when absent, the draft model uses the target model load configuration.
+- name: SpeculativeConfig.model
+  relation: Selects the draft model whose PyTorch checkpoint placement is affected.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: Determines the loader path; this map-location setting only matters for a path that deserializes PyTorch checkpoint
+    files with torch.load.
+constraints:
+- 'The value must be accepted by torch.load map_location: a valid device string or a dictionary mapping saved device tags
+  to destination tags.'
+- Dictionary syntax must preserve string keys and values when serialized.
+- draft_load_config is documented as an internal SpeculativeConfig field and is not intended to be supplied through --speculative-config.
+tuning_advice:
+  summary: Keep cpu unless an internally constructed draft LoadConfig must remap a PyTorch checkpoint for compatibility or
+    measured startup-memory reasons.
+  suggested_values:
+  - scenario: Normal draft-model loading
+    value: cpu
+    reason: This is the safe default and avoids materializing checkpoint tensors directly in accelerator memory during deserialization.
+  - scenario: Checkpoint saved with device tags unavailable on the host
+    value:
+      ? ''
+      : cpu
+    reason: Remaps all serialized tensor locations to CPU so the draft checkpoint can be deserialized before normal model
+      placement.
+  caveats:
+  - Any effect is confined to draft-model initialization; steady-state speculative decoding latency and throughput are unchanged.
+  - Direct accelerator placement can raise peak device-memory pressure and may fail when the destination device is unavailable
+    or lacks capacity.
+  - Safetensors and other non-torch.load paths do not use this setting.
+  - The pinned Ascend repository adds no pt_load_map_location-specific validation or tuning behavior.
+  quick_guide: Leave cpu in place; use a device map only to solve a verified PyTorch checkpoint placement problem during draft-model
+    startup.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

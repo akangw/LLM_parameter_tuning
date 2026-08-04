@@ -1,0 +1,111 @@
+name: --tensor-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:943
+- vllm/config/parallel.py:113
+value_type: int
+default: '1'
+valid_choices: positive integer, typically a power of 2 (1, 2, 4, 8)
+cli_example: --tensor-parallel-size 8
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "Tensor parallel size controls how many NPU devices split the model's weight matrices and compute across attention\
+  \ heads and hidden dimensions. On Ascend NPU, this parameter directly determines:\n1. **Memory distribution**: Each NPU\
+  \ holds 1/tp_size of the model weights, reducing\n   per-device memory pressure. This is critical for large models that\
+  \ exceed single-NPU\n   HBM capacity.\n\n2. **Communication overhead**: Higher tp_size introduces HCCL all-reduce/all-gather\n\
+  \   operations after each attention and MLP block. On Ascend, vllm-ascend may use\n   FLASHCOMM1 or FLASHCOMM2 to fuse these\
+  \ communications with computation, but the\n   overhead still grows with tp_size.\n\n3. **Sequence parallelism interaction**:\
+  \ When `enable_sp` is active (FLASHCOMM1),\n   vllm-ascend pads tokens to multiples of tp_size (see `_pad_for_sequence_parallelism`\n\
+  \   in model_runner_v1.py:2626) and adjusts cudagraph capture sizes to be multiples of\n   tp_size (platform.py:459-476).\
+  \ This can cause token padding waste if tp_size is\n   large relative to batch size.\n\n4. **CUDAGraph capture**: The cudagraph\
+  \ capture sizes are validated against tp_size\n   when sequence parallelism is enabled (platform.py:465-468). Mismatched\
+  \ sizes cause\n   assertion errors.\n\n5. **Fine-grained TP**: vllm-ascend supports per-component TP sizes via\n   `finegrained_tp_config`\
+  \ (lmhead_tensor_parallel_size, oproj_tensor_parallel_size,\n   embedding_tensor_parallel_size, mlp_tensor_parallel_size),\
+  \ allowing heterogeneous\n   parallelism within a single model.\n\n6. **Shared expert DP**: The `enable_shared_expert_dp`\
+  \ feature only activates when\n   tp_size > 1 (ascend_config.py:109).\n\n7. **World size constraint**: The product of tp_size\
+  \ × pp_size × pcp_size must equal\n   the total world size (patch_multiproc_executor.py:33-38).\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:2626
+  context: Pads scheduled tokens to multiple of tp_size when sequence parallelism (FLASHCOMM1) is enabled
+- file: vllm_ascend/worker/model_runner_v1.py:2645
+  context: Used in sync_and_slice_intermediate_tensors for SP-aware tensor slicing
+- file: vllm_ascend/platform.py:459
+  context: Validates and adjusts cudagraph capture sizes to be multiples of tp_size when SP is enabled
+- file: vllm_ascend/ascend_config.py:109
+  context: Enables shared expert data parallel only when tp_size > 1
+- file: vllm_ascend/ascend_config.py:116-128
+  context: Adjusts max_num_batched_tokens to be divisible by tp_size × pcp_size for FLASHCOMM1
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:32
+  context: Validates world_size = tp_size × pp_size × pcp_size
+- file: vllm_ascend/worker/worker.py:762
+  context: Passes tp_size to ensure_model_parallel_initialized for HCCL init
+- file: vllm/config/model.py:1141
+  context: Validates total_num_attention_heads % tp_size == 0
+- file: vllm/config/model.py:1164
+  context: Validates tp_size > total_num_kv_heads for decode context parallel with GQA/MQA
+- file: vllm/config/compilation.py:1306
+  context: Used in cudagraph mode resolution for spec decode size adjustments
+related_parameters:
+- name: --pipeline-parallel-size
+  relation: Product with tp_size and pcp_size must equal world_size; combined with tp_size for 2D parallelism
+- name: --prefill-context-parallel-size
+  relation: Product tp_size × pcp_size must divide max_num_batched_tokens when FLASHCOMM1 is enabled
+- name: --decode-context-parallel-size
+  relation: tp_size must be greater than total_num_kv_heads when DCP > 1 for GQA/MQA models
+- name: --data-parallel-size
+  relation: Combined with tp_size to determine total world_size for multi-node deployments
+- name: finegrained_tp_config (additional-config)
+  relation: Overrides tp_size for specific model components (lm_head, o_proj, embedding, mlp)
+- name: '--compilation-config ''{"pass_config": {"enable_sp": true}}'''
+  relation: When SP is enabled, token counts and cudagraph sizes must be multiples of tp_size
+- name: --enable-expert-parallel
+  relation: When expert parallel is enabled with tp_size > 1, shared_expert_dp can be activated
+constraints:
+- tp_size must be a positive integer (typically 1, 2, 4, or 8).
+- Total number of attention heads must be divisible by tp_size.
+- When decode_context_parallel_size > 1 for GQA/MQA models, tp_size must be greater than total_num_kv_heads.
+- The product tp_size × pp_size × pcp_size must equal the total world_size (number of NPUs).
+- When FLASHCOMM1 sequence parallelism is enabled, max_num_batched_tokens must be divisible by tp_size × pcp_size.
+- When FLASHCOMM1 SP is enabled and enforce_eager is False, cudagraph_capture_sizes must contain values that are multiples
+  of tp_size.
+- For speculative decoding with DCP on GQA/MQA draft models, draft_tensor_parallel_size must be greater than total_num_kv_heads.
+tuning_advice:
+  summary: Set tp_size to the smallest value that fits the model in NPU HBM; prefer powers of 2 and ensure attention heads
+    are divisible by tp_size.
+  suggested_values:
+  - scenario: Small models (≤8B parameters) on a single 8-NPU node
+    value: 1 or 2
+    reason: Minimizes HCCL communication overhead; single-NPU inference has lowest latency when model fits in HBM.
+  - scenario: Medium models (8B-32B) on 8 NPUs, e.g., Qwen or Llama
+    value: '8'
+    reason: Distributes weights across all 8 NPUs to fit HBM; documented as performing well for dynamic batch on Qwen/Llama
+      8B-32B (see dynamic_batch.md).
+  - scenario: Large models (>70B) requiring multiple nodes
+    value: '8'
+    reason: Max per-node tp_size on 8-NPU nodes; combine with pipeline parallelism for cross-node scaling.
+  - scenario: Sequence parallelism (FLASHCOMM1) enabled
+    value: 2 or 4
+    reason: Larger tp_size increases token padding waste when SP pads to tp_size multiples; balance parallelism gains against
+      padding overhead.
+  - scenario: Fine-grained TP with heterogeneous component sizes
+    value: Set global tp_size and override specific components via finegrained_tp_config
+    reason: Allows independent TP sizes for embedding, lm_head, o_proj, and MLP to optimize memory and communication per component.
+  caveats:
+  - Larger tp_size increases HCCL all-reduce frequency and volume, which can become the latency bottleneck at low batch sizes.
+  - When FLASHCOMM1 SP is enabled, tokens are padded to tp_size multiples, causing compute waste if batch sizes are small
+    relative to tp_size.
+  - CUDAGraph capture sizes must be multiples of tp_size when SP is active; mismatched sizes cause assertion failures at startup.
+  - tp_size must divide the number of attention heads evenly; non-divisible values cause a ValueError at model loading.
+  - On Ascend NPU, the mp (multiprocessing) executor requires tp_size × pp_size × pcp_size ≤ available NPUs on a single node;
+    for multi-node, use Ray executor or set nnodes explicitly.
+  - Dynamic batch feature has been tested primarily with tp_size=8 on Qwen and Llama 8B-32B models; other configurations may
+    require additional tuning of SLO_limits_for_dynamic_batch.
+  quick_guide: Use the smallest tp_size that fits your model in NPU memory; prefer powers of 2 that divide the attention head
+    count evenly.
+analysis_date: '2026-07-06'

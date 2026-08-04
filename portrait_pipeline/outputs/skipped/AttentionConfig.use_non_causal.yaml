@@ -1,0 +1,9 @@
+name: AttentionConfig.use_non_causal
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source, this boolean is copied only into AttentionSelectorConfig and checked as a backend
+  capability requirement; it is not used to set CommonAttentionMetadata.causal or an attention kernel's causal mode. The pinned
+  vLLM Ascend platform does not inspect use_non_causal when selecting its attention backend and instead consumes the independently
+  produced causal metadata in its attention implementation. Therefore the current pinned sources do not establish a latency,
+  throughput, or memory effect for this parameter; it is a semantic/backend-compatibility flag rather than a performance tuning
+  control.

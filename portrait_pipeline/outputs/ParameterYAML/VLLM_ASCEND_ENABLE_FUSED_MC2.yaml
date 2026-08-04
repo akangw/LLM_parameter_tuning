@@ -1,0 +1,89 @@
+name: VLLM_ASCEND_ENABLE_FUSED_MC2
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:92
+- vllm_ascend/ascend_config.py:146
+- vllm_ascend/ascend_forward_context.py:283
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:259
+- vllm_ascend/platform.py:670
+- docs/source/user_guide/configuration/additional_config.md:27
+value_type: int
+default: 0
+valid_choices:
+- 0
+- 1
+- 2
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: Controls whether eligible expert-parallel MoE execution on Atlas A3 selects FUSED_MC2 instead of the ordinary
+  MC2 or ALLTOALL paths. Mode 1 invokes the monolithic dispatch_ffn_combine operator; mode 2 invokes dispatch_gmm_combine_decode
+  for eligible decode work and explicitly falls back for prefill. These paths combine expert dispatch, FFN/GMM computation,
+  and combine work in a fused operator, so they directly change MoE kernel and communication overhead. The pinned Qwen3-235B
+  guide describes mode 1 as reducing MoE time in both prefill and decode and recommends mode 2 for an EP32 disaggregated scenario,
+  making latency and token throughput materially workload-dependent.
+usage_locations:
+- file: vllm_ascend/envs.py:92
+  context: Parses the environment string as an integer, documents modes 0, 1, and 2, and supplies the default of 0.
+- file: vllm_ascend/ascend_config.py:146
+  context: Loads enable_fused_mc2 from additional_config first and otherwise falls back to this deprecated environment variable.
+- file: vllm_ascend/ascend_forward_context.py:283
+  context: Selects FUSED_MC2 for eligible Atlas A3 decode or prefill batches, with mode-specific EP, draft-model, quantization,
+    and phase guards.
+- file: vllm_ascend/ops/fused_moe/moe_comm_method.py:259
+  context: Implements the fused path, calling dispatch_ffn_combine for mode 1 and dispatch_gmm_combine_decode for mode 2.
+- file: vllm_ascend/platform.py:670
+  context: Rejects fused MC2 when hierarchy communication is also enabled.
+- file: docs/source/tutorials/models/Qwen3-235B-A22B.md:379
+  context: Documents the experimental Atlas A3 W8A8 use case and its prefill/decode performance purpose.
+related_parameters:
+- name: additional_config.enable_fused_mc2
+  relation: Preferred replacement with identical integer meaning; when present, it overrides this environment variable.
+- name: enable_mc2_hierarchy_comm
+  relation: Mutually exclusive; enabling hierarchy communication together with a nonzero fused MC2 setting raises ValueError
+    during platform configuration.
+- name: --enable-expert-parallel
+  relation: Fused MC2 is selected only for MoE expert-parallel execution with an expert-parallel group larger than one.
+constraints:
+- The fused selection is implemented for Atlas A3; other device branches select their own ALLGATHER, MC2, or ALLTOALL behavior.
+- Mode 1 is documented for W8A8 MoE layers with EP size at most 32, a non-draft/non-MTP model, and non-dynamic EPLB; the current
+  selector explicitly enforces EP<=32 and excludes draft-model execution.
+- Mode 2 is decode-only, requires the target MoE quantization type w8a8_dynamic, and requires a W8A8 MTP or MoE drafter when
+  the applicable speculative method uses one.
+- Any nonzero value conflicts with enable_mc2_hierarchy_comm and causes startup validation to fail.
+- The environment-variable interface is deprecated and logged as scheduled for removal; use additional_config.enable_fused_mc2
+  for new deployments.
+tuning_advice:
+  summary: Enable a fused mode only for a validated Atlas A3 W8A8 expert-parallel MoE deployment, and benchmark it against
+    mode 0 with the real prefill/decode mix.
+  suggested_values:
+  - scenario: General eligible Atlas A3 W8A8 MoE serving, EP<=32, without a draft model, dynamic EPLB, or hierarchy communication
+    value: 1
+    reason: Selects dispatch_ffn_combine for eligible prefill and decode batches, matching the documented path that reduces
+      MoE time in both phases.
+  - scenario: Eligible Atlas A3 W8A8 decode node, especially the documented Qwen3-235B EP32 disaggregated configuration
+    value: 2
+    reason: Selects dispatch_gmm_combine_decode for qualifying decode batches while deliberately leaving prefill on the ordinary
+      communication path.
+  - scenario: Unsupported hardware, non-W8A8 MoE, hierarchy communication, or a workload that shows regressions or correctness
+      issues
+    value: 0
+    reason: Keeps the default MC2/ALLTOALL selection and avoids the fused operator's compatibility restrictions.
+  caveats:
+  - Mode 1 and mode 2 are distinct operator choices, not additive feature bits.
+  - The feature is documented as experimental and currently supported for W8A8 on Atlas A3; verify accuracy as well as latency
+    and throughput.
+  - The release notes advise against fused MC2 for multi-DP kv_producer or kv_both cases with many tokens because padded-token
+    routing can overload ranks and cause accuracy and performance problems.
+  - additional_config.enable_fused_mc2 overrides the environment variable, so inspect the effective configuration before attributing
+    benchmark results to this setting.
+  - Batch size relative to the MC2 token capacity changes whether the selector uses its decode-side or prefill-side branch,
+    and mode 2 never enables the fused prefill branch.
+  quick_guide: Use 1 for eligible fused prefill plus decode, 2 for an eligible decode-only deployment, and otherwise retain
+    0; never combine a nonzero value with hierarchy MC2 communication.
+analysis_date: '2026-07-28'

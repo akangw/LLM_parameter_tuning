@@ -1,0 +1,6 @@
+name: VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS
+type: env
+performance_impact: none
+skip_reason: In the pinned sources this environment variable is only declared and parsed in vllm/envs.py; neither upstream
+  vLLM nor vllm-ascend reads it. The Ascend worker measures NPU graph memory through its own capture_model path without consulting
+  this variable, so changing it has no latency, throughput, or memory effect.

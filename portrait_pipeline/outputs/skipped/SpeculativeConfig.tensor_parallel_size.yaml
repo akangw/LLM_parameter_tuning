@@ -1,0 +1,7 @@
+name: SpeculativeConfig.tensor_parallel_size
+type: nested
+performance_impact: none
+skip_reason: This is an invalid-key compatibility sentinel, not a tensor-parallel tuning control. In the pinned upstream vLLM
+  source, any non-null value causes SpeculativeConfig validation to fail with an instruction to use draft_tensor_parallel_size
+  instead; leaving it null has no runtime effect. The pinned vllm-ascend source consumes draft_tensor_parallel_size and the
+  derived draft parallel configuration, not this field, so it likewise cannot change latency, throughput, or memory.

@@ -1,0 +1,113 @@
+name: VLLM_ASCEND_ENABLE_MLAPO
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:87
+- vllm_ascend/ascend_config.py:152
+- vllm_ascend/attention/utils.py:377
+- vllm_ascend/attention/mla_v1.py:962
+- vllm_ascend/attention/mla_v1.py:1749
+- vllm_ascend/attention/sfa_v1.py:576
+- vllm_ascend/attention/sfa_v1.py:1169
+- vllm_ascend/device/device_op.py:216
+- docs/source/user_guide/configuration/additional_config.md:24
+- docs/source/tutorials/models/Kimi-K2.5.md:642
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'The variable is the deprecated fallback for additional_config.enable_mlapo, which takes precedence when explicitly
+  present. Its enabled default requests fused MLAPO preprocessing for MLA/SFA attention. Eligible execution prepares specialized
+  weights and calls fused NPU MLA-prolog preprocessing instead of the ordinary sequence of preprocessing operations, which
+  can significantly improve performance but consumes more NPU memory. Applicability is heavily gated: on non-A5 devices the
+  common MLA path enables it only for a decode-only KV consumer, and individual MLA layers require W8A8 or W8A8-MXFP8 quantization;
+  A5 permits the configured switch outside that PD-decode restriction and the SFA path also supports an A5 floating-point
+  implementation. Non-A5 SFA disables MLAPO for non-W8A8 layers or SFA context parallelism. The pinned upstream vLLM repository
+  has no implementation of this Ascend-specific variable.'
+usage_locations:
+- file: vllm_ascend/envs.py:87
+  context: Parses the environment value with bool(int(...)); the unset default is "1".
+- file: vllm_ascend/ascend_config.py:152
+  context: Resolves enable_mlapo by preferring additional_config.enable_mlapo and otherwise using this deprecated environment
+    variable.
+- file: vllm_ascend/attention/utils.py:377
+  context: Makes the effective common MLA decision; A5 follows the configured value, while other devices additionally require
+    a decode-only KV-consumer instance.
+- file: vllm_ascend/attention/mla_v1.py:962
+  context: Disables MLAPO per MLA layer unless its fused projection uses supported W8A8 or W8A8-MXFP8 quantization, then prepares
+    weights for the fused operator.
+- file: vllm_ascend/attention/mla_v1.py:1749
+  context: Selects fused decode preprocessing only for decode-only batches of at most 1024 tokens; other batches use ordinary
+    MLA preprocessing.
+- file: vllm_ascend/attention/sfa_v1.py:576
+  context: Validates SFA eligibility, including A5 floating-point support, non-A5 W8A8 requirements, and incompatibility with
+    SFA context parallelism.
+- file: vllm_ascend/attention/sfa_v1.py:1169
+  context: Runs the SFA MLAPO preprocessing branch when enabled and within the non-A5 1024-token limit; A5 is exempt from
+    that token-count gate.
+- file: vllm_ascend/device/device_op.py:216
+  context: Implements the fused decode preprocessing with the NPU MLA prolog operator and direct KV-cache inputs.
+- file: docs/source/tutorials/models/Kimi-K2.5.md:642
+  context: Documents significant performance improvement, increased NPU memory use, and decode-node-only use in PD separation.
+related_parameters:
+- name: additional_config.enable_mlapo
+  relation: Preferred replacement; when the key is present it overrides this environment variable, including an explicit false
+    value.
+- name: kv_transfer_config
+  relation: On non-A5 devices, MLAPO is effective through the common MLA path only for a KV consumer that is not also a producer,
+    corresponding to a decode-only PD node.
+- name: quantization
+  relation: MLA requires W8A8 or W8A8-MXFP8 layers; non-A5 SFA likewise requires supported W8A8 quantization, while A5 SFA
+    can also use a floating-point fused path.
+- name: additional_config.enable_dsa_cp
+  relation: Enabling SFA context parallelism makes the SFA implementation disable MLAPO for those layers.
+constraints:
+- The environment value is parsed by int(), so use a numeric string; "0" is false and any nonzero integer is true, while a
+  nonnumeric value fails during parsing.
+- additional_config.enable_mlapo has precedence and is the supported migration target; the environment variable is scheduled
+  for removal.
+- On non-A5 devices, the common MLA enablement helper requires a decode-only KV consumer, so the true default alone does not
+  activate MLAPO on ordinary or prefill instances.
+- MLA layers disable MLAPO unless the fused projection uses Ascend W8A8 or W8A8-MXFP8 dynamic quantization.
+- Non-A5 SFA layers require supported W8A8 quantization and disable MLAPO when SFA context parallelism is enabled; A5 SFA
+  may use either its quantized or floating-point fused implementation.
+- The MLA fused decode branch requires no prefill tokens and at most 1024 decode tokens; non-A5 SFA also uses a 1024-token
+  limit, while A5 SFA is exempt from that SFA gate.
+tuning_advice:
+  summary: Migrate to additional_config.enable_mlapo and keep it enabled for eligible decode-oriented MLA/SFA workloads when
+    performance is the priority and NPU memory headroom is sufficient; disable it to reduce memory pressure.
+  suggested_values:
+  - scenario: Eligible W8A8 or W8A8-MXFP8 MLA decode workload with sufficient NPU memory
+    value: '1'
+    reason: Enables the fused preprocessing path that the Ascend source and deployment guidance identify as a significant
+      performance optimization.
+  - scenario: Prefill-decode separation on non-A5 hardware
+    value: '1'
+    reason: Configure the optimization on decode-only consumer nodes, where the runtime permits it; leave it off on prefill
+      nodes as the model guides recommend.
+  - scenario: NPU out-of-memory pressure or a memory-sensitive deployment
+    value: '0'
+    reason: Avoids MLAPO's additional NPU memory consumption at the cost of its fused-path performance benefit.
+  - scenario: New or migrated deployment that needs MLAPO
+    value: '0'
+    reason: Leave the deprecated variable unset or disabled and express the desired true value through additional_config.enable_mlapo
+      instead.
+  caveats:
+  - The environment variable is deprecated and planned for removal; new configurations should use the additional-config replacement.
+  - A configured true value does not guarantee the fused path runs, because device generation, PD role, quantization, context
+    parallelism, batch composition, and token count all impose runtime gates.
+  - The default changed to enabled, but non-A5 role gating means the default is effectively active only on decode-only PD
+    consumers for the common MLA path.
+  - The pinned sources provide qualitative performance and memory guidance rather than portable benchmark numbers; measure
+    decode throughput and peak NPU memory on the target model, quantization, device generation, and batch shape.
+  quick_guide: Use additional_config.enable_mlapo=true on eligible decode workloads with memory headroom; turn it off when
+    NPU memory is the binding constraint.
+analysis_date: '2026-07-28'

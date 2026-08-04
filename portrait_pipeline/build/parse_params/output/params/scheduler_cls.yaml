@@ -1,0 +1,93 @@
+name: --scheduler-cls
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:127
+- vllm/engine/arg_utils.py:1360
+- vllm_ascend/platform.py:602
+- vllm_ascend/core/recompute_scheduler.py:78
+value_type: str
+default: null
+valid_choices: A Python class path string (e.g., 'vllm.v1.core.sched.scheduler.Scheduler') or a class reference
+cli_example: --scheduler-cls vllm_ascend.core.scheduler_dynamic_batch.SchedulerDynamicBatch
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter controls which scheduler class vLLM uses to decide the order and batching of requests. The\
+  \ scheduler directly governs token-level scheduling decisions (prefill/decode batching, chunked prefill behavior, KV cache\
+  \ allocation), making it a primary determinant of throughput and latency.\nOn Ascend NPU, vllm-ascend silently overrides\
+  \ this parameter in three scenarios (vllm_ascend/platform.py:600-612): 1. When `recompute_scheduler_enable` is set, it forces\n\
+  \   `vllm_ascend.core.recompute_scheduler.RecomputeScheduler` (or\n   `AsyncRecomputeScheduler` if async_scheduling is enabled).\n\
+  2. When `SLO_limits_for_dynamic_batch != -1`, it forces\n   `vllm_ascend.core.scheduler_dynamic_batch.SchedulerDynamicBatch`\
+  \ and\n   also enables chunked prefill.\n3. When `profiling_chunk_config.enabled` is true, it forces\n   `vllm_ascend.core.scheduler_profiling_chunk.ProfilingChunkScheduler`.\n\
+  \nThese Ascend-specific schedulers implement NPU-optimized batching strategies (dynamic batch sizing, recompute-aware scheduling,\
+  \ profiling-based chunk sizing) that can significantly outperform the upstream Scheduler on Ascend hardware. The upstream\
+  \ default (`vllm.v1.core.sched.scheduler.Scheduler`) is GPU-optimized and may not account for Ascend's memory hierarchy\
+  \ and compute characteristics.\nThe scheduler is instantiated in `vllm/v1/engine/core.py:132` via `get_scheduler_cls()`,\
+  \ which resolves the class from the string path. If `scheduler_cls` is None, it selects `AsyncScheduler` when async_scheduling\
+  \ is enabled, otherwise the default `Scheduler`.\n"
+usage_locations:
+- file: vllm/v1/engine/core.py:132
+  context: Scheduler class is resolved and instantiated for the engine core
+- file: vllm/config/scheduler.py:168
+  context: get_scheduler_cls() method resolves the class from string or returns default
+- file: vllm_ascend/platform.py:600-612
+  context: vllm-ascend overrides scheduler_cls based on Ascend-specific config flags
+- file: vllm_ascend/core/recompute_scheduler.py:78-91
+  context: RecomputeSchedulerConfig sets scheduler_cls to Ascend recompute scheduler
+related_parameters:
+- name: --async-scheduling
+  relation: When scheduler_cls is None and async_scheduling is True, AsyncScheduler is used instead of Scheduler
+- name: ascend_config.recompute_scheduler_enable
+  relation: When enabled, vllm-ascend overrides scheduler_cls to RecomputeScheduler
+- name: ascend_config.SLO_limits_for_dynamic_batch
+  relation: When not -1, vllm-ascend overrides scheduler_cls to SchedulerDynamicBatch
+- name: ascend_config.profiling_chunk_config.enabled
+  relation: When enabled, vllm-ascend overrides scheduler_cls to ProfilingChunkScheduler
+- name: --enable-chunked-prefill
+  relation: SchedulerDynamicBatch override also forces enable_chunked_prefill to True
+constraints:
+- The value must be a valid Python class path string (e.g., 'mod.custom_class') or a class reference.
+- The specified class must implement the SchedulerInterface protocol.
+- When using vllm-ascend, the scheduler_cls value set via CLI may be silently overridden if Ascend-specific scheduler features
+  (recompute_scheduler_enable, SLO_limits_for_dynamic_batch, profiling_chunk_config) are enabled.
+tuning_advice:
+  summary: 'On Ascend NPU, prefer vllm-ascend''s built-in schedulers (SchedulerDynamicBatch, RecomputeScheduler, ProfilingChunkScheduler)
+    over the upstream default, as they are optimized for Ascend''s architecture and can significantly improve throughput.
+
+    '
+  suggested_values:
+  - scenario: General Ascend NPU deployment seeking better throughput
+    value: vllm_ascend.core.scheduler_dynamic_batch.SchedulerDynamicBatch
+    reason: Implements dynamic batch sizing optimized for Ascend NPU, automatically adjusting batch sizes based on SLO limits
+      to maximize hardware utilization
+  - scenario: PD-disaggregated deployment (kv_producer or kv_consumer) with recompute optimization
+    value: vllm_ascend.core.recompute_scheduler.RecomputeScheduler
+    reason: Optimized for PD-disaggregated scenarios where recomputation can reduce KV cache transfer overhead between producer
+      and consumer
+  - scenario: PD-disaggregated deployment with async scheduling
+    value: vllm_ascend.core.recompute_scheduler.AsyncRecomputeScheduler
+    reason: Combines recompute optimization with async scheduling for lower latency in disaggregated serving
+  - scenario: Deployment requiring profiling-based chunk size optimization
+    value: vllm_ascend.core.scheduler_profiling_chunk.ProfilingChunkScheduler
+    reason: Uses profiling data to determine optimal chunk sizes for prefill, improving throughput on Ascend hardware
+  - scenario: Standard deployment without Ascend-specific optimizations
+    value: null (default)
+    reason: Uses upstream Scheduler (or AsyncScheduler if async_scheduling is enabled), which is GPU-optimized but functional
+      on Ascend
+  caveats:
+  - vllm-ascend silently overrides scheduler_cls when Ascend-specific features are enabled — your CLI value may be ignored
+    without warning.
+  - SchedulerDynamicBatch requires SLO_limits_for_dynamic_batch to be set (not -1) and automatically enables chunked prefill.
+  - RecomputeScheduler is only valid in PD-disaggregated mode (kv_role='kv_producer' or 'kv_consumer'), not in PD-mixed mode.
+  - Custom scheduler classes must implement the SchedulerInterface, which is not a stable public API and may break across
+    vLLM versions.
+  - The upstream default Scheduler is designed for GPU architectures and may not optimally utilize Ascend NPU's memory bandwidth
+    and compute units.
+  quick_guide: On Ascend NPU, use vllm-ascend's SchedulerDynamicBatch for general workloads, or RecomputeScheduler for PD-disaggregated
+    deployments — avoid the upstream default for production.
+analysis_date: '2026-07-06'

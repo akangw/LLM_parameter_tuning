@@ -1,0 +1,7 @@
+name: --max-cpu-loras
+type: cli
+performance_impact: none
+skip_reason: The current pinned upstream source only declares, parses, passes, and validates this LoRAConfig field; it defaults
+  to max_loras and must not be lower than max_loras. A repository-wide search finds no current runtime cache or model-manager
+  consumer, and the pinned vllm-ascend tree has no implementation override. It therefore has no verified latency, throughput,
+  or memory effect in this source snapshot.

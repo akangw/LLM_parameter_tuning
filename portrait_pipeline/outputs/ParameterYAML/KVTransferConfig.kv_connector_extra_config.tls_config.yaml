@@ -1,0 +1,81 @@
+name: KVTransferConfig.kv_connector_extra_config.tls_config
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:809
+- vllm/config/kv_transfer.py:60
+value_type: dict
+default: {}
+valid_choices: A dictionary accepted without schema validation. Recognized keys are ssl_enable (boolean, default false), ssl_certfile
+  (client certificate path), ssl_keyfile (client private-key path), ssl_keyfile_password (optional key password), and ssl_ca_certs
+  (CA bundle path or an httpx-compatible verify value, default false).
+cli_example: --kv-transfer-config '{"kv_connector":"MooncakeLayerwiseConnector","kv_role":"kv_both","kv_connector_extra_config":{"tls_config":{"ssl_enable":true,"ssl_certfile":"/certs/client.crt","ssl_keyfile":"/certs/client.key","ssl_ca_certs":"/certs/ca.crt"}}}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: The Ascend MooncakeLayerwiseConnector scheduler reads this dictionary once at initialization. With ssl_enable=false
+  (the default), it constructs a plain httpx client for asynchronous metaserver POST requests. With ssl_enable=true, it constructs
+  the client with the configured client certificate/key and CA verification setting, adding TLS handshake, certificate verification,
+  and encryption work to those control-plane requests. This can increase remote prefill setup latency and reduce control-plane
+  request throughput, especially when connections cannot be reused, but it does not encrypt or directly alter the bulk Mooncake
+  KV-cache data path or the connector's ZeroMQ handshake sockets. Consequently the expected performance effect is low relative
+  to KV transfer and model execution, although misconfigured certificates can make metaserver requests fail after three attempts
+  and prevent useful remote prefill work from being coordinated.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:809
+  context: Reads the dictionary, extracts certificate, key, password, CA/verify, and enable values, then creates the scheduler's
+    persistent httpx client with or without TLS arguments.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:902
+  context: Submits metaserver access to a 32-thread executor while coordinating remote-prefill scheduling; the configured
+    httpx client performs the POST.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1017
+  context: Posts request metadata through the persistent client and retries failures up to three total attempts before propagating
+    the final exception.
+- file: vllm/config/kv_transfer.py:60
+  context: Upstream defines kv_connector_extra_config as an arbitrary dictionary; get_from_extra_config returns this connector-owned
+    value or the supplied empty-dictionary default without validation or coercion.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: tls_config is consumed only by the Ascend MooncakeLayerwiseConnector scheduler in the pinned sources.
+- name: KVTransferConfig.kv_connector_extra_config.tls_config.ssl_enable
+  relation: Selects whether TLS certificate and verification arguments are supplied when constructing the metaserver httpx
+    client.
+- name: Request.kv_transfer_params.metaserver
+  relation: Supplies the URL posted by this client; its scheme and endpoint must be compatible with the TLS setting.
+constraints:
+- The dictionary and its members receive no connector-side type, path, or consistency validation; invalid values fail during
+  httpx client creation or when a metaserver request is attempted.
+- When ssl_enable is true, provide a readable certificate and matching key; provide ssl_keyfile_password when the private
+  key is encrypted.
+- ssl_ca_certs defaults to false and is passed as httpx verify=False when TLS is enabled, disabling server-certificate verification.
+  Supply an appropriate CA bundle path for authenticated production connections.
+- The metaserver URL must use a scheme compatible with the selected mode and all communicating deployments must use mutually
+  compatible credentials and trust roots.
+- This setting applies only to HTTP requests to the metaserver. It does not configure NPU-link TLS, Mooncake bulk-data encryption,
+  or ZeroMQ socket security.
+tuning_advice:
+  summary: 'Treat this primarily as a security and interoperability setting: enable TLS when the metaserver traffic crosses
+    an untrusted network, then measure the small control-plane cost rather than disabling verification for speed.'
+  suggested_values:
+  - scenario: Trusted isolated development network with a plain-HTTP metaserver
+    value: {}
+    reason: Preserves the source default and avoids TLS setup, but provides no confidentiality or authentication for metaserver
+      messages.
+  - scenario: Production or untrusted network
+    value: '{ssl_enable: true, ssl_certfile: /certs/client.crt, ssl_keyfile: /certs/client.key, ssl_ca_certs: /certs/ca.crt}'
+    reason: Enables client credentials and verified TLS for the connector's metaserver control traffic.
+  caveats:
+  - Source alone does not quantify TLS overhead; it depends on connection reuse, certificate chain, CPU capacity, network
+    RTT, and request rate.
+  - The persistent httpx client can reuse connections, so steady-state cost may be much smaller than first-connection handshake
+    cost.
+  - Disabling CA verification may slightly reduce validation work but exposes the control plane to interception and is not
+    a sound performance tuning strategy.
+  - TLS on this HTTP path does not secure the performance-dominant bulk KV transfer path; evaluate that path's security separately.
+  quick_guide: First match ssl_enable and the metaserver URL scheme, verify certificate and CA paths, then compare remote-prefill
+    coordination latency and failure rate under realistic concurrency. Keep verified TLS wherever security requires it; investigate
+    connection reuse or metaserver capacity before weakening authentication.
+analysis_date: '2026-07-30'

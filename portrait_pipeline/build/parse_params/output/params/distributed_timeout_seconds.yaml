@@ -1,0 +1,68 @@
+name: --distributed-timeout-seconds
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/config/parallel.py:289
+- vllm/engine/arg_utils.py:932
+- vllm/v1/worker/gpu_worker.py:1139
+value_type: int | None
+default: null
+valid_choices: positive integer or None
+cli_example: --distributed-timeout-seconds 1200
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls the timeout for `torch.distributed.init_process_group`, which is called during worker
+  initialization (see `init_worker_distributed_environment` in vllm/v1/worker/gpu_worker.py:1139-1149). On Ascend NPU, the
+  underlying communication backend is HCCL (not NCCL), but the timeout mechanism is the same: if the timeout is too short
+  and model loading or HCCL initialization takes longer than expected (e.g., large models, slow network storage, multi-node
+  setups), the process group initialization will fail with a timeout error, preventing the server from starting. Setting it
+  too high has no runtime performance penalty — it only affects how long the system waits before declaring a failure during
+  startup. It does not affect inference throughput, latency, or memory usage once the server is running. The vllm-ascend plugin
+  does not override or modify this parameter; it passes through to the upstream vLLM initialization logic.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_worker.py:1139
+  context: Read from parallel_config.distributed_timeout_seconds and converted to timedelta for init_process_group timeout
+    parameter.
+- file: vllm/config/parallel.py:289
+  context: Field definition with default None, documented as timeout for distributed operations.
+- file: vllm/engine/arg_utils.py:458
+  context: EngineArgs attribute declaration, defaulting to ParallelConfig.distributed_timeout_seconds.
+- file: vllm/engine/arg_utils.py:932
+  context: CLI argument registration under ParallelConfig group.
+related_parameters:
+- name: --nnodes
+  relation: Multi-node setups are the primary scenario where increasing this timeout is recommended.
+- name: --tensor-parallel-size
+  relation: Larger tensor-parallel sizes may increase HCCL initialization time, potentially requiring a longer timeout.
+- name: --pipeline-parallel-size
+  relation: Pipeline parallelism adds more processes to synchronize, which may extend initialization time.
+constraints:
+- Must be a positive integer if set; None uses PyTorch's default timeout (600 seconds for NCCL, similar for HCCL).
+tuning_advice:
+  summary: Increase this value only if you encounter timeout errors during multi-node or large-model startup on Ascend NPU.
+  suggested_values:
+  - scenario: Single-node Ascend NPU deployment with local model storage
+    value: null
+    reason: Default PyTorch timeout (600s) is sufficient for single-node HCCL initialization and local model loading.
+  - scenario: Multi-node Ascend NPU deployment or slow network storage (e.g., downloading models at startup)
+    value: 1200
+    reason: Doubling the default timeout provides headroom for HCCL multi-node rendezvous and model download delays without
+      affecting runtime performance.
+  - scenario: Very large models (70B+) on multi-node Ascend clusters with shared network storage
+    value: 1800
+    reason: Large model loading and HCCL communication group setup across many nodes can exceed 10 minutes; 1800s prevents
+      premature timeout failures.
+  caveats:
+  - This parameter only affects startup time; it has zero impact on inference throughput, latency, or memory usage once the
+    server is running.
+  - On Ascend NPU, the communication backend is HCCL, but the timeout mechanism is identical to NCCL — the same PyTorch distributed
+    timeout applies.
+  - Setting an excessively high value (e.g., 3600+) may mask genuine hangs during initialization, delaying problem diagnosis.
+  quick_guide: Leave at default (None) unless you see distributed timeout errors at startup; then increase to 1200-1800 seconds
+    for multi-node Ascend deployments.
+analysis_date: '2026-07-06'

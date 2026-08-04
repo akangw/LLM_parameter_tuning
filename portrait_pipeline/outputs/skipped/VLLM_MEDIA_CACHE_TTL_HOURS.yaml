@@ -1,0 +1,7 @@
+name: VLLM_MEDIA_CACHE_TTL_HOURS
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this environment variable is only type-declared, parsed, and listed among environment
+  variables to log in vllm/envs.py; there is no current media-cache or other runtime consumer of its value. The pinned vllm-ascend
+  repository contains no reference or override. Therefore changing it has no verified latency, throughput, or memory effect
+  in the pinned sources.

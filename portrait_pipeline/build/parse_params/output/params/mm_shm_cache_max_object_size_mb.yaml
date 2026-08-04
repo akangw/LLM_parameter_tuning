@@ -1,0 +1,67 @@
+name: mm-shm-cache-max-object-size-mb
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:135
+- vllm/engine/arg_utils.py:1189
+- vllm/config/model.py:330
+value_type: int
+default: 128
+valid_choices: '>= 0'
+cli_example: --mm-shm-cache-max-object-size-mb 256
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter sets the maximum size (in MiB) for each individual object stored in the multi-modal processor''s
+  shared memory (SHM) cache. It is only effective when `--mm-processor-cache-type` is set to `"shm"`. The value is used to
+  initialize `SingleWriterShmObjectStorage` with `max_object_size` (converted to bytes by multiplying by `MiB_bytes`), which
+  controls the allocation of shared memory segments for cached multi-modal inputs. Objects larger than this limit cannot be
+  stored in the SHM cache, forcing re-processing of those multi-modal inputs on subsequent requests. This can increase latency
+  for requests with large multi-modal inputs (e.g., high-resolution images or long videos) and reduce cache hit rates, indirectly
+  affecting throughput. On Ascend NPU, the multi-modal encoder runs on the host CPU or NPU depending on the model architecture;
+  cache misses mean repeated encoder computation, which consumes NPU compute resources and PCIe bandwidth for data transfer.
+  The parameter does not directly control KV-cache or model weight memory, so its overall performance impact is low compared
+  to primary memory/parallelism parameters.
+
+  '
+usage_locations:
+- file: vllm/multimodal/cache.py:461
+  context: 'Sender cache initialization: max_object_size = mm_shm_cache_max_object_size_mb * MiB_bytes'
+- file: vllm/multimodal/cache.py:704
+  context: 'Receiver cache initialization: max_object_size = mm_shm_cache_max_object_size_mb * MiB_bytes'
+- file: vllm/config/multimodal.py:248
+  context: 'Validation: raises ValueError if set when mm_processor_cache_type != ''shm'''
+related_parameters:
+- name: mm-processor-cache-type
+  relation: Must be set to 'shm' for this parameter to take effect; otherwise raises ValueError
+- name: mm-processor-cache-gb
+  relation: Controls total SHM cache size; max_object_size limits individual entries within that space
+constraints:
+- mm_shm_cache_max_object_size_mb must only be set when mm_processor_cache_type is 'shm'
+- mm_shm_cache_max_object_size_mb must be >= 0
+tuning_advice:
+  summary: 'Increase this value if multi-modal cache hit rates are low due to large objects being rejected; decrease if SHM
+    memory fragmentation is a concern.
+
+    '
+  suggested_values:
+  - scenario: Default usage with moderate-sized multi-modal inputs (e.g., 336x336 images)
+    value: 128
+    reason: Default value is sufficient for typical vision-language model inputs
+  - scenario: High-resolution images or long video inputs that exceed 128 MiB when serialized
+    value: 512
+    reason: Allows larger multi-modal tensors to be cached, improving cache hit rates and reducing re-encoding overhead
+  - scenario: Memory-constrained deployments where SHM space is limited
+    value: 64
+    reason: Reduces per-object SHM allocation, allowing more objects to fit in the total cache budget
+  caveats:
+  - This parameter has no effect unless --mm-processor-cache-type is set to 'shm'
+  - Setting this too high may cause SHM allocation failures if the total cache size (--mm-processor-cache-gb) is insufficient
+  - On Ascend NPU, multi-modal encoder computation may run on CPU or NPU; cache misses add both CPU/NPU compute overhead and
+    host-to-device transfer latency
+  quick_guide: Set to a value larger than your largest expected multi-modal input tensor size (in MiB) to maximize SHM cache
+    hit rates
+analysis_date: '2026-07-06'

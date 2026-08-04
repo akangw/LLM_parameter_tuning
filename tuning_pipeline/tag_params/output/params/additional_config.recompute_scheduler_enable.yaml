@@ -1,0 +1,119 @@
+name: additional_config.recompute_scheduler_enable
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:134
+- vllm_ascend/platform.py:586
+- vllm_ascend/core/recompute_scheduler.py:77
+- vllm_ascend/core/recompute_scheduler.py:336
+- vllm_ascend/core/recompute_scheduler.py:830
+- vllm_ascend/utils.py:1222
+- docs/source/user_guide/configuration/additional_config.md:81
+- docs/source/tutorials/models/Qwen3.5-397B-A17B.md:512
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"recompute_scheduler_enable": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling this Ascend-only option replaces the configured vLLM scheduler with RecomputeScheduler, or AsyncRecomputeScheduler
+  when asynchronous scheduling is active. On a KV-consumer decode node that cannot allocate new KV-cache blocks, the scheduler
+  removes a running request, frees its local KV blocks, and emits a terminal output with stop_reason "recomputed"; the documented
+  PD workflow then sends that request to a prefill node to rebuild its KV cache. This changes the response to decode-side
+  KV pressure from local waiting/preemption to cross-node recomputation. It can sustain decode admission and throughput when
+  KV capacity is tight, but an affected request incurs another prefill and KV transfer, so its latency rises and prefill/communication
+  load increases. With ample KV capacity the overflow path may not run, although selecting the alternate scheduler and, for
+  qualifying MoE consumer configurations, changing the DP all-reduce decision still alter execution behavior.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:134
+  context: Reads the nested additional_config key and stores it with a default of false.
+- file: vllm_ascend/platform.py:586
+  context: Rejects PD-mixed use and replaces SchedulerConfig with RecomputeSchedulerConfig when enabled.
+- file: vllm_ascend/core/recompute_scheduler.py:77
+  context: Selects the synchronous or asynchronous Ascend recompute scheduler class while copying existing scheduler settings.
+- file: vllm_ascend/core/recompute_scheduler.py:336
+  context: On consumer-side KV allocation failure, frees a running request's blocks and records it for recomputation instead
+    of normal local preemption.
+- file: vllm_ascend/core/recompute_scheduler.py:830
+  context: Returns affected requests with stop_reason recomputed so the surrounding PD service can redirect them.
+- file: vllm_ascend/utils.py:1222
+  context: Allows the option to affect whether qualifying MoE KV-consumer ranks skip DP-group all-reduce when decode uses
+    MC2.
+- file: docs/source/tutorials/models/Qwen3.5-397B-A17B.md:512
+  context: Documents decode KV insufficiency as the trigger, prefill recomputation as the action, and enabling the option
+    on both PD sides as the recommendation.
+related_parameters:
+- name: --kv-transfer-config
+  relation: Must configure a PD-disaggregated kv_producer or kv_consumer role; absence of the config or kv_both is rejected
+    at startup.
+- name: --enable-prefix-caching
+  relation: The referenced PD tutorial disables prefix caching and notes a known decode-node issue, so validate this feature
+    combination for the selected connector and release.
+- name: --gpu-memory-utilization
+  relation: Determines usable device memory and therefore how readily decode-side KV allocation pressure reaches the recomputation
+    path.
+- name: scheduler_config.async_scheduling
+  relation: Chooses AsyncRecomputeScheduler rather than RecomputeScheduler when asynchronous scheduling is enabled.
+- name: additional_config.enable_mc2_hierarchy_comm
+  relation: Hierarchical communication forces the DP all-reduce skip helper to return false before this option participates
+    in its MC2 decision.
+constraints:
+- Only valid in PD-disaggregated mode with kv_transfer_config role kv_producer or kv_consumer.
+- Enabling it without kv_transfer_config or with kv_role kv_both raises a startup ValueError.
+- Configure it consistently on both prefill and decode services, as recommended by the Ascend PD tutorial.
+- The throughput benefit is conditional on decode KV-cache pressure and must be weighed against repeated prefill compute and
+  KV-transfer work.
+tuning_advice:
+  summary: Enable it on both sides of a PD-disaggregated deployment when decode KV exhaustion causes stalls or admission pressure;
+    otherwise retain false to avoid unnecessary recomputation behavior.
+  suggested_values:
+  - scenario: PD-disaggregated service experiencing decode-side KV-cache allocation failures
+    value: true
+    reason: Frees decode KV blocks and returns affected requests for prefill recomputation, allowing the decode scheduler
+      to keep making progress under memory pressure.
+  - scenario: PD-disaggregated service with sufficient decode KV headroom
+    value: false
+    reason: Avoids extra recomputation and cross-node transfer paths when KV exhaustion is not limiting latency or throughput.
+  - scenario: PD-mixed or non-disaggregated deployment
+    value: false
+    reason: Enabled is invalid for no kv_transfer_config or kv_both and fails during startup validation.
+  caveats:
+  - Requests selected for recomputation pay additional prefill and KV-transfer latency, and shift work to the prefill tier.
+  - Gains depend on request lengths, concurrency, KV-cache sizing, PD balance, connector behavior, and the frequency of allocation
+    failure; benchmark end-to-end tail latency and throughput.
+  - The documented Qwen3.5 PD setup disables prefix caching and identifies a known decode-node issue with that feature.
+  - For qualifying MoE consumer ranks, this flag can also change DP all-reduce behavior when decode communication requires
+    MC2; hierarchical communication overrides that skip path.
+  quick_guide: Use false by default; in PD-disaggregated operation, enable true on both prefill and decode nodes only after
+    measurements show decode KV pressure, then monitor recomputation rate, prefill saturation, transfer load, throughput,
+    and tail latency.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

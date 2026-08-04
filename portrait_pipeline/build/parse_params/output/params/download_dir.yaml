@@ -1,0 +1,77 @@
+name: --download-dir
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:60
+- vllm/engine/arg_utils.py:849
+value_type: str
+default: None
+valid_choices: any valid filesystem path
+cli_example: --download-dir /data/model_cache
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter specifies the local directory for downloading and caching model weights from Hugging Face Hub.
+  It is passed to `huggingface_hub.snapshot_download` as the `cache_dir` argument. On Ascend NPU, this parameter does not
+  directly affect inference throughput or memory usage. However, it can indirectly affect startup latency: if the specified
+  directory is on slow storage (e.g., NFS without sufficient caching), model loading time increases. Conversely, placing weights
+  on fast local NVMe storage reduces cold-start latency. The parameter is used identically in vllm-ascend (no override detected)
+  — it flows through `LoadConfig.download_dir` into `download_weights_from_hf`, `download_safetensors_index_file_from_hf`,
+  `download_gguf`, and the bitsandbytes loader. In vllm-ascend''s `aisbench.py`, a similar `download_dir` parameter is used
+  for ModelScope downloads, but this is a separate tool path, not the vLLM engine path.
+
+  '
+usage_locations:
+- file: vllm/config/load.py:60
+  context: Field definition in LoadConfig dataclass; default is None (Hugging Face default cache)
+- file: vllm/engine/arg_utils.py:849
+  context: CLI argument registration under LoadConfig group
+- file: vllm/engine/arg_utils.py:1599
+  context: Passed to LoadConfig constructor during engine initialization
+- file: vllm/model_executor/model_loader/default_loader.py:164
+  context: Used as cache_dir when downloading weights from Hugging Face Hub
+- file: vllm/model_executor/model_loader/default_loader.py:228
+  context: Used in np_cache weights iterator for cached numpy weight loading
+- file: vllm/model_executor/model_loader/bitsandbytes_loader.py:107
+  context: Used when downloading bitsandbytes quantized weights
+- file: vllm/model_executor/model_loader/bitsandbytes_loader.py:144
+  context: Used when downloading safetensors index file for bitsandbytes
+- file: vllm/model_executor/model_loader/gguf_loader.py:67
+  context: Used as cache_dir when downloading GGUF format weights
+- file: vllm/config/vllm.py:1830
+  context: Included in VllmConfig string representation for logging
+related_parameters:
+- name: --load-format
+  relation: Determines which loader path uses download_dir (safetensors, gguf, bitsandbytes, etc.)
+- name: --model
+  relation: If model is a local path, download_dir is not used; only used for Hugging Face Hub model IDs
+- name: --ignore-patterns
+  relation: Filters which files to download into download_dir
+constraints: []
+tuning_advice:
+  summary: 'Set --download-dir to a path on fast local storage (NVMe SSD) to minimize model loading latency on Ascend NPU;
+    avoid network-mounted filesystems for production deployments.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with local NVMe storage
+    value: /data/model_cache
+    reason: Local NVMe provides the fastest read speeds, minimizing cold-start latency when loading large models onto Ascend
+      NPU
+  - scenario: Development or testing with limited local storage
+    value: None (use Hugging Face default cache)
+    reason: Allows Hugging Face to manage cache location automatically; acceptable when startup time is not critical
+  - scenario: Multi-node Ascend cluster with shared storage
+    value: /shared/models
+    reason: Centralized model storage avoids per-node downloads; ensure the shared filesystem has sufficient read throughput
+  caveats:
+  - This parameter only affects model download location, not runtime inference performance on Ascend NPU
+  - If the model path (--model) is already a local directory, --download-dir is ignored
+  - On Ascend NPU, model weights are loaded into HBM via the CANN runtime; download_dir only affects the initial file read
+    phase
+  - Ensure sufficient disk space in the specified directory — large models (70B+) can require hundreds of GB
+  quick_guide: Point --download-dir to fast local storage to reduce model loading time; has no effect on inference throughput
+    or memory usage on Ascend NPU
+analysis_date: '2026-07-06'

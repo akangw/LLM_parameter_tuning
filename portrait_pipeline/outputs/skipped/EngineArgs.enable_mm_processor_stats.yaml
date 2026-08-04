@@ -1,0 +1,6 @@
+name: EngineArgs.enable_mm_processor_stats
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source this internal-only boolean is copied from EngineArgs into ObservabilityConfig,
+  but it has no runtime consumer, so enabling it does not collect multimodal processor timing statistics or affect latency,
+  throughput, or memory. The pinned vLLM Ascend source likewise contains no reference to or override for this field.

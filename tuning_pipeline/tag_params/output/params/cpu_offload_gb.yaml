@@ -1,0 +1,77 @@
+name: --cpu-offload-gb
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:23
+- vllm/config/offload.py:116
+- vllm_ascend/worker/model_runner_v1.py:4261
+value_type: float
+default: 0
+valid_choices: Non-negative GiB value per device.
+cli_example: --cpu-offload-gb <GiB>
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option activates UVA CPU weight offloading once above zero, creating virtual device-memory capacity at
+  the cost of on-demand access over the host-device interconnect. It can enable a model that otherwise exceeds memory capacity
+  but introduces transfer/zero-copy overhead that can reduce latency and throughput. In the target Ascend model runner, a
+  reinitialization path asserts that CPU weight offloading is disabled, so it requires explicit compatibility testing rather
+  than being a safe capacity knob for all target configurations.
+usage_locations:
+- file: vllm/config/offload.py:23
+  context: Defines non-negative GiB per device, default zero, and UVA zero-copy semantics.
+- file: vllm/config/offload.py:116
+  context: Treats CPU offload as active only when the configured value is greater than zero.
+- file: vllm_ascend/worker/model_runner_v1.py:4261
+  context: Asserts CPU offloading is zero when its input-batch reinitialization condition is reached.
+related_parameters:
+- name: --cpu-offload-params
+  relation: Narrows which parameters use the CPU offload budget.
+- name: --gpu-memory-utilization
+  relation: Controls device memory allocation pressure before offload is considered.
+- name: --offload-backend
+  relation: Selects the broader offload configuration path.
+constraints:
+- --cpu-offload-gb must be non-negative.
+- The target Ascend model-runner reinitialization path requires cpu_offload_gb to be zero, so a positive value is not universally
+  compatible with the target runtime.
+tuning_advice:
+  summary: Keep zero for normal target Ascend serving; consider a positive value only after proving the required runner path
+    does not hit the target assertion.
+  suggested_values:
+  - scenario: Normal target Ascend serving
+    value: 0
+    reason: This is the default and satisfies the explicit target model-runner assertion.
+  - scenario: Memory-constrained configuration validated against the target runner path
+    value: small positive GiB, benchmarked
+    reason: A positive value enables UVA offload but must be limited to the minimum capacity needed because it adds host-device
+      access overhead.
+  caveats:
+  - The target source contains a runtime assertion for zero CPU offload in an input-batch reinitialization path.
+  - Offloading can trade capacity for latency and throughput, and its result depends on host-device interconnect behavior.
+  quick_guide: Use 0 by default on the target Ascend stack; do not enable CPU offload without a target-runtime compatibility
+    test.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

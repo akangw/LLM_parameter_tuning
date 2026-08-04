@@ -1,0 +1,65 @@
+name: VLLM_NIXL_ABORT_REQUEST_TIMEOUT
+type: env
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/envs.py:1472
+value_type: int
+default: '480'
+valid_choices: positive integer (seconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This environment variable controls the timeout (in seconds) after which the KV cache on the producer side
+  is automatically cleared if no READ notification is received from the consumer. It is only applicable when using NixlConnector
+  in a disaggregated decode-prefill (P/D) setup. On timeout, expired KV blocks are forcibly released to prevent memory leaks.
+  A shorter timeout reduces memory pressure on the producer by freeing stranded blocks faster, but may prematurely evict blocks
+  that a slow consumer still intends to read, causing request failures. A longer timeout increases memory usage on the producer
+  but provides more tolerance for slow consumers. On Ascend NPU, the vllm-ascend plugin''s MooncakeHybridConnector also reads
+  this variable (via envs.VLLM_NIXL_ABORT_REQUEST_TIMEOUT) to determine when to force-free expired delayed requests, making
+  it relevant for Ascend-based disaggregated serving deployments.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:562
+  context: Sets expiration time for requests waiting for remote decode to fetch blocks
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:1727
+  context: Releases expired KV blocks for requests that exceeded the timeout
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:185
+  context: Force-frees expired delayed requests in Ascend MooncakeHybridConnector
+- file: examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py:155
+  context: Proxy-side conversation KV cache TTL must be less than this timeout
+related_parameters:
+- name: VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
+  relation: Analogous timeout for MooncakeConnector; both default to 480 seconds
+constraints:
+- Only effective when using NixlConnector or MooncakeHybridConnector in a disaggregated prefill-decode setup
+- Must be a positive integer representing seconds
+tuning_advice:
+  summary: 'Adjust this timeout to balance memory pressure on the producer against tolerance for slow consumers in disaggregated
+    serving. Only relevant for NixlConnector-based P/D deployments.
+
+    '
+  suggested_values:
+  - scenario: Default / general use
+    value: 480
+    reason: The upstream default provides a generous 8-minute window for consumers to read KV blocks before forced eviction
+  - scenario: High-throughput production with reliable network
+    value: 120
+    reason: Reduces memory pressure on the producer by freeing stranded blocks sooner; safe when network latency is consistently
+      low
+  - scenario: Slow or unreliable consumer connections
+    value: 600
+    reason: Extends the grace period to avoid premature KV block eviction that would cause request failures
+  caveats:
+  - Setting this too low may cause legitimate requests to fail if the consumer cannot read KV blocks within the timeout window
+  - Setting this too high increases memory usage on the producer, potentially causing OOM if many requests are stranded
+  - In vllm-ascend, the MooncakeHybridConnector also uses this value for delayed request cleanup, so it affects Ascend NPU
+    deployments even when not using NixlConnector directly
+  - The proxy-side conversation KV cache TTL (in disagg_proxy_multiturn.py) must be less than this timeout to avoid inconsistencies
+  quick_guide: Use the default 480s unless you observe memory pressure on the producer (reduce) or premature request failures
+    (increase)
+analysis_date: '2026-07-06'

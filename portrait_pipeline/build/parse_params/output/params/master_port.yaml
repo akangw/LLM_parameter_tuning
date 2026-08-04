@@ -1,0 +1,71 @@
+name: --master-port
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:928
+- vllm/config/parallel.py:258
+value_type: int
+default: 29501
+valid_choices: any valid TCP port number (1-65535)
+cli_example: --master-port 29501
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: '--master-port specifies the TCP port used by the distributed process group (torch.distributed) for multi-node
+  coordination when distributed_executor_backend is "mp". On Ascend NPU, this port is used for the gloo backend (CPU-side
+  control plane) during process group initialization (see examples/offline_external_launcher.py:180: backend="cpu:gloo,npu:hccl").
+  The actual NPU-to-NPU data communication uses HCCL over HCCS/RoCE and does not go through this port. The parameter only
+  affects the initial handshake and coordination phase, not the steady-state inference performance. A port conflict will cause
+  the process group initialization to fail, preventing the job from starting, but once connected, the port choice has no measurable
+  impact on throughput or latency.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:258
+  context: Field definition with default 29501, used in ParallelConfig for multi-node mp backend
+- file: vllm/engine/arg_utils.py:928
+  context: CLI argument registration under ParallelConfig group
+- file: vllm/engine/arg_utils.py:1905
+  context: Passed to ParallelConfig constructor during engine startup
+- file: examples/offline_external_launcher.py:274
+  context: Used in Ascend example to set MASTER_PORT env var for torch.distributed.init_process_group
+- file: examples/offline_weight_load.py:278
+  context: Used in Ascend weight loading example for multi-node process group init
+related_parameters:
+- name: --master-addr
+  relation: Together with --master-port, forms the address:port pair for the distributed master node
+- name: --distributed-executor-backend
+  relation: --master-port is only used when distributed_executor_backend is 'mp' (multiprocessing)
+- name: --nnodes
+  relation: Must be > 1 for --master-port to be meaningful; single-node setups use localhost
+- name: --node-rank
+  relation: Non-zero node_rank workers connect to the master node at --master-addr:--master-port
+constraints:
+- Must be a valid TCP port number between 1 and 65535
+- Must not conflict with other services on the master node
+- Only used when distributed_executor_backend is 'mp'
+- All nodes in the distributed job must use the same --master-port value
+tuning_advice:
+  summary: 'Use the default port (29501) unless it conflicts with another service. The port choice has no performance impact
+    on Ascend NPU inference.
+
+    '
+  suggested_values:
+  - scenario: Default single-node or multi-node deployment
+    value: 29501
+    reason: The default value works for most deployments and avoids unnecessary configuration
+  - scenario: Port 29501 is already in use by another process
+    value: <any available port, e.g. 29502>
+    reason: Choose any free port to avoid initialization failure; no performance difference
+  caveats:
+  - On Ascend NPU, the actual tensor communication uses HCCL over HCCS/RoCE, not this TCP port. Changing this port does not
+    affect NPU communication performance.
+  - If using an external launcher (e.g., torchrun), the launcher may set MASTER_PORT independently, overriding this value.
+  - For single-node multi-NPU inference, this parameter is effectively unused since all communication happens via shared memory
+    or local HCCS.
+  quick_guide: Keep the default 29501 unless there is a port conflict; this parameter does not affect Ascend NPU inference
+    performance.
+analysis_date: '2026-07-06'

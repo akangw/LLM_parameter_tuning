@@ -1,0 +1,115 @@
+name: SpeculativeConfig.rejection_sample_method
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:68
+- vllm/config/speculative.py:190
+- vllm/config/speculative.py:221
+- vllm/config/speculative.py:952
+- vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:315
+value_type: str
+default: standard
+valid_choices:
+- standard
+- synthetic
+cli_example: --speculative-config '{"method":"draft_model","model":"Qwen/Qwen3-0.6B","num_speculative_tokens":5,"rejection_sample_method":"standard"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This field selects how speculative draft tokens are accepted. The standard mode uses probabilistic rejection
+  sampling, with draft probabilities or the configured one-hot draft sampling behavior, so useful accepted length is determined
+  by agreement between the draft and target distributions. Synthetic mode instead resolves a configured target acceptance
+  length or per-position marginal rates into a fixed acceptance schedule. In an implementation that consumes those rates,
+  increasing scheduled acceptance produces more output tokens per verification step and can improve inter-token latency and
+  throughput, while decreasing it deliberately produces shorter accepted runs; it is principally suitable for controlled performance
+  experiments rather than normal distribution-correct serving. The pinned upstream tree validates and normalizes the synthetic
+  schedule but contains no runtime consumer of rejection_sample_method or the resolved rates, so the configuration alone does
+  not establish a realized upstream speed change in this snapshot. Ascend takes precedence: its NPU v2 rejection sampler explicitly
+  raises NotImplementedError when synthetic rates are supplied because the required 64-bit Triton random operation is unsupported.
+  Therefore standard is the only supported production choice on the pinned Ascend stack.'
+usage_locations:
+- file: vllm/config/speculative.py:68
+  context: Restricts the configuration value to the literals standard and synthetic.
+- file: vllm/config/speculative.py:190
+  context: Declares standard as the default and describes probabilistic versus scheduled synthetic acceptance.
+- file: vllm/config/speculative.py:221
+  context: Validates synthetic rates or converts a requested mean acceptance length into per-position marginal rates.
+- file: vllm/config/speculative.py:952
+  context: Requires exactly one synthetic acceptance control in synthetic mode, resolves it, and rejects those controls in
+    standard mode.
+- file: vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:315
+  context: Implements the Ascend NPU v2 rejection entry point and rejects non-null synthetic rates because NPU Triton lacks
+    the required 64-bit random primitive.
+related_parameters:
+- name: SpeculativeConfig.synthetic_acceptance_rates
+  relation: Supplies the non-increasing per-position marginal acceptance schedule required by synthetic mode.
+- name: SpeculativeConfig.synthetic_acceptance_length
+  relation: Alternatively supplies the desired mean accepted sequence length, which synthetic mode converts to per-position
+    rates.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Sets the required rate-list length and bounds synthetic_acceptance_length to the interval from 1 through num_speculative_tokens
+    plus 1.
+- name: SpeculativeConfig.draft_sample_method
+  relation: Controls whether standard rejection sampling uses cached stochastic draft logits or treats draft proposals as
+    one-hot greedy samples.
+constraints:
+- The only accepted values are standard and synthetic.
+- Synthetic mode requires exactly one of synthetic_acceptance_rates or synthetic_acceptance_length.
+- A synthetic_acceptance_rates list must contain exactly num_speculative_tokens entries, every entry must be in [0, 1], and
+  the list must be non-increasing.
+- synthetic_acceptance_length must be between 1 and num_speculative_tokens + 1 inclusive.
+- Synthetic acceptance controls are rejected when this field is standard.
+- Synthetic rejection sampling is unsupported by the pinned Ascend NPU v2 rejection kernel and raises NotImplementedError
+  if synthetic rates reach it.
+- In the pinned upstream snapshot, the field and resolved synthetic rates are validated in SpeculativeConfig but are not consumed
+  by an upstream runtime rejection path.
+tuning_advice:
+  summary: Use standard for normal serving and for every Ascend deployment. Consider synthetic only in an upstream experimental
+    environment whose runtime is verified to consume the resolved schedule, and use it to sweep controlled acceptance lengths
+    rather than as a production quality knob.
+  suggested_values:
+  - scenario: Ascend NPU serving
+    value: standard
+    reason: It is the only method supported by the pinned Ascend rejection kernel; supplying synthetic rates fails explicitly.
+  - scenario: General production serving
+    value: standard
+    reason: It is the source-defined default and bases acceptance on the target and draft distributions rather than an artificial
+      schedule.
+  - scenario: Controlled upstream speculative-decoding performance study
+    value: synthetic
+    reason: It permits acceptance-length sweeps when paired with exactly one valid synthetic schedule control, but only after
+      verifying that the deployed runtime actually consumes the resolved rates.
+  caveats:
+  - Do not use synthetic on the pinned Ascend stack; the NPU kernel refuses it rather than silently producing incorrect acceptance
+    decisions.
+  - The pinned upstream repository exposes validation and rate resolution but no runtime consumer, so setting synthetic may
+    not change execution in this exact source snapshot.
+  - Synthetic acceptance is artificial and should not be interpreted as output-quality or target-distribution correctness
+    evidence.
+  - Latency and throughput effects depend on speculative depth, batch size, verification cost, and the accepted-length schedule;
+    a higher configured acceptance rate does not reduce the target verification work already performed for the step.
+  quick_guide: Keep standard. On Ascend this is mandatory; upstream, use synthetic only for an acceptance-controlled benchmark
+    after confirming runtime plumbing, then sweep valid acceptance schedules and measure end-to-end latency and throughput.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

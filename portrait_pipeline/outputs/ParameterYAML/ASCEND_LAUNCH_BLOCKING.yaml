@@ -1,0 +1,59 @@
+name: ASCEND_LAUNCH_BLOCKING
+type: env
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/platform.py:546
+value_type: str
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: NPUPlatform.check_and_update_config reads this environment variable after Ascend has normalized the compilation
+  and CUDAGraph modes. When the value is exactly "1" and cudagraph_mode is anything other than NONE, initialization raises
+  ValueError because ACL graph does not support launch blocking. Thus the normal value "0" preserves access to ACL graph execution,
+  while using "1" for debugging requires an eager/no-graph configuration and gives up the latency and throughput benefits
+  of graph replay. The pinned upstream vLLM repository has no ASCEND_LAUNCH_BLOCKING reader; this behavior is specific to
+  the Ascend platform hook.
+usage_locations:
+- file: vllm_ascend/platform.py:542
+  context: Rejects the exact string "1" whenever the finalized cudagraph mode is not NONE and recommends unsetting the variable
+    or setting it to 0.
+- file: docs/source/developer_guide/Design_Documents/ACL_Graph.md:71
+  context: Documents that ASCEND_LAUNCH_BLOCKING=1 is rejected while ACL graph is enabled.
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:75
+  context: The documented deployment environment explicitly exports the performance-oriented value 0.
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: ASCEND_LAUNCH_BLOCKING=1 is permitted by the platform check only when this mode has been reduced to NONE.
+- name: enforce_eager
+  relation: Enabling eager execution makes upstream vLLM set compilation mode and cudagraph mode to NONE, which avoids the
+    Ascend incompatibility at the cost of disabling compilation and graph replay.
+constraints:
+- The value must not be "1" when the finalized compilation_config.cudagraph_mode is non-NONE; the Ascend platform raises ValueError
+  during configuration.
+- Values are environment strings, and only the exact string "1" activates the incompatibility check.
+tuning_advice:
+  summary: Keep the variable unset or at "0" for serving; reserve "1" for debugging without ACL graph.
+  suggested_values:
+  - scenario: Normal latency- or throughput-sensitive serving
+    value: '0'
+    reason: This is the code default and allows the configured ACL graph mode to remain enabled.
+  - scenario: Debugging that specifically requires blocking launches
+    value: '1'
+    reason: Use only together with cudagraph_mode=NONE (for example, eager execution), because graph mode otherwise fails
+      validation.
+  caveats:
+  - Setting "1" while ACL graph is enabled prevents startup rather than merely degrading performance.
+  - Debugging with "1" requires disabling graph execution, so benchmark results are not representative of the normal graph-enabled
+    path.
+  - The current guard compares strings exactly; values other than "1" bypass this vLLM-Ascend check and are not documented
+    choices here.
+  quick_guide: Use "0" by default; if a debugging session needs "1", first disable CUDAGraph/ACL graph.
+analysis_date: '2026-08-03'

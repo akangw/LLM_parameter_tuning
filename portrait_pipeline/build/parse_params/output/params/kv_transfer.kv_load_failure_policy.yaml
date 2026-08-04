@@ -1,0 +1,65 @@
+name: kv_transfer.kv_load_failure_policy
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/v1/core/sched/scheduler.py:131
+- vllm_ascend/platform.py:785
+value_type: str
+default: fail
+valid_choices:
+- fail
+- recompute
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls how the scheduler handles KV cache load failures during KV transfer operations (e.g.,
+  disaggregated prefill-decode or KV offloading). When set to ''fail'', a request whose KV cache blocks cannot be loaded from
+  the remote connector is immediately terminated with an error finish reason, freeing resources quickly but causing the request
+  to fail. When set to ''recompute'', the scheduler sets `recompute_kv_load_failures = True` (vllm/v1/core/sched/scheduler.py:133),
+  which causes the request to be rescheduled for recomputation of the failed KV blocks. This avoids request failures at the
+  cost of additional computation and increased latency for affected requests. On Ascend NPU, the ''recompute'' policy is explicitly
+  blocked for hybrid models (vllm_ascend/platform.py:785-788) via an assertion, meaning hybrid model deployments must use
+  ''fail''. The performance impact is medium because it directly affects tail latency and throughput under KV transfer failure
+  conditions, which are common in disaggregated serving and KV offloading scenarios.
+
+  '
+usage_locations:
+- file: vllm/v1/core/sched/scheduler.py:131-133
+  context: Scheduler reads kv_load_failure_policy to set recompute_kv_load_failures flag
+- file: vllm_ascend/platform.py:785-788
+  context: Ascend platform validates that recompute policy is not used with hybrid models
+related_parameters:
+- name: kv_transfer_config
+  relation: Parent configuration object; must be non-None for this parameter to take effect
+- name: model_config.is_hybrid
+  relation: When True, kv_load_failure_policy='recompute' is blocked on Ascend NPU
+constraints:
+- kv_load_failure_policy='recompute' is not supported for hybrid models on Ascend NPU (raises AssertionError)
+- kv_transfer_config must be non-None for this parameter to have any effect
+tuning_advice:
+  summary: 'Use ''recompute'' for production disaggregated serving to avoid request failures from transient KV transfer issues;
+    use ''fail'' for debugging or when request failures are acceptable. On Ascend NPU, hybrid models must use ''fail''.
+
+    '
+  suggested_values:
+  - scenario: Production disaggregated prefill-decode serving with non-hybrid models
+    value: recompute
+    reason: Prevents request failures due to transient KV cache transfer issues, improving overall reliability at the cost
+      of some recomputation latency
+  - scenario: Hybrid model deployments on Ascend NPU
+    value: fail
+    reason: Ascend NPU explicitly blocks recompute mode for hybrid models; fail is the only supported option
+  - scenario: Debugging or testing KV transfer infrastructure
+    value: fail
+    reason: Immediate failure makes KV transfer issues visible and easier to diagnose
+  caveats:
+  - The 'recompute' policy increases latency for affected requests because failed KV blocks must be recomputed from scratch
+  - On Ascend NPU, hybrid models (is_hybrid=True) cannot use 'recompute' — attempting to do so raises an AssertionError
+  - This parameter only takes effect when kv_transfer_config is configured (i.e., KV connectors are in use)
+  - When MultiConnector is used, configure this on the top-level kv-transfer-config, not on child connectors
+  quick_guide: Set to 'recompute' for resilient disaggregated serving unless using hybrid models on Ascend NPU
+analysis_date: '2026-07-06'

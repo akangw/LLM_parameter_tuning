@@ -1,0 +1,149 @@
+name: CompilationConfig.cudagraph_mode
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:57
+- vllm/config/compilation.py:581
+- vllm/config/vllm.py:175
+- vllm/v1/cudagraph_dispatcher.py:165
+- docs/design/cuda_graphs.md:40
+- vllm_ascend/platform.py:424
+- vllm_ascend/worker/model_runner_v1.py:2677
+- docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:125
+value_type: str
+default: null
+valid_choices:
+- NONE
+- PIECEWISE
+- FULL
+- FULL_DECODE_ONLY
+- FULL_AND_PIECEWISE
+cli_example: vllm serve <model> --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Selects which model-execution regions are captured and replayed as device graphs. NONE disables graph capture.
+  PIECEWISE keeps graph-incompatible operations outside captured regions and requires vLLM piecewise compilation. FULL captures
+  full graphs for both uniform-decode and non-uniform batches. FULL_DECODE_ONLY uses full graphs for uniform decode but runs
+  prefill and mixed batches without graphs, reducing graph memory relative to modes that also capture those batches. FULL_AND_PIECEWISE
+  uses full graphs for uniform decode and piecewise graphs for prefill or mixed batches; upstream documents this as generally
+  the fastest choice, especially for low latency, but also the choice with the greatest graph memory and capture time. The
+  declared null is a delayed default: the normal O2 optimization-level defaults resolve it to FULL_AND_PIECEWISE, while explicit
+  field values override that default. Runtime dispatch can still fall back to eager NONE when no compatible captured key exists
+  or can downgrade the configured mode for an attention backend or model feature. On Ascend the same selector controls ACLGraph:
+  platform setup configures splitting for piecewise-containing modes, clears splitting for full-only modes, and disables vLLM
+  compilation as well as ACLGraph when the effective mode is NONE. Ascend documentation recommends FULL_DECODE_ONLY because
+  graph replay reduces operator-dispatch overhead.'
+usage_locations:
+- file: vllm/config/vllm.py:175
+  context: 'Optimization levels supply delayed defaults: O0 selects NONE, O1 selects PIECEWISE, and O2/O3 select FULL_AND_PIECEWISE;
+    an explicit cudagraph_mode takes precedence over these defaults.'
+- file: vllm/v1/cudagraph_dispatcher.py:165
+  context: Expands the effective configured mode into FULL and/or PIECEWISE capture keys for the configured sizes, separately
+    representing uniform decode and mixed or prefill batches.
+- file: vllm/v1/cudagraph_dispatcher.py:234
+  context: Chooses FULL before PIECEWISE at runtime and falls back to NONE when the batch is outside the capture bound, no
+    key matches, or a feature excludes a graph mode.
+- file: vllm_ascend/platform.py:478
+  context: Downgrades unsupported full modes for encoder-decoder models to PIECEWISE when vLLM compilation is active, otherwise
+    to NONE.
+- file: vllm_ascend/platform.py:501
+  context: 'Applies Ascend precedence: NONE disables compilation and extended NPU graphs; piecewise-containing modes configure
+    splitting and graph sizes; full-only modes clear splitting to avoid repeated compilation.'
+- file: vllm_ascend/worker/model_runner_v1.py:2677
+  context: Dispatches each Ascend runtime batch to an available graph mode, pads it to the selected capture descriptor, or
+    executes eagerly when required.
+- file: docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:125
+  context: Describes cudagraph_mode as an ACLGraph control that reduces operator-dispatch cost and recommends FULL_DECODE_ONLY
+    for current Ascend deployments.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: Supplies the effective cudagraph mode when this field remains null; the default O2 level selects FULL_AND_PIECEWISE.
+- name: CompilationConfig.mode
+  relation: PIECEWISE and FULL_AND_PIECEWISE require VLLM_COMPILE because they contain piecewise graphs. On Ascend, effective
+    NONE also forces compilation mode to NONE.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Determines the batch-token sizes for which the selected graph modes create capture keys; batches without a compatible
+    key execute eagerly.
+- name: CompilationConfig.max_cudagraph_capture_size
+  relation: Batches above this effective upper bound bypass graph replay regardless of the selected mode.
+- name: ModelConfig.enforce_eager
+  relation: Forces cudagraph_mode to NONE and clears graph capture regardless of this configured value.
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: Ascend disables extended NPU graphs when the effective mode is NONE or contains PIECEWISE; full-only graph modes
+    can leave it enabled.
+constraints:
+- String values are parsed case-insensitively but must name one of NONE, PIECEWISE, FULL, FULL_DECODE_ONLY, or FULL_AND_PIECEWISE.
+- PIECEWISE and FULL_AND_PIECEWISE require CompilationMode.VLLM_COMPILE and usable splitting operations; incompatible compilation
+  settings cause a fallback to NONE or another mode.
+- Full graph modes depend on the selected attention backend and model features. Runtime initialization may downgrade them
+  to the closest supported mode, so the configured and effective values can differ.
+- 'Upstream pooling models replace full-containing modes with PIECEWISE. Encoder-decoder handling is platform-specific: pinned
+  Ascend replaces full-containing modes with PIECEWISE under VLLM_COMPILE and NONE otherwise.'
+- On Ascend, compilation modes other than NONE and VLLM_COMPILE force cudagraph_mode to NONE; xlite full mode also forces
+  NONE, while xlite decode-only mode forces FULL_DECODE_ONLY.
+- Ascend graph modes are incompatible with ASCEND_LAUNCH_BLOCKING=1 and platform configuration raises ValueError when both
+  are active.
+tuning_advice:
+  summary: Use FULL_DECODE_ONLY as the Ascend baseline, retain the upstream O2 FULL_AND_PIECEWISE default when latency is
+    the priority and memory/startup budgets permit it, and move toward PIECEWISE or NONE only for compatibility, memory, startup,
+    or debugging needs.
+  suggested_values:
+  - scenario: Typical Ascend NPU serving
+    value: FULL_DECODE_ONLY
+    reason: Pinned Ascend documentation recommends this mode; it removes decode operator-dispatch overhead without also retaining
+      piecewise graphs for prefill and mixed batches.
+  - scenario: Upstream CUDA low-latency serving with compatible backends
+    value: FULL_AND_PIECEWISE
+    reason: This is the O2/O3 default and the documented generally fastest mode, using full graphs for uniform decode and
+      piecewise graphs otherwise.
+  - scenario: Graph-compatible decode-focused or P/D decode instance
+    value: FULL_DECODE_ONLY
+    reason: Prefill and mixed batches stay uncaptured, saving graph memory compared with FULL_AND_PIECEWISE while accelerating
+      uniform decode.
+  - scenario: Backend compatibility is more important than maximum latency reduction
+    value: PIECEWISE
+    reason: It leaves incompatible operations such as attention outside captured regions, at the cost of less complete launch-overhead
+      elimination.
+  - scenario: Debugging, minimum startup work, or severe graph-memory pressure
+    value: NONE
+    reason: It avoids graph capture, replay, and graph memory. On Ascend this also disables the compilation path, so the performance
+      loss can be larger.
+  caveats:
+  - Graph capture reserves device memory and adds startup warm-up/capture time; the cost increases with capture sizes, graph
+    variants, and modes that cover both decode and mixed batches.
+  - The fastest effective mode depends on model shape, attention backend, prompt/decode mix, speculative decoding, LoRA state,
+    and capture-size coverage; benchmark end-to-end latency, throughput, startup time, and peak memory together.
+  - Inspect the normalized effective mode in logs because platform setup and backend capability checks can silently replace
+    the requested mode.
+  - 'FULL is not usually the first tuning choice: upstream states that FULL_AND_PIECEWISE is generally faster, while Ascend
+    documentation recommends FULL_DECODE_ONLY.'
+  quick_guide: Start with FULL_DECODE_ONLY on Ascend or the effective O2 default FULL_AND_PIECEWISE upstream. Compare against
+    PIECEWISE and NONE under production-shaped traffic, verify the final effective mode and capture coverage, and keep the
+    least memory-intensive mode that meets the latency and throughput target.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

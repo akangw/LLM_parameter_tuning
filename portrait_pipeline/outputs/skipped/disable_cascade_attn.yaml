@@ -1,0 +1,6 @@
+name: --disable-cascade-attn
+type: cli
+performance_impact: none
+skip_reason: 'On the target vllm-ascend runtime, this GPU-specific setting is unsupported: platform configuration logs a warning
+  and resets disable_cascade_attn=True to False. Therefore the CLI flag has no effective latency, throughput, or memory tuning
+  impact on Ascend.'

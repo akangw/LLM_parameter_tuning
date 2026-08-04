@@ -1,0 +1,105 @@
+name: --scheduler-cls
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:127
+- vllm/config/scheduler.py:168
+- vllm/engine/arg_utils.py:1360
+- vllm/engine/arg_utils.py:1976
+- vllm_ascend/platform.py:590
+- vllm_ascend/platform.py:600
+- vllm_ascend/core/recompute_scheduler.py:78
+- vllm_ascend/core/scheduler_dynamic_batch.py:122
+- vllm_ascend/core/scheduler_profiling_chunk.py:46
+value_type: str
+default: null
+valid_choices: A Python import path of the form "module.ClassName"; programmatic configuration also accepts a class object.
+cli_example: --scheduler-cls my_package.my_scheduler.CustomScheduler
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This option replaces the scheduler implementation that makes admission, batching, preemption, and token-budget
+  decisions, so a custom implementation can directly change request latency, device utilization and throughput, and KV-cache
+  pressure. With a null value, vLLM resolves to AsyncScheduler when async_scheduling is true and otherwise to Scheduler. A
+  non-null string is imported by qualified name, while a class object is accepted through programmatic configuration. On Ascend,
+  platform configuration has precedence over the CLI value: recompute_scheduler_enable replaces the complete scheduler config
+  with RecomputeSchedulerConfig; SLO_limits_for_dynamic_batch then selects SchedulerDynamicBatch and enables chunked prefill;
+  profiling_chunk_config.enabled is applied last and selects ProfilingChunkScheduler. Thus, when more than one of these features
+  is configured, the later Ascend override is the effective scheduler.'
+usage_locations:
+- file: vllm/config/scheduler.py:168
+  context: Resolves null to the standard synchronous or asynchronous scheduler and imports a non-null qualified class name.
+- file: vllm/engine/arg_utils.py:1976
+  context: Copies the CLI value into SchedulerConfig during engine configuration.
+- file: vllm_ascend/platform.py:590
+  context: Replaces SchedulerConfig with the Ascend recompute configuration in supported PD-disaggregated deployments.
+- file: vllm_ascend/platform.py:600
+  context: Overrides scheduler_cls for dynamic batching and profiling-based chunk sizing, with profiling applied last.
+- file: vllm_ascend/core/recompute_scheduler.py:78
+  context: Defines the Ascend recompute scheduler default and switches to AsyncRecomputeScheduler when async scheduling is
+    active.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:122
+  context: Implements dynamic token-budget refinement and decode-first chunked-prefill scheduling.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:46
+  context: Implements profiling-based dynamic chunk sizing for pipeline-parallel prefill.
+related_parameters:
+- name: --async-scheduling
+  relation: With scheduler_cls unset, it selects AsyncScheduler; recompute mode similarly selects AsyncRecomputeScheduler.
+- name: ascend_config.recompute_scheduler_enable
+  relation: Replaces the configured scheduler with an Ascend recompute scheduler in PD-disaggregated mode.
+- name: ascend_config.SLO_limits_for_dynamic_batch
+  relation: A value other than -1 overrides scheduler_cls with SchedulerDynamicBatch and enables chunked prefill.
+- name: ascend_config.profiling_chunk_config.enabled
+  relation: Overrides scheduler_cls with ProfilingChunkScheduler after the other Ascend scheduler selections.
+- name: --enable-chunked-prefill
+  relation: The Ascend dynamic-batch override forces this option true; profiling-based chunk sizing is documented for chunked
+    prefill.
+- name: --pipeline-parallel-size
+  relation: Ascend profiling_chunk_config requires pipeline parallelism greater than one.
+constraints:
+- A CLI value must resolve to an importable Python class; a programmatic value may be a class object.
+- The custom scheduler must be compatible with vLLM's internal SchedulerInterface and current constructor contract.
+- vLLM warns that the custom scheduler interface is not public and compatibility may not be maintained across releases.
+- Ascend recompute scheduling is valid only for PD-disaggregated kv_producer or kv_consumer roles, not PD-mixed kv_both mode.
+- Ascend profiling-based chunk sizing requires pipeline_parallel_size greater than one.
+- Ascend feature configuration can override an explicitly supplied --scheduler-cls value.
+tuning_advice:
+  summary: Leave the option unset for normal serving. On Ascend, enable a supported scheduler feature through its documented
+    additional configuration so the platform also applies the required companion settings; use --scheduler-cls only for a
+    tested custom implementation.
+  suggested_values:
+  - scenario: Standard vLLM or Ascend serving
+    value: <unset>
+    reason: This preserves vLLM's Scheduler or AsyncScheduler selection and avoids depending on the unstable custom scheduler
+      interface.
+  - scenario: Ascend PD-disaggregated serving with KV-cache recomputation
+    value: <unset; configure recompute_scheduler_enable=true>
+    reason: The Ascend platform validates the KV role, constructs RecomputeSchedulerConfig, and chooses the synchronous or
+      asynchronous recompute class.
+  - scenario: Ascend dynamic batching governed by an SLO limit
+    value: <unset; configure SLO_limits_for_dynamic_batch to a nonnegative limit>
+    reason: The Ascend platform selects SchedulerDynamicBatch and also enables the required chunked-prefill behavior.
+  - scenario: Ascend profiling-based dynamic chunks with pipeline parallelism
+    value: <unset; configure profiling_chunk_config.enabled=true>
+    reason: The platform selects ProfilingChunkScheduler and installs its companion patch after validating pipeline parallelism.
+  - scenario: Maintained private scheduler implementation
+    value: my_package.my_scheduler.CustomScheduler
+    reason: A qualified path activates the custom scheduler, but it should be used only when its interface and performance
+      have been tested against the pinned vLLM release.
+  caveats:
+  - Scheduler selection is structural, not a scalar tuning knob; no custom class is universally faster, and gains require
+    workload-specific latency, throughput, and KV-cache measurements.
+  - Directly naming an Ascend built-in scheduler can omit validation or companion mutations performed by vllm_ascend.platform;
+    prefer the corresponding additional configuration.
+  - If dynamic batching and profiling chunk sizing are both enabled, ProfilingChunkScheduler wins because its override is
+    applied later.
+  - Recompute scheduling replaces SchedulerConfig before the later dynamic-batch and profiling overrides, so combining these
+    features changes which scheduler is ultimately active.
+  - Custom schedulers rely on a non-public interface and may break when vLLM is upgraded.
+  quick_guide: Keep --scheduler-cls unset, select Ascend scheduler features through --additional-config, and override the
+    class directly only after compatibility and representative load testing.
+analysis_date: '2026-07-27'

@@ -1,0 +1,8 @@
+name: EPLBConfig.step_interval
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, this field is declared and documented as an EPLB rebalance interval but has
+  no runtime consumer, so changing it does not alter latency, throughput, or memory in the pinned implementation. The pinned
+  vLLM Ascend implementation likewise does not consume this upstream field; its separate dynamic-EPLB path schedules heat
+  collection and algorithm execution with Ascend-specific expert_heat_collection_interval and algorithm_execution_interval
+  settings.

@@ -1,0 +1,101 @@
+name: CompilationConfig.pass_config.fi_allreduce_fusion_max_size_mb
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:155
+- vllm/config/compilation.py:181
+- vllm/config/vllm.py:1660
+- docs/design/fusions.md:106
+value_type: float
+default: null
+valid_choices: A float threshold in MiB, or null to select the device-capability and tensor-parallel-world-size default.
+cli_example: --compilation-config '{"pass_config":{"fi_allreduce_fusion_max_size_mb":32}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This threshold is converted from MiB to bytes and, when fused AllReduce+RMSNorm is enabled, divided by hidden
+  size and dtype element size to create a max-token compile-range boundary. Ranges at or below that boundary can use the FlashInfer
+  fused tensor-parallel all-reduce, residual/RMSNorm, and optional quantization kernel; larger ranges retain the unfused path.
+  Raising the value can extend communication fusion to larger batches and increases the maximum FlashInfer workspace sizing,
+  while lowering it restricts fusion to smaller decode-like ranges. The parameter has no consumer or override in the pinned
+  vllm-ascend repository; Ascend configures its separate NPU all-reduce/RMSNorm pass through ascend_compilation_config instead.
+usage_locations:
+- file: vllm/config/compilation.py:181
+  context: flashinfer_max_size accepts only tensor-parallel world sizes 2, 4, or 8, resolves null through the CUDA capability-specific
+    table, and converts the selected MiB value to integer bytes.
+- file: vllm/config/vllm.py:1660
+  context: When fuse_allreduce_rms is active, _set_compile_ranges converts the byte threshold to a token count using model
+    hidden size and dtype element size and adds that count as a compile-range endpoint.
+- file: docs/design/fusions.md:106
+  context: Documents that the fused collective is profitable only for small token counts and that this field configures the
+    maximum eligible tensor size.
+related_parameters:
+- name: CompilationConfig.pass_config.fuse_allreduce_rms
+  relation: The size threshold affects compile-range selection only when this fusion pass is enabled.
+- name: ParallelConfig.tensor_parallel_size
+  relation: The tensor-parallel world size selects the automatic threshold and only world sizes 2, 4, and 8 are supported
+    by flashinfer_max_size.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Caps the compile ranges and the maximum token capacity needed by the fused workspace.
+- name: CompilationConfig.compile_ranges_endpoints
+  relation: The derived maximum eligible token count is inserted as an endpoint so the fusion pass can be limited to lower
+    ranges.
+constraints:
+- The setting is relevant only when fused AllReduce+RMSNorm is enabled and a FlashInfer-capable CUDA path is in use.
+- flashinfer_max_size returns no threshold for tensor-parallel world sizes other than 2, 4, and 8.
+- With null, unsupported or non-CUDA device capabilities have no automatic threshold and therefore do not create a fusion
+  compile-range boundary.
+- The pinned code performs no explicit positivity or finiteness validation; use a finite positive value because zero, negative,
+  NaN, or infinite values can produce invalid or nonsensical byte and token boundaries.
+- The upstream fusion documentation warns that TP+DP and TP+PP combinations are currently broken for this fused path.
+tuning_advice:
+  summary: Leave the field unset to use the pinned hardware/topology defaults, and override it only after benchmarking the
+    fused and unfused boundary for the exact model shape and request-size distribution.
+  suggested_values:
+  - scenario: Supported CUDA deployment without workload-specific benchmark evidence
+    value: unset (null)
+    reason: This selects the maintained device-capability and TP-size table instead of imposing one threshold across different
+      GPU generations and topologies.
+  - scenario: SM90 with TP=2
+    value: 64
+    reason: This is the pinned implementation's automatic 64 MiB threshold for that capability and world size.
+  - scenario: SM100 with TP=4
+    value: 32
+    reason: This is the pinned implementation's automatic 32 MiB threshold for that capability and world size.
+  - scenario: Measured crossover differs from the automatic threshold
+    value: benchmark-derived positive float
+    reason: Set the largest tensor size for which end-to-end fused execution remains faster, while checking the associated
+      workspace memory.
+  caveats:
+  - 'A larger value is not automatically faster: the documentation says the fusion is profitable for small token counts, so
+    extending it beyond the measured crossover can reduce throughput or raise latency.'
+  - The same MiB value maps to different token counts for different hidden sizes and dtypes.
+  - Increasing the threshold can increase FlashInfer workspace allocation, although workspace token capacity is capped by
+    max_num_batched_tokens.
+  - The explanatory table in vllm/config/compilation.py is not fully aligned with the imported constant in the pinned allreduce
+    fusion implementation; leaving the value null uses the implementation constant.
+  - This setting is not a tuning control for the separate vllm-ascend NPU all-reduce/RMSNorm fusion pass.
+  quick_guide: Keep null by default; on supported CUDA TP=2/4/8, benchmark around the automatic cutoff and change it only
+    if latency, throughput, and workspace memory improve together.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - high_concurrency

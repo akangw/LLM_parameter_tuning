@@ -1,0 +1,72 @@
+name: compilation.compilation_time
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/compilation/monitor.py:52
+- vllm/v1/executor/abstract.py:132
+- vllm/v1/worker/gpu_worker.py:725
+- vllm/v1/worker/cpu_worker.py:218
+- vllm_ascend/worker/worker.py:582
+value_type: float
+default: '0.0'
+valid_choices: any non-negative float
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This is a read-only diagnostic field, not a user-configurable tuning knob. It records the wall-clock time
+  (in seconds) spent in torch.compile during model warmup. The value is accumulated in vllm/compilation/monitor.py:52 via
+  `compilation_config.compilation_time += total_compile_time` and propagated from worker processes back to the main process
+  in vllm/v1/executor/abstract.py:132 using `max()` across workers. On Ascend NPU, the vllm-ascend worker (vllm_ascend/worker/worker.py:582)
+  reads this value to construct a `CompilationTimes` struct for logging. The field itself does not affect runtime performance
+  — it is purely observational. However, a high compilation_time value indicates that torch.compile (or CANN graph compilation
+  on Ascend) is taking a long time during startup, which increases time-to-first-token latency. This is a symptom of compilation
+  overhead, not a cause.
+
+  '
+usage_locations:
+- file: vllm/compilation/monitor.py:52
+  context: Accumulates compilation time during torch.compile warmup
+- file: vllm/v1/executor/abstract.py:132
+  context: Propagates max compilation time from workers to main process config
+- file: vllm/v1/engine/core.py:286
+  context: Reads compilation_time for startup timing log message
+- file: vllm/v1/worker/gpu_worker.py:725
+  context: Returns compilation_time in CompilationTimes from GPU worker warmup
+- file: vllm/v1/worker/cpu_worker.py:218
+  context: Returns compilation_time in CompilationTimes from CPU worker warmup
+- file: vllm_ascend/worker/worker.py:582
+  context: Ascend worker reads compilation_time to construct CompilationTimes for logging
+- file: vllm/benchmarks/startup.py:158
+  context: Benchmark extracts compilation_time for startup performance measurement
+related_parameters:
+- name: compilation_config.encoder_compilation_time
+  relation: Sibling field tracking encoder compilation time separately
+- name: compilation_config.mode
+  relation: compilation_time is only populated when mode is VLLM_COMPILE
+constraints: []
+tuning_advice:
+  summary: 'This is a read-only metric. To reduce the compilation time it measures, tune torch.compile settings or use CUDA
+    graphs / CANN graph capture to avoid recompilation.
+
+    '
+  suggested_values: []
+  caveats:
+  - 'On Ascend NPU, high compilation_time values may reflect CANN graph compilation overhead rather than torch.compile. Consider
+    using `--enforce-eager` to skip torch.compile entirely if startup latency is critical.
+
+    '
+  - 'This field is only populated when `compilation_config.mode == CompilationMode.VLLM_COMPILE`. In other modes (e.g., NONE),
+    it remains 0.0.
+
+    '
+  - 'The value is the max across all workers (TP>1), so it reflects the slowest worker''s compilation time.
+
+    '
+  quick_guide: 'This is a read-only diagnostic metric. Reduce startup latency by tuning compilation mode or using graph capture
+    instead.
+
+    '
+analysis_date: '2026-07-06'

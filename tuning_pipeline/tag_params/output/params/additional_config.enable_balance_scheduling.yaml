@@ -1,0 +1,108 @@
+name: additional_config.enable_balance_scheduling
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:77
+- vllm_ascend/platform.py:574
+- vllm_ascend/patch/platform/patch_balance_schedule.py:31
+- docs/source/user_guide/configuration/additional_config.md:91
+- docs/source/tutorials/models/DeepSeek-R1.md:122
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: '--additional-config ''{"enable_balance_scheduling": true}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: When true in vllm_config.additional_config, the Ascend patch replaces the normal v1 scheduling path with BalanceScheduler
+  and a balance-aware data-parallel engine loop. Each DP rank all-gathers its number of running requests after an engine step.
+  Before admitting waiting requests, a rank stops admission when the gathered state shows that any rank has reached max_num_running_reqs.
+  This changes prefill/decode mixing and can improve output throughput and TPOT for saturated DP workloads; the pinned Ascend
+  model guides also warn that TTFT can degrade. The extra CPU-tensor dist.all_gather on every active DP loop iteration is
+  synchronization overhead, and delaying waiting-request admission can increase queueing latency. With the default false,
+  BalanceScheduler delegates to the upstream scheduler and the patched engine entry point delegates to the original implementation.
+  The pinned upstream vLLM tree has no enable_balance_scheduling setting; this behavior is Ascend-specific.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:77
+  context: Reads the additional-config key with a deprecated environment-variable fallback and rejects simultaneous use with
+    profiling_chunk_config.
+- file: vllm_ascend/platform.py:574
+  context: Validates that balance scheduling is used only in PD-mixed mode, rejecting kv_producer and kv_consumer roles.
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:31
+  context: Reads the raw additional_config key, initializes per-DP-rank running-count tensors, and selects the custom or original
+    scheduler path.
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:274
+  context: Stops admitting waiting requests when the latest gathered counts show any DP rank at max_num_running_reqs.
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:622
+  context: Adds the running-request all-gather to the DP engine loop and activates the patched engine and scheduler classes.
+- file: docs/source/tutorials/models/DeepSeek-R1.md:122
+  context: Documents the expected throughput/TPOT improvement and the possible TTFT regression for v1 scheduling.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: The balancing mechanism exchanges running-request counts across DP ranks; data_parallel_size greater than one
+    is needed for cross-rank balancing to have a practical effect.
+- name: --max-num-seqs
+  relation: Determines max_num_running_reqs, the saturation threshold used to stop admission on all balancing ranks when any
+    rank reaches it.
+- name: additional_config.profiling_chunk_config
+  relation: Mutually exclusive; startup raises ValueError when profiling_chunk_config.enabled and balance scheduling are both
+    true.
+- name: kv_transfer_config.kv_role
+  relation: Only no KV transfer config or kv_role=kv_both is accepted; kv_producer and kv_consumer are rejected as PD-disaggregated
+    modes.
+- name: VLLM_ASCEND_BALANCE_SCHEDULING
+  relation: Deprecated fallback parsed by AscendConfig, but the scheduling patch checks the raw additional_config mapping;
+    use the additional-config key to reliably activate the current scheduler path.
+constraints:
+- Cannot be enabled together with additional_config.profiling_chunk_config.enabled; initialization raises ValueError.
+- 'Supports only PD-mixed mode: kv_transfer_config must be absent or kv_role must be kv_both; kv_producer and kv_consumer
+  cause startup to fail.'
+- The active patch checks bool(additional_config.get("enable_balance_scheduling", false)); an environment variable alone does
+  not satisfy that check in the pinned implementation.
+- The custom balancing behavior is Ascend-specific and has no matching parameter in the pinned upstream vLLM tree.
+tuning_advice:
+  summary: Keep false by default. Benchmark true for saturated, multi-rank DP deployments in PD-mixed mode when output throughput
+    or TPOT matters more than TTFT.
+  suggested_values:
+  - scenario: Saturated data-parallel PD-mixed serving where output throughput or TPOT is the priority
+    value: true
+    reason: Enables cross-rank running-count coordination and limits new-request admission when a peer rank is saturated,
+      which the Ascend model guides identify as potentially improving output throughput and TPOT.
+  - scenario: TTFT-sensitive, lightly loaded, single-DP-rank, or unbenchmarked deployment
+    value: false
+    reason: Preserves normal v1 scheduling and avoids the additional DP collective and admission delay; cross-rank balancing
+      offers no practical benefit with only one DP rank.
+  caveats:
+  - Enabling can degrade TTFT because waiting requests may be held back when another DP rank is at its request limit.
+  - The DP engine performs an additional CPU-tensor dist.all_gather during every active loop iteration.
+  - Results are workload-dependent; verify throughput, TPOT, and TTFT with production-like prompt/output lengths and concurrency.
+  - Do not use in PD-disaggregated producer or consumer nodes; current startup validation rejects those modes.
+  - Do not combine with profiling_chunk_config; choose one scheduling optimization.
+  - Use additional_config rather than the deprecated environment variable because the active patch reads the raw mapping.
+  quick_guide: For DP greater than one in PD-mixed mode, compare false and true under production-like load. Keep true only
+    if the throughput/TPOT gain outweighs any TTFT regression and collective overhead.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

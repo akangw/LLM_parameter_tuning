@@ -1,0 +1,66 @@
+name: VLLM_ASCEND_APPLY_DSV4_PATCH
+type: env
+category: model
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:114
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: 'When enabled (set to "1"), this environment variable activates a collection of DeepSeek V4-specific patches
+  in vllm-ascend. The most performance-critical change is in KV cache management: "it forces the use of" AscendHybridKVCacheCoordinator
+  (patch_kv_cache_coordinator.py:290-303), which implements a MultiBlockPool strategy for KV cache allocation. This hybrid
+  coordinator is specifically designed for DeepSeek V4''s DSA (Dual-Stream Attention) architecture with context parallelism
+  (CP), enabling efficient KV cache interleaving across CP ranks. Additionally, it imports speculative decoding patches (patch_speculative_config)
+  that are tailored for DeepSeek V4''s MTP (Multi-Token Prediction) layers. The patch is always used together with VLLM_ASCEND_ENABLE_FLASHCOMM1
+  in test configurations, suggesting these two optimizations are complementary for DeepSeek V4 inference. Without this patch,
+  DeepSeek V4 models fall back to standard KV cache coordinators that may not handle DSA CP interleaving correctly, potentially
+  causing memory fragmentation, reduced throughput, or incorrect results under context parallelism.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/__init__.py:49
+  context: Conditionally imports speculative config patch for DeepSeek V4
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:290
+  context: Selects AscendHybridKVCacheCoordinator for KV cache management
+- file: tests/e2e/pull_request/four_card/test_deepseek_v4.py:31
+  context: Enabled in DeepSeek V4 W4A8 TP4 basic greedy test
+- file: tests/e2e/pull_request/four_card/test_deepseek_v4.py:72
+  context: Enabled in DeepSeek V4 W4A8 TP4 index cache test
+- file: tests/e2e/pull_request/four_card/long_sequence/test_basic.py:117
+  context: Enabled in DeepSeek V4 DSA CP long sequence test
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Always used together in DeepSeek V4 test configurations; complementary optimization
+- name: enable_dsa_cp
+  relation: DSA context parallelism must be enabled for the hybrid KV cache coordinator to be meaningful
+constraints:
+- This patch is only applicable to DeepSeek V4 model variants (including DeepSeek-V4-Flash and DeepSeek-V4-Pro).
+- Must be used with DSA context parallelism (enable_dsa_cp) for the hybrid KV cache coordinator to take effect.
+- Requires at least 4 NPUs when used with DSA CP (as indicated by test skip conditions).
+tuning_advice:
+  summary: Always enable for DeepSeek V4 models to activate MultiBlockPool KV cache management and speculative decoding patches.
+  suggested_values:
+  - scenario: Serving any DeepSeek V4 model variant (W4A8, W8A8, Flash, Pro)
+    value: '1'
+    reason: Activates AscendHybridKVCacheCoordinator for efficient DSA CP KV cache interleaving and MTP speculative decoding
+      patches; required for correct and performant DeepSeek V4 inference.
+  - scenario: Non-DeepSeek V4 models
+    value: '0'
+    reason: The patch is DeepSeek V4-specific; enabling it for other models may cause unexpected behavior or errors.
+  caveats:
+  - The hybrid KV cache coordinator is only selected when DSA context parallelism is active (dcp_world_size > 1 or pcp_world_size
+    > 1); for single-rank deployments, the patch still imports speculative config patches but uses standard KV cache coordinators.
+  - Enabling this patch may increase NPU memory usage due to the MultiBlockPool allocation strategy.
+  - This patch is always paired with VLLM_ASCEND_ENABLE_FLASHCOMM1=1 in official test configurations for optimal performance.
+  quick_guide: Set VLLM_ASCEND_APPLY_DSV4_PATCH=1 for all DeepSeek V4 inference workloads; leave disabled (default 0) for
+    all other models.
+analysis_date: '2026-07-06'

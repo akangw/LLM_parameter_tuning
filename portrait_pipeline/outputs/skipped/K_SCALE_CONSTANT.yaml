@@ -1,0 +1,7 @@
+name: K_SCALE_CONSTANT
+type: env
+performance_impact: none
+skip_reason: Controls the numeric range constant used for dynamic key scaling in FP8 KV cache attention. In the pinned sources
+  it is parsed by vllm/envs.py and materialized as DSAAttention.k_range by vllm_ascend/models/layer/attention/layer.py, but
+  it does not change cache dtype or size, tensor shapes, kernel selection, or execution volume; no latency, throughput, or
+  memory tuning effect is evidenced.

@@ -1,0 +1,85 @@
+name: SpeculativeConfig.suffix_decoding_max_cached_requests
+type: nested
+category: memory
+scope: vllm
+source_file:
+- vllm/config/speculative.py:170
+value_type: int
+default: 10000
+valid_choices: '>= 0'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: This setting caps the number of completed requests retained in suffix decoding's global suffix tree. Raising
+  it allows token sequences from more past responses to remain available for cross-request pattern matches before FIFO eviction,
+  which can preserve speculative-decoding opportunities and improve latency or throughput on repetitive workloads, at the
+  cost of more CPU-side tree memory. Lowering it bounds that memory more tightly but evicts reusable responses sooner. A value
+  of 0 disables the global tree, eliminating this cross-request cache while leaving each request's prompt tree active.
+usage_locations:
+- file: vllm/config/speculative.py:170
+  context: Defines the default and documents the global suffix-tree request cap, FIFO eviction, and the zero-disable behavior.
+- file: vllm/config/speculative.py:787
+  context: Validates that the configured request cap is nonnegative when suffix decoding is selected.
+- file: docs/features/speculative_decoding/README.md:112
+  context: Documents the nested suffix-decoding option, its default, and the zero-disable behavior.
+- file: docs/source/tutorials/features/suffix_speculative_decoding.md:5
+  context: Ascend tutorial explains that suffix decoding uses prompt and generated-content patterns on CPU and can improve
+    performance on repetitive workloads.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: This cache limit is used only when the speculative-decoding method is suffix.
+- name: SpeculativeConfig.suffix_decoding_max_tree_depth
+  relation: Limits the depth and therefore per-sequence content retained in the global and prompt suffix trees.
+- name: SpeculativeConfig.suffix_decoding_max_spec_factor
+  relation: Controls proposal length from a matched prefix, while this parameter controls how many past requests remain matchable.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Provides the maximum speculative-token limit; suffix decoding selects the actual proposal length dynamically.
+constraints:
+- Must be greater than or equal to 0; a negative value raises ValueError during suffix-decoding configuration validation.
+- Has effect only with SpeculativeConfig.method set to suffix.
+- Suffix decoding requires the Arctic Inference package; configuration validation raises ImportError when it is unavailable.
+tuning_advice:
+  summary: Keep the default unless CPU memory pressure or measured cross-request reuse justifies changing the cache size.
+  suggested_values:
+  - scenario: No useful repetition across requests or strict CPU-memory budget
+    value: 0
+    reason: Disables the global suffix tree and its cross-request cache while preserving prompt-tree matching within each
+      request.
+  - scenario: General suffix-decoding deployment
+    value: 10000
+    reason: Uses the source default and retains a broad history before FIFO eviction without assuming workload-specific reuse.
+  - scenario: Repetitive traffic with demonstrated cache benefit and available CPU memory
+    value: 20000
+    reason: A larger measured cap can retain more reusable past responses, but should be adopted only after profiling memory
+      and end-to-end gains.
+  caveats:
+  - The tree's exact byte footprint is workload-dependent because cached response lengths and shared token prefixes vary.
+  - Increasing the cap does not guarantee better acceptance or throughput when requests do not share reusable patterns.
+  - The global suffix tree resides on CPU; suffix decoding itself does not require an additional accelerator draft model.
+  quick_guide: Start at 10000, lower it when CPU memory is constrained, or raise it only when profiling shows FIFO eviction
+    is discarding useful repetitive history.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

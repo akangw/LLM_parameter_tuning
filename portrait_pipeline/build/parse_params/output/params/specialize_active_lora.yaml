@@ -1,0 +1,77 @@
+name: --specialize-active-lora
+type: cli
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/lora.py:67
+- vllm/engine/arg_utils.py:579
+- vllm/engine/arg_utils.py:1262
+- vllm/engine/arg_utils.py:2001
+- vllm/v1/cudagraph_dispatcher.py:64
+- vllm/lora/ops/triton_ops/lora_kernel_metadata.py:39
+- vllm/lora/ops/triton_ops/lora_kernel_metadata.py:44
+- vllm/lora/punica_wrapper/punica_gpu.py:54
+- vllm/lora/punica_wrapper/punica_gpu.py:118
+- vllm/lora/punica_wrapper/punica_xpu.py:55
+value_type: bool
+default: 'False'
+valid_choices: boolean
+cli_example: --specialize-active-lora
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this parameter causes the CUDA graph dispatcher to capture separate execution graphs for different
+  counts of active LoRA adapters (powers of 2 up to max_loras). This specialization allows the LoRA kernel to use pre-compiled
+  grids optimized for specific active LoRA counts, reducing runtime dispatch overhead. However, it increases startup time
+  (more graphs to capture) and memory usage (more compiled graph variants). On Ascend NPU, the effect depends on whether vllm-ascend
+  uses CUDA graphs or an equivalent graph capture mechanism. The parameter is read in vllm/v1/cudagraph_dispatcher.py:64 to
+  determine whether to specialize graph keys by LoRA count, and in punica_gpu.py:54 and punica_xpu.py:55 to compute captured_lora_counts
+  for LoRA kernel metadata. When False, a single default num_active_loras value (max_loras + 1) is used for all cases, avoiding
+  per-count graph specialization.
+
+  '
+usage_locations:
+- file: vllm/v1/cudagraph_dispatcher.py:64
+  context: Reads specialize_active_lora to decide whether to include LoRA count in CUDA graph capture keys
+- file: vllm/lora/punica_wrapper/punica_gpu.py:54
+  context: Computes captured_lora_counts for GPU punica wrapper based on specialize_active_lora
+- file: vllm/lora/punica_wrapper/punica_gpu.py:118
+  context: Passes specialize_active_lora to meta_args() for LoRA shrink operation
+- file: vllm/lora/punica_wrapper/punica_xpu.py:55
+  context: Computes captured_lora_counts for XPU punica wrapper based on specialize_active_lora
+- file: vllm/lora/ops/triton_ops/lora_kernel_metadata.py:39
+  context: Uses default_num_active_loras_cpu when specialize_active_lora is False
+- file: vllm/lora/ops/triton_ops/lora_kernel_metadata.py:44
+  context: Rounds up num_active_loras to nearest captured count when specialize_active_lora is enabled
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for this parameter to have any effect
+- name: --max-loras
+  relation: Determines the range of LoRA counts for which specialized graphs are captured
+- name: cudagraph_specialize_lora
+  relation: This parameter only takes effect when cudagraph_specialize_lora is True (per docstring)
+constraints:
+- Only takes effect when cudagraph_specialize_lora is True
+- Only meaningful when --enable-lora is also set
+tuning_advice:
+  summary: 'Enable only when you have variable LoRA usage patterns and can tolerate increased startup time and memory for
+    CUDA graph capture. On Ascend NPU, verify that vllm-ascend supports CUDA graph specialization before enabling.
+
+    '
+  suggested_values:
+  - scenario: Fixed or single LoRA adapter usage
+    value: 'False'
+    reason: No benefit from specializing graphs for different LoRA counts; avoids unnecessary graph capture overhead
+  - scenario: Highly variable LoRA adapter counts with many concurrent adapters
+    value: 'True'
+    reason: Reduces runtime dispatch overhead by using pre-compiled grids for each active LoRA count
+  caveats:
+  - Increases startup time due to capturing multiple CUDA graph variants (powers of 2 up to max_loras)
+  - Increases memory usage because each specialized graph variant consumes additional memory
+  - On Ascend NPU, the effectiveness depends on whether vllm-ascend implements equivalent graph capture specialization
+  - Only applies to the V1 CUDA graph dispatcher path; V2 may have different behavior
+  quick_guide: Leave disabled (False) unless you observe LoRA dispatch overhead with highly variable adapter counts
+analysis_date: '2026-07-06'

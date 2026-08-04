@@ -1,0 +1,95 @@
+name: HCCL_INTRA_ROCE_ENABLE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:1218
+- vllm_ascend/ops/fused_moe/token_dispatcher.py:115
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:187
+- docs/source/user_guide/feature_guide/kv_pool.md:111
+value_type: str
+default: ''
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: In current vLLM Ascend source, is_hierarchical_communication_enabled() recognizes the exact pair HCCL_INTRA_ROCE_ENABLE="0"
+  and HCCL_INTRA_PCIE_ENABLE="1". On A2, the source comments state that this pairing reduces cross-machine traffic and significantly
+  improves MC2 MoE dispatch/combine communication. The result makes the MC2 token dispatcher pass expert_scales and prevents
+  skipping the data-parallel all-reduce, selecting uniform-token global_bs=0 behavior. Separately, Ascend documentation describes
+  value "1" as selecting an RDMA rather than SDMA mesh link between two 8P groups and requires it for the A2 KV-pool direct-transfer
+  scheme. The pinned upstream vLLM repository has no references to this variable.
+usage_locations:
+- file: vllm_ascend/utils.py:1218
+  context: Reads the variable with an empty-string default; only "0", paired with HCCL_INTRA_PCIE_ENABLE="1", makes the environment-variable
+    hierarchy condition true.
+- file: vllm_ascend/utils.py:1236
+  context: Hierarchy mode forces should_skip_allreduce_across_dp_group() to return false, because hierarchy requires uniform
+    tokens and global_bs=0.
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:118
+  context: Stores the hierarchy result as need_expert_scale, which controls whether expert_scales are supplied to the MC2
+    dispatch operator.
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:187
+  context: Documents use of the RDMA link instead of the SDMA link between two 8P groups.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:111
+  context: Requires value "1" for the direct-transmission scheme on 800 I/T A2 hardware.
+related_parameters:
+- name: HCCL_INTRA_PCIE_ENABLE
+  relation: Must equal "1" while HCCL_INTRA_ROCE_ENABLE equals "0" for the environment-variable hierarchy condition in vLLM
+    Ascend to become true.
+- name: enable_mc2_hierarchy_comm
+  relation: The Ascend configuration flag is an alternative way for is_hierarchical_communication_enabled() to return true;
+    unlike the environment pair, it also directly causes the dispatcher to pass comm_alg="hierarchy".
+- name: ASCEND_ENABLE_USE_FABRIC_MEM
+  relation: Recommended by the KV-pool guide for direct transfer on A3 instead of the A2 RoCE setting.
+constraints:
+- 'The vLLM Ascend hierarchy check is exact and string-valued: HCCL_INTRA_ROCE_ENABLE must be "0" and HCCL_INTRA_PCIE_ENABLE
+  must be "1"; leaving either variable unset does not activate it.'
+- The source describes the hierarchy performance optimization specifically for A2 MC2 MoE dispatch/combine; do not generalize
+  that benefit to other hardware or communication paths.
+- 'Value "1" serves a different documented use case: it is required for the A2 KV-pool direct-transmission scheme and selects
+  an RDMA mesh link rather than the hierarchy condition.'
+tuning_advice:
+  summary: 'Choose the value by communication path: use "0" together with HCCL_INTRA_PCIE_ENABLE="1" for the documented A2
+    MC2 MoE hierarchy optimization, or use "1" when the A2 KV-pool direct-transfer setup requires the RoCE/RDMA mesh link.'
+  suggested_values:
+  - scenario: A2 multi-group MoE inference using MC2 dispatch/combine
+    value: '0'
+    reason: Paired with HCCL_INTRA_PCIE_ENABLE="1", current source says it reduces cross-machine communication traffic and
+      significantly improves MC2 dispatch/combine performance.
+  - scenario: KV-pool direct transmission on 800 I/T A2
+    value: '1'
+    reason: The current KV-pool hardware table marks this export as required for the A2 direct-transmission scheme.
+  - scenario: A3 KV-pool direct transmission
+    value: ''
+    reason: Leave this A2-oriented setting unset and follow the current guide's recommended ASCEND_ENABLE_USE_FABRIC_MEM=1
+      configuration for A3.
+  caveats:
+  - Setting "0" alone is insufficient; HCCL_INTRA_PCIE_ENABLE must also be exactly "1".
+  - Hierarchy mode prevents the data-parallel all-reduce skip optimization, so the net gain depends on topology and workload
+    even though the A2 MC2 source describes a significant communication improvement.
+  - The "0" hierarchy use case and the "1" A2 KV-transfer use case are mutually exclusive; select according to the active
+    feature rather than treating one value as globally faster.
+  quick_guide: 'A2 MC2 MoE hierarchy: export HCCL_INTRA_ROCE_ENABLE=0 and HCCL_INTRA_PCIE_ENABLE=1. A2 KV-pool direct transfer:
+    export HCCL_INTRA_ROCE_ENABLE=1. A3 KV-pool direct transfer: leave it unset and use ASCEND_ENABLE_USE_FABRIC_MEM=1 as
+    documented.'
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  deploy_scenario: []

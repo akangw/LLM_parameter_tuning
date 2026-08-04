@@ -1,0 +1,103 @@
+name: --enable-sleep-mode
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/model.py:290
+- vllm/engine/arg_utils.py:825
+- vllm_ascend/platform.py:125
+- vllm_ascend/platform.py:650
+- vllm_ascend/worker/worker.py:200
+- vllm_ascend/worker/worker.py:488
+- vllm_ascend/device_allocator/camem.py:113
+- docs/source/user_guide/feature_guide/sleep_mode.md:3
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve Qwen/Qwen2.5-0.5B-Instruct --enable-sleep-mode
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: Enables the allocator-backed sleep/wake path rather than releasing memory by itself. On Ascend, model weights
+  and KV-cache allocations are placed in CaMem pools tagged "weights" and "kv_cache". A later level-1 sleep offloads weights
+  to pinned CPU memory and discards KV cache; level 2 discards both. This can free most of the engine's NPU allocation for
+  RL training phases or other tenants, but sleeping interrupts inference and wake-up must remap NPU memory and, for offloaded
+  weights, copy it back from CPU. The transition thus adds wake latency and reduces useful throughput when performed frequently.
+  Keeping the option false avoids pool and transition costs but leaves weights and KV cache resident. Upstream provides the
+  analogous sleep feature on platforms whose platform implementation reports support.
+usage_locations:
+- file: vllm_ascend/worker/worker.py:200
+  context: Implements Ascend level 1 by retaining a CPU copy of weight-tagged allocations and level 2 by discarding all pooled
+    weight and KV-cache allocations, then reports the NPU bytes freed.
+- file: vllm_ascend/worker/worker.py:488
+  context: Places model-loading allocations in the weights pool and rejects a second sleep-enabled model instance when the
+    singleton allocator already owns allocations.
+- file: vllm_ascend/worker/worker.py:696
+  context: Places KV-cache initialization in the kv_cache memory pool.
+- file: vllm_ascend/device_allocator/camem.py:178
+  context: Copies selected tags to pinned CPU memory, unmaps all pooled NPU allocations on sleep, and remaps/restores selected
+    allocations on wake.
+- file: vllm_ascend/platform.py:650
+  context: Suppresses the normal automatic expandable_segments configuration when sleep mode is enabled because that allocator
+    mode is incompatible with the CaMem pool.
+- file: vllm/config/model.py:507
+  context: Rejects the option when the active platform does not expose sleep support.
+- file: docs/source/user_guide/feature_guide/sleep_mode.md:13
+  context: Documents the two memory-release levels, their CPU-memory implications, and offline and development-mode serving
+    usage.
+related_parameters:
+- name: sleep level
+  relation: The value passed to llm.sleep or the development sleep endpoint selects level 1 (offload weights and discard KV
+    cache) or level 2 (discard both).
+- name: PYTORCH_NPU_ALLOC_CONF
+  relation: expandable_segments:True is not automatically enabled with sleep mode and is explicitly incompatible with Ascend's
+    CaMem memory pool.
+- name: VLLM_ASCEND_ENABLE_NZ
+  relation: Wake-up rejects enabled FRACTAL_NZ weight mode because it can cause model parameter precision problems in RL workflows.
+constraints:
+- The active platform must report sleep-mode support. The pinned Ascend platform does so, while upstream support remains platform-dependent.
+- On Ascend, expandable_segments:True must not be present in PYTORCH_NPU_ALLOC_CONF; CaMemAllocator asserts that expandable
+  segments and its memory pool are incompatible.
+- Ascend's singleton CaMem allocator permits only one sleep-enabled LLM instance per process while allocations from that instance
+  remain in use.
+- Ascend wake-up requires FRACTAL_NZ weight mode to be disabled; the guide uses VLLM_ASCEND_ENABLE_NZ=0 and the worker raises
+  when NZ mode is enabled.
+- Level 1 needs enough host memory for a pinned CPU backup of model weights. Level 2 forgets model weights as well as KV cache
+  and is intended for a subsequent model switch or weight update rather than transparent reuse.
+- Building vllm-ascend from source is required by the pinned guide because its sleep allocator uses the low-level AscendCL
+  API.
+tuning_advice:
+  summary: Enable this when reclaiming NPU memory between generation phases is worth the sleep/wake pause and host-memory
+    cost; leave it disabled for a continuously serving engine that never needs to relinquish its memory.
+  suggested_values:
+  - scenario: RL post-training with alternating generation and training phases
+    value: true
+    reason: Sleeping between phases releases KV cache and optionally model weights, reducing NPU contention while the training
+      phase uses the device.
+  - scenario: Intermittent or multi-tenant inference with meaningful idle windows
+    value: true
+    reason: The released NPU memory can be used by another workload; choose level 1 when the same model will resume and sufficient
+      CPU memory is available.
+  - scenario: Continuous latency-sensitive serving
+    value: false
+    reason: Resident weights and KV cache avoid sleep/wake remapping, host copies, and cold resumption latency when there
+      is no useful idle window.
+  caveats:
+  - Enabling the flag only prepares pooled allocations; memory is reclaimed only when the sleep API or development endpoint
+    is actually invoked.
+  - Level 1 trades NPU memory for pinned CPU memory approximately associated with the retained model weights, and wake-up
+    copies those weights back.
+  - Level 2 discards weights, so the caller must coordinate the intended weight reload or model-update workflow before inference
+    resumes.
+  - Frequent transitions can erase the memory-sharing benefit through added latency and lost serving time; measure the full
+    sleep/wake duty cycle.
+  - Online sleep and wake endpoints are exposed only in server development mode and should not be made reachable by untrusted
+    clients.
+  quick_guide: Use true for alternating RL or long-idle workloads, call level 1 to resume the same model or level 2 before
+    replacing weights, verify NZ and allocator settings, and benchmark wake latency; otherwise keep the default false.
+analysis_date: '2026-08-03'

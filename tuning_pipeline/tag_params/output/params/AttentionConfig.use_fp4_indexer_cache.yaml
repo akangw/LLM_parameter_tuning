@@ -1,0 +1,103 @@
+name: AttentionConfig.use_fp4_indexer_cache
+type: nested
+category: memory
+scope: vllm
+source_file:
+- vllm/config/attention.py:64
+- vllm/v1/attention/backends/mla/indexer.py:255
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: -ac.use_fp4_indexer_cache=true
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'In the upstream DeepSeek-V3.2 sparse-indexer metadata builder, enabling this flag selects the FP4-indexer-cache
+  compatibility layout. It is accepted only on datacenter Blackwell GPUs in the SM100 capability family. When speculative
+  decoding produces next_n values outside the natively supported FP4 set of 1 or 2, the flag forces the flattening path: decode
+  requests need not be uniform, per-request block tables and sequence lengths are expanded to per-token metadata, and the
+  native two-dimensional MTP layout is bypassed. That changes metadata preparation work, batching behavior, buffer shape,
+  and therefore decode latency, throughput, and metadata memory. With next_n 1 or 2, the pinned source shows no execution-path
+  difference beyond the hardware guard. The vllm-ascend repository has no consumer or override for this field, so it is not
+  an Ascend tuning control.'
+usage_locations:
+- file: vllm/v1/attention/backends/mla/indexer.py:255
+  context: DeepseekV32IndexerMetadataBuilder reads the field and rejects true unless the current device belongs to the SM100
+    datacenter Blackwell capability family.
+- file: vllm/v1/attention/backends/mla/indexer.py:270
+  context: Defines native FP4 next_n support as 1 or 2 and enables flattening when this flag is true and next_n is outside
+    that set.
+- file: vllm/v1/attention/backends/mla/indexer.py:291
+  context: Chooses a one-dimensional expanded decode sequence-length buffer for the flattening path instead of the native
+    two-dimensional MTP buffer.
+- file: vllm/v1/attention/backends/mla/indexer.py:483
+  context: Allows non-uniform decode requests when flattening is enabled, changing how decode and prefill work are split.
+- file: vllm/v1/attention/backends/mla/indexer.py:570
+  context: Selects native decode only when flattening is disabled; otherwise decode tensors are prepared by the expansion
+    path before indexer execution.
+related_parameters:
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Determines next_n as num_speculative_tokens plus one; the flag changes the layout only when that value is outside
+    the native FP4 set of 1 or 2.
+- name: ModelConfig.max_model_len
+  relation: Contributes to the size of block-table buffers used by the indexer metadata builder, including the flattened decode
+    path.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Sizes the preallocated one-dimensional sequence-length buffer and bounds the per-token metadata used by flattening.
+constraints:
+- True requires an SM100-family datacenter Blackwell GPU such as B200 or GB200; consumer Blackwell SM120 and earlier architectures
+  fail the builder assertion.
+- The field is consumed only by DeepseekV32IndexerMetadataBuilder in the pinned source, so other attention backends and models
+  do not use it.
+- Native FP4 indexer-cache layout supports next_n values 1 and 2. With two or more speculative tokens, next_n is at least
+  3 and enabling the flag forces flattening.
+- The pinned vllm-ascend repository does not consume or override this upstream CUDA-specific field.
+tuning_advice:
+  summary: Keep false unless running the DeepSeek-V3.2 sparse indexer on a supported SM100 datacenter GPU and intentionally
+    evaluating FP4 indexer-cache behavior. Benchmark the exact speculative-decoding configuration before enabling it.
+  suggested_values:
+  - scenario: General upstream serving or any non-SM100 GPU
+    value: false
+    reason: This is the default; unsupported GPUs reject true, and other model or backend paths have no source-backed benefit
+      from enabling it.
+  - scenario: DeepSeek-V3.2 indexer on B200 or GB200 with zero or one speculative token
+    value: benchmark true against false
+    reason: The hardware and native next_n constraints are satisfied, but the pinned source provides no benchmark establishing
+      an end-to-end gain.
+  - scenario: DeepSeek-V3.2 indexer on B200 or GB200 with two or more speculative tokens
+    value: false unless FP4 cache is specifically required
+    reason: True forces per-token flattening for unsupported native next_n values, adding metadata expansion whose latency,
+      throughput, and memory effects must be measured.
+  - scenario: Ascend NPU deployment
+    value: false
+    reason: The Ascend plugin has no consumer for this CUDA-specific field.
+  caveats:
+  - The configuration docstring says FP4 indexer cache is not supported yet, and the pinned source exposes only layout and
+    compatibility handling; it does not establish a general performance advantage for true.
+  - Flattening repeats block-table rows and constructs per-token sequence lengths, but its net cost depends on batch size,
+    accepted speculative tokens, sequence lengths, and scheduler limits.
+  - Changing the flag alters initialization-time buffer layout and should be benchmarked after restarting the engine with
+    representative traffic.
+  quick_guide: Leave false. Consider true only for a DeepSeek-V3.2 sparse-indexer test on B200 or GB200; verify speculative
+    next_n, then compare decode latency, throughput, and peak memory under the intended workload.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - mla
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - long_output
+  - high_concurrency

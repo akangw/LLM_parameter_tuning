@@ -1,0 +1,102 @@
+name: --data-parallel-rpc-port
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:998
+- vllm/config/parallel.py:129
+value_type: int
+default: '29550'
+valid_choices: any valid port number (1024-65535)
+cli_example: --data-parallel-rpc-port 29550
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter specifies the TCP port used for RPC (ZeroMQ-based) handshake and communication between data-parallel
+  engine instances. It is only relevant when `--data-parallel-size` > 1 (multi-instance data-parallel deployment for MoE models).
+  The port is used to establish ZMQ connections for engine handshaking and client-server communication between DP ranks. It
+  does not directly affect inference computation, memory usage, or throughput — it only affects the initial connection setup
+  and control-plane messaging. However, port conflicts can prevent multi-instance DP deployments from starting, which indirectly
+  impacts the ability to scale throughput via data parallelism. The parameter is explicitly excluded from the computation
+  graph hash (vllm/config/parallel.py:728), confirming it has no effect on model execution semantics.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1886
+  context: 'Falls back to ParallelConfig.data_parallel_rpc_port (default 29550) when not explicitly set by the user.
+
+    '
+- file: vllm/v1/engine/utils.py:1094
+  context: 'Used in v1 engine to construct the ZMQ handshake address for core engine processes via get_engine_client_zmq_addr().
+
+    '
+- file: vllm/entrypoints/cli/serve.py:198
+  context: 'Used in headless mode to construct the TCP handshake address for multi-instance DP engine launching.
+
+    '
+- file: examples/features/data_parallel/multi_instance_data_parallel.py:44
+  context: 'Example usage setting data_parallel_rpc_port=62300 for a 2-instance PowerMoE deployment.
+
+    '
+related_parameters:
+- name: --data-parallel-size
+  relation: 'This port is only used when data_parallel_size > 1. Without multi-instance DP, the parameter has no effect.
+
+    '
+- name: --data-parallel-address
+  relation: 'Together with data_parallel_address, forms the full TCP endpoint for DP RPC communication.
+
+    '
+- name: --data-parallel-backend
+  relation: 'When backend is "mp" (multiprocessing), this port is used for ZMQ handshake. When backend is "ray", the address/port
+    may be auto-detected.
+
+    '
+- name: --master-addr / --master-port
+  relation: 'When data_parallel_address is not set and backend is "mp", master_addr is used as the data parallel address,
+    with data_parallel_rpc_port as the port.
+
+    '
+constraints:
+- Must be a valid, available TCP port number (typically 1024-65535).
+- Must not conflict with other services on the same host, including --master-port and other DP instances' RPC ports.
+- Only meaningful when --data-parallel-size > 1; otherwise the parameter is ignored.
+tuning_advice:
+  summary: 'Use the default value (29550) unless it conflicts with another service. This parameter has minimal performance
+    impact — it only affects control-plane connection setup for multi-instance data-parallel deployments.
+
+    '
+  suggested_values:
+  - scenario: Single-instance or data_parallel_size=1
+    value: '29550'
+    reason: 'The parameter is ignored when data_parallel_size=1, so any value is acceptable. The default avoids unnecessary
+      configuration.
+
+      '
+  - scenario: Multi-instance DP on a single host
+    value: 29550 (default) or distinct ports per instance
+    reason: 'Each DP instance on the same host needs a unique RPC port. Use the default for the first instance and increment
+      for additional instances (e.g., 29551, 29552) to avoid port conflicts.
+
+      '
+  - scenario: Multi-node DP deployment
+    value: '29550'
+    reason: 'Since each node has its own network namespace, the same port can be reused across nodes without conflict. The
+      default value is appropriate.
+
+      '
+  caveats:
+  - 'Port conflicts will cause DP engine startup failures with ZMQ bind errors. Ensure the port is free before launching,
+    especially when running multiple DP instances on the same host.
+
+    '
+  - 'This parameter is excluded from the computation graph hash, so changing it does not invalidate any caches or require
+    model recompilation.
+
+    '
+  quick_guide: 'Keep the default 29550 unless running multiple DP instances on one host — then assign unique ports to each
+    instance.
+
+    '
+analysis_date: '2026-07-06'

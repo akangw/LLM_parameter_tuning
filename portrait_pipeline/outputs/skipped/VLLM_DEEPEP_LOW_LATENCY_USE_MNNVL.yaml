@@ -1,0 +1,6 @@
+name: VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this environment variable is typed and parsed with a default of 0 in vllm/envs.py,
+  but no runtime code consumes it. The pinned vLLM-Ascend source contains no reference to it. Therefore changing it cannot
+  affect latency, throughput, or memory in the target source revisions.

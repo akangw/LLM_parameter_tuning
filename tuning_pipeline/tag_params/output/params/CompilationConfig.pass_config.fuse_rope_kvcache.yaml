@@ -1,0 +1,146 @@
+name: CompilationConfig.pass_config.fuse_rope_kvcache
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:147
+- vllm/config/compilation.py:282
+- vllm/config/compilation.py:941
+- vllm/config/compilation.py:1112
+- vllm/config/vllm.py:142
+- vllm/config/vllm.py:1714
+- vllm/v1/attention/backend.py:815
+- vllm/v1/attention/backends/triton_attn.py:735
+- vllm/v1/attention/backends/rocm_aiter_fa.py:1464
+- docs/design/fusions.md:175
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: -cc.pass_config.fuse_rope_kvcache=True
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'On supported upstream ROCm/AITER attention backends, enabling this compilation pass replaces a rotary-embedding
+  operation followed by a unified KV-cache update with one fused RoPE-and-cache kernel. This avoids a separate kernel launch
+  and separate reads and writes of the key and value tensors; the pinned fusion guide reports an indicative 2-4% end-to-end
+  speedup. The declared value is null because VllmConfig resolves it from the optimization level: O0 and O1 set false, while
+  O2 (the overall default) and O3 call enable_rope_kvcache_fusion, which requires enabled ROCm AITER ops, the rotary_embedding
+  custom op, and a graph configuration that keeps the KV-cache update visible. Explicit user values are retained rather than
+  replaced by these defaults, but true is forcibly reset to false on every non-ROCm platform, including Ascend. The default
+  token threshold of 256 creates a separate compile range so small-batch/decode shapes can use the fusion while larger prefill
+  shapes use unfused kernels because the AITER fused kernel can regress at higher token counts.'
+usage_locations:
+- file: vllm/config/compilation.py:147
+  context: Declares the delayed boolean setting; PassConfig initialization at line 282 warns and resets it to false on non-ROCm
+    platforms.
+- file: vllm/config/vllm.py:142
+  context: Computes automatic O2/O3 enablement from AITER availability, rotary_embedding custom-op activation, and graph visibility
+    of the KV-cache update; O0 and O1 resolve the field to false.
+- file: vllm/config/compilation.py:941
+  context: Ensures rotary_embedding is enabled as a custom op when this fusion is explicitly active so the graph can match
+    the pass.
+- file: vllm/config/compilation.py:1112
+  context: Disables the fusion when implicit splitting would remove unified KV-cache update from the compiled graph and Inductor
+    graph partitioning is not enabled.
+- file: vllm/config/vllm.py:1714
+  context: Adds the configured maximum token count, 256 by default, as a compile-range endpoint when the fusion is enabled.
+- file: vllm/v1/attention/backend.py:815
+  context: Defines the backend capability gate used by RopeKVCacheFusionPass; unsupported attention implementations return
+    false.
+- file: vllm/v1/attention/backends/triton_attn.py:735
+  context: Enables the backend fused path only with ROCm AITER and without per-token-per-head KV-cache quantization, then
+    delegates RoPE plus cache update to rocm_aiter_ops.triton_rope_and_cache.
+- file: vllm/v1/attention/backends/rocm_aiter_fa.py:1464
+  context: Enables the AITER FlashAttention backend path only when AITER is active and shuffled KV-cache layout is disabled.
+- file: docs/design/fusions.md:175
+  context: Documents the ROCm/AITER-only operation fusion, default 256-token limit, graph requirements, FP16/BF16 support
+    matrix, and indicative 2-4% end-to-end gain.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: O0 and O1 resolve an unspecified value to false; O2 and O3 use the runtime support predicate. The overall default
+    optimization level is O2.
+- name: CompilationConfig.pass_config.rope_kvcache_fusion_max_token_num
+  relation: Limits the fused compile range to at most 256 tokens by default; larger token counts use unfused kernels.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: When enabled, keeps the required RoPE-to-KV-update pattern available to the fusion despite graph partitioning.
+- name: CompilationConfig.splitting_ops
+  relation: Without Inductor graph partitioning, unified KV-cache update must not be split out of the compiled graph; an empty
+    list is the documented explicit configuration.
+- name: CompilationConfig.custom_ops
+  relation: The rotary_embedding custom op must be active for automatic enablement and graph matching; explicit fusion enablement
+    adds it when absent.
+- name: CacheConfig.cache_dtype
+  relation: Backend support varies with KV-cache quantization; Triton rejects per-token-per-head quantization, while current
+    ROCm implementations contain an FP8 cache path beyond the guide's documented FP16/BF16 support matrix.
+constraints:
+- Effective only on ROCm with AITER enabled; PassConfig automatically resets true to false on non-ROCm platforms, including
+  Ascend.
+- The selected attention implementation must report fused_rope_kvcache_supported; the base implementation returns false.
+- The FX graph must expose rotary_embedding followed by unified_kv_cache_update, either through Inductor graph partitioning
+  or by removing KV-cache update from splitting_ops.
+- The documented supported activation and cache data types are FP16/BF16; quantized-cache support is backend-specific, and
+  Triton explicitly rejects its per-token-per-head quantization mode.
+- The ROCm AITER FlashAttention implementation rejects shuffled KV-cache layout because that layout uses another cache-update
+  path.
+- The default fused range is num_tokens at or below 256; larger batches use unfused kernels unless the related threshold is
+  deliberately changed and benchmarked.
+tuning_advice:
+  summary: Leave the delayed default in place for normal ROCm/AITER deployments so O2 can enable the fusion only when its
+    support and graph predicates pass. Use explicit true mainly for controlled tests of a compatible graph, and use false
+    on Ascend and other non-ROCm platforms.
+  suggested_values:
+  - scenario: ROCm with AITER, a supported attention backend, and mostly decode or other batches of at most 256 tokens
+    value: leave unset
+    reason: Default O2 evaluates the runtime capability predicate and enables the documented 2-4% fusion opportunity only
+      when the required custom op and graph visibility are present.
+  - scenario: Ascend, CUDA, CPU, AITER disabled, or an attention backend that rejects the fusion
+    value: false
+    reason: These paths cannot use the fused ROCm/AITER kernel; non-ROCm initialization forcibly disables a true value.
+  - scenario: Controlled ROCm/AITER benchmark with explicit graph partitioning or empty splitting_ops
+    value: true
+    reason: Explicit enablement requests the fusion and activates rotary_embedding as a custom op, allowing true-versus-false
+      end-to-end comparison on a known compatible graph.
+  - scenario: Workload dominated by prefills or batches above 256 tokens
+    value: false
+    reason: The pinned source deliberately routes these shapes to unfused kernels by default due to AITER fused-kernel performance
+      issues, so forcing the pass offers little expected benefit without separate threshold tuning.
+  caveats:
+  - The source-level default is null, not universally true or false; effective behavior depends on optimization level, AITER
+    availability, custom-op selection, attention backend, and graph splitting.
+  - The pinned guide says the fusion is automatic at O1 and above, but the pinned configuration table explicitly sets it false
+    at O1 and evaluates the predicate only at O2/O3; current code is authoritative.
+  - Explicit true bypasses the conservative optimization-level predicate, but it cannot bypass the non-ROCm forced disable
+    or make an unsupported backend and unmatched graph fuse.
+  - The pinned vllm-ascend repository contains no reference, override, NPU pass, or backend implementation for this field;
+    upstream configuration disables it on Ascend because Ascend is not ROCm.
+  - The 2-4% figure is indicative and workload dependent; benchmark warmed end-to-end latency and throughput with the actual
+    token mix, cache dtype, backend, and graph configuration.
+  quick_guide: On supported ROCm/AITER decode-heavy serving, keep null at default O2 and benchmark the resolved fusion against
+    false; on Ascend or any non-ROCm system use false.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

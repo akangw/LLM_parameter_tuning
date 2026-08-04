@@ -1,0 +1,8 @@
+name: KVTransferConfig.kv_parallel_size
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, kv_parallel_size is only declared on KVTransferConfig; no runtime code reads
+  it, validates it, or uses it to size or organize KV-transfer communication. The pinned vLLM Ascend package likewise has
+  no code reference to the field, while its deployment documentation merely supplies the default value 1 in MooncakeConnectorV1
+  examples. Therefore the current pinned implementations establish no latency, throughput, or memory effect for this field,
+  despite the declaration's stale guidance that P2pNcclConnector should use 2.

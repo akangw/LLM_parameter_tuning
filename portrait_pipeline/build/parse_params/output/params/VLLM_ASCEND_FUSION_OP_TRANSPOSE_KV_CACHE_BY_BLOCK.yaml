@@ -1,0 +1,89 @@
+name: VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK
+type: env
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:107-109
+- vllm_ascend/ascend_config.py:170-175
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether a fused custom operator is used during KV cache reformatting in
+  PD (prefill-decode) disaggregation scenarios on Ascend NPUs. When enabled (default), the Mooncake KV transfer connectors
+  (both standard and hybrid) call `reformat_kv_cache_with_fused_op` instead of the generic `reformat_kv_cache` path. The fused
+  operator performs transpose-by-block operations on KV cache tensors in a single optimized kernel, reducing the number of
+  kernel launches and device-host synchronization points. This directly reduces the latency of KV cache transfer between prefill
+  and decode nodes, which is on the critical path for time-to-first-token in disaggregated serving. Disabling it falls back
+  to a non-fused implementation that may use multiple smaller operations, increasing overhead. The parameter has no effect
+  outside PD disaggregation scenarios (i.e., when KV transfer is not active or when neither `need_cat_cache` nor `need_nz_cache`
+  is true).
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:830
+  context: 'Standard Mooncake connector reads this env var to decide whether to use the fused `reformat_kv_cache_with_fused_op`
+    or the generic `reformat_kv_cache` when reformatting KV cache blocks after transfer.
+
+    '
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:727
+  context: 'Hybrid Mooncake connector reads this env var to decide whether to use the fused `reformat_kv_cache_with_fused_op`
+    or the generic `reformat_kv_cache` when reformatting KV cache blocks after transfer.
+
+    '
+- file: vllm_ascend/ascend_config.py:170-175
+  context: 'AscendConfig reads this env var and stores it as `enable_transpose_kv_cache_by_block`, which can also be set via
+    `additional_config` dict.
+
+    '
+related_parameters:
+- name: enable_kv_nz
+  relation: 'The fused op is used when `need_cat_cache` (GQA/MHA head concatenation needed) or `need_nz_cache` (KV cache NZ
+    layout enabled) is true. If neither condition holds, the reformatting is skipped entirely and this env var has no effect.
+
+    '
+- name: enable_custom_op
+  relation: 'The fused op path requires `enable_custom_op()` to return True. If custom ops are disabled globally, the fused
+    op cannot be used even if this env var is set to true.
+
+    '
+constraints:
+- The fused operator is only invoked when custom ops are enabled (`enable_custom_op()` returns True).
+- The fused operator is only used in PD disaggregation scenarios where KV cache transfer is active.
+- The fused operator only supports GQA/MHA KV cache concatenation by head; other reformatting needs fall back to the generic
+  path.
+tuning_advice:
+  summary: 'Keep this enabled (default) in PD disaggregation deployments to reduce KV cache transfer latency via fused transpose-by-block
+    operations on Ascend NPUs.
+
+    '
+  suggested_values:
+  - scenario: PD disaggregation with KV cache transfer on Ascend NPU
+    value: true
+    reason: 'The fused operator reduces kernel launch overhead and speeds up KV cache reformatting, which is on the critical
+      path for time-to-first-token in disaggregated serving.
+
+      '
+  - scenario: Debugging or isolating KV transfer issues
+    value: false
+    reason: 'Disabling the fused op falls back to the generic reformatting path, which can help determine whether a performance
+      or correctness issue is specific to the fused operator implementation.
+
+      '
+  caveats:
+  - This parameter has no effect outside PD disaggregation scenarios. In standalone deployments, it is silently ignored.
+  - The fused operator requires `enable_custom_op()` to be True. If custom ops are disabled, the generic path is used regardless
+    of this setting.
+  - The fused operator only handles GQA/MHA head concatenation. NZ layout reformatting still uses the generic path even when
+    the fused op is enabled.
+  quick_guide: 'Leave enabled (default) for PD disaggregation; disable only for debugging KV transfer issues.
+
+    '
+analysis_date: '2026-07-06'

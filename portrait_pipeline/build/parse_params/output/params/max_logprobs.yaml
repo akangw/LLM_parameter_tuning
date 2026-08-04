@@ -1,0 +1,72 @@
+name: --max-logprobs
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:797
+- vllm/config/model.py:222
+value_type: int
+default: '20'
+valid_choices: integer >= -1
+cli_example: --max-logprobs 20
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter caps the maximum number of log probabilities that can be requested per token via SamplingParams.
+  It acts as a server-side safety limit to prevent clients from requesting excessive logprobs (e.g., logprobs=vocab_size)
+  which would require storing and sorting the entire vocabulary''s logits for every generated token. The memory impact is
+  proportional to (batch_size × seq_len × max_logprobs) for the logprob tensors returned to the client. On Ascend NPU, the
+  mechanism is identical to upstream vLLM — this is purely a validation gate in the sampling params path (vllm/sampling_params.py:667-704)
+  and does not affect model execution, attention computation, or NPU kernel selection. Setting max_logprobs=-1 removes the
+  cap, allowing requests up to vocab_size logprobs, which can cause OOM on large-vocabulary models (e.g., 128k+ tokens) if
+  many concurrent requests request full logprobs. No vllm-ascend override was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:520
+  context: EngineArgs.max_logprobs field definition, default from ModelConfig.max_logprobs
+- file: vllm/engine/arg_utils.py:1535
+  context: Passed to ModelConfig constructor when creating engine config
+- file: vllm/config/model.py:222
+  context: ModelConfig.max_logprobs field with default=20 and docstring
+- file: vllm/sampling_params.py:667
+  context: _validate_logprobs() enforces the cap against per-request logprobs/prompt_logprobs
+- file: vllm/config/speculative.py:641
+  context: Propagated to draft model config for speculative decoding
+related_parameters:
+- name: --logprobs-mode
+  relation: Controls whether raw or processed logprobs/logits are returned; orthogonal to the max_logprobs cap
+- name: SamplingParams.logprobs
+  relation: Per-request logprobs count; validated against max_logprobs at request time
+- name: SamplingParams.prompt_logprobs
+  relation: Per-request prompt logprobs count; also validated against max_logprobs
+constraints:
+- max_logprobs must be >= -1; values below -1 are invalid
+- When max_logprobs is not -1, per-request logprobs and prompt_logprobs must not exceed max_logprobs, otherwise a VLLMValidationError
+  is raised
+- When max_logprobs is -1, the effective cap becomes the model's vocabulary size
+tuning_advice:
+  summary: Keep the default (20) unless you need more logprobs for downstream processing; avoid -1 on large-vocabulary models
+    under high concurrency.
+  suggested_values:
+  - scenario: Standard OpenAI-compatible serving with logprobs
+    value: '20'
+    reason: Matches OpenAI Chat Completions API default; sufficient for most use cases and prevents accidental OOM from unbounded
+      logprob requests
+  - scenario: Applications requiring more logprobs (e.g., confidence calibration, token-level analysis)
+    value: '100'
+    reason: Provides richer probability information without approaching full vocab size; memory overhead remains manageable
+  - scenario: Research/debugging requiring full vocabulary logprobs on small models
+    value: '-1'
+    reason: Removes the cap entirely; only safe when vocab_size is small (e.g., < 50k) and concurrency is low
+  caveats:
+  - Setting max_logprobs=-1 on models with large vocabularies (128k+) under high concurrency can cause OOM because each request
+    may allocate tensors of size (seq_len × vocab_size)
+  - This parameter only caps what clients can request; it does not reduce memory usage for requests that request fewer logprobs
+    than the cap
+  - On Ascend NPU, the memory impact is the same as on GPU — the logprob tensors reside in host memory after being copied
+    from device, so NPU HBM is not directly affected by large max_logprobs values
+  quick_guide: Use --max-logprobs 20 for production; raise to 100 if your application needs more token probabilities; avoid
+    -1 on large-vocab models.
+analysis_date: '2026-07-06'

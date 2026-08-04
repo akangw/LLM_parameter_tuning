@@ -1,0 +1,61 @@
+name: compilation.disabled_custom_ops
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/model_executor/custom_op.py:189
+value_type: list[str]
+default: '[]'
+valid_choices: list of custom op name strings
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter is a set (list) of custom op names that are explicitly disabled during compilation. When a
+  custom op is in this set, vLLM falls back to the native PyTorch implementation (forward_native) instead of using the device-specific
+  optimized kernel (forward_cuda, forward_hip, forward_oot, etc.). On Ascend NPU, vllm-ascend registers its ops as out-of-tree
+  (OOT) custom ops. If an Ascend-optimized custom op is added to disabled_custom_ops, the system will use forward_native instead
+  of forward_oot, potentially losing NPU-specific optimizations. This directly affects compute efficiency and thus latency/throughput.
+  The parameter is populated automatically when a CustomOp''s enabled() method returns False, but can also be set via compilation
+  config.
+
+  '
+usage_locations:
+- file: vllm/model_executor/custom_op.py:189
+  context: 'CustomOp.dispatch_forward: adds op name to disabled_custom_ops when enabled() returns False'
+related_parameters:
+- name: compilation.enabled_custom_ops
+  relation: Complementary set; an op is either in enabled_custom_ops or disabled_custom_ops
+- name: compilation_config
+  relation: Parent compilation configuration object that holds both enabled and disabled custom op sets
+constraints:
+- Each entry must be a valid custom op name string recognized by vLLM's CustomOp registry.
+- An op cannot be in both enabled_custom_ops and disabled_custom_ops simultaneously.
+tuning_advice:
+  summary: 'On Ascend NPU, avoid disabling custom ops that have Ascend-specific implementations, as this forces fallback to
+    generic PyTorch native kernels and loses NPU optimizations.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment on Ascend NPU
+    value: '[] (empty list, no custom ops disabled)'
+    reason: 'vllm-ascend provides optimized OOT kernels for Ascend NPUs. Disabling them forces native PyTorch fallback, reducing
+      throughput and increasing latency. Keep all custom ops enabled unless debugging.
+
+      '
+  - scenario: Debugging or isolating a suspected buggy custom op on Ascend
+    value: '[''<specific_op_name>'']'
+    reason: 'Temporarily disable a single custom op to test whether it causes numerical issues or crashes. Re-enable once
+      debugging is complete.
+
+      '
+  caveats:
+  - Disabling an Ascend-optimized custom op (forward_oot) causes fallback to forward_native, which may not be optimized for
+    Da Vinci architecture and can significantly degrade performance.
+  - This parameter is typically managed internally by vLLM's CustomOp dispatch logic; manual modification should be done with
+    caution and only for debugging.
+  - vllm-ascend does not override or extend this parameter, but its custom ops are affected by it.
+  quick_guide: Keep disabled_custom_ops empty on Ascend NPU to retain all NPU-optimized custom kernels.
+analysis_date: '2026-07-06'

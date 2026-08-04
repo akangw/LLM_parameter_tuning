@@ -1,0 +1,58 @@
+# 运行与恢复
+
+## 前置条件
+
+- Windows PowerShell、Python 3.11+、Git、Codex CLI。
+- `pip install -r tuning_pipeline/requirements-runtime.txt`。
+- SSH 别名 `hetao-npu` 可用。
+- `tuning_pipeline/workflow/continuous/activation.approved.yaml` 与目标镜像一致。
+- 如本地没有固定源码，先运行 `scripts/fetch-sources.ps1`。
+
+## 常用命令
+
+```powershell
+# 无远端提交的前置检查
+.\一键启动.ps1 -CheckOnly
+
+# 首次同步脚本并创建独立 Lease
+.\scripts\prepare-remote.ps1
+
+# 新建 Session
+.\一键启动.ps1 -NewSession
+
+# 续跑当前 Session
+.\一键启动.ps1 -Resume
+
+# 前台运行，便于观察
+.\一键启动.ps1 -Resume -Foreground
+
+# 查看状态
+.\scripts\status.ps1
+
+# 优雅停止
+.\scripts\stop.ps1
+```
+
+默认启动器会检查 PID、画像进度、标签进度、激活审批、Python 依赖和 Codex CLI。发现可续跑状态时优先使用 `--resume`。
+
+## 停止语义
+
+优雅停止只写入 `STOP_REQUESTED`。Controller 会继续回收当前轮次，然后停止提交下一轮。若服务尚未产生指标，状态分类为 `operator_stop_before_metrics`，不能继承旧轮次的 OOM 分类。
+
+`-StopActiveTask` 会向远端 Lease 发出停止请求，只有明确需要立即停止计算时才使用。
+
+## 恢复边界
+
+- `--resume` 总是加载 Session 内冻结的配置和 Search Limits。
+- 服务镜像身份不一致时拒绝恢复。
+- Benchmark 容器、Suite、Schema、Tokenizer 或 Dataset 指纹变化时，应创建新 Session。
+- 当前平台不允许 Agent 启用上游 `--enable-eplb`。
+- 同一项目不得同时运行两个 Controller；旧项目和新项目分别使用自己的锁与 Lease。
+
+## 远端只读检查
+
+```powershell
+ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190 && ktp-lab status --lease vllmtkb-418bd627-32c8cf190-glm52-a3-32npu"
+```
+
+远端正式运行目录之外的 `/mnt/host-model/slai/user-1-wangakang/wangakang` 内容只允许读取。

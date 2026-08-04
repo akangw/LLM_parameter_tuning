@@ -1,0 +1,7 @@
+name: --disable-custom-all-reduce
+type: cli
+performance_impact: none
+skip_reason: On the target vllm-ascend runtime, this flag cannot select a custom all-reduce implementation. Upstream ParallelConfig
+  forces disable_custom_all_reduce to true whenever the current platform does not support custom all-reduce (vllm/config/parallel.py:941),
+  and the Ascend NPU communicator supplies only a compatibility interface with ca_comm set to None (vllm_ascend/distributed/device_communicators/npu_communicator.py:37).
+  Therefore changing the CLI flag has no effective latency, throughput, or memory impact on Ascend.

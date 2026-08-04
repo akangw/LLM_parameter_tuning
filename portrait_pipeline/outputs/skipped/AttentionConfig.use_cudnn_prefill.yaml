@@ -1,0 +1,6 @@
+name: AttentionConfig.use_cudnn_prefill
+type: nested
+performance_impact: none
+skip_reason: 'This deprecated compatibility field no longer selects a cuDNN prefill implementation: upstream vLLM raises an
+  error when it is enabled without an explicit replacement MLA backend, while vllm-ascend classifies it as GPU-specific and
+  resets it to false. It therefore has no effective latency, throughput, or memory tuning impact in the pinned runtimes.'

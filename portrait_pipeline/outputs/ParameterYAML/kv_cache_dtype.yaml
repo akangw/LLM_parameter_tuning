@@ -1,0 +1,95 @@
+name: --kv-cache-dtype
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1088
+- vllm/engine/arg_utils.py:1684
+- vllm/config/cache.py:18
+- vllm_ascend/platform.py:407
+- vllm_ascend/models/layer/attention/layer.py:153
+value_type: str
+default: auto
+valid_choices:
+- auto
+- float16
+- bfloat16
+- fp8
+- fp8_e4m3
+- fp8_e5m2
+- fp8_inc
+- fp8_ds_mla
+- turboquant_k8v4
+- turboquant_4bit_nc
+- turboquant_k3v4_nc
+- turboquant_3bit_nc
+- int8_per_token_head
+- fp8_per_token_head
+- nvfp4
+cli_example: --kv-cache-dtype fp8
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: This selects the storage dtype for the attention KV cache. Cache dtype changes each cache block's byte size,
+  so it changes the number of blocks that fit in the configured device-memory budget and can consequently change the concurrency
+  and throughput attainable by the serving engine. Upstream resolves auto to the model dtype before building CacheConfig.
+  On Ascend, index_topk models have cache_dtype overwritten to the model dtype during platform configuration; Ascend cache-spec
+  code also converts the configured string to a torch dtype and, for its A5 DeepSeek-V4 MLA path, forces float8_e4m3fn.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1088
+  context: Registers --kv-cache-dtype from the CacheConfig cache_dtype argument metadata.
+- file: vllm/engine/arg_utils.py:1684
+  context: Resolves auto using the model configuration and passes the result to CacheConfig.
+- file: vllm/config/cache.py:18
+  context: Defines the accepted CacheDType literals; CacheConfig defaults cache_dtype to auto.
+- file: vllm_ascend/platform.py:407
+  context: Replaces cache_dtype with the model dtype when the model text config has index_topk.
+- file: vllm_ascend/models/layer/attention/layer.py:153
+  context: Converts cache dtype to a torch dtype while building the Ascend MLA cache specification and forces float8_e4m3fn
+    on A5.
+related_parameters:
+- name: --dtype
+  relation: The auto value resolves to the model dtype upstream, and Ascend also uses model dtype for index_topk models.
+- name: --gpu-memory-utilization
+  relation: Cache dtype determines how much KV cache fits in the memory budget derived from this setting.
+- name: --kv-cache-memory-bytes
+  relation: Cache dtype changes the amount of KV cache capacity that the explicit byte budget can represent.
+- name: --calculate-kv-scales
+  relation: When cache dtype is fp8, this deprecated option controls dynamic K/V scale calculation; otherwise checkpoint scales
+    or 1.0 are used.
+- name: --mamba-cache-dtype
+  relation: Hybrid Mamba configuration resolves the KV cache dtype to calculate cache layout and alignment.
+constraints:
+- The value must be one of the CacheDType literals defined in vllm/config/cache.py.
+- On Ascend models whose text configuration has index_topk, platform configuration overwrites this setting with the model
+  dtype.
+- The Ascend DeepSeek-V4 MLA cache-spec path forces float8_e4m3fn on A5 regardless of the earlier configured value.
+- For fp8, use checkpoint K/V scales when available; with calculate_kv_scales disabled and no checkpoint scales, upstream
+  defaults them to 1.0.
+tuning_advice:
+  summary: Leave this at auto as the compatibility baseline. Consider a supported lower-precision cache dtype only when cache
+    capacity limits the workload and accuracy, model support, and the active Ascend path have been benchmarked.
+  suggested_values:
+  - scenario: General Ascend deployment
+    value: auto
+    reason: Resolves to model dtype upstream and avoids forcing a dtype that may be overridden or unsupported by the active
+      model path.
+  - scenario: Cache-capacity-limited deployment with verified FP8 support and acceptable quality
+    value: fp8
+    reason: A lower-precision KV cache uses fewer bytes per cached token, permitting more cache blocks in the same memory
+      budget.
+  - scenario: Ascend model with index_topk
+    value: auto
+    reason: vllm-ascend overwrites cache_dtype with the model dtype for this model class, so an explicit alternative does
+      not persist.
+  caveats:
+  - A smaller cache dtype is not a guaranteed throughput gain; measure prefill, decode, and quality for the specific model
+    and workload.
+  - FP8 scale handling affects accuracy; absent checkpoint scales, disabled dynamic calculation leaves the scales at 1.0.
+  - Ascend-specific paths can override the requested value, including index_topk handling and the A5 DeepSeek-V4 MLA cache
+    path.
+  quick_guide: Keep auto first; use a verified lower-precision dtype when KV-cache memory is the bottleneck, then benchmark
+    quality and throughput.
+analysis_date: '2026-07-27'

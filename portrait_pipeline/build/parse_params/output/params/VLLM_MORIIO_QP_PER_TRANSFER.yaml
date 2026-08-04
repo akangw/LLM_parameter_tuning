@@ -1,0 +1,59 @@
+name: VLLM_MORIIO_QP_PER_TRANSFER
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1480
+- vllm/distributed/kv_transfer/kv_connector/v1/moriio/moriio_engine.py:379
+value_type: int
+default: '1'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls the number of Queue Pairs (QP) per transfer for the Mori-IO RDMA connector
+  used in vLLM''s disaggregated prefill-decode (PD) setup. It is read in vllm/distributed/kv_transfer/kv_connector/v1/moriio/
+  moriio_engine.py:379 and passed to RdmaBackendConfig as the qp_per_transfer parameter when creating the RDMA backend. More
+  QPs per transfer can increase RDMA bandwidth utilization by allowing concurrent data transfers over multiple queue pairs,
+  potentially reducing KV cache transfer latency between prefill and decode nodes. However, this parameter is only relevant
+  when using the Mori-IO connector in a disaggregated serving architecture, which is a specialized deployment mode. On Ascend
+  NPU, the Mori-IO connector is not commonly used — Ascend deployments typically use HCCL-based communication or other Ascend-native
+  interconnects. The parameter has no effect in standard single-node or non-disaggregated deployments.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/moriio/moriio_engine.py:379
+  context: Reads VLLM_MORIIO_QP_PER_TRANSFER and passes it to RdmaBackendConfig for Mori-IO engine backend creation
+related_parameters:
+- name: VLLM_MORIIO_CONNECTOR_READ_MODE
+  relation: Also controls Mori-IO connector behavior; must be enabled for Mori-IO to be active
+- name: VLLM_MORIIO_POST_BATCH_SIZE
+  relation: Another Mori-IO RDMA backend configuration parameter used alongside QP_PER_TRANSFER
+- name: VLLM_MORIIO_NUM_WORKERS
+  relation: Controls the number of worker threads for Mori-IO operations; used together in RdmaBackendConfig
+constraints:
+- Must be a positive integer (int conversion will raise ValueError if non-numeric)
+- Only takes effect when using the Mori-IO connector in a disaggregated prefill-decode setup
+tuning_advice:
+  summary: 'Only relevant for Mori-IO RDMA-based disaggregated serving. On Ascend NPU, this parameter is typically unused;
+    leave at default unless explicitly deploying with Mori-IO connector.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend NPU deployment (single-node or HCCL-based multi-node)
+    value: '1'
+    reason: Mori-IO connector is not used; parameter has no effect. Default value is appropriate.
+  - scenario: Mori-IO disaggregated PD setup with high-bandwidth RDMA network
+    value: '4'
+    reason: Increasing QP per transfer can improve RDMA bandwidth utilization and reduce KV cache transfer latency, at the
+      cost of additional RDMA resources.
+  caveats:
+  - This parameter only affects the Mori-IO connector path, which is not the default communication backend for Ascend NPU
+    deployments
+  - Increasing QP per transfer consumes more RDMA resources (queue pairs are a limited hardware resource on RDMA NICs)
+  - No vllm-ascend override exists for this parameter; it behaves identically to upstream vLLM
+  quick_guide: Leave at default (1) unless using Mori-IO disaggregated serving with RDMA
+analysis_date: '2026-07-06'

@@ -1,0 +1,73 @@
+name: --dbo-prefill-token-threshold
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1045
+- vllm/engine/arg_utils.py:485
+- vllm/config/parallel.py:206
+- vllm/v1/worker/ubatch_utils.py:46
+value_type: int
+default: 512
+valid_choices: positive integer
+cli_example: --dbo-prefill-token-threshold 1024
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the token count threshold for activating dual batch overlap (DBO) microbatching on
+  batches that contain at least one prefill request. In vllm/v1/worker/ubatch_utils.py:46, the function check_ubatch_thresholds
+  compares the total number of tokens in a batch against this threshold when uniform_decode is False (i.e., mixed prefill-decode
+  or pure prefill batches). If num_tokens >= dbo_prefill_token_threshold, the batch is split into microbatches (ubatches)
+  for overlapped execution. This directly affects how prefill-heavy batches are scheduled: a lower threshold causes more aggressive
+  microbatching, which can improve throughput by overlapping prefill computation with decode but may increase per-batch scheduling
+  overhead. A higher threshold reduces microbatching frequency, potentially lowering latency for small prefill batches at
+  the cost of reduced overlap efficiency. The parameter only takes effect when --enable-dbo is set and config.use_ubatching
+  is True. On Ascend NPU, the DBO mechanism can help hide memory access latency and improve compute utilization, making this
+  threshold particularly relevant for workloads with mixed prefill/decode patterns.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/ubatch_utils.py:46
+  context: Used in check_ubatch_thresholds to decide whether a non-uniform-decode batch should be microbatched
+- file: vllm/config/parallel.py:206
+  context: Defined as a field of ParallelConfig with default value 512
+related_parameters:
+- name: --enable-dbo
+  relation: Must be enabled for this threshold to take effect; DBO is the parent feature
+- name: --dbo-decode-token-threshold
+  relation: Sibling parameter controlling the threshold for pure-decode batches; together they define DBO microbatching behavior
+- name: --ubatch-size
+  relation: Controls the size of each microbatch when DBO splitting is triggered
+constraints:
+- --enable-dbo must be set to True for this parameter to have any effect
+- Value must be a positive integer
+tuning_advice:
+  summary: Adjust based on typical prefill token counts in your workload to balance microbatching overhead against compute
+    overlap benefits
+  suggested_values:
+  - scenario: Workloads with large prefill requests (e.g., long document summarization, RAG with large contexts)
+    value: 512
+    reason: The default value triggers microbatching for prefill batches with 512+ tokens, which is suitable for large-prefill
+      scenarios where overlapping prefill and decode can significantly improve throughput
+  - scenario: Workloads with many small prefill requests (e.g., chatbot with short user prompts)
+    value: 256
+    reason: Lowering the threshold enables microbatching for smaller prefill batches, increasing overlap opportunities and
+      potentially improving throughput for chatty workloads with frequent short prefills
+  - scenario: Latency-sensitive applications where prefill latency must be minimized
+    value: 2048
+    reason: Raising the threshold reduces microbatching frequency for prefill batches, avoiding the scheduling overhead of
+      splitting small batches and keeping prefill latency lower for typical request sizes
+  caveats:
+  - This parameter only affects batches containing at least one prefill; pure-decode batches use --dbo-decode-token-threshold
+    instead
+  - On Ascend NPU, excessive microbatching of small prefill batches may increase kernel launch overhead without proportional
+    compute overlap gains — monitor NPU utilization when lowering the threshold
+  - 'The TODO comment in the source code (''TODO(lucas): tune'') suggests the default of 512 is a placeholder and may not
+    be optimal for all hardware configurations'
+  - Microbatching effectiveness depends on the model architecture and NPU memory bandwidth; larger models with higher compute
+    intensity benefit more from DBO overlap
+  quick_guide: Start with the default 512; lower to 256 for chat workloads with short prompts, raise to 1024+ for latency-sensitive
+    deployments
+analysis_date: '2026-07-06'

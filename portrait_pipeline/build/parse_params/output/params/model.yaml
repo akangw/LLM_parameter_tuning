@@ -1,0 +1,90 @@
+name: --model
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:764
+value_type: str
+default: <computed>
+valid_choices: any valid Hugging Face model name or local path
+cli_example: --model Qwen/Qwen3-8B
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "The --model parameter determines which model architecture, size, and configuration are loaded. This directly\
+  \ controls: 1. Model size (parameter count) → GPU/NPU memory footprint and KV cache capacity. 2. Architecture-specific code\
+  \ paths (e.g., DeepSeek MLA, MoE routing, attention\n   backends) that have vastly different performance characteristics\
+  \ on Ascend NPU.\n3. vllm-ascend uses the model config to decide Ascend-specific optimizations:\n   - \"In ascend_config.py:180,\
+  \ the model's is_deepseek_mla flag gates PD disaggregation\"\n     logic (pd_tp_ratio, pd_head_ratio, num_head_replica).\n\
+  \   - \"In ascend_config.py:228, hf_text_config.index_topk determines whether sparse\"\n     attention (enable_sparse_c8)\
+  \ is applicable.\n   - \"In patch_camem_allocator.py:17, the model config validation path is patched\"\n     to enable CaMemAllocator\
+  \ for NPU sleep mode.\n4. The model name is used as the model_name tag in metrics output when\n   --served-model-name is\
+  \ not specified.\nOn Ascend NPU, model choice is the single most impactful decision because it determines which CANN operators\
+  \ are invoked, whether FlashComm optimizations apply, and how memory is allocated via the Ascend memory allocator.\n"
+usage_locations:
+- file: vllm/engine/arg_utils.py:734
+  context: 'HF_HUB_OFFLINE path resolution: replaces model ID with local path'
+- file: vllm/engine/arg_utils.py:764
+  context: CLI argument registration in ModelConfig group
+- file: vllm_ascend/ascend_config.py:180
+  context: Used to check is_deepseek_mla for PD disaggregation config
+- file: vllm_ascend/ascend_config.py:228
+  context: Used to check hf_text_config.index_topk for sparse attention
+- file: vllm_ascend/patch/platform/patch_camem_allocator.py:17
+  context: ModelConfig validation patched for NPU CaMemAllocator
+related_parameters:
+- name: --served-model-name
+  relation: Overrides the model_name tag in metrics; --model value is used as fallback
+- name: --tokenizer
+  relation: Tokenizer is auto-detected from --model if not explicitly set
+- name: --revision
+  relation: Specifies which model revision to download from Hugging Face
+- name: --dtype
+  relation: Data type must be compatible with the chosen model architecture
+- name: --quantization
+  relation: Quantization method must be supported by the chosen model
+- name: --max-model-len
+  relation: Maximum sequence length is constrained by the model's native context window
+- name: --trust-remote-code
+  relation: Required for models with custom code in their Hugging Face repo
+constraints:
+- The model must be a valid Hugging Face model name or a local path to model weights.
+- When HF_HUB_OFFLINE is set, the model path must exist locally; otherwise startup fails.
+- The model architecture must be supported by vllm-ascend; unsupported architectures will fail at load time.
+- For PD disaggregation with pd_tp_ratio > 1, the model must have a positive total KV head count.
+- enable_kv_nz is only supported for DeepSeek MLA models; enabling it on other models raises RuntimeError.
+- enable_sparse_c8 requires the model to have index_topk in its Hugging Face text config.
+tuning_advice:
+  summary: Choose the smallest model that meets your quality requirements to maximize throughput and minimize memory pressure
+    on Ascend NPU.
+  suggested_values:
+  - scenario: High-throughput serving with limited NPU memory
+    value: Qwen/Qwen2.5-7B-Instruct or similar 7B-class model
+    reason: 7B models fit comfortably on a single Ascend 910B with ample KV cache headroom, enabling larger batch sizes and
+      higher throughput.
+  - scenario: Quality-sensitive tasks requiring strong reasoning
+    value: Qwen/Qwen3-32B or DeepSeek-R1-Distill-Qwen-32B
+    reason: 32B models balance quality and memory; on multi-NPU setups with tensor parallelism they achieve good throughput
+      on Ascend.
+  - scenario: Maximum throughput on multi-NPU Ascend cluster
+    value: DeepSeek-V3 or similar MoE model
+    reason: MoE models benefit from Ascend-specific optimizations like EPLB, fused MC2, and FlashComm; the sparse activation
+      reduces per-token compute.
+  - scenario: Development and testing
+    value: Qwen/Qwen2.5-1.5B-Instruct
+    reason: Minimal memory footprint allows rapid iteration; fits on a single NPU with default settings.
+  caveats:
+  - DeepSeek MLA models (e.g., DeepSeek-V2/V3) require specific Ascend optimizations (enable_kv_nz, enable_sparse_c8) that
+    may not be enabled by default.
+  - MoE models with shared experts can use enable_shared_expert_dp and multistream_overlap_shared_expert for better performance
+    but at higher memory cost.
+  - Model loading time scales with model size; large models (70B+) may take several minutes to load on Ascend NPU.
+  - Some models require --trust-remote-code; always verify the model's Hugging Face page for special requirements.
+  - vllm-ascend may not support every model architecture that upstream vllm supports; check the vllm-ascend compatibility
+    list before deploying.
+  quick_guide: Start with Qwen2.5-7B for balanced performance; use DeepSeek-V3 MoE for maximum throughput on multi-NPU Ascend
+    clusters.
+analysis_date: '2026-07-06'

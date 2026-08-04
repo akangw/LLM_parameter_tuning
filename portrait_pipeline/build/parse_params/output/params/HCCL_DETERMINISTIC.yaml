@@ -1,0 +1,63 @@
+name: HCCL_DETERMINISTIC
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/batch_invariant.py:83
+value_type: str
+default: <computed>
+valid_choices:
+- strict
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'HCCL_DETERMINISTIC controls whether HCCL (Huawei Collective Communication Library) operations produce bitwise-deterministic
+  results across runs. When set to "strict" or "true", HCCL disables internal performance optimizations (e.g., non-deterministic
+  reduction tree algorithms, relaxed synchronization) to guarantee identical outputs for identical inputs. This trades communication
+  throughput for reproducibility. On Ascend NPU, vllm-ascend''s batch_invariant module forcibly sets HCCL_DETERMINISTIC="strict"
+  and LCCL_DETERMINISTIC="1" when batch invariance mode is enabled (override_envs_for_invariance, line 83). The documentation
+  (faqs.md:196) also recommends HCCL_DETERMINISTIC=true alongside other determinism flags for reproducible inference. The
+  performance cost is proportional to the frequency and size of collective operations — tensor-parallel all-reduces and pipeline-parallel
+  sends/recvs will be slower under deterministic mode.
+
+  '
+usage_locations:
+- file: vllm_ascend/batch_invariant.py:83
+  context: Set to "strict" inside override_envs_for_invariance() when batch invariance mode is activated
+- file: tests/ut/test_batch_invariant.py:38
+  context: Test assertion verifying HCCL_DETERMINISTIC is set to "strict" after override_envs_for_invariance()
+related_parameters:
+- name: LCCL_DETERMINISTIC
+  relation: Set simultaneously to "1" in the same override function; both control determinism in Ascend communication libraries
+- name: ATB_MATMUL_SHUFFLE_K_ENABLE
+  relation: Documentation groups these together as determinism-related env vars; all must be set for full reproducibility
+- name: ATB_LLM_LCOC_ENABLE
+  relation: Documentation groups these together as determinism-related env vars; all must be set for full reproducibility
+constraints:
+- HCCL_DETERMINISTIC is only effective when batch invariance mode is explicitly enabled via the vllm-ascend batch_invariant
+  module
+- Setting HCCL_DETERMINISTIC to "strict" or "true" disables HCCL performance optimizations and will reduce communication throughput
+tuning_advice:
+  summary: Only enable HCCL_DETERMINISTIC when bitwise reproducibility across runs is required; leave unset for production
+    throughput
+  suggested_values:
+  - scenario: Production inference where throughput matters and bitwise reproducibility is not required
+    value: unset
+    reason: Avoids disabling HCCL performance optimizations, preserving full communication bandwidth for tensor/pipeline parallelism
+  - scenario: Debugging, testing, or benchmarking where identical outputs across runs are required
+    value: strict
+    reason: Guarantees bitwise-deterministic collective operations, enabling reproducible results for validation and comparison
+  caveats:
+  - HCCL_DETERMINISTIC is automatically set to "strict" by vllm-ascend's batch_invariant.override_envs_for_invariance() —
+    if you need determinism, use the batch invariance API rather than setting this env var manually
+  - The performance penalty scales with communication volume; large tensor-parallel models will see greater throughput degradation
+  - Must be combined with LCCL_DETERMINISTIC=1, ATB_MATMUL_SHUFFLE_K_ENABLE=0, and ATB_LLM_LCOC_ENABLE=0 for full determinism
+    as documented in faqs.md
+  quick_guide: Leave HCCL_DETERMINISTIC unset for production; use vllm-ascend batch invariance mode (which sets it to "strict")
+    only when reproducibility is required
+analysis_date: '2026-07-06'

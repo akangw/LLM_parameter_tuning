@@ -1,0 +1,64 @@
+name: kv_transfer.kv_parallel_size
+type: nested
+category: communication
+scope: vllm-ascend
+source_file: []
+value_type: int
+default: <computed>
+valid_choices: positive integer, typically 1 or 2
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the number of parallel instances used for KV cache transfer between prefill and decode
+  nodes in a disaggregated serving setup. It is consumed by the KV connector (e.g., MooncakeConnectorV1) to determine how
+  many concurrent communication streams are established. Setting kv_parallel_size to 2 enables dual-instance transfer, which
+  can double the effective bandwidth utilization for KV cache movement over the network. This directly affects the latency
+  of KV cache transfer and the overall throughput of the disaggregated pipeline, as the KV transfer is on the critical path
+  for decode nodes to begin generation. The documentation examples consistently use kv_parallel_size: "1, suggesting that
+  higher values may" require careful resource provisioning. The hint from code extraction indicates that for P2pNcclConnector,
+  this should be 2, implying that the optimal value depends on the specific connector implementation and the underlying network
+  topology.
+
+  '
+usage_locations:
+- file: vllm_ascend/kv_transfer/kv_connector/v1/mooncake_connector.py
+  context: Reads kv_parallel_size from config to determine number of parallel transfer instances
+- file: vllm_ascend/kv_transfer/kv_connector/v1/p2p_nccl_connector.py
+  context: Uses kv_parallel_size to set up NCCL-based parallel transfer instances
+related_parameters:
+- name: kv_transfer.kv_connector
+  relation: The connector type determines how kv_parallel_size is interpreted; P2pNcclConnector expects 2, while MooncakeConnectorV1
+    typically uses 1
+- name: kv_transfer.kv_role
+  relation: Both kv_producer and kv_consumer roles use kv_parallel_size to configure their transfer instances
+- name: kv_transfer.kv_connector_extra_config
+  relation: Contains dp_size and tp_size which interact with kv_parallel_size to determine total parallelism
+constraints:
+- kv_parallel_size must be a positive integer
+- For P2pNcclConnector, kv_parallel_size should be set to 2
+- The total number of parallel transfer instances across all nodes must not exceed available network resources
+tuning_advice:
+  summary: Set kv_parallel_size to 2 for P2pNcclConnector to maximize bandwidth utilization; use 1 for MooncakeConnectorV1
+    unless network profiling shows benefit from higher concurrency
+  suggested_values:
+  - scenario: Using P2pNcclConnector for KV cache transfer
+    value: 2
+    reason: The P2pNcclConnector implementation is designed for dual-instance parallel transfer to fully utilize NCCL bandwidth
+  - scenario: Using MooncakeConnectorV1 in standard disaggregated serving
+    value: 1
+    reason: Documentation examples consistently use 1 for MooncakeConnectorV1, indicating this is the tested and stable configuration
+  - scenario: High-bandwidth network with MooncakeConnectorV1 and observed KV transfer bottleneck
+    value: 2
+    reason: Increasing to 2 may improve KV transfer throughput if the network has sufficient headroom, but requires validation
+  caveats:
+  - Increasing kv_parallel_size beyond 2 may cause resource contention on the NPU and network without proportional throughput
+    gains
+  - The optimal value depends on the connector type; P2pNcclConnector requires 2, while MooncakeConnectorV1 defaults to 1
+  - Each parallel instance consumes additional NPU memory and communication resources; ensure sufficient headroom before increasing
+  - This parameter only takes effect in disaggregated prefill-decode architectures where KV cache is transferred between nodes
+  quick_guide: 'Use kv_parallel_size: 2 for P2pNcclConnector, and kv_parallel_size: 1 for MooncakeConnectorV1 unless profiling
+    indicates a bottleneck'
+analysis_date: '2026-07-06'

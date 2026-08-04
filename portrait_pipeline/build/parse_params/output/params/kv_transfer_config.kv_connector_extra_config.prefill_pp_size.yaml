@@ -1,0 +1,55 @@
+name: kv_transfer_config.kv_connector_extra_config.prefill_pp_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:157
+value_type: int
+default: '1'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls how many pipeline-parallel stages the prefill node uses when the KV cache is transferred
+  from prefill to decode nodes via the Ascend KV pool. It is read only when `kv_role == "kv_consumer"` and `consumer_is_to_put`
+  is true (i.e., the decode node is responsible for putting KV cache into the pool). The value determines how the model''s
+  hidden layers are partitioned across prefill pipeline stages. If `prefill_pp_layer_partition` is not set, layers are evenly
+  distributed across `prefill_pp_size` partitions. An incorrect value can cause layer partition mismatch errors or suboptimal
+  load balancing, affecting prefill throughput and memory distribution across NPUs.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:157
+  context: Read from kv_connector_extra_config dict to determine prefill pipeline parallelism size for KV pool layer partitioning.
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.prefill_pp_layer_partition
+  relation: Specifies the exact layer distribution across prefill PP stages; must have length equal to prefill_pp_size if
+    provided.
+- name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_put
+  relation: prefill_pp_size is only used when consumer_is_to_put is true and kv_role is kv_consumer.
+constraints:
+- prefill_pp_size must be a positive integer.
+- If prefill_pp_layer_partition is provided, its length must equal prefill_pp_size.
+- If prefill_pp_layer_partition is provided, the sum of its elements must equal the model's total number of hidden layers.
+tuning_advice:
+  summary: Set prefill_pp_size to the number of NPUs allocated for prefill pipeline parallelism when using KV pool with consumer-side
+    put.
+  suggested_values:
+  - scenario: Single NPU prefill node (no PP)
+    value: 1
+    reason: Default value; no pipeline parallelism, all layers on one NPU.
+  - scenario: Multiple NPU prefill nodes with pipeline parallelism
+    value: <number of prefill PP stages>
+    reason: Should match the actual pipeline parallel size of the prefill node to correctly partition layers.
+  caveats:
+  - This parameter only takes effect when the decode node is configured to put KV cache into the pool (consumer_is_to_put=true).
+  - If prefill_pp_layer_partition is not explicitly set, layers are evenly distributed; uneven division may cause slight imbalance
+    in the last partitions.
+  - Mismatch between prefill_pp_size and the actual prefill PP configuration can lead to runtime errors or incorrect KV cache
+    transfer.
+  quick_guide: Set prefill_pp_size equal to the pipeline parallel size of your prefill node when using Ascend KV pool with
+    consumer-side put.
+analysis_date: '2026-07-06'

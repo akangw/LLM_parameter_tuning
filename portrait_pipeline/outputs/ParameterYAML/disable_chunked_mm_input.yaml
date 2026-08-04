@@ -1,0 +1,59 @@
+name: --disable-chunked-mm-input
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1357
+- vllm/config/scheduler.py:117
+- vllm/config/vllm.py:1984
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --disable-chunked-mm-input
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This V1 scheduler option changes chunked-prefill handling of multimodal items. When enabled, a mixed prompt
+  whose remaining token budget covers only part of a multimodal item schedules the preceding text in the current step and
+  defers the entire multimodal item to a later step. This can leave part of a prefill batch's token budget unused, reducing
+  batching efficiency and throughput, while avoiding splitting that item across scheduler steps. It is relevant only when
+  chunked prefill is enabled. The pinned vllm-ascend production sources contain no override or separate implementation for
+  this option.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1972
+  context: EngineArgs passes the CLI value into SchedulerConfig during engine configuration.
+- file: vllm/config/scheduler.py:224
+  context: SchedulerConfig forces this option to true for encoder-decoder models and disables chunked prefill.
+- file: vllm/config/vllm.py:1984
+  context: Mamba cache align mode asserts that this option is false because it requires chunked multimodal input.
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: The option's partial-item scheduling behavior applies only when chunked prefill is enabled.
+- name: --mamba-cache-mode
+  relation: mamba_cache_mode=align requires this option to remain false.
+constraints:
+- Encoder-decoder models force disable_chunked_mm_input to true and disable chunked prefill.
+- mamba_cache_mode=align requires disable_chunked_mm_input to be false.
+- The option is documented as used only in V1.
+tuning_advice:
+  summary: Keep the default false unless atomic scheduling of multimodal items is required by the workload or model configuration.
+  suggested_values:
+  - scenario: Chunked-prefill multimodal serving where utilization of each prefill token budget is important.
+    value: false
+    reason: Allows the scheduler to split a multimodal item across steps instead of deferring the entire item when it does
+      not fit in the remaining budget.
+  - scenario: A V1 multimodal workload that requires whole multimodal items to be deferred rather than partially scheduled.
+    value: true
+    reason: Schedules the preceding text first and defers the complete multimodal item to a later step when the remaining
+      token budget cannot cover it.
+  caveats:
+  - Enabling the option can leave token budget unused in a prefill step and can reduce batching efficiency.
+  - It has no separate pinned vllm-ascend production implementation and is only relevant with chunked prefill in V1.
+  - Encoder-decoder models override the setting, and Mamba cache align mode rejects true.
+  quick_guide: Use false by default; use true only when whole-item multimodal scheduling is needed and reduced batch packing
+    is acceptable.
+analysis_date: '2026-07-27'

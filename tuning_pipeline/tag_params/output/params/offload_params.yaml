@@ -1,0 +1,101 @@
+name: --offload-params
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:70
+- vllm/engine/arg_utils.py:1157
+value_type: list[str]
+default: []
+valid_choices: Any list of exact, dot-delimited parameter-name segments present in the model's named parameters.
+cli_example: --offload-params gate_up_proj down_proj
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: This option is the parameter whitelist for the prefetch CPU-weight-offloading backend. For layers selected
+  by --offload-group-size and --offload-num-in-group, an empty list selects every named parameter, while a non-empty list
+  selects only names containing an exact dot-delimited segment sequence. Selected weights are held in CPU storage and copied
+  asynchronously into reusable device buffers before their layer runs. Selecting more or larger tensors can free more resident
+  device memory, but increases host-to- device traffic and the static prefetch-buffer footprint, so exposed transfer waits
+  can increase request latency and reduce throughput. Selecting fewer tensors makes the inverse tradeoff. A layer with no
+  matching parameter is skipped by the offloader.
+usage_locations:
+- file: vllm/config/offload.py:70
+  context: Defines the empty-set default and documents that the filter uses exact parameter-name segment matching.
+- file: vllm/engine/arg_utils.py:1157
+  context: Exposes the PrefetchOffloadConfig field as the --offload-params CLI option.
+- file: vllm/engine/arg_utils.py:2148
+  context: Passes the parsed set into PrefetchOffloadConfig when EngineArgs builds OffloadConfig.
+related_parameters:
+- name: --offload-group-size
+  relation: Enables the prefetch backend in auto mode when greater than zero and determines which layer groups are candidates
+    for selective offloading.
+- name: --offload-num-in-group
+  relation: Determines how many layers at the end of each group are candidates for offloading.
+- name: --offload-prefetch-step
+  relation: Controls how many layers are prefetched ahead and therefore how many reusable device-buffer slots are allocated
+    for each selected parameter.
+- name: --offload-backend
+  relation: The selector is consumed by the prefetch backend; forcing the UVA backend causes prefetch settings to be ignored.
+- name: --cpu-offload-params
+  relation: Separate selective filter for the UVA CPU-offloading backend.
+constraints:
+- 'Prefetch offloading must be active: in auto mode --offload-group-size must be greater than zero, or --offload-backend must
+  select prefetch with a valid positive group size.'
+- Matching uses exact dot-delimited segment sequences. For example, w13_weight matches mlp.experts.w13_weight but not mlp.experts.w13_weight_scale.
+- An empty value set means all parameters in each selected layer are offloaded.
+- If no parameter in a selected layer matches a non-empty filter, that layer is not offloaded.
+- --offload-num-in-group must not exceed --offload-group-size, and an active prefetch backend requires --offload-prefetch-step
+  to be at least 1.
+tuning_advice:
+  summary: Start with the largest repeated weight groups needed to meet the device- memory target, then add or remove exact
+    parameter-name segments while measuring peak memory, transfer stalls, latency, and throughput.
+  suggested_values:
+  - scenario: Dense transformer where offloading MLP projections is sufficient
+    value:
+    - gate_up_proj
+    - down_proj
+    reason: This is the selective configuration exercised by the pinned upstream correctness test and targets large MLP weights
+      while leaving attention weights resident.
+  - scenario: Maximum weight-memory relief for the layers selected by the group settings
+    value: []
+    reason: The empty set selects every parameter in each selected layer, maximizing resident-weight removal but also maximizing
+      transfer work and potentially increasing the device prefetch-buffer footprint.
+  - scenario: MoE model where expert matrices dominate weight memory
+    value:
+    - w13_weight
+    - w2_weight
+    reason: Exact expert-weight segments can focus offloading on the largest repeated tensors; confirm the actual names in
+      the loaded model before use.
+  caveats:
+  - Parameter names are model- and quantization-specific. Inspect named parameters after weight processing; a plausible but
+    nonmatching segment silently causes affected layers to remain resident.
+  - Narrowing the filter reduces transfer work but also reduces total resident weight memory freed; static prefetch buffers
+    still consume device memory.
+  - The pinned vLLM Ascend repository contains no implementation or documentation for this option, while the upstream implementation
+    uses CUDA streams and CUDA-graph integration. Do not assume this setting is supported on Ascend NPU without separate validation.
+  - Measurements depend on host-device bandwidth, parameter sizes, group placement, prefetch depth, and whether transfers
+    overlap computation.
+  quick_guide: Use exact names from the model, begin with its largest repeated MLP or expert weights, and use an empty list
+    only when maximum device-memory relief is more important than transfer overhead.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

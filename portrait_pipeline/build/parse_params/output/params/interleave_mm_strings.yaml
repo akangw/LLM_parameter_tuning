@@ -1,0 +1,62 @@
+name: --interleave-mm-strings
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:180
+- vllm/engine/arg_utils.py:1219
+- vllm/entrypoints/chat_utils.py:1872
+value_type: bool
+default: false
+valid_choices: boolean (true/false)
+cli_example: --interleave-mm-strings
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls how multimodal content is interleaved with text in chat prompts when using --chat-template-content-format=string.
+  When enabled, it allows multimodal placeholders (images, audio, video) to be interleaved within text strings rather than
+  being placed only at the beginning or end of messages. The performance impact is indirect and minor: "it affects the prompt
+  parsing path in parse_chat_messages() and" parse_chat_messages_async() (vllm/entrypoints/chat_utils.py:1872,1911), which
+  determines how multimodal data is tracked and resolved via MultiModalItemTracker. Different interleaving patterns can lead
+  to slightly different tokenization and multimodal data batching, which may marginally affect prompt processing throughput
+  and the memory layout of multimodal embeddings. However, this is purely a prompt formatting concern — it does not affect
+  the core model forward pass, KV cache management, or NPU-specific execution paths. No vllm-ascend override or Ascend-specific
+  behavior was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/entrypoints/chat_utils.py:1872
+  context: parse_chat_messages() — passes interleave_strings flag to _parse_chat_message_content()
+- file: vllm/entrypoints/chat_utils.py:1911
+  context: parse_chat_messages_async() — same logic for async path
+- file: vllm/config/model.py:338
+  context: ModelConfig.__init__() — InitVar passed to MultiModalConfig
+- file: vllm/config/model.py:385
+  context: compute_hash() — included in hash factors (affects computation graph identity)
+related_parameters:
+- name: --chat-template-content-format
+  relation: Must be set to 'string' for --interleave-mm-strings to take effect; the interleave_strings flag is only true when
+    content_format == 'string' AND interleave_mm_strings is enabled
+constraints:
+- --interleave-mm-strings has no effect unless --chat-template-content-format is set to 'string'
+tuning_advice:
+  summary: Enable only if your multimodal chat template requires interleaved text-and-media content within a single message
+    string; otherwise leave disabled for simpler prompt processing.
+  suggested_values:
+  - scenario: Standard multimodal chat with media at message boundaries
+    value: false
+    reason: Default behavior places media at message boundaries, which is simpler and sufficient for most chat templates;
+      no benefit from enabling interleaving.
+  - scenario: Chat templates requiring interleaved text and media within a single message string
+    value: true
+    reason: Required for correct prompt formatting when the chat template expects media tokens interleaved with text in the
+      same string; must also set --chat-template-content-format=string.
+  caveats:
+  - This parameter only affects prompt parsing and formatting, not the model inference engine or NPU execution.
+  - Enabling this may slightly change the order of multimodal data processing, which could affect batching efficiency in edge
+    cases, but the impact is negligible.
+  - No Ascend-specific behavior or override exists for this parameter; it behaves identically on NPU and GPU.
+  quick_guide: Leave at default (false) unless your specific multimodal chat template requires interleaved string content.
+analysis_date: '2026-07-06'

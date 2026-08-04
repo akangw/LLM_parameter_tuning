@@ -1,0 +1,116 @@
+name: AttentionConfig.use_trtllm_attention
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/attention.py:45
+- vllm/v1/attention/backends/flashinfer.py:415
+- vllm/v1/attention/backends/flashinfer.py:643
+- vllm/v1/attention/backends/flashinfer.py:915
+- docs/design/attention_backends.md:186
+- vllm_ascend/platform.py:1025
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: --attention-config.use_trtllm_attention=0
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM this tri-state option controls whether the FlashInfer backend may dispatch prefill work to
+  its TRT-LLM attention kernel. Null leaves the decision to FlashInfer's compatibility and workload checks, true requests
+  TRT-LLM attention, and false opts out. Changing the selected kernel can change prefill latency and throughput; on supported
+  Blackwell hardware the TRT-LLM path also supplies attention-sink support. Decode dispatch is separately preferred whenever
+  the implementation reports TRT-LLM compatibility and decode-context parallelism is not active. In the pinned vllm-ascend
+  source a truthy value is treated as NVIDIA-specific and reset to false during platform configuration, so this option is
+  not an effective Ascend tuning control.
+usage_locations:
+- file: vllm/config/attention.py:45
+  context: Declares the nullable boolean; null means automatic selection, while true or false explicitly requests or rejects
+    TRT-LLM attention within FlashInfer.
+- file: vllm/v1/attention/backends/flashinfer.py:415
+  context: FlashInfer reports attention-sink support only when TRT-LLM attention is supported, while respecting an explicit
+    false setting.
+- file: vllm/v1/attention/backends/flashinfer.py:643
+  context: Tests model head geometry and platform support for TRT-LLM attention, then uses the result to choose query dtype,
+    decode behavior, and batch-reordering support.
+- file: vllm/v1/attention/backends/flashinfer.py:915
+  context: Passes this option as force_use_trtllm when selecting the per-batch prefill dispatch path; the result determines
+    whether FlashInfer must use its non-TRT-LLM metadata and dtype fallback.
+- file: docs/design/attention_backends.md:186
+  context: Documents that FlashInfer uses TRT-LLM attention on Blackwell SM100 for sink support and shows the option set to
+    zero to disable it.
+- file: vllm_ascend/platform.py:1025
+  context: Includes use_trtllm_attention among GPU-specific attention flags and resets a truthy value to false during Ascend
+    platform configuration.
+related_parameters:
+- name: AttentionConfig.backend
+  relation: This setting is consumed by the upstream FlashInfer backend; selecting a different attention backend makes it
+    irrelevant.
+- name: AttentionConfig.disable_flashinfer_q_quantization
+  relation: When TRT-LLM attention is supported, this separate option controls whether FlashInfer may use a quantized query
+    dtype; a non-TRT-LLM batch falls back to model-dtype queries.
+- name: ParallelConfig.decode_context_parallel_size
+  relation: The pinned FlashInfer implementation disables its TRT-LLM decode path when decode-context parallel world size
+    exceeds one, independently of the prefill override.
+constraints:
+- The option affects upstream execution only when the FlashInfer attention backend is selected and the installed kernels,
+  GPU, model head geometry, cache dtype, and workload satisfy TRT-LLM attention requirements.
+- Forcing true cannot make an unsupported TRT-LLM kernel configuration valid; compatibility checks still constrain dispatch.
+- Setting false can remove FlashInfer attention-sink support; models requiring sinks must use a compatible TRT-LLM path on
+  Blackwell or another backend supported by the hardware.
+- The pinned FlashInfer code chooses decode TRT-LLM attention from compatibility and requires decode-context parallel world
+  size at most one; this field is passed directly to the prefill selector.
+- On vllm-ascend, true is overwritten with false and the plugin uses its Ascend-native attention path.
+tuning_advice:
+  summary: Leave the option unset for automatic upstream FlashInfer dispatch. Force a value only for a measured kernel comparison
+    or to work around a path-specific issue; leave it false or unset on Ascend because the plugin does not expose TRT-LLM
+    attention as a tuning path.
+  suggested_values:
+  - scenario: Upstream FlashInfer production workload on supported NVIDIA hardware
+    value: unset
+    reason: Automatic dispatch retains compatibility checks and can choose TRT-LLM only for eligible shapes and batches.
+  - scenario: Controlled upstream benchmark comparing FlashInfer native and TRT-LLM paths
+    value: false
+    reason: Explicitly opts prefill out of TRT-LLM attention, providing the non-TRT-LLM side of an otherwise identical benchmark.
+  - scenario: Compatible Blackwell workload requiring attention sinks
+    value: true
+    reason: Requests the TRT-LLM path that supplies sink support in the pinned FlashInfer backend; verify every workload shape
+      is supported.
+  - scenario: vllm-ascend deployment
+    value: false
+    reason: Ascend resets a truthy request to false and uses its own attention implementation, so forcing TRT-LLM has no benefit.
+  caveats:
+  - The pinned source establishes different dispatch and fallback paths but contains no benchmark magnitude; measure prefill
+    latency, end-to-end latency, and throughput on the target model and request distribution.
+  - Results depend on GPU generation, FlashInfer/TRT-LLM kernel availability, query and KV head counts, cache and query dtypes,
+    sequence lengths, speculative decoding, and decode-context parallelism.
+  - An explicit false value can make a sink-using FlashInfer workload fail rather than merely run more slowly because native
+    FlashInfer does not provide that capability in the pinned implementation.
+  - Ascend logs a warning and resets only truthy values; null and false are both effectively inactive for this GPU-specific
+    control.
+  quick_guide: Start with null; benchmark false against automatic selection if investigating upstream FlashInfer performance,
+    use true only for a verified compatible TRT-LLM requirement, and do not tune this option on Ascend.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

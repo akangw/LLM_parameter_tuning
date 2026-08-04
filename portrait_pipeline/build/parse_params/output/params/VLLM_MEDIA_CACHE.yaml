@@ -1,0 +1,86 @@
+name: VLLM_MEDIA_CACHE
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:821
+- vllm/envs.py:71
+- vllm/multimodal/media/connector.py:127
+value_type: str
+default: '''""'''
+valid_choices: any valid filesystem path string, or empty string to disable
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'VLLM_MEDIA_CACHE controls the directory path for caching media files (images, video, audio) fetched from URLs
+  during multimodal inference. When set to a non-empty writable directory path, vLLM enables a disk-based LRU cache for downloaded
+  media, avoiding repeated network fetches for the same URLs across requests. This can reduce end-to-end request latency for
+  multimodal workloads where the same media URLs are referenced repeatedly (e.g., benchmark suites, repeated queries against
+  a fixed image set). The cache is managed with size and TTL limits controlled by sibling env vars VLLM_MEDIA_CACHE_MAX_SIZE_MB
+  and VLLM_MEDIA_CACHE_TTL_HOURS. When empty (default), caching is completely disabled and every request triggers a fresh
+  network fetch. This parameter is upstream vLLM functionality with no vllm-ascend override — it behaves identically on Ascend
+  NPU as on GPU. It is explicitly excluded from torch.compile cache key computation (vllm/envs.py:1913), confirming it has
+  no impact on model compilation or execution graph. Performance impact is limited to I/O-bound multimodal request preprocessing,
+  not the NPU compute path.
+
+  '
+usage_locations:
+- file: vllm/multimodal/media/connector.py:127
+  context: 'MediaConnector.__init__ reads VLLM_MEDIA_CACHE to determine whether to enable disk-based media caching. If non-empty,
+    creates the directory and verifies writability before enabling the LRU cache.
+
+    '
+- file: vllm/envs.py:821
+  context: 'Environment variable definition with default empty string (caching disabled).
+
+    '
+- file: vllm/envs.py:1913
+  context: 'Listed in ignored_factors for torch.compile cache key computation — changes to this env var do not trigger model
+    recompilation.
+
+    '
+related_parameters:
+- name: VLLM_MEDIA_CACHE_MAX_SIZE_MB
+  relation: Sets the maximum cache size in MB; only effective when VLLM_MEDIA_CACHE is non-empty
+- name: VLLM_MEDIA_CACHE_TTL_HOURS
+  relation: Sets the time-to-live for cached entries in hours; only effective when VLLM_MEDIA_CACHE is non-empty
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls retry behavior for network fetches; cache hits bypass network fetches entirely
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Network timeout for image fetches; cache hits avoid this timeout
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Network timeout for video fetches; cache hits avoid this timeout
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Network timeout for audio fetches; cache hits avoid this timeout
+constraints:
+- When set, the path must be a writable directory; vLLM verifies writability at startup and logs an error if the directory
+  cannot be created or written to.
+- An empty string (default) disables media caching entirely.
+tuning_advice:
+  summary: 'Set VLLM_MEDIA_CACHE to a persistent writable directory when serving multimodal models with repeated media URL
+    references to reduce network fetch latency; leave empty if media URLs are unique per request or disk I/O is a bottleneck.
+
+    '
+  suggested_values:
+  - scenario: Production multimodal serving with repeated media URLs (e.g., fixed image dataset, benchmark loops)
+    value: '''"/tmp/vllm_media_cache"'''
+    reason: Enables disk caching to avoid redundant network fetches; /tmp is typically fast (tmpfs on many systems) but consider
+      a persistent path if cache should survive reboots.
+  - scenario: One-shot or unique-media workloads where each request uses a different URL
+    value: '''""'''
+    reason: Disabling cache avoids unnecessary disk I/O and storage consumption since cache hit rate would be near zero.
+  - scenario: High-throughput serving with limited disk I/O bandwidth
+    value: '''""'''
+    reason: Disk-based caching may become a bottleneck if the storage medium is slow; network fetch may be faster than disk
+      read in some deployments.
+  caveats:
+  - Media caching is disk-based, not memory-based — cache hits still incur disk read latency, which may be comparable to or
+    slower than network fetch depending on storage medium and network speed.
+  - The cache directory can grow up to VLLM_MEDIA_CACHE_MAX_SIZE_MB (default 5 GB); ensure sufficient disk space is available.
+  - This parameter has no effect on Ascend NPU compute performance — it only affects multimodal request preprocessing I/O.
+  - Cache entries are evicted by LRU policy when size limit is exceeded, or by age when TTL expires.
+  quick_guide: Set to a writable directory path to cache multimodal media downloads and reduce repeated network fetches; leave
+    empty (default) to disable.
+analysis_date: '2026-07-06'

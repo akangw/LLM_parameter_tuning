@@ -1,0 +1,58 @@
+name: --mamba-backend
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:886
+value_type: str
+default: <computed>
+valid_choices: '[''auto'', ''native'', ''triton'', ''cuda'', ''ascend'']'
+cli_example: --mamba-backend ascend
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'Controls which Mamba SSU (State Space Unit) backend implementation is used for Mamba-family models (e.g.,
+  Mamba, Mamba2, Jamba). On Ascend NPU, vllm-ascend patches the MambaConfig to set the default backend to ''ascend'' (via
+  patch_mamba_config.py or patch_mamba_config_310.py depending on device type). The backend selection directly determines
+  which CUDA/NPU kernel implementation executes the selective scan operation — the core computational kernel of Mamba models.
+  Using the wrong backend (e.g., ''triton'' or ''cuda'' on Ascend) will either fail to compile or fall back to slow CPU execution,
+  severely degrading throughput. The ''ascend'' backend uses CANN-optimized operators for the selective scan, achieving significantly
+  higher throughput and lower memory overhead compared to generic backends on NPU hardware. On 310P devices, a specialized
+  patch (patch_mamba_config_310) applies further optimizations.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/__init__.py:27-30
+  context: Conditionally imports patch_mamba_config or patch_mamba_config_310 based on is_310p() check
+- file: vllm_ascend/patch/platform/patch_mamba_manager:40
+  context: Patches MambaManager for Ascend-specific memory management
+- file: vllm/engine/arg_utils.py:886
+  context: CLI argument registration under MambaConfig group
+related_parameters:
+- name: --enable-mamba-cache-stochastic-rounding
+  relation: Mamba-specific cache optimization that works with the selected mamba backend
+- name: --mamba-cache-philox-rounds
+  relation: Controls stochastic rounding rounds for Mamba cache, dependent on mamba backend support
+constraints:
+- The 'ascend' backend is only available when running on Ascend NPU hardware
+- On 310P devices, a specialized mamba config patch is applied automatically
+- Using 'cuda' or 'triton' backends on Ascend NPU will fail or fall back to CPU execution
+tuning_advice:
+  summary: On Ascend NPU, always use --mamba-backend ascend (set automatically by vllm-ascend) for optimal Mamba model performance
+  suggested_values:
+  - scenario: Running Mamba-family models on Ascend NPU (all device types)
+    value: ascend
+    reason: vllm-ascend automatically patches the default to 'ascend' and provides CANN-optimized selective scan kernels that
+      are essential for acceptable throughput on NPU
+  - scenario: Running Mamba-family models on NVIDIA GPU
+    value: auto
+    reason: The 'auto' backend selects the best available backend (typically 'triton' or 'cuda') for the current GPU platform
+  caveats:
+  - vllm-ascend silently overrides the default mamba backend to 'ascend' — manually setting a different backend may break
+    Mamba model inference on NPU
+  - On 310P devices, a separate patch (patch_mamba_config_310) is applied with device-specific optimizations
+  - The mamba backend only affects Mamba-family models; it has no effect on Transformer-based models
+  quick_guide: Leave --mamba-backend at its default (auto-patched to 'ascend' by vllm-ascend) for Mamba models on Ascend NPU
+analysis_date: '2026-07-06'

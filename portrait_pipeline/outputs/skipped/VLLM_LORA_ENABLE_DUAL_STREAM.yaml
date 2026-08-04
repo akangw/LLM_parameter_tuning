@@ -1,0 +1,7 @@
+name: VLLM_LORA_ENABLE_DUAL_STREAM
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source, this environment variable is parsed in vllm/envs.py but is only read by vllm/config/lora.py
+  to reject non-CUDA platforms and to disable the flag when fully_sharded_loras is enabled. No LoRA execution or kernel path
+  consumes it, so it does not alter latency, throughput, or memory. The pinned vLLM Ascend repository neither defines nor
+  uses this variable.

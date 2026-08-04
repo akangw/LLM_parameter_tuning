@@ -1,0 +1,92 @@
+name: DYNAMIC_EPLB
+type: env
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:94
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+- '1'
+- '0'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: "DYNAMIC_EPLB enables dynamic Expert Parallel Load Balancing (EPLB) for MoE models on Ascend NPU. When set\
+  \ to \"true\" or \"1\", it activates a runtime load balancing mechanism that monitors expert utilization and redistributes\
+  \ experts across EP ranks to mitigate load imbalance. This directly improves token throughput and reduces tail latency in\
+  \ MoE inference by preventing individual ranks from becoming bottlenecks due to skewed expert activation patterns.\nThe\
+  \ mechanism works through several code paths: 1. In vllm_ascend/ascend_config.py:677-681, when dynamic_eplb is configured\
+  \ in eplb_config,\n   the system asserts that DYNAMIC_EPLB (or EXPERT_MAP_RECORD) must be \"true\", otherwise\n   it raises\
+  \ an assertion error. This gate ensures the environment variable is properly set\n   before dynamic EPLB features activate.\n\
+  2. In vllm_ascend/patch/platform/__init__.py:42-43, when DYNAMIC_EPLB is enabled, it\n   conditionally imports patch_multiproc_executor,\
+  \ which patches the multiprocessing\n   executor to support dynamic expert redistribution across worker processes.\n3. In\
+  \ vllm_ascend/distributed/parallel_state.py:98-102, when dynamic_eplb is enabled in\n   the ascend config, a dedicated _DYNAMIC_EPLB\
+  \ communication group is initialized using\n   the same group ranks as the MC2 group. This group facilitates the all-to-all\n\
+  \   communication needed for expert redistribution.\n4. In vllm_ascend/utils.py:1190, the dynamic_eplb communication group\
+  \ is assigned a\n   dedicated HCCL buffer size of 100 (via _DYNAMIC_EPLB_BUFFER_SIZE), optimizing\n   communication for\
+  \ load balancing operations.\n\nThe dynamic EPLB system collects expert heat (utilization) data at configurable intervals\
+  \ (expert_heat_collection_interval), runs a balancing algorithm periodically (algorithm_execution_interval), and redistributes\
+  \ experts with support for redundant experts (num_redundant_experts). This is particularly impactful for large MoE models\
+  \ like DeepSeek-V3 and Qwen3-235B where expert load imbalance can cause significant throughput degradation.\n"
+usage_locations:
+- file: vllm_ascend/envs.py:94
+  context: Environment variable definition with default 'false'
+- file: vllm_ascend/ascend_config.py:679
+  context: 'Assertion check: DYNAMIC_EPLB must be ''true'' when dynamic_eplb config is enabled'
+- file: vllm_ascend/patch/platform/__init__.py:42
+  context: Conditional import of patch_multiproc_executor when DYNAMIC_EPLB is enabled
+- file: vllm_ascend/distributed/parallel_state.py:98-102
+  context: Initialization of _DYNAMIC_EPLB communication group for expert redistribution
+- file: vllm_ascend/utils.py:1190
+  context: HCCL buffer size configuration for dynamic_eplb communication group
+- file: tests/e2e/pull_request/two_card/test_qwen3_30b_a3b.py:33
+  context: Test case setting DYNAMIC_EPLB=true for MoE TP+EP+EPLB scenario
+related_parameters:
+- name: EXPERT_MAP_RECORD
+  relation: Alternative env var that also satisfies the dynamic EPLB assertion gate; used for load data collection
+- name: eplb_config.dynamic_eplb
+  relation: Configuration field that must be set to True alongside DYNAMIC_EPLB; triggers the assertion check
+- name: eplb_config.expert_heat_collection_interval
+  relation: Controls how frequently expert utilization data is collected for the balancing algorithm
+- name: eplb_config.algorithm_execution_interval
+  relation: Controls how frequently the load balancing algorithm runs to redistribute experts
+- name: eplb_config.num_redundant_experts
+  relation: Number of redundant expert copies to maintain for load balancing flexibility
+- name: eplb_config.eplb_policy_type
+  relation: Policy type for the balancing algorithm (0-3); documentation recommends policy 2 (swift balancer)
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: Fused MC2 optimization (value 1) is incompatible with dynamic EPLB as noted in envs.py:98
+constraints:
+- DYNAMIC_EPLB must be set to 'true' or '1' when eplb_config.dynamic_eplb is True, otherwise an assertion error is raised
+- DYNAMIC_EPLB is only applicable to MoE models with expert parallelism enabled
+- Fused MC2 optimization (VLLM_ASCEND_ENABLE_FUSED_MC2=1) cannot be used with dynamic EPLB
+tuning_advice:
+  summary: Enable DYNAMIC_EPLB for MoE models with expert parallelism to mitigate load imbalance and improve throughput; use
+    policy type 2 (swift balancer) as recommended by documentation.
+  suggested_values:
+  - scenario: MoE model serving with expert parallelism (EP > 1) where load imbalance is observed
+    value: 'true'
+    reason: Activates dynamic expert redistribution to balance load across EP ranks, improving throughput and reducing tail
+      latency
+  - scenario: Load data collection or performance profiling for EPLB tuning
+    value: 'true'
+    reason: Required alongside EXPERT_MAP_RECORD to enable expert heat data collection for offline analysis
+  - scenario: Non-MoE models or single-rank deployment without expert parallelism
+    value: 'false'
+    reason: Dynamic EPLB has no effect without expert parallelism; keeping it disabled avoids unnecessary overhead
+  caveats:
+  - Dynamic EPLB requires additional NPU memory for the communication buffers and expert redistribution metadata
+  - The balancing algorithm introduces periodic overhead during algorithm_execution_interval; tune this interval based on
+    workload stability
+  - Fused MC2 optimization (VLLM_ASCEND_ENABLE_FUSED_MC2=1) is incompatible with dynamic EPLB — choose one optimization path
+  - The swift balancer policy (eplb_policy_type=2) is the recommended policy in the current version per documentation
+  - Both DYNAMIC_EPLB env var and eplb_config.dynamic_eplb config field must be set to enable the feature
+  quick_guide: For MoE models with EP>1, set export DYNAMIC_EPLB=true and configure eplb_config with dynamic_eplb=True, policy_type=2,
+    and appropriate collection/execution intervals.
+analysis_date: '2026-07-06'

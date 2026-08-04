@@ -1,0 +1,77 @@
+name: compilation.mode
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:421
+- vllm_ascend/platform.py:438
+value_type: int
+default: <computed>
+valid_choices:
+- 0
+- 1
+- 2
+- 3
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'compilation.mode controls whether torch.compile-based compilation is applied to the model. On Ascend NPU,
+  vllm-ascend overrides this parameter in platform.py: if enforce_eager is True, mode is forced to CompilationMode.NONE (0).
+  If mode is set to anything other than NONE (0) or VLLM_COMPILE (3), vllm-ascend logs a warning and disables CUDAGraphs by
+  setting cudagraph_mode to NONE. This means only modes 0 and 3 are effectively supported on Ascend. Mode 0 (NONE) runs the
+  model in fully eager PyTorch mode with no torch.compile optimization, which increases operator dispatch overhead and reduces
+  throughput. Mode 3 (VLLM_COMPILE) enables vLLM''s custom Inductor-based compilation backend with caching, piecewise compilation,
+  and shape specialization, which can significantly reduce latency and improve throughput. The mode also indirectly affects
+  CUDAGraph behavior: "when mode is not NONE or VLLM_COMPILE," CUDAGraphs are disabled entirely, losing the operator dispatch
+  reduction benefits of graph capture. Additionally, when enforce_eager is set (e.g., via xlite full mode), mode is forced
+  to NONE, which also disables CUDAGraphs and torch.compile, resulting in the highest latency and lowest throughput configuration.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:438
+  context: Forces mode to CompilationMode.NONE when enforce_eager is True
+- file: vllm_ascend/platform.py:444
+  context: Checks if mode is supported on NPU; disables CUDAGraphs for unsupported modes
+- file: vllm/config/vllm.py:946
+  context: Sets mode to NONE when enforce_eager is True in model config
+- file: vllm/config/vllm.py:985
+  context: 'Sets default mode based on optimization_level: VLLM_COMPILE for O1+, NONE for O0'
+related_parameters:
+- name: compilation.cudagraph_mode
+  relation: When compilation.mode is not NONE or VLLM_COMPILE, cudagraph_mode is forced to NONE on Ascend
+- name: model_config.enforce_eager
+  relation: When enforce_eager is True, compilation.mode is forced to NONE
+- name: compilation.cudagraph_capture_sizes
+  relation: CUDAGraph capture sizes are only used when mode allows CUDAGraphs (mode is NONE or VLLM_COMPILE)
+- name: optimization_level
+  relation: 'Default mode is derived from optimization_level: VLLM_COMPILE for O1+, NONE for O0'
+constraints:
+- On Ascend NPU, compilation.mode must be either 0 (NONE) or 3 (VLLM_COMPILE); any other value causes CUDAGraphs to be disabled
+- When enforce_eager is True, compilation.mode is automatically forced to 0 (NONE)
+- When xlite full mode is enabled, enforce_eager is set to True, which forces compilation.mode to 0 (NONE)
+tuning_advice:
+  summary: Use mode 3 (VLLM_COMPILE) for best performance on Ascend NPU; only use mode 0 (NONE) for debugging or when xlite
+    full mode is required
+  suggested_values:
+  - scenario: Production deployment on Ascend NPU
+    value: 3
+    reason: VLLM_COMPILE enables torch.compile with vLLM's custom Inductor backend, reducing operator dispatch overhead and
+      improving throughput. This is the default for optimization_level O1+ and is the recommended mode for Ascend.
+  - scenario: Debugging or when xlite full mode is enabled
+    value: 0
+    reason: NONE disables all torch.compile compilation, running the model in eager mode. This is useful for debugging compilation
+      issues or when xlite full mode forces enforce_eager=True.
+  caveats:
+  - Modes 1 (STOCK_TORCH_COMPILE) and 2 (DYNAMO_TRACE_ONCE) are not supported on Ascend NPU and will cause CUDAGraphs to be
+    disabled, severely degrading performance
+  - When compilation.mode is NONE, CUDAGraphs may still be used if cudagraph_mode is configured, but torch.compile optimizations
+    are lost
+  - xlite full mode forces enforce_eager=True, which in turn forces compilation.mode to NONE, disabling both torch.compile
+    and CUDAGraphs
+  quick_guide: Set compilation.mode to 3 (VLLM_COMPILE) for production; use 0 (NONE) only for debugging or when xlite full
+    mode is required
+analysis_date: '2026-07-06'

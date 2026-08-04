@@ -1,0 +1,85 @@
+name: ASCEND_HOME_PATH
+type: env
+category: hardware
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:58
+value_type: str
+default: /usr/local/Ascend/ascend-toolkit/latest
+valid_choices: any valid filesystem path to CANN toolkit installation
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'ASCEND_HOME_PATH specifies the root directory of the CANN (Compute Architecture for Neural Networks) toolkit
+  installation on the Ascend NPU system. This path is used at runtime to locate critical compilation resources (TBE operator
+  headers, AscendC API headers, op_common includes) during JIT compilation of custom CANN operators. When custom operators
+  (e.g., add_rms_norm_bias, apply_top_k_top_p_custom, causal_conv1d, chunk_fwd_o, compressor, dequant_swiglu_quant) are compiled
+  on-the-fly, the toolkit_path is resolved from this env var and used to construct include paths for the AscendC compiler.
+  If ASCEND_HOME_PATH is not set, the code falls back to /usr/local/Ascend/latest/ (see add_rms_norm_bias.py:198-199 and similar
+  patterns in all custom operator implementations). Additionally, ASCEND_HOME_PATH is used in the worker''s uninstall_static_kernel
+  method (worker.py:173) to locate and execute the static kernel uninstall script at <ASCEND_HOME_PATH>/opp/static_kernel/ai_core/uninstall.sh.
+  An incorrect or missing ASCEND_HOME_PATH will cause JIT compilation failures for custom operators, leading to runtime errors
+  or fallback to slower execution paths. However, in normal deployments where CANN is installed at the standard location,
+  this parameter has no direct performance tuning effect — it is purely a path configuration variable.
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:58
+  context: Environment variable definition with default fallback to None (resolved at usage sites)
+- file: vllm_ascend/worker/worker.py:173
+  context: Used to locate static kernel uninstall script at <ASCEND_HOME_PATH>/opp/static_kernel/ai_core/uninstall.sh
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/add_rms_norm_bias.py:197
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/apply_top_k_top_p_custom.py:191
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/causal_conv1d.py:209
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/chunk_fwd_o.py:203
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/chunk_gated_delta_rule_fwd_h.py:209
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/compressor.py:233
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/copy_and_expand_eagle_inputs.py:221
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+- file: vllm_ascend/_cann_ops_custom/vendors/custom_transformer/op_impl/ai_core/tbe/custom_transformer_impl/dynamic/dequant_swiglu_quant.py:245
+  context: Resolved to construct AscendC compiler include paths for JIT compilation; falls back to /usr/local/Ascend/latest/
+related_parameters:
+- name: SOC_VERSION
+  relation: Both are CANN toolkit configuration parameters; SOC_VERSION specifies the Ascend chip version used during package
+    building, while ASCEND_HOME_PATH specifies the toolkit installation location
+- name: HCCL_SO_PATH
+  relation: Both are Ascend hardware path configurations; HCCL_SO_PATH specifies the HCCL communication library path, while
+    ASCEND_HOME_PATH specifies the CANN toolkit root
+constraints:
+- ASCEND_HOME_PATH must point to a valid CANN toolkit installation directory containing the opp/static_kernel and pkg_inc/op_common
+  subdirectories
+- If ASCEND_HOME_PATH is not set or is empty, the system falls back to /usr/local/Ascend/latest/ for JIT compilation include
+  paths
+- The worker's uninstall_static_kernel method reads ASCEND_HOME_PATH directly from os.environ without a fallback, so it must
+  be set before worker initialization to avoid KeyError
+tuning_advice:
+  summary: Set ASCEND_HOME_PATH only if CANN is installed at a non-standard location; otherwise leave it unset to use the
+    default /usr/local/Ascend/ascend-toolkit/latest
+  suggested_values:
+  - scenario: Standard CANN installation at default path
+    value: <unset>
+    reason: The code falls back to /usr/local/Ascend/latest/ for JIT compilation and the envs.py default is /usr/local/Ascend/ascend-toolkit/latest;
+      no explicit setting needed
+  - scenario: CANN installed at a custom or versioned path (e.g., /opt/Ascend/ascend-toolkit/8.0.RC1)
+    value: /opt/Ascend/ascend-toolkit/8.0.RC1
+    reason: Ensures JIT compilation of custom operators uses the correct CANN headers and the static kernel uninstall script
+      is found at the correct location
+  caveats:
+  - Setting ASCEND_HOME_PATH to an incorrect or non-existent path will cause JIT compilation failures for custom CANN operators,
+    potentially falling back to slower execution or crashing at runtime
+  - The worker.py uninstall_static_kernel method accesses os.environ['ASCEND_HOME_PATH'] without a default fallback, so the
+    variable must be set before the worker process starts
+  - This parameter does not directly tune performance; it only ensures correct compilation and execution of Ascend-specific
+    operators
+  quick_guide: Leave ASCEND_HOME_PATH unset unless CANN is installed at a non-default location; verify the path contains opp/static_kernel
+    and pkg_inc/op_common subdirectories
+analysis_date: '2026-07-06'

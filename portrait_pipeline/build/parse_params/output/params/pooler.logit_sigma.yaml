@@ -1,0 +1,54 @@
+name: pooler.logit_sigma
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/model_executor/layers/pooler/seqwise/poolers.py:123
+- vllm/model_executor/layers/pooler/tokwise/poolers.py:132
+value_type: float
+default: null
+valid_choices: any positive float or null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter is a calibration constant applied during classification pooling (Platt scaling). It divides
+  the logits after mean subtraction: activation((logit - logit_mean) / logit_sigma). The division is a scalar operation on
+  the final classification head output, which has negligible computational cost compared to the transformer forward pass.
+  It does not affect memory usage, communication, or the main model computation. The performance impact is limited to a tiny
+  arithmetic overhead in the pooler head, which is identical on Ascend NPU and GPU.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/pooler/seqwise/poolers.py:123
+  context: Passed to ClassifierPoolerHead constructor for sequence-level classification pooling.
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:132
+  context: Passed to TokenClassifierPoolerHead constructor for token-level classification pooling.
+related_parameters:
+- name: pooler.logit_mean
+  relation: 'Used together in Platt scaling formula: (logit - logit_mean) / logit_sigma. logit_mean is the subtraction term
+    applied before division by logit_sigma.'
+constraints:
+- If provided, logit_sigma must be a positive float; a value of zero would cause division by zero.
+tuning_advice:
+  summary: 'This is a model calibration parameter, not a performance tuning knob. Set it only if you have a pre-computed Platt
+    scaling sigma for your classification model; otherwise leave it as null (default).
+
+    '
+  suggested_values:
+  - scenario: Default usage with no calibration
+    value: null
+    reason: No scaling is applied; the model uses raw logits. This is the standard setting unless you have explicit calibration
+      data.
+  - scenario: Using a pre-computed Platt scaling sigma from model training
+    value: <your_calibrated_sigma_value>
+    reason: Apply the calibration factor obtained during model training or evaluation to improve classification score quality.
+      The value is model-specific and has no general recommended default.
+  caveats:
+  - This parameter only takes effect for embedding/classification models that use pooling (e.g., BERT for sequence classification).
+    It has no effect on generative/causal LM models.
+  - Setting an inappropriate sigma value will degrade classification accuracy but will not affect inference throughput or
+    memory usage.
+  quick_guide: Leave as null unless you have a calibrated Platt scaling sigma from model training.
+analysis_date: '2026-07-06'

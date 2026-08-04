@@ -1,0 +1,89 @@
+name: ASCEND_ENABLE_USE_FABRIC_MEM
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:69
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "When ASCEND_ENABLE_USE_FABRIC_MEM=1, the MooncakeBackend enables a unified memory address direct transmission\
+  \ scheme for KV cache transfer on Ascend 800 I/T A3 series hardware. This changes the store setup path significantly: -\
+  \ \"Without fabric memory (default): a transfer engine is obtained via global_te.get_transfer_engine(),\"\n  local_seg includes\
+  \ the RPC port, local_buffer_size is passed to store.setup(), and the engine\n  is explicitly provided. Buffers must be\
+  \ registered via global_te.register_buffer().\n- With fabric memory: \"local_seg is just the hostname (no port), local_buffer_size\
+  \ is forced to 0,\"\n  no transfer engine is obtained, and register_buffer() becomes a no-op.\nThe fabric memory path eliminates\
+  \ the need for explicit buffer registration and reduces communication overhead by using direct memory addressing, which\
+  \ directly improves KV cache transfer latency and throughput in Mooncake-based disaggregated prefill/decode deployments.\
+  \ Additionally, when fabric memory is enabled, lazy_init is also enabled (line 70), deferring store initialization until\
+  \ the first put() call, which can reduce startup time.\n"
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:69
+  context: Reads env var to set self._use_fabric_mem boolean flag
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:70
+  context: Controls lazy_init behavior — lazy_init is only enabled when fabric memory is active
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:117
+  context: Branches store.setup() call — fabric memory path skips transfer engine and sets local_buffer_size=0
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:165
+  context: register_buffer() becomes a no-op when fabric memory is enabled
+related_parameters:
+- name: MOONCAKE_CONFIG_PATH
+  relation: Required for MooncakeBackend to function; fabric memory is a Mooncake-specific optimization
+- name: ASCEND_BUFFER_POOL
+  relation: Alternative configuration for 800 I/T A3 series when fabric memory is not used (HDK 25.5.0-26.0.0)
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: Required for direct transmission on 800 I/T A2 series (fabric memory is A3-only)
+- name: HCCL_RDMA_TIMEOUT
+  relation: RDMA timeout must be configured alongside fabric memory for stable KV transfer
+- name: ASCEND_CONNECT_TIMEOUT
+  relation: Connection timeout for one-sided communication; relevant in Mooncake deployments
+- name: ASCEND_TRANSFER_TIMEOUT
+  relation: Transfer timeout for one-sided communication; relevant in Mooncake deployments
+constraints:
+- ASCEND_ENABLE_USE_FABRIC_MEM can only be used on 800 I/T A3 series hardware
+- Requires HDK >= 25.5, CANN >= 9.0.0, and LingQu Computing Network >= 1.5
+- Only effective when using MooncakeBackend for KV cache transfer (protocol must be "ascend")
+tuning_advice:
+  summary: 'Enable ASCEND_ENABLE_USE_FABRIC_MEM=1 on 800 I/T A3 series hardware with Mooncake-based disaggregated prefill/decode
+    to reduce KV cache transfer latency and eliminate explicit buffer registration overhead.
+
+    '
+  suggested_values:
+  - scenario: 800 I/T A3 series with Mooncake disaggregated prefill/decode (HDK >= 25.5, CANN >= 9.0.0)
+    value: '1'
+    reason: 'Enables unified memory address direct transmission, eliminating transfer engine overhead and buffer registration.
+      This is the recommended configuration per vllm-ascend documentation for A3 hardware.
+
+      '
+  - scenario: 800 I/T A2 series or non-Mooncake KV transfer backends
+    value: '0'
+    reason: 'Fabric memory is only supported on A3 series. A2 series should use HCCL_INTRA_ROCE_ENABLE=1 instead. Non-Mooncake
+      backends do not read this variable.
+
+      '
+  - scenario: 800 I/T A3 series with HDK 25.5.0-26.0.0 (transitional version)
+    value: '0'
+    reason: 'For HDK versions between 25.5.0 and 26.0.0, use ASCEND_BUFFER_POOL=4:8 as an alternative buffer configuration
+      instead of fabric memory.
+
+      '
+  caveats:
+  - Fabric memory forces local_buffer_size to 0 in the Mooncake store setup, which may affect memory allocation behavior for
+    KV cache buffers.
+  - When fabric memory is enabled, lazy_init is automatically activated — the store is not initialized until the first put()
+    call, which means the first request may experience additional latency.
+  - register_buffer() becomes a no-op with fabric memory; any code relying on explicit buffer registration for correctness
+    may behave unexpectedly.
+  - RDMA timeout (HCCL_RDMA_TIMEOUT) must satisfy HCCL_RDMA_TIMEOUT > ASCEND_TRANSFER_TIMEOUT * 7 for stable operation.
+  quick_guide: Set ASCEND_ENABLE_USE_FABRIC_MEM=1 on A3 series with HDK >= 25.5 and CANN >= 9.0.0 for optimal Mooncake KV
+    transfer performance; leave disabled (0) on A2 series or older software stacks.
+analysis_date: '2026-07-06'

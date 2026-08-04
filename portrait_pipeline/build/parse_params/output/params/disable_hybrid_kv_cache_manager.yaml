@@ -1,0 +1,122 @@
+name: --disable-hybrid-kv-cache-manager
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1367
+- vllm/config/scheduler.py:132
+- vllm/config/vllm.py:1311
+- vllm_ascend/platform.py:278
+- vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:28
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1604
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1109
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:168
+value_type: bool
+default: None
+valid_choices: true, false, or None (auto-detect)
+cli_example: --disable-hybrid-kv-cache-manager
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter controls whether the KV cache manager allocates different cache sizes for different attention
+  layer types (full attention vs sliding window attention vs Mamba). When disabled (default=None or False), the hybrid KV
+  cache manager (HMA) is active: layers with sliding window attention get smaller KV caches proportional to their window size,
+  saving significant GPU/NPU memory. When enabled (True), all layers get the same KV cache size as full attention layers,
+  wasting memory on layers that don''t need it.
+
+  On Ascend NPU, this parameter has additional critical effects beyond memory savings:
+
+  1. **KV Transfer compatibility**: vllm-ascend''s KV transfer connectors (Mooncake, AscendMultiConnector) check this flag
+  to determine whether HMA (Hybrid Memory Allocation) is required. If HMA is enabled and a connector doesn''t support it,
+  the system raises a ValueError (vllm/distributed/kv_transfer/kv_connector/factory.py:55-60). The AscendMultiConnector asserts
+  that all sub-connectors support HMA when it''s enabled (vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:28-30).
+
+  2. **Mamba model support**: vllm-ascend patches Mamba config verification to check this flag (vllm_ascend/patch/platform/patch_mamba_config.py:25).
+  When HMA is active with KV transfer, Mamba block sizes are aligned with attention block sizes (vllm_ascend/platform.py:277-293).
+
+  3. **Mooncake connector behavior**: Both MooncakeConnector and MooncakeHybridConnector use this flag to determine if hybrid
+  KV cache handling is needed (mooncake_connector.py:1604, mooncake_hybrid_connector.py:1109,1407). When HMA is active, the
+  connector must handle multiple KV cache groups with different specs.
+
+  4. **Ascend KV pool scheduling**: The AscendStore pool scheduler and worker check this flag to determine if hybrid KV cache
+  is in use, which affects cache transfer granularity and Mamba group inference (pool_scheduler.py:168-172, pool_worker.py:286-290).
+
+  5. **Auto-disable on Ascend**: vllm-ascend''s platform may not support hybrid KV cache (current_platform.support_hybrid_kv_cache()
+  returns False for non-GPU platforms), causing automatic disable (vllm/config/vllm.py:1315-1317). This means on Ascend NPU,
+  HMA may be force-disabled regardless of user preference.
+
+  Memory impact is substantial for hybrid models (e.g., models with both full and sliding window attention): sliding window
+  layers may only need 1/8 to 1/32 of the full attention KV cache, so disabling HMA can waste 30-50% of KV cache memory.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1311-1347
+  context: Runtime determination of whether to disable HMA based on platform support, chunked attention, speculative decoding,
+    and KV transfer config
+- file: vllm/v1/core/kv_cache_utils.py:1626-1627
+  context: When True, calls unify_hybrid_kv_cache_specs() to make all layers use the same KV cache spec
+- file: vllm_ascend/platform.py:277-293
+  context: Mamba block size alignment logic conditioned on HMA being enabled
+- file: vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:28-30
+  context: Assertion that all sub-connectors support HMA when enabled
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1604-1606
+  context: Determines if HMA is required for Mooncake connector initialization
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1109-1112
+  context: Sets use_hybrid flag for Mooncake hybrid connector
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:168-172
+  context: Static method checking if hybrid KV cache is in use for pool scheduling
+- file: vllm/distributed/kv_transfer/kv_connector/factory.py:55-60
+  context: Validates connector HMA support before creation
+related_parameters:
+- name: --kv-transfer-config
+  relation: When KV transfer config is set and disable_hybrid_kv_cache_manager is None, HMA is auto-disabled
+- name: --speculative-config
+  relation: HMA is auto-disabled when using Eagle speculative decoding with chunked local attention
+- name: --attention-chunk-size
+  relation: Chunked local attention with HMA causes latency regression; HMA auto-disabled unless VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE=1
+- name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+  relation: Environment variable to override auto-disable of HMA with chunked local attention
+constraints:
+- When --disable-hybrid-kv-cache-manager is not set (None) and --kv-transfer-config is set, HMA is automatically disabled.
+- When --disable-hybrid-kv-cache-manager is not set (None) and Eagle speculative decoding is used with chunked local attention,
+  HMA is automatically disabled.
+- When --disable-hybrid-kv-cache-manager is not set (None) and chunked local attention is used, HMA is automatically disabled
+  unless VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE=1 is set.
+- On Ascend NPU platforms, HMA may be force-disabled if the platform does not support hybrid KV cache (current_platform.support_hybrid_kv_cache()
+  returns False).
+- When HMA is enabled and a KV connector is used, all sub-connectors must support HMA or an assertion error is raised.
+- When HMA is enabled with Mamba models and KV transfer, mamba_block_size must be a multiple of block_size.
+tuning_advice:
+  summary: 'For Ascend NPU, leave this parameter at default (None) to let vllm-ascend auto-detect the best setting. Only explicitly
+    set --disable-hybrid-kv-cache-manager if you encounter compatibility issues with KV transfer connectors or speculative
+    decoding.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with standard attention models
+    value: None (default, auto-detect)
+    reason: vllm-ascend will automatically determine whether HMA is supported and appropriate. On Ascend, HMA may be auto-disabled
+      if the platform doesn't support it.
+  - scenario: Using KV transfer (disaggregated prefill) on Ascend NPU
+    value: None (default, auto-detect)
+    reason: vllm-ascend auto-disables HMA when KV transfer config is set, ensuring compatibility with Mooncake and other connectors.
+  - scenario: Hybrid model (full + sliding window attention) without KV transfer or speculative decoding
+    value: false (do not disable, i.e., enable HMA)
+    reason: Enables memory-efficient KV cache allocation where sliding window layers use proportionally less cache, saving
+      30-50% memory on Ascend NPU.
+  - scenario: Using Eagle speculative decoding with chunked local attention
+    value: None (default, auto-detect)
+    reason: HMA is auto-disabled in this configuration to avoid compatibility issues.
+  caveats:
+  - On Ascend NPU, vllm-ascend may force-disable HMA even if you explicitly enable it, because current_platform.support_hybrid_kv_cache()
+    may return False for non-GPU platforms.
+  - When HMA is auto-disabled due to KV transfer config, a warning is logged but the system continues to function normally.
+  - 'Disabling HMA (setting to True) on hybrid models wastes KV cache memory: sliding window layers get full-attention-sized
+    caches they don''t need.'
+  - The MooncakeHybridConnector on Ascend requires HMA to be enabled for hybrid models with multiple KV cache groups; disabling
+    HMA may cause it to fall back to non-hybrid mode.
+  quick_guide: Leave at default (None) for Ascend NPU — vllm-ascend auto-configures HMA based on platform capabilities and
+    feature compatibility.
+analysis_date: '2026-07-06'

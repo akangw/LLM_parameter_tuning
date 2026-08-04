@@ -1,0 +1,63 @@
+name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_put
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file: []
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls whether the Decode node (consumer) writes KV cache data back into the shared KV Pool
+  after processing. When enabled (true), the Decode node will put its computed KV cache into the pool, making it available
+  for Prefill nodes or other consumers to load. This enables KV cache reuse across requests but introduces additional network/storage
+  I/O on the Decode path, which can increase decode latency and reduce throughput. When disabled (false, the default), the
+  Decode node does not write to the pool, avoiding this overhead. The parameter is part of the KV connector extra configuration
+  used in vllm-ascend''s KV Pool feature for disaggregated prefill-decode architectures. No source code definition was found
+  in the provided context, but the documentation explicitly describes its behavior and default value.
+
+  '
+usage_locations: []
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_load
+  relation: Complementary parameter that controls whether the Decode node loads KV cache from the pool
+- name: kv_transfer_config.kv_connector_extra_config.load_async
+  relation: Controls whether KV cache loading is asynchronous, which may interact with put operations
+- name: kv_transfer_config.kv_connector_extra_config.backend
+  relation: The storage backend (mooncake, memcache, yuanrong) determines the I/O characteristics of put operations
+constraints:
+- This parameter is only meaningful when KV Pool is enabled and a kv_connector_extra_config is configured
+- The Decode node must have network connectivity to the configured KV Pool backend for put operations to succeed
+tuning_advice:
+  summary: 'Enable consumer_is_to_put only when KV cache reuse benefits outweigh the added decode-path I/O overhead
+
+    '
+  suggested_values:
+  - scenario: Disaggregated prefill-decode with high cache hit rates where KV reuse significantly reduces prefill work
+    value: true
+    reason: 'Writing KV cache from Decode to the pool enables subsequent Prefill nodes to load and reuse cached KV states,
+      reducing redundant computation. This is beneficial when many requests share common prefixes or system prompts.
+
+      '
+  - scenario: Latency-sensitive decode workloads or low cache reuse scenarios
+    value: false
+    reason: 'Keeping the default false avoids the additional I/O overhead on the critical decode path. If KV cache reuse is
+      infrequent, the cost of putting data into the pool outweighs the benefits.
+
+      '
+  caveats:
+  - Enabling this parameter adds network/storage write operations to every decode step, which can increase per-token decode
+    latency
+  - The actual performance impact depends heavily on the backend choice (mooncake, memcache, yuanrong) and network conditions
+  - This parameter should be evaluated together with consumer_is_to_load to ensure a coherent KV Pool strategy
+  quick_guide: 'Set to true only in disaggregated deployments where KV cache reuse measurably reduces end-to-end latency;
+    keep false for standalone or latency-critical decode
+
+    '
+analysis_date: '2026-07-06'

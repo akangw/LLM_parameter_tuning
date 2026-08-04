@@ -1,0 +1,59 @@
+name: compilation.pass_config.rope_kvcache_fusion_max_token_num
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/vllm.py:1716
+- vllm/compilation/passes/fusion/rope_kvcache_fusion.py:248
+value_type: int
+default: null
+valid_choices: positive integer or null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter sets a token count threshold for the RoPE+KVCache fusion compilation pass. When the number
+  of tokens in a batch is at or below this threshold, the fused kernel is used; above it, the unfused (separate RoPE and KVCache)
+  kernels are used. The fused kernel reduces kernel launch overhead and intermediate memory operations, which benefits small-batch
+  decode scenarios. However, this parameter only takes effect when fuse_rope_kvcache is enabled and the underlying attention
+  implementation supports fused RoPE+KVCache (checked via layer.impl.fused_rope_kvcache_supported()). On Ascend NPU, vllm-ascend
+  does not override or reference this parameter, and Ascend attention backends may not implement the fused kernel at all,
+  making this parameter effectively a no-op on Ascend hardware unless a compatible backend is used.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1716
+  context: Reads the threshold value to determine compile range endpoints for the RoPE+KVCache fusion pass.
+- file: vllm/compilation/passes/fusion/rope_kvcache_fusion.py:248
+  context: Stores the threshold as self.max_token_num for use during the fusion pass execution.
+related_parameters:
+- name: compilation.pass_config.fuse_rope_kvcache
+  relation: Must be enabled (true) for rope_kvcache_fusion_max_token_num to have any effect.
+constraints:
+- Must be a positive integer or null (None).
+- Only takes effect when compilation.pass_config.fuse_rope_kvcache is true.
+- The fused kernel is only applied when the underlying attention implementation supports it (fused_rope_kvcache_supported()
+  returns true).
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter likely has no effect because vllm-ascend attention backends do not implement the
+    fused RoPE+KVCache kernel. Leave at default (null) unless using a custom backend that supports this fusion.
+
+    '
+  suggested_values:
+  - scenario: Default / Ascend NPU with standard vllm-ascend backends
+    value: null
+    reason: vllm-ascend does not implement fused_rope_kvcache_supported(), so the fusion pass will not match any patterns
+      regardless of this threshold.
+  - scenario: Custom Ascend backend with fused RoPE+KVCache support (hypothetical)
+    value: 256
+    reason: Set to a value that separates decode batch sizes (small) from prefill batch sizes (large). Typical decode batches
+      are below 256 tokens.
+  caveats:
+  - On Ascend NPU with vllm-ascend, this parameter is effectively a no-op because the fused kernel is not implemented in Ascend
+    attention backends.
+  - Even on GPU, setting this too high may cause the fused kernel to be used for large prefill batches where the unfused kernels
+    are more efficient.
+  quick_guide: Leave at default (null) on Ascend NPU — the fused RoPE+KVCache kernel is not supported by vllm-ascend.
+analysis_date: '2026-07-06'

@@ -1,0 +1,5 @@
+name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM and vLLM Ascend sources only declare this environment variable in vllm/envs.py and contain no
+  runtime read or use of it, so changing it cannot affect latency, throughput, or memory in the pinned code.

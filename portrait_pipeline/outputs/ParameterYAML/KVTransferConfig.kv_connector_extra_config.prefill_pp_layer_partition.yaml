@@ -1,0 +1,90 @@
+name: KVTransferConfig.kv_connector_extra_config.prefill_pp_layer_partition
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:154
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:412
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:381
+- docs/source/user_guide/feature_guide/kv_pool.md:373
+value_type: str
+default: null
+valid_choices: Comma-separated integer layer counts, with exactly prefill_pp_size entries whose sum equals the model's num_hidden_layers.
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"consumer_is_to_put":true,"prefill_pp_size":2,"prefill_pp_layer_partition":"30,31"}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This AscendStoreConnector setting describes how many model layers belong to each pipeline-parallel stage on
+  the prefill producer when a KV consumer is configured to put KV into the pool. The consumer parses the comma-separated counts
+  and gives them to ChunkedTokenDatabase, whose decode-side adapter slices KV addresses and sizes by those counts and rewrites
+  storage keys from PP rank 0 to each producer PP rank. It does not repartition the running prefill engine. The actual producer
+  partition determines per-stage compute and memory balance and therefore pipeline latency and throughput; this metadata must
+  match that layout so KV is stored under the correct stage keys and with the correct layer slices.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:154
+  context: For kv_role=kv_consumer with consumer_is_to_put enabled, parses the string into integer layer counts, validates
+    count and total, or computes a near-even partition when it is absent.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:412
+  context: Uses the partition counts to split each KV address and size list and replace the PP-rank component of each storage
+    key.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:381
+  context: Applies the prefill-PP adapter before a KV consumer stores generated KV data in the pool.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:373
+  context: Documents the setting for consumer-side put when the prefill node uses PP and shows "30,31" together with prefill_pp_size=2.
+related_parameters:
+- name: KVTransferConfig.kv_connector_extra_config.prefill_pp_size
+  relation: Sets the expected number of comma-separated layer counts; when this partition is absent, it also drives the consumer's
+    near-even fallback split.
+- name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_put
+  relation: This partition is read only for an AscendStore KV consumer that is configured to put KV cache into the pool.
+- name: KVTransferConfig.kv_role
+  relation: The pool-worker path using this setting requires kv_role to be kv_consumer.
+- name: pipeline_parallel_size
+  relation: The declared counts must describe the prefill producer's actual pipeline stages; this extra configuration does
+    not change the engine's pipeline layout.
+- name: KVTransferConfig.kv_connector
+  relation: AscendStoreConnector's KV-pool worker consumes this connector-specific extra setting; no matching use exists in
+    the pinned upstream vLLM repository.
+constraints:
+- The value is a comma-separated string of integer layer counts, not a YAML list and not a list of cumulative boundary indices.
+- The parsed list length must equal prefill_pp_size, otherwise pool-worker initialization raises ValueError.
+- The parsed counts must sum to model_config.hf_text_config.num_hidden_layers, otherwise pool-worker initialization raises
+  ValueError.
+- Operationally, each count should be positive and the sequence must match the producer's PP-rank layer placement; current
+  parsing explicitly checks integer syntax, list length, and total but does not separately reject zero or negative entries.
+- The setting is consulted only when kv_role is kv_consumer and consumer_is_to_put is true. If it is absent in that path,
+  the worker derives a near-even split from num_hidden_layers and prefill_pp_size, assigning remainder layers to stages near
+  the end.
+tuning_advice:
+  summary: Choose the producer's real per-PP-stage layer counts for load and memory balance, then copy that exact comma-separated
+    layout into the consumer-side AscendStore configuration; treat the field as transfer metadata, not as the control that
+    partitions the producer.
+  suggested_values:
+  - scenario: Pinned Ascend KV-pool example with a 61-layer prefill producer using two PP stages
+    value: '"30,31"'
+    reason: This is the documented form and matches two stage counts totaling 61; it also illustrates that entries are counts,
+      not boundaries.
+  - scenario: Producer uses the same near-even split as the pool worker's fallback
+    value: <omit prefill_pp_layer_partition>
+    reason: With the correct prefill_pp_size, omission makes the consumer compute a near-even split from num_hidden_layers;
+      use this only when that computed split exactly matches the producer.
+  - scenario: Profiled uneven producer partition
+    value: '"10,12,10" for a 32-layer producer with prefill_pp_size=3'
+    reason: An uneven count string is valid when it totals the model layer count and exactly reflects a deliberately profiled
+      producer layout.
+  caveats:
+  - Changing this string alone does not move model layers between NPUs; configure the actual producer PP layout separately
+    and keep this metadata synchronized with it.
+  - The legacy description of entries as partition boundaries is incorrect for the pinned source. The parser treats every
+    entry as a layer count, requires exactly prefill_pp_size entries, and sums them to num_hidden_layers.
+  - A syntactically valid but mismatched count sequence can split KV addresses at the wrong layers or label data with the
+    wrong PP rank, making transferred KV unusable even though initialization succeeds.
+  - The automatic remainder policy is not a universal performance optimum. Benchmark the actual producer's TTFT, throughput,
+    and per-stage memory, then report the resulting layout exactly on the consumer.
+  - The pinned upstream vLLM tree has no implementation of this extra-config key; this behavior is Ascend-specific.
+  quick_guide: Set prefill_pp_size to the producer PP stage count and use a quoted comma-separated count string whose entries
+    exactly match producer ranks and sum to num_hidden_layers, or omit it only when the code's near-even fallback matches.
+analysis_date: '2026-07-30'

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "summary",
+    "result_assessment",
+    "knowledge_evidence",
+    "change_strategy",
+    "interaction_analysis",
+    "constraint_checks",
+    "changes",
+    "candidate",
+    "expected_tradeoffs"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["continue", "stop_complete"]
+    },
+    "summary": {"type": "string"},
+    "result_assessment": {"type": "string"},
+    "knowledge_evidence": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 12}
+    },
+    "change_strategy": {
+      "type": "string",
+      "enum": ["none", "single_parameter", "coupled_parameters"]
+    },
+    "interaction_analysis": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 12}
+    },
+    "constraint_checks": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 12}
+    },
+    "changes": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["parameter", "before", "after", "rationale"],
+        "properties": {
+          "parameter": {"type": "string"},
+          "before": {
+            "anyOf": [
+              {"type": "string"},
+              {"type": "number"},
+              {"type": "boolean"},
+              {"type": "null"},
+              {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}}
+            ]
+          },
+          "after": {
+            "anyOf": [
+              {"type": "string"},
+              {"type": "number"},
+              {"type": "boolean"},
+              {"type": "null"},
+              {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}}
+            ]
+          },
+          "rationale": {"type": "string", "minLength": 12}
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_num_seqs",
+        "max_model_len",
+        "max_num_batched_tokens",
+        "gpu_memory_utilization",
+        "enable_prefix_caching",
+        "async_scheduling",
+        "enable_expert_parallel",
+        "compilation_mode",
+        "num_speculative_tokens",
+        "long_prefill_token_threshold"
+      ],
+      "properties": {
+        "max_num_seqs": {"type": "integer"},
+        "max_model_len": {"type": "integer"},
+        "max_num_batched_tokens": {"type": "integer"},
+        "gpu_memory_utilization": {"type": "number"},
+        "enable_prefix_caching": {"type": "boolean"},
+        "async_scheduling": {"type": "boolean"},
+        "enable_expert_parallel": {"type": "boolean"},
+        "compilation_mode": {"type": "string"},
+        "num_speculative_tokens": {"type": "integer"},
+        "long_prefill_token_threshold": {"type": "integer"}
+      }
+    },
+    "expected_tradeoffs": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

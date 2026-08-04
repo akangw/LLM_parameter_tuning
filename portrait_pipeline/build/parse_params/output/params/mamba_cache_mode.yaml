@@ -1,0 +1,117 @@
+name: --mamba-cache-mode
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1121
+- vllm/config/cache.py:132
+- vllm_ascend/patch/platform/patch_mamba_config.py:107
+- vllm_ascend/patch/platform/patch_mamba_config_310.py:68
+- vllm_ascend/platform.py:285
+value_type: str
+default: '''none'''
+valid_choices:
+- none
+- all
+- align
+cli_example: --mamba-cache-mode align
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "Controls the caching strategy for Mamba (state-space model) layers in hybrid attention-Mamba architectures.\
+  \ On Ascend NPU, this parameter has a critical performance impact because it determines:\n1. **Block size alignment**: When\
+  \ set to \"align\", vllm-ascend forces\n   `mamba_block_size` to equal `block_size`, ensuring Mamba state pages and\n  \
+  \ attention KV pages have identical sizes. This enables efficient hybrid KV\n   cache management and is required for KV\
+  \ transfer (disaggregated prefill).\n   When set to \"all\", the block size is computed from the Mamba chunk size\n   and\
+  \ kernel alignment constraints, which can result in very large block\n   sizes (e.g., 2048 tokens) — meaning prefixes shorter\
+  \ than the block size\n   are never cached, reducing prefix caching effectiveness.\n\n2. **KV transfer compatibility**:\
+  \ vllm-ascend's KV transfer (disaggregated\n   prefill) only supports \"align\" mode. If KV transfer is enabled with a\n\
+  \   hybrid model and mamba_cache_mode is \"none\", it is automatically\n   overridden to \"align\". Any other value raises\
+  \ an assertion error.\n\n3. **AscendStore compatibility**: The AscendStore hybrid linear-attention\n   support requires\
+  \ mamba_cache_mode=\"align\" and raises NotImplementedError\n   otherwise.\n\n4. **Scheduling constraints**: \"align\" mode\
+  \ requires block_size <=\n   max_num_batched_tokens, chunked MM input enabled, and is incompatible\n   with Model Runner\
+  \ V2 (only V1 supported on Ascend).\n\n5. **Memory overhead**: \"align\" mode may pad Mamba pages to match attention\n \
+  \  page sizes, increasing memory usage by a small percentage (logged as\n   \"Padding mamba page size by X%\").\n\n6. **Prefix\
+  \ caching behavior**: \"all\" caches Mamba state at every\n   i * block_size position; \"align\" only caches at the last\
+  \ token of each\n   scheduler step when the token is at position i * block_size, reducing\n   cache write frequency but\
+  \ potentially missing some cache opportunities.\n"
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:107
+  context: Forces mamba_cache_mode to 'align' when KV transfer is enabled with hybrid models; asserts only 'align' is supported
+    for KV transfer
+- file: vllm_ascend/patch/platform/patch_mamba_config_310.py:68-84
+  context: 'Computes block_size and mamba_block_size differently based on mode: ''all'' uses chunk_size from model config,
+    ''align'' forces mamba_block_size = block_size'
+- file: vllm_ascend/platform.py:285
+  context: 'In update_block_size_for_backend: when prefix caching is disabled but KV transfer is enabled with ''align'' mode,
+    ensures mamba_block_size is a multiple of block_size'
+- file: vllm_ascend/worker/model_runner_v1.py:1910,2062
+  context: 'V1 worker: when mode is ''align'', performs mamba preprocess (copy operations) and do_mamba_copy_block before
+    model forward'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:231,296
+  context: 'KV transfer connector: uses mamba_cache_mode to determine which block index to transfer (''align'' uses last block
+    minus speculative tokens, otherwise block 0)'
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:68
+  context: 'AscendStore pool scheduler: raises NotImplementedError if MambaSpec is used with mamba_cache_mode != ''align'''
+- file: vllm/config/vllm.py:1975
+  context: 'Upstream validation: ''align'' mode asserts block_size <= max_num_batched_tokens, requires chunked MM input, and
+    is incompatible with Model Runner V2'
+- file: vllm/v1/attention/backends/mamba_attn.py:110,382
+  context: 'Upstream V1 attention backend: ''all'' mode allocates state_indices_tensor with max_num_blocks dimension and computes
+    prefix caching block indices; other modes use mamba_get_block_table_tensor'
+related_parameters:
+- name: --enable-prefix-caching
+  relation: Prefix caching must be enabled for 'all' or 'align' modes to have meaningful effect; 'none' mode is used when
+    prefix caching is disabled
+- name: --mamba-block-size
+  relation: 'mamba_cache_mode determines how mamba_block_size is computed: ''align'' forces it to equal block_size; ''all''
+    computes it from chunk_size and kernel alignment'
+- name: --block-size
+  relation: In 'align' mode, mamba_block_size is forced to equal block_size; block_size may be auto-adjusted to ensure attention
+    page size >= mamba page size
+- name: --max-num-batched-tokens
+  relation: In 'align' mode, block_size must be <= max_num_batched_tokens
+- name: --kv-transfer-config
+  relation: When KV transfer is enabled with hybrid models, mamba_cache_mode is forced to 'align'
+constraints:
+- When KV transfer is enabled with a hybrid model, mamba_cache_mode must be 'align' (automatically overridden from 'none',
+  or asserted for other values)
+- AscendStore hybrid linear-attention support requires mamba_cache_mode='align'
+- In 'align' mode, block_size must be less than or equal to max_num_batched_tokens
+- In 'align' mode, chunked MM input must be enabled (disable_chunked_mm_input must be False)
+- Model Runner V2 does not support mamba_cache_mode='align'
+- mamba_block_size must be a multiple of block_size when using 'align' mode with KV transfer and prefix caching disabled
+tuning_advice:
+  summary: For hybrid Mamba-Attention models on Ascend NPU, use 'align' mode with prefix caching enabled for best KV cache
+    efficiency and KV transfer compatibility.
+  suggested_values:
+  - scenario: Hybrid Mamba-Attention model with prefix caching (recommended for Qwen3.5 on Ascend)
+    value: '''align'''
+    reason: Required for KV transfer compatibility; ensures Mamba and attention page sizes are aligned for efficient hybrid
+      KV cache management; documented as the recommended setting for Qwen3.5 models on Ascend
+  - scenario: Hybrid Mamba-Attention model with KV transfer (disaggregated prefill)
+    value: '''align'''
+    reason: Only 'align' mode is supported for KV transfer; 'none' is automatically overridden to 'align', other values raise
+      assertion errors
+  - scenario: Pure Mamba model (no attention layers) without prefix caching
+    value: '''none'''
+    reason: Prefix caching is not applicable; 'none' avoids unnecessary cache management overhead
+  - scenario: Hybrid model with prefix caching but no KV transfer, and block_size alignment is not critical
+    value: '''all'''
+    reason: Caches Mamba state at every block_size boundary, maximizing prefix cache hit rate; however, may result in very
+      large block sizes on Ascend (e.g., 2048), reducing effective caching for short prefixes
+  caveats:
+  - On Ascend NPU, 'all' mode may cause block_size to be auto-adjusted to very large values (e.g., 2048 tokens), meaning prefixes
+    shorter than block_size are never cached — this significantly reduces prefix caching effectiveness for typical workloads
+  - '''align'' mode pads Mamba pages to match attention page sizes, which may increase memory usage slightly (logged as a
+    percentage during initialization)'
+  - '''align'' mode is only supported with Model Runner V1 on Ascend; V2 is not compatible'
+  - When KV transfer is enabled, mamba_cache_mode is silently overridden to 'align' if set to 'none' — this may cause unexpected
+    behavior if you rely on 'none' semantics
+  - The AscendStore KV pool backend requires 'align' mode and will raise NotImplementedError otherwise
+  quick_guide: For Qwen3.5 and similar hybrid models on Ascend NPU, always use --mamba-cache-mode align together with --enable-prefix-caching
+    for optimal KV cache performance and KV transfer compatibility.
+analysis_date: '2026-07-06'

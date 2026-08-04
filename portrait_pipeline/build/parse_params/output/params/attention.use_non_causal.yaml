@@ -1,0 +1,60 @@
+name: attention.use_non_causal
+type: nested
+category: model
+scope: vllm
+source_file: []
+value_type: bool
+default: <computed>
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls whether the attention mechanism uses non-causal (bidirectional) masking instead of
+  standard causal (autoregressive) masking. When set to true, each token can attend to all other tokens in the sequence, which
+  is required for certain model architectures (e.g., embedding models like BERT, or prefix encoders in multimodal models).
+  The parameter is read in vllm/v1/attention/selector.py:94 and passed into the AttentionSelectorConfig, which determines
+  the attention backend selection. On Ascend NPU, the choice of attention backend directly affects which CANN operators are
+  used (e.g., FlashAttention vs. standard attention), impacting both compute efficiency and memory usage. Non-causal attention
+  typically requires storing the full attention matrix or using different tiling strategies, which can increase memory footprint
+  and reduce throughput compared to causal attention that benefits from triangular masking optimizations. The actual performance
+  impact depends on whether the model architecture genuinely requires non-causal attention — enabling it unnecessarily on
+  causal models would degrade performance without benefit.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/selector.py:94
+  context: Passed into AttentionSelectorConfig to influence attention backend selection
+related_parameters:
+- name: attention.backend
+  relation: The attention backend selected may have different performance characteristics for causal vs non-causal attention
+- name: model architecture (e.g., is_embedding_model)
+  relation: Model type determines whether non-causal attention is required; embedding models and certain multimodal encoders
+    need it
+constraints:
+- Must only be set to true for model architectures that require bidirectional attention (e.g., embedding models, some vision
+  encoders); setting it on causal decoder models will produce incorrect results
+tuning_advice:
+  summary: 'Do not manually override this parameter — it is model-determined. Only enable non-causal attention when the model
+    architecture requires it, as it increases memory usage and reduces throughput on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Standard autoregressive decoder models (e.g., LLaMA, Qwen, GPT-style)
+    value: false
+    reason: Causal attention is correct for these models and enables optimized triangular masking on Ascend NPU
+  - scenario: Embedding models or multimodal models with bidirectional encoders
+    value: true
+    reason: Required for correct model behavior; the performance cost is unavoidable for these architectures
+  caveats:
+  - On Ascend NPU, non-causal attention may use different CANN operators that have higher memory footprint and lower throughput
+    than causal FlashAttention variants
+  - The vllm-ascend plugin does not override this parameter, but the attention backend selected on Ascend may have different
+    performance profiles for non-causal patterns
+  quick_guide: Leave at model default; only true for embedding/bi-encoder models where it is required for correctness
+analysis_date: '2026-07-06'

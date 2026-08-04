@@ -1,0 +1,78 @@
+name: --mamba-cache-dtype
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:124
+- vllm/engine/arg_utils.py:658
+- vllm/engine/arg_utils.py:1112
+- vllm/engine/arg_utils.py:1706
+value_type: str
+default: auto
+valid_choices: auto, float16, bfloat16, float32
+cli_example: --mamba-cache-dtype float16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: "Controls the data type used for Mamba model state caches (both convolution state and SSM state). On Ascend\
+  \ NPU, this directly affects: 1. Memory footprint: float32 states consume 2x memory vs float16/bfloat16, reducing available\n\
+  \   space for KV cache or batch size.\n2. Compute throughput: lower-precision states reduce memory bandwidth pressure during\
+  \ state\n   read/write operations in Mamba mixer kernels (mamba_mixer.py, mamba_mixer2.py, linear_attn.py,\n   gdn_linear_attn.py,\
+  \ kda.py).\n3. Hybrid model block size: when mamba_cache_dtype is float32 in hybrid attention/Mamba models,\n   FlashAttention\
+  \ restricts supported block sizes to [16, 32, 64] instead of multiples of 16\n   (flash_attn.py:87), which can reduce achievable\
+  \ throughput.\nThe parameter is passed to MambaStateDtypeCalculator methods that determine the actual torch dtype for each\
+  \ state component. When set to 'auto', the dtype is inferred from the model config (typically matching the model's weight\
+  \ dtype).\n"
+usage_locations:
+- file: vllm/model_executor/layers/mamba/mamba_mixer.py:467
+  context: Mamba1 state dtype calculation using mamba_cache_dtype and mamba_ssm_cache_dtype
+- file: vllm/model_executor/layers/mamba/mamba_mixer2.py:922
+  context: Mamba2 state dtype calculation using mamba_cache_dtype and mamba_ssm_cache_dtype
+- file: vllm/model_executor/layers/mamba/linear_attn.py:258
+  context: Linear attention state dtype calculation using mamba_cache_dtype
+- file: vllm/model_executor/layers/mamba/gdn_linear_attn.py:247
+  context: Gated DeltaNet state dtype calculation using mamba_cache_dtype and mamba_ssm_cache_dtype
+- file: vllm/model_executor/layers/kda.py:97
+  context: KimiDeltaAttention state dtype calculation using mamba_cache_dtype
+- file: vllm/v1/attention/backends/flash_attn.py:87
+  context: FlashAttention block size restriction when mamba_cache_dtype is float32 in hybrid models
+related_parameters:
+- name: --mamba-ssm-cache-dtype
+  relation: Controls SSM state dtype independently; mamba_cache_dtype sets both conv and SSM state unless overridden by mamba_ssm_cache_dtype
+- name: --mamba-block-size
+  relation: Block size for Mamba cache; float32 mamba_cache_dtype restricts valid block sizes in hybrid models
+- name: --mamba-cache-mode
+  relation: Cache strategy for Mamba layers; state dtype applies to cached states regardless of mode
+constraints:
+- 'Must be one of: auto, float16, bfloat16, float32'
+- When set to float32 in hybrid attention/Mamba models, FlashAttention block sizes are restricted to [16, 32, 64]
+tuning_advice:
+  summary: Use float16 or bfloat16 for Mamba cache to reduce memory usage and avoid hybrid model block size restrictions;
+    only use float32 if numerical precision issues are observed.
+  suggested_values:
+  - scenario: Default / general Mamba inference on Ascend NPU
+    value: auto
+    reason: Auto infers dtype from model config, typically matching model weights (float16/bfloat16), providing good balance
+      of precision and memory efficiency
+  - scenario: Memory-constrained deployment requiring maximum batch size
+    value: float16
+    reason: Reduces Mamba state cache memory by 50% vs float32, allowing larger batch sizes or longer sequences
+  - scenario: Hybrid Mamba/Attention models where block size flexibility is needed
+    value: float16
+    reason: Avoids FlashAttention block size restriction to [16, 32, 64] that occurs with float32, enabling multiples of 16
+      for better throughput
+  - scenario: Numerical precision issues observed with lower-precision states
+    value: float32
+    reason: Provides full precision for SSM and convolution states at the cost of 2x memory and potential block size restrictions
+      in hybrid models
+  caveats:
+  - On Ascend NPU, float32 Mamba cache states consume 2x HBM vs float16/bfloat16, directly reducing available KV cache space
+  - In hybrid Mamba/Attention models, setting mamba_cache_dtype to float32 triggers FlashAttention block size restrictions
+    to [16, 32, 64], which may reduce throughput
+  - mamba_cache_dtype controls both convolution state and SSM state dtypes; use mamba_ssm_cache_dtype to independently control
+    SSM state precision if needed
+  - vllm-ascend does not override this parameter; behavior follows upstream vLLM
+  quick_guide: Leave as 'auto' unless memory is tight (use float16) or numerical issues arise (use float32).
+analysis_date: '2026-07-06'

@@ -1,0 +1,76 @@
+name: profiler.torch_profiler_use_gzip
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/v1/engine/async_llm.py:196
+- vllm/profiler/wrapper.py:195
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls whether PyTorch profiler trace files are saved in gzip-compressed format. When enabled
+  (default), trace files are compressed, reducing disk I/O and storage requirements during profiling sessions. The compression
+  itself consumes CPU cycles, which can marginally affect throughput and latency while profiling is active. However, this
+  parameter only takes effect when the torch profiler is explicitly enabled (profiler="torch"), and has zero impact during
+  normal inference without profiling. The parameter is passed directly to PyTorch''s torch.profiler.tensorboard_trace_handler
+  as the use_gzip argument. On Ascend NPU, the behavior is identical to upstream vLLM since this is a pure PyTorch-level parameter
+  with no vllm-ascend override or NPU-specific code path.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/async_llm.py:196
+  context: Passed to tensorboard_trace_handler when creating the async LLM engine's CPU profiler
+- file: vllm/profiler/wrapper.py:195
+  context: Passed to tensorboard_trace_handler when creating the default profiler wrapper's trace handler
+related_parameters:
+- name: profiler
+  relation: Must be set to 'torch' for this parameter to have any effect
+- name: profiler.torch_profiler_dir
+  relation: Specifies the output directory where compressed trace files are saved
+- name: profiler.torch_profiler_with_stack
+  relation: When enabled, stack traces increase trace file size, making gzip compression more beneficial
+constraints: []
+tuning_advice:
+  summary: 'Keep the default (true) unless disk space is abundant and you need to avoid the minor CPU overhead of gzip compression
+    during profiling.
+
+    '
+  suggested_values:
+  - scenario: Default profiling with limited disk space
+    value: true
+    reason: 'Gzip compression significantly reduces trace file sizes (often 5-10x), saving disk space and reducing I/O time
+      when writing traces. The CPU overhead is negligible for typical profiling workloads.
+
+      '
+  - scenario: Profiling on CPU-constrained systems where every cycle counts
+    value: false
+    reason: 'Disabling gzip avoids the CPU cost of compression, which may be noticeable if profiling very short intervals
+      or on systems with limited CPU headroom. Trace files will be larger but written faster.
+
+      '
+  caveats:
+  - 'This parameter has no effect unless the torch profiler is enabled (profiler="torch"). During normal inference without
+    profiling, changing this value does nothing.
+
+    '
+  - 'Gzip compression is applied per-trace-file. If profiling generates many small trace files, the compression overhead per
+    file may outweigh the I/O savings.
+
+    '
+  - 'On Ascend NPU, the torch profiler captures CPU-side activities only. NPU-specific profiling (e.g., CANN profiler) is
+    not affected by this parameter.
+
+    '
+  quick_guide: 'Keep default (true) for most cases; set to false only if profiling on a severely CPU-constrained system where
+    compression overhead is measurable.
+
+    '
+analysis_date: '2026-07-06'

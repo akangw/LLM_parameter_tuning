@@ -1,0 +1,85 @@
+name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:419
+- vllm_ascend/distributed/parallel_state.py:136
+- vllm_ascend/ops/vocab_parallel_embedding.py:63
+- docs/source/user_guide/feature_guide/Fine_grained_TP.md:60
+value_type: int
+default: 0
+valid_choices: 0 to disable, or a positive integer that evenly divides parallel_config.data_parallel_size
+cli_example: vllm serve deepseek-ai/DeepSeek-R1 --data-parallel-size 16 --tensor-parallel-size 1 --enable-expert-parallel
+  --additional-config '{"finegrained_tp_config":{"lmhead_tensor_parallel_size":8}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: A value greater than zero replaces the normal TP group for lm_head with an Ascend fine-grained group of this
+  size. The LM-head vocabulary weight is sharded across that group, reducing each NPU's weight storage and projection work.
+  Logit computation first all-gathers hidden states and, unless reduced sampling is enabled, all-to-alls the resulting logits,
+  so larger groups trade memory and GEMM savings for additional communication. Ascend's documented DP32+EP32 decode experiment
+  with LM-head TP 8 reports 1.51 GB per-device memory savings and a 1.2 ms TPOT improvement at batch size 24; results depend
+  on model, batch, topology, and communication cost. The current validation path permits enabling this setting only when model_config.is_moe
+  is true.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:419
+  context: Parses the nested value with default 0 and validates enabled fine-grained TP sizes.
+- file: vllm_ascend/ascend_config.py:445
+  context: Treats values greater than 0 as enabled; rejects enabled use for non-MoE models and sizes that do not divide data_parallel_size.
+- file: vllm_ascend/distributed/parallel_state.py:136
+  context: Reads the size and creates the lmheadtp process group over chunks of the data-parallel dimension.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:63
+  context: Selects the dedicated LM-head group when constructing an LM-head vocabulary-parallel layer, determining weight
+    partition size and rank.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:254
+  context: Routes logits through the LM-head TP path, including hidden-state all-gather and optional logits all-to-all.
+- file: vllm_ascend/worker/model_runner_v1.py:1200
+  context: Pads LM-head logits indices to a uniform cross-DP request shape when the feature is enabled.
+- file: docs/source/user_guide/feature_guide/Fine_grained_TP.md:91
+  context: Reports the decode benchmark's LM-head memory saving and TPOT impact and recommends fine-grained TP for all-DP
+    decode instances.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: The enabled LM-head TP size must evenly divide DP size, and its process groups are carved from the DP dimension.
+- name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+  relation: Sibling fine-grained TP setting for the input embedding table; it may share a cached group when configured with
+    the same size.
+- name: additional_config.enable_reduce_sample
+  relation: When enabled, LM-head TP keeps partitioned logits for reduced sampling instead of performing the logits all-to-all.
+- name: parallel_config.tensor_parallel_size
+  relation: LM-head fine-grained TP is independent of global TP and is especially useful for DP-heavy decode deployments with
+    global TP size 1.
+constraints:
+- Values greater than 0 enable the feature; use 0 to disable it.
+- When enabled, model_config.is_moe must be true or initialization raises an AssertionError.
+- When enabled, parallel_config.data_parallel_size modulo lmhead_tensor_parallel_size must equal 0.
+- The setting is implemented only by vLLM Ascend and has no upstream vLLM counterpart in the pinned source.
+tuning_advice:
+  summary: Use LM-head fine-grained TP on MoE decode deployments when duplicated vocabulary-projection weights or LM-head
+    memory traffic are material. Increase the size only while measured memory and TPOT gains exceed the hidden-state and logits
+    communication overhead.
+  suggested_values:
+  - scenario: Disabled baseline or any dense model under the current implementation
+    value: 0
+    reason: This avoids the dedicated communication path; enabled values are rejected for non-MoE models.
+  - scenario: MoE deployment with data_parallel_size 16, starting evaluation
+    value: 8
+    reason: This is the documented configuration example and leaves two LM-head TP groups per global-TP lane.
+  - scenario: DeepSeek-V3.1 PD-disaggregated decode with global TP size 1 and DP size divisible by 16
+    value: 16
+    reason: The pinned Ascend tutorial uses 16 to reduce per-card LM-head computation on the decode node.
+  caveats:
+  - Larger groups increase collective communication and can regress latency when interconnect cost outweighs the smaller GEMM
+    and weight reads.
+  - Every candidate must divide data_parallel_size exactly; a positive value larger than DP size therefore fails the divisibility
+    check.
+  - The feature guide describes broad model support, but the pinned runtime validation rejects enabled fine-grained TP for
+    non-MoE models; follow the runtime behavior.
+  - Benchmark gains from DP32+EP32 on Ascend Atlas A2 are workload-specific and should not be treated as universal.
+  quick_guide: Keep 0 for the baseline. For a MoE decode node, benchmark 8 or another positive divisor of data_parallel_size,
+    then increase only if per-device memory and TPOT improve despite collective overhead.
+analysis_date: '2026-08-01'

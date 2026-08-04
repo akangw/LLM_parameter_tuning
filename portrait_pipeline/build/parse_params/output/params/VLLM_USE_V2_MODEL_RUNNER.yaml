@@ -1,0 +1,110 @@
+name: VLLM_USE_V2_MODEL_RUNNER
+type: env
+category: other
+scope: both
+source_file:
+- vllm/envs.py:1711
+- vllm_ascend/worker/worker.py:144
+- vllm_ascend/platform.py:849
+- vllm_ascend/ascend_forward_context.py:365
+value_type: bool
+default: 'False'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This environment variable toggles between vLLM's v1 and v2 model runner architectures. On Ascend NPU, the\
+  \ choice has profound performance implications because vllm-ascend maintains completely separate code paths for v1 and v2,\
+  \ with different attention backends, forward context handling, and feature support.\nIn v1 mode (VLLM_USE_V2_MODEL_RUNNER=0,\
+  \ default): - \"vllm-ascend uses its own Ascend-native attention backends (ASCEND_DSA, ASCEND_MLA,\"\n  ASCEND_SFA, CUSTOM)\
+  \ with full feature support including context parallelism.\n- \"The forward context uses Ascend-specific extra attributes\
+  \ (is_first_layer,\"\n  prefetch_mlp_gate_up_proj, prefetch_mlp_gate_down_proj, prefetch_mlp_enabled,\n  model_instance,\
+  \ is_draft_model) for optimized execution.\n- \"Speculative decoding supports ngram, MTP, Medusa, and Eagle through Ascend-native\"\
+  \n  proposers in the v1 dispatch path.\n\nIn v2 mode (VLLM_USE_V2_MODEL_RUNNER=1): - \"All attention backends report as\
+  \ \\\"FLASH_ATTN\\\" to satisfy v2's KV cache initialization\"\n  assertions, potentially losing Ascend-specific optimizations.\n\
+  - \"The forward context uses a simplified additional_kwargs dict, lacking v1's extra\"\n  fields (is_first_layer, prefetch_mlp_*,\
+  \ model_instance, is_draft_model).\n- \"The platform.py MoE communication setup is only active in v2 mode, enabling\"\n\
+  \  Ascend-specific MoE optimizations (moe_comm_method selection, in_profile_run detection).\n- v2 has stricter feature validation:\
+  \ \"it rejects routed experts capture, custom logits\"\n  processors, KV sharing fast prefill, and EC transfer configurations.\n\
+  - \"On vllm 0.21.0, v2 is explicitly unsupported and falls back to v1 with a warning.\" - \"Hybrid models (e.g., Qwen3.5\
+  \ with Mamba-style GDN + attention layers) are not\"\n  supported in v2 mode.\n\nThe v2 runner generally offers better scheduling\
+  \ and throughput on GPUs, but on Ascend NPU the v1 path has more mature Ascend-specific optimizations. The choice directly\
+  \ affects which attention kernels execute, how MoE communication is handled, and which speculative decoding methods are\
+  \ available.\n"
+usage_locations:
+- file: vllm_ascend/worker/worker.py:144
+  context: Worker reads VLLM_USE_V2_MODEL_RUNNER to set self.use_v2_model_runner; falls back to v1 on vllm 0.21.0
+- file: vllm_ascend/platform.py:849
+  context: Only sets up Ascend MoE forward context (moe_comm_method, in_profile_run) when v2 is enabled
+- file: vllm_ascend/ascend_forward_context.py:365
+  context: Routes extra forward context attribute access differently for v1 (direct attr) vs v2 (additional_kwargs dict)
+- file: vllm_ascend/attention/attention_v1.py:82
+  context: Returns "CUSTOM" attention name in v1, "FLASH_ATTN" in v2 to pass v2 KV cache assertions
+- file: vllm_ascend/attention/dsa_v1.py:179
+  context: Returns "ASCEND_DSA" in v1, "FLASH_ATTN" in v2
+- file: vllm_ascend/attention/fa3_v1.py:18
+  context: Returns "CUSTOM" in v1, "FLASH_ATTN" in v2
+- file: vllm_ascend/attention/mla_v1.py:85
+  context: Returns "ASCEND_MLA" in v1, "FLASH_ATTN" in v2
+- file: vllm_ascend/attention/sfa_v1.py:79
+  context: Returns "ASCEND_SFA" in v1, "FLASH_ATTN" in v2
+- file: vllm/config/vllm.py:1199
+  context: Triggers v2 model runner validation when enabled
+- file: vllm/config/vllm.py:1894
+  context: Raises ValueError for unsupported v2 features (routed experts capture, custom logits processors, KV sharing fast
+    prefill, EC transfer)
+- file: vllm/v1/core/sched/scheduler.py:244
+  context: Scheduler reads flag to set self.use_v2_model_runner
+- file: vllm/v1/worker/gpu_worker.py:156
+  context: GPU worker reads flag to set self.use_v2_model_runner
+- file: vllm/v1/attention/backends/flashinfer.py:686
+  context: Disables pin_memory for CPU buffers in v2 to avoid race conditions
+related_parameters:
+- name: VLLM_MLA_DISABLE
+  relation: When VLLM_USE_V2_MODEL_RUNNER is enabled, hybrid models like Qwen3.5 (MLA + GDN) are unsupported and tests skip
+    them
+- name: --enforce-eager
+  relation: v2 mode is tested with enforce_eager=True in Ascend e2e tests; interaction with CUDA graphs on Ascend may differ
+    between v1 and v2
+constraints:
+- VLLM_USE_V2_MODEL_RUNNER is not supported on vllm version 0.21.0; the worker automatically falls back to v1 with a warning.
+- V2 model runner does not support hybrid models that mix Mamba-style GDN with attention layers (e.g., Qwen3.5).
+- V2 model runner does not support routed experts capture, custom logits processors, KV sharing fast prefill, or EC transfer;
+  enabling any of these with v2 raises a ValueError.
+tuning_advice:
+  summary: On Ascend NPU, keep VLLM_USE_V2_MODEL_RUNNER=0 (v1) for production unless you specifically need v2's MoE communication
+    optimizations and can accept reduced attention backend support.
+  suggested_values:
+  - scenario: Production deployment on Ascend NPU with standard dense or MoE models
+    value: '0'
+    reason: v1 mode uses Ascend-native attention backends (ASCEND_DSA, ASCEND_MLA, ASCEND_SFA) with full feature support including
+      context parallelism and speculative decoding (ngram, MTP, Medusa, Eagle). This is the most mature and tested path on
+      Ascend hardware.
+  - scenario: MoE model deployment where Ascend-specific MoE communication optimizations are critical
+    value: '1'
+    reason: v2 mode enables the Ascend MoE forward context setup in platform.py, which selects optimal moe_comm_method and
+      detects profile runs. This can improve MoE throughput but sacrifices Ascend-native attention backend names and some
+      forward context features.
+  - scenario: Development or testing on vllm 0.21.0
+    value: '0'
+    reason: v2 is explicitly unsupported on vllm 0.21.0; the worker automatically falls back to v1 regardless of the env var
+      setting.
+  caveats:
+  - In v2 mode, all Ascend attention backends report as "FLASH_ATTN" to pass v2's KV cache initialization assertions, which
+    may bypass Ascend-specific attention optimizations available in v1.
+  - v2 mode lacks v1's extra forward context fields (is_first_layer, prefetch_mlp_*, model_instance, is_draft_model), which
+    may affect performance of pipeline-parallel or speculative decoding setups.
+  - v2 mode has stricter feature validation and will raise errors for unsupported configurations (routed experts capture,
+    custom logits processors, KV sharing fast prefill, EC transfer).
+  - Hybrid models like Qwen3.5 are not supported in v2 mode.
+  - The v2 path on Ascend is less mature; e2e tests for v2 are marked with skipif and noted as broken after CANN/triton-ascend
+    upgrades.
+  quick_guide: Use VLLM_USE_V2_MODEL_RUNNER=0 (v1) on Ascend NPU for production stability and full feature support; only enable
+    v2 if you specifically need its MoE communication optimizations and have verified compatibility with your model.
+analysis_date: '2026-07-06'

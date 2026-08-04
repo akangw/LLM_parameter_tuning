@@ -1,0 +1,108 @@
+name: --disable-nccl-for-dp-synchronization
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1049
+- vllm/config/parallel.py:212
+- vllm/config/vllm.py:891
+- vllm/v1/worker/dp_utils.py:27
+value_type: bool
+default: <computed>
+valid_choices:
+- true
+- false
+cli_example: --disable-nccl-for-dp-synchronization
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: "This parameter controls whether the data-parallel (DP) synchronization logic in vllm/v1/worker/dp_utils.py\
+  \ uses NCCL (GPU/NPU direct) or Gloo (CPU-side) for its all-reduce operation. When set to True, the all-reduce tensor is\
+  \ transferred to CPU and the operation uses the Gloo backend via the DP group's cpu_group. When False, NCCL is used directly\
+  \ on the device.\nThe performance impact is twofold: 1. NCCL all-reduce on NPU is typically faster than CPU-side Gloo, so\
+  \ disabling NCCL\n   (i.e., using Gloo) adds CPU transfer overhead and slower reduction.\n2. However, NCCL all-reduce introduces\
+  \ a device synchronization point that can block\n   the async scheduling pipeline. With async scheduling enabled, using\
+  \ Gloo avoids\n   this GPU/NPU sync point, which can improve overall throughput by allowing the\n   scheduler to overlap\
+  \ computation with communication.\n\nThe default is computed at runtime in vllm/config/vllm.py:891-902: when disable_nccl_for_dp_synchronization\
+  \ is None (unset by user), it defaults to True if async scheduling is enabled AND data_parallel_size > 1 AND the model is\
+  \ MoE; otherwise it defaults to False. This means for MoE models with async scheduling, the default behavior is to use Gloo\
+  \ (CPU all-reduce), trading raw communication speed for better pipeline overlap.\nOn Ascend NPU, the HCCL backend (Ascend's\
+  \ NCCL equivalent) may have different synchronization characteristics than GPU NCCL. The CPU transfer path involves device-to-host\
+  \ memory copy, which on Ascend may be slower due to PCIe or HCCS bandwidth limitations. Users should benchmark both settings\
+  \ for their specific model and NPU configuration.\n"
+usage_locations:
+- file: vllm/v1/worker/dp_utils.py:27
+  context: 'In _get_device_and_group(), checks disable_nccl_for_dp_synchronization to decide whether to use device (NCCL)
+    or CPU (Gloo) for DP all-reduce synchronization.
+
+    '
+- file: vllm/config/vllm.py:891
+  context: 'During VllmConfig initialization, sets the default value based on async_scheduling and data_parallel_size and
+    model type (MoE check).
+
+    '
+related_parameters:
+- name: --data-parallel-size
+  relation: 'This parameter only has effect when data_parallel_size > 1. With dp_size=1, there is no DP synchronization to
+    perform.
+
+    '
+- name: async_scheduling
+  relation: 'The default value of disable_nccl_for_dp_synchronization depends on whether async scheduling is enabled. When
+    async scheduling is on, the default is True (use Gloo) to avoid GPU sync points.
+
+    '
+constraints:
+- This parameter only takes effect when data_parallel_size is greater than 1.
+- This parameter only affects the v1 worker path (vllm/v1/worker/dp_utils.py); v2 worker behavior may differ.
+tuning_advice:
+  summary: 'For MoE models with async scheduling on Ascend NPU, benchmark both NCCL and Gloo backends to determine which gives
+    better throughput for your specific workload.
+
+    '
+  suggested_values:
+  - scenario: 'MoE model with async scheduling enabled, high request concurrency, and Ascend NPU where HCCL sync points cause
+      pipeline bubbles.
+
+      '
+    value: true
+    reason: 'Using Gloo (CPU all-reduce) avoids HCCL synchronization points that can stall the async scheduler. The CPU transfer
+      overhead is offset by better compute/communication overlap, improving overall throughput under high load.
+
+      '
+  - scenario: 'MoE model with async scheduling disabled, or low request concurrency where pipeline overlap benefits are minimal.
+
+      '
+    value: false
+    reason: 'NCCL/HCCL all-reduce on NPU is faster than CPU-side Gloo. Without async scheduling, there is no pipeline to overlap,
+      so the faster device-side reduction directly reduces per-step latency.
+
+      '
+  - scenario: 'Non-MoE model with data_parallel_size > 1.
+
+      '
+    value: false
+    reason: 'The default logic in vllm/config/vllm.py:893-894 only auto-enables Gloo for MoE models. For non-MoE models, NCCL
+      is the default and generally preferred for lower communication latency.
+
+      '
+  caveats:
+  - 'On Ascend NPU, the CPU transfer path (device-to-host copy) may be slower than on GPU due to PCIe bandwidth or HCCS limitations.
+    Always benchmark with your specific NPU configuration.
+
+    '
+  - 'This parameter only affects the v1 worker path. If using v2 worker, verify whether dp_utils.py is even invoked, as v2
+    may have different DP synchronization logic.
+
+    '
+  - 'The environment variable mentioned in the code comment (vllm/v1/worker/dp_utils.py:25-26) for quickly disabling this
+    optimization does not appear to be a formal configuration option — this CLI flag is the primary control.
+
+    '
+  quick_guide: 'For Ascend NPU MoE inference with async scheduling, start with the default (Gloo/True) and benchmark against
+    explicit --disable-nccl-for-dp-synchronization=False to compare HCCL vs CPU all-reduce performance.
+
+    '
+analysis_date: '2026-07-06'

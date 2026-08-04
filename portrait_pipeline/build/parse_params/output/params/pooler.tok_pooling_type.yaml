@@ -1,0 +1,66 @@
+name: pooler.tok_pooling_type
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/pooler.py
+- vllm/config/model.py:608
+value_type: str
+default: <computed>
+valid_choices:
+- ALL
+- STEP
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+impact_detail: 'This parameter controls the token-level pooling method for pooling models (embedding/classification tasks).
+  It affects whether chunked prefill can be enabled: "when set to \"STEP\", chunked prefill is disabled" (vllm/config/model.py:1735),
+  which can reduce throughput for long sequences. When set to "ALL", chunked prefill may be supported depending on the sequence
+  pooling type. The parameter itself does not directly control memory or computation; its performance impact is indirect through
+  enabling/disabling chunked prefill optimization. On Ascend NPU, chunked prefill behavior follows the same logic as upstream
+  vLLM — no vllm-ascend override was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:608
+  context: Default value assignment from model_info if not user-specified
+- file: vllm/config/model.py:1735
+  context: Checked to determine chunked prefill support for pooling models
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:100
+  context: Used to select the token pooling method for token embedding tasks
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:123
+  context: Used to select the token pooling method for token classification tasks
+- file: vllm/pooling_params.py:140
+  context: Validates that step_pooling_parameters are only used when tok_pooling_type is "STEP"
+related_parameters:
+- name: pooler.seq_pooling_type
+  relation: Together with seq_pooling_type determines whether chunked prefill is supported
+- name: runner_type
+  relation: Only relevant when runner_type is "pooling"
+constraints:
+- pooler.tok_pooling_type must be one of "ALL" or "STEP"
+- When pooler.tok_pooling_type is not "STEP", step_pooling_parameters (step_tag_id, returned_token_ids) must not be set
+tuning_advice:
+  summary: 'Use the default value unless you specifically need step-wise token pooling; "ALL" enables chunked prefill for
+    better throughput on long sequences.
+
+    '
+  suggested_values:
+  - scenario: Default usage for embedding/classification models
+    value: ALL
+    reason: '"ALL" is the default for most pooling models and allows chunked prefill when combined with compatible seq_pooling_type,
+      improving throughput for long sequences.
+
+      '
+  - scenario: Models requiring step-wise token pooling (e.g., streaming token classification)
+    value: STEP
+    reason: '"STEP" enables per-step token pooling but disables chunked prefill, which may reduce throughput for long sequences.
+
+      '
+  caveats:
+  - Setting tok_pooling_type to "STEP" disables chunked prefill regardless of seq_pooling_type
+  - On Ascend NPU, chunked prefill behavior follows upstream vLLM logic — no Ascend-specific override exists
+  quick_guide: Keep the default "ALL" unless your model architecture explicitly requires "STEP" pooling
+analysis_date: '2026-07-06'

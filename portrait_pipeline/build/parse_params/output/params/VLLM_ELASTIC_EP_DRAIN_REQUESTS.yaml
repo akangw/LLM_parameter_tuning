@@ -1,0 +1,75 @@
+name: VLLM_ELASTIC_EP_DRAIN_REQUESTS
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:1762
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'When set to true, this environment variable causes the engine to wait for all in-flight requests to complete
+  (drain) before executing an elastic expert parallelism (EP) scaling operation. The drain is performed by calling `wait_for_requests_to_drain(drain_timeout)`
+  in `vllm/v1/engine/async_llm.py:1014`. This introduces a delay before the scaling command is sent, which can increase the
+  latency of the scaling operation itself. However, it does not directly affect steady-state inference throughput or per-request
+  latency. The parameter only has an effect when elastic EP scaling is triggered via the `scale_elastic_ep()` API. On Ascend
+  NPU, the behavior is identical to upstream vLLM since vllm-ascend does not override or modify this parameter.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/async_llm.py:1009
+  context: 'Checked before calling `wait_for_requests_to_drain()` in the `scale_elastic_ep()` method. If true, the engine
+    drains all pending requests before proceeding with the DP size change.
+
+    '
+- file: vllm/envs.py:265
+  context: 'Declared as a boolean environment variable in the `environment_variables` dictionary with default value false.
+
+    '
+related_parameters:
+- name: VLLM_ELASTIC_EP_SCALE_UP_LAUNCH
+  relation: 'Related elastic EP environment variable that indicates whether the current process is a scale-up launch engine
+    core. Both are used in elastic EP scaling workflows.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Enable only if you need graceful request completion before elastic EP scaling; otherwise leave disabled to minimize
+    scaling latency.
+
+    '
+  suggested_values:
+  - scenario: 'Production deployments where in-flight requests must complete before scaling down data-parallel workers to
+      avoid dropping requests.
+
+      '
+    value: true
+    reason: 'Ensures all active requests finish before workers are removed, preventing request failures during scale-down
+      operations.
+
+      '
+  - scenario: 'Development, testing, or deployments where scaling speed is prioritized over graceful request completion.
+
+      '
+    value: false
+    reason: 'Avoids the drain delay, allowing the scaling operation to proceed immediately. This is the default behavior.
+
+      '
+  caveats:
+  - 'Enabling this parameter increases the time required to complete an elastic EP scaling operation, as the engine must wait
+    for all requests to finish (up to `drain_timeout` seconds, default 300s).
+
+    '
+  - 'This parameter only affects the `scale_elastic_ep()` API path and has no effect on normal inference serving.
+
+    '
+  quick_guide: 'Set to 1 only if you need graceful draining during elastic EP scaling; default 0 is optimal for scaling speed.
+
+    '
+analysis_date: '2026-07-06'

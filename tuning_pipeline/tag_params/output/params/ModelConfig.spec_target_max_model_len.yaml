@@ -1,0 +1,93 @@
+name: ModelConfig.spec_target_max_model_len
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/model.py:202
+- vllm/config/model.py:1687
+- vllm/config/model.py:2064
+- vllm/config/speculative.py:638
+value_type: int
+default: null
+valid_choices: null or a positive integer token count
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This internal field is a fallback for resolving a speculative draft model's maximum sequence length. If the
+  draft model configuration exposes none of the recognized context-length keys and no explicit max_model_len is supplied,
+  _get_and_verify_max_len returns spec_target_max_model_len instead of falling back to 2048. SpeculativeConfig populates it
+  from the already-resolved target model maximum when constructing a separate draft ModelConfig. This can keep speculative
+  decoding available for requests longer than 2048 tokens and thereby preserve its conditional latency and throughput benefit.
+  It has no effect when the draft configuration yields a maximum length or an explicit draft max_model_len is set, and it
+  does not itself select a kernel or set the number of speculative tokens.
+usage_locations:
+- file: vllm/config/speculative.py:638
+  context: Passes the target model's resolved max_model_len into the separately constructed draft ModelConfig as the fallback
+    value.
+- file: vllm/config/model.py:1687
+  context: Forwards the field to _get_and_verify_max_len while resolving a ModelConfig's effective max_model_len.
+- file: vllm/config/model.py:2103
+  context: Returns this value only when no recognized model or tokenizer length was derived and max_model_len was not explicitly
+    supplied; otherwise the normal length-resolution paths take precedence.
+- file: vllm/config/speculative.py:752
+  context: Clamps the resolved draft maximum against the target maximum (or an explicit speculative maximum), which determines
+    the length boundary used by the draft configuration.
+related_parameters:
+- name: ModelConfig.max_model_len
+  relation: An explicit value takes precedence over this fallback during model-length resolution.
+- name: SpeculativeConfig.max_model_len
+  relation: Optionally imposes a smaller speculative-decoding length limit after the draft ModelConfig has been constructed.
+- name: SpeculativeConfig.model
+  relation: A separate draft model must be constructed for this target-derived fallback to be populated by SpeculativeConfig.
+constraints:
+- This is an internal construction field, not a documented vllm serve CLI tuning option; SpeculativeConfig supplies it automatically.
+- It is consulted only when no supported maximum-length key can be derived from the model architecture or tokenizer configuration
+  and max_model_len is null.
+- The automatically supplied value is the target ModelConfig's resolved positive max_model_len and is later bounded together
+  with the draft and optional speculative maximum lengths.
+- The pinned vllm-ascend repository has no declaration, consumer, or override for this field, so no Ascend-specific behavior
+  is claimed.
+tuning_advice:
+  summary: Do not tune this field directly; let SpeculativeConfig inherit the resolved target length when it constructs a
+    draft model.
+  suggested_values:
+  - scenario: Normal speculative decoding with a separate draft model
+    value: target_model_config.max_model_len
+    reason: This is the source-populated value and prevents a metadata-poor draft model from receiving the generic 2048-token
+      fallback.
+  - scenario: Direct ModelConfig construction outside SpeculativeConfig
+    value: leave unset (null)
+    reason: Preserve the default unless the caller is deliberately implementing the same target-length fallback for a speculative
+      draft model.
+  caveats:
+  - For draft models with recognized context-length metadata, changing this field has no effect.
+  - An explicit ModelConfig.max_model_len takes precedence, including the SpeculativeConfig.max_model_len value passed during
+    draft construction.
+  - Any latency or throughput effect occurs only for long requests whose speculative eligibility would otherwise be limited
+    by the generic 2048-token fallback.
+  - The pinned vllm-ascend source contains no Ascend-specific evidence for tuning this internal field.
+  quick_guide: Leave it null in ordinary ModelConfig usage. For the internal speculative draft construction path, retain the
+    automatically inherited target maximum and tune the public speculative controls instead.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output

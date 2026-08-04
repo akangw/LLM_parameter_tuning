@@ -1,0 +1,67 @@
+name: VLLM_RPC_BASE_PATH
+type: env
+category: communication
+scope: both
+source_file:
+- vllm/envs.py:590
+- vllm/envs.py:17
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:666
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:42
+value_type: str
+default: <computed>
+valid_choices: any valid filesystem path
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'VLLM_RPC_BASE_PATH specifies the base directory for IPC (Inter-Process Communication) socket files used by
+  ZMQ-based RPC channels. On Ascend NPU, this is consumed by vllm-ascend''s KV cache transfer subsystem (pool_scheduler.py
+  and cpu_offload/metadata.py) to construct IPC paths for the lookup RPC socket and metadata server socket. The path itself
+  does not directly affect compute performance, but if the default temp directory (e.g., /tmp) is on a slow or network-mounted
+  filesystem, socket creation and communication latency could be marginally impacted. The parameter is explicitly excluded
+  from torch.compile cache key factors (vllm/envs.py:1877), confirming it has no effect on compilation or model execution
+  performance.
+
+  '
+usage_locations:
+- file: vllm/envs.py:590
+  context: Environment variable definition with default tempfile.gettempdir()
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:666
+  context: Constructs ZMQ IPC path for KV transfer lookup RPC socket
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:42
+  context: Constructs ZMQ IPC path for KV cache CPU offload metadata server
+- file: vllm/utils/network_utils.py:142
+  context: Constructs generic open ZMQ IPC path using uuid4
+related_parameters:
+- name: VLLM_PORT
+  relation: Both are used in distributed IPC communication setup; VLLM_PORT handles TCP ports while VLLM_RPC_BASE_PATH handles
+    Unix domain socket paths
+- name: VLLM_HOST_IP
+  relation: Both are used in distributed environment configuration for multi-node communication
+constraints:
+- The path must be writable by the vLLM process; otherwise ZMQ socket creation will fail
+- On multi-node deployments, each node must have its own local filesystem path (IPC sockets are local only)
+tuning_advice:
+  summary: Use the default value unless /tmp is on a slow or network-mounted filesystem; then set to a local fast filesystem
+    path like /dev/shm or an SSD-backed directory
+  suggested_values:
+  - scenario: Default deployment with local /tmp on SSD
+    value: <default>
+    reason: The default tempfile.gettempdir() typically resolves to /tmp which is adequate for IPC socket performance
+  - scenario: /tmp is on a network filesystem (NFS) or tmpfs with limited space
+    value: /dev/shm
+    reason: /dev/shm is a RAM-backed tmpfs providing the lowest latency for IPC socket operations and avoids network filesystem
+      overhead
+  - scenario: Custom deployment with dedicated fast local storage
+    value: /var/run/vllm
+    reason: A dedicated directory on local SSD ensures consistent performance and avoids potential cleanup issues with system
+      temp directories
+  caveats:
+  - IPC sockets are local to a single node; this path must be on a local filesystem, not a shared network mount
+  - Ensure the directory has sufficient permissions and is not cleaned up by system temp cleaners during long-running inference
+    sessions
+  - This parameter has no effect on Ascend NPU compute performance or memory usage; it only affects IPC socket creation latency
+  quick_guide: Leave at default unless /tmp is network-mounted; then set to /dev/shm for lowest IPC latency
+analysis_date: '2026-07-06'

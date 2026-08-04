@@ -1,0 +1,57 @@
+name: speculative.draft_load_config.model_loader_extra_config
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: dict
+default: '''{}'''
+valid_choices: any dict
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter is a passthrough dictionary that gets forwarded to the model loader when loading the draft
+  (speculative) model. Its performance impact is indirect and depends entirely on what keys are placed inside it. On Ascend
+  NPU, the model loader is vllm-ascend''s AscendModelLoader, which may interpret certain keys (e.g., those affecting weight
+  loading parallelism, NPU memory allocation, or CANN compilation options) differently than the upstream GPU loader. However,
+  the parameter itself has no direct code path that affects performance — it is a configuration carrier. The actual performance
+  effect comes from the specific loader options chosen, not from this container parameter. Since no definition or usage was
+  found in the provided vllm or vllm-ascend source context, its practical effect on Ascend NPU cannot be confirmed from the
+  available code evidence.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.draft_load_config.load_format
+  relation: The load_format determines which model loader is selected, and this extra_config is passed to that loader.
+- name: speculative.draft_load_config
+  relation: Parent configuration object that contains model_loader_extra_config.
+constraints: []
+tuning_advice:
+  summary: 'This is a passthrough container with no direct performance effect. Only populate it with keys that are known to
+    be supported by vllm-ascend''s AscendModelLoader.
+
+    '
+  suggested_values:
+  - scenario: Default usage (no special loader options needed)
+    value: '''{}'''
+    reason: Empty dict avoids passing unsupported or untested options to the Ascend model loader.
+  - scenario: When specific Ascend loader options are required (e.g., weight loading tuning)
+    value: '''{"key": "value"}'''
+    reason: 'Only add keys that are documented as supported by vllm-ascend''s model loader. Unsupported keys may be silently
+      ignored or cause errors on Ascend NPU.
+
+      '
+  caveats:
+  - 'vllm-ascend''s AscendModelLoader may not support all keys that the upstream GPU model loader supports. Passing GPU-specific
+    options could cause unexpected behavior or be silently ignored.
+
+    '
+  - 'No usage of this parameter was found in the provided vllm-ascend source context, so its actual effect on Ascend NPU is
+    unverified.
+
+    '
+  quick_guide: Leave as empty dict `{}` unless you have specific, vllm-ascend-documented loader options to pass.
+analysis_date: '2026-07-06'

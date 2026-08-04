@@ -1,0 +1,59 @@
+name: --enable-ep-weight-filter
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1025
+- vllm/config/parallel.py:153
+- docs/source/tutorials/models/Hy3-preview.md:101
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-ep-weight-filter
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+impact_detail: 'This flag changes model-loading behavior, not steady-state inference scheduling. The current ParallelConfig
+  documentation states that, with expert parallelism, each rank reads only its own expert shard, reducing storage I/O for
+  MoE checkpoints. The current Ascend Hy3 deployment guide verifies the practical effect: it skips expert weights outside
+  the local EP rank during loading and reduces disk and host-memory pressure for very large MoE checkpoints. It therefore
+  affects peak host memory during initialization; the pinned sources do not claim a universal runtime latency or throughput
+  change.'
+usage_locations:
+- file: vllm/engine/arg_utils.py:1915
+  context: Passes the CLI-derived setting into ParallelConfig when building engine configuration.
+- file: vllm/config/parallel.py:153
+  context: Defines the disabled-by-default setting and documents local-expert-only loading under expert parallelism.
+- file: docs/source/tutorials/models/Hy3-preview.md:101
+  context: Ascend Hy3 deployment guidance says the option skips non-local EP-rank expert weights during loading and reduces
+    disk and host-memory pressure.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Required for the documented local-expert filtering behavior; ParallelConfig describes the filter as applying when
+    expert parallelism is active.
+constraints:
+- The documented filtering behavior applies only when expert parallelism is active.
+- It has no effect for non-MoE models.
+- It has no effect for 3D fused-expert checkpoints such as GPT-OSS.
+tuning_advice:
+  summary: Enable for a very large MoE checkpoint using expert parallelism when reducing model-load disk I/O and peak host-memory
+    pressure is valuable. Leave disabled when the model is not MoE or does not use expert parallelism.
+  suggested_values:
+  - scenario: Large per-expert-tensor MoE checkpoint deployed with expert parallelism
+    value: true
+    reason: Each rank can skip non-local expert weights during loading, reducing disk and host-memory pressure according to
+      the pinned configuration documentation and Ascend deployment guide.
+  - scenario: Non-MoE model, 3D fused-expert checkpoint, or deployment without expert parallelism
+    value: false
+    reason: The current ParallelConfig documentation states that the option has no effect for non-MoE and 3D fused-expert
+      checkpoints, and its documented behavior requires expert parallelism.
+  caveats:
+  - This is a model-initialization optimization; the pinned sources do not establish a steady-state inference latency or throughput
+    improvement.
+  - The option is disabled by default.
+  quick_guide: Enable with --enable-expert-parallel for large conventional MoE checkpoints when model-load host-memory pressure
+    is a concern.
+analysis_date: '2026-07-27'

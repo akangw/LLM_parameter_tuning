@@ -1,0 +1,78 @@
+name: compilation.cudagraph_copy_inputs
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:1285
+- vllm/compilation/caching.py:543
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'When cudagraph_copy_inputs is True, the compilation backend copies input tensors to internally managed buffers
+  before executing the cudagraph. This ensures that the same input buffers are always used, which is required for cudagraph
+  correctness when callers cannot guarantee buffer reuse. The copy operation adds a small per-invocation overhead (memory
+  allocation + copy) and increases peak memory usage due to the additional buffer allocation. On Ascend NPU, this parameter
+  is only relevant when cudagraph_mode is not NONE (i.e., cudagraphs are enabled). vllm-ascend does not override or modify
+  this parameter; it inherits the upstream behavior. The parameter has no effect when cudagraph_mode is NONE, as the copy
+  logic is skipped entirely in that case.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:1285
+  context: 'Checked during serialization of the compiled graph. If cudagraph_mode is NONE or cudagraph_copy_inputs is False,
+    the function returns a VllmSerializableFunction without input copying. Otherwise, symbolic tensor indices are identified
+    and input buffers are allocated for copying.
+
+    '
+- file: vllm/compilation/caching.py:543
+  context: 'Checked when loading a compiled graph from cache. If True, input buffers are allocated and a copy-and-call wrapper
+    is created around the runtime callable. If False, the runtime callable is used directly without copying.
+
+    '
+related_parameters:
+- name: compilation.cudagraph_mode
+  relation: 'cudagraph_copy_inputs only has effect when cudagraph_mode is not NONE. When cudagraph_mode is NONE, the copy
+    logic is skipped regardless of this parameter''s value.
+
+    '
+constraints:
+- cudagraph_copy_inputs has no effect when cudagraph_mode is set to NONE.
+tuning_advice:
+  summary: 'Set to True only if you encounter cudagraph correctness issues due to non-reusable input buffers; otherwise keep
+    False to avoid unnecessary memory allocation and copy overhead.
+
+    '
+  suggested_values:
+  - scenario: Default usage with stable input buffer reuse
+    value: false
+    reason: 'Avoids per-invocation tensor copy overhead and extra memory allocation. Most vLLM execution paths reuse input
+      buffers, making copying unnecessary.
+
+      '
+  - scenario: Debugging cudagraph correctness issues or when callers cannot guarantee buffer reuse
+    value: true
+    reason: 'Ensures cudagraph receives consistent input buffers by copying inputs to internally managed buffers, at the cost
+      of additional memory and a small latency penalty per invocation.
+
+      '
+  caveats:
+  - 'On Ascend NPU, cudagraph support in vllm-ascend may have additional limitations. Verify that cudagraph_mode is properly
+    supported before relying on this parameter.
+
+    '
+  - 'Enabling this parameter increases peak memory usage due to the allocation of internal input buffers for each compiled
+    graph.
+
+    '
+  quick_guide: 'Keep False unless cudagraph correctness issues arise; then enable for debugging.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,234 @@
+remote_host: hetao-npu
+remote_transport: paramiko
+remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+poll_seconds: 60
+round_timeout_minutes: 750
+partial_exit_grace_seconds: 120
+# Resolve from PATH on the handoff machine. VLLMTKB_CODEX_COMMAND can override it.
+codex_command: auto
+execution_mode: ktp_lab
+# The sliced MTP-only checkpoint made by the deployment owner. Set the exact
+# server path before preparing the lease; leaving it empty fails closed.
+mtp_draft_model: /models/share/GLM-5.2-w8a8-mtp-only-vllm0.25.1-image46d8bbb4
+lab:
+  # Versioned lease name prevents reuse of Pods created from the previous image.
+  lease_name: vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+  lease_yaml: workflow/auto/lease_loop.yaml
+  output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/lab_runs
+benchmark:
+  # Keep both implementations. New sessions use the frozen L1 standard; set
+  # mode to legacy_random_32k1k only when reproducing historical runs.
+  mode: aligned_l1
+  aligned_l1:
+    # Pin the exact standard filename so a future central alias update cannot
+    # silently change the experiment matrix.
+    suite: 01_调优_结构化定长-v4.yaml
+    suite_id: tuning-fixed
+    suite_version: v4
+    phase: all
+    # One complete repetition still runs all 24 GuideLLM configs (12 formal
+    # cases plus their warmups). Historical A0 calibration measured 1.06% CV
+    # for the C32 geometric-mean score, so continuous screening uses one pass.
+    repetitions: 1
+    # Retry budgets are frozen into each candidate.env for auditability.
+    # Targeted case retry is cheap; full runtime/metrics reruns remain bounded.
+    case_retry_limit: 2
+    runtime_retry_limit: 2
+    metrics_retry_limit: 2
+    # Shared cap across runtime and full-matrix metrics recovery. This prevents
+    # the independent retry layers from multiplying into five full L1 passes.
+    total_full_retry_limit: 2
+    served_model: glm-5
+    service_port: 8000
+    tokenizer: /models/share/GLM-5.2-w8a8
+    # Use an immutable snapshot inside this isolated project. The shared
+    # checkout follows main and currently reports ServeBench 1.7.0.
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    servebench_workspace: /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
+    servebench_version: 1.0.1
+    servebench_commit: 5f01dcafd9b4ce9c788d8f7c1a537d4b3ea83c73
+    # Approved read-only benchmark runtime. Keep the digest-qualified reference:
+    # the mutable nightly tag must never define measurement identity by itself.
+    docker_image: 10.1.30.201:31443/user-1-wangakang/vllm-ascend@sha256:46d8bbb49f90f0607a41f972b7d847b434e0cf0f86fce9164549a7fdf0033112
+    guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/datasets
+    suite_sha256: 5d7baacf92dbcff2b2972db0dd4649b78a88e1b9d099d0ff37552a232b48b353
+    schema_files_sha256:
+      schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
+    tokenizer_files_sha256:
+      tokenizer.json: 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+      tokenizer_config.json: 98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc
+    dataset_manifests_sha256:
+      tuning-structured-chat-1024-256-v1/manifest.json: d5f00196e77ad4bbfe139212ee611ace3e7374f80f0807403195abeb039ee49f
+      tuning-structured-prefill-8192-512-v1/manifest.json: 36b1f2ddb0a17d7321fe92425484b303ba79ae8d6b09b4204eb211dbf1968b5d
+      tuning-structured-balanced-1024-1024-v1/manifest.json: 5521d58078bd8b5fc727c2749d2cb86df61326fd774d2c1b9f9b19606b04aaf8
+      tuning-structured-decode-256-2048-v1/manifest.json: d50b2c466153f74e0a0c00f7f94dd6d8baa9e780d3f5f3fed53a6dfcc02e76a0
+    primary_concurrency: 32
+    workloads:
+      chat-1024-256: {input_tokens: 1024, output_tokens: 256}
+      prefill-8192-512: {input_tokens: 8192, output_tokens: 512}
+      balanced-1024-1024: {input_tokens: 1024, output_tokens: 1024}
+      decode-256-2048: {input_tokens: 256, output_tokens: 2048}
+  legacy_random_32k1k:
+    model: GLM-5.2-w8a8
+    input_tokens: 32000
+    output_tokens: 1000
+    random_range_ratio: 0.5
+    num_prompts: 8
+    request_rate: 0.2
+    temperature: 0
+    primary_metric: output_throughput
+# Compatibility alias for archived sessions and the legacy benchmark path.
+fixed_scenario:
+  model: GLM-5.2-w8a8
+  input_tokens: 32000
+  output_tokens: 1000
+  num_prompts: 8
+  request_rate: 0.2
+  temperature: 0
+  primary_metric: output_throughput
+baseline:
+  max_num_seqs: 48
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.93
+  enable_prefix_caching: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  long_prefill_token_threshold: 0
+  enable_chunked_prefill: true
+  max_cudagraph_capture_size: 192
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  compilation_enable_sp: false
+  # Baseline-effective-config replay: this is the capture list observed in the
+  # successful 0706 A0 engine log, not a guessed search value.  Keep it fixed
+  # for the initial calibration so the new pipeline does not silently rely on
+  # a different runtime auto-expansion when the source/image are identical.
+  cudagraph_capture_sizes: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+  # Use the supported additional-config interface.  The 0706 service had the
+  # equivalent FlashComm1 behaviour through its inherited environment.
+  flashcomm1: true
+# New Sessions resolve this default through workflow/search_space_compiler.
+# Set to manual to reproduce the original fixed pool below. A Session freezes
+# its resolved limits in session_config.yaml, so changing this file never
+# changes an already-running or resumed Session.
+search_limits_mode: automated
+automated_search_limits:
+  scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+  registry: workflow/search_space_compiler/registry.yaml
+  policy: workflow/search_space_compiler/policy.yaml
+  knowledge_dir: tag_params/output/params
+  history_source: latest_completed_session
+  # Explicit integration approval from the owner. Reserve parameters not in
+  # this list fail closed if history-aware rotation tries to activate them.
+  approved_planned_parameters:
+    - enable_chunked_prefill
+    - max_cudagraph_capture_size
+    - compilation_enable_sp
+    - cudagraph_capture_sizes
+    - flashcomm1
+    - mlapo
+    - fused_mc2
+sidecars:
+  enabled: true
+  scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+  registry: workflow/search_space_compiler/registry.yaml
+  knowledge_dir: tag_params/output/params
+  default_rules: workflow/sidecars/default_rules.yaml
+  include_one_hop: true
+# Preserved manual fallback pool. It is used unchanged when
+# search_limits_mode is set to manual.
+search_limits:
+  max_num_seqs: [8, 16, 32, 48, 64]
+  max_model_len: [64000]
+  max_num_batched_tokens: [4096, 8192, 16384, 32768]
+  gpu_memory_utilization: [0.85, 0.90, 0.93, 0.95]
+  enable_prefix_caching: [false, true]
+  async_scheduling: [true]
+  enable_expert_parallel: [true]
+  compilation_mode: [FULL_DECODE_ONLY, PIECEWISE]
+  num_speculative_tokens: [0, 1, 2, 3]
+  long_prefill_token_threshold: [0, 1024, 2048, 4096]
+  enable_chunked_prefill: [true, false]
+  max_cudagraph_capture_size: [192, 128, 256]
+  # The pinned Ascend platform rejects the upstream --enable-eplb CLI. Keep
+  # these fields as fixed runtime-contract values until native dynamic EPLB is
+  # wired through additional_config and verified on this exact image.
+  enable_eplb: [false]
+  eplb_num_redundant_experts: [0]
+  compilation_enable_sp: [false, true]
+  # Keep FlashComm1 searchable after the replay A0; true is deliberately the
+  # baseline and false is the controlled ablation, not an inherited default.
+  flashcomm1: [true, false]
+  cudagraph_capture_sizes:
+    # A coupled compilation profile.  It remains a reserve dimension during
+    # initial search; the A0 replay value is explicit and the automatic null
+    # behaviour is retained only as a later comparison candidate.
+    - [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+    - null
+change_policy:
+  strategy_version: best_anchor_coverage_v2
+  max_parameters_per_round: 4
+  max_grid_steps_per_parameter: 2
+  max_total_grid_steps: 6
+  max_candidate_reselections: 2
+  adaptive:
+    enabled: true
+    exploration:
+      preferred_parameters_per_round: [2, 3]
+      max_parameters_per_round: 3
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 6
+    refinement:
+      preferred_parameters_per_round: [1, 2]
+      max_parameters_per_round: 2
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 3
+  derived_parameters:
+    max_cudagraph_capture_size:
+      drivers: [max_num_seqs, num_speculative_tokens]
+    cudagraph_capture_sizes:
+      drivers:
+        - max_num_seqs
+        - num_speculative_tokens
+        - max_cudagraph_capture_size
+  parameter_groups:
+    scheduler_capacity:
+      - max_num_seqs
+      - max_num_batched_tokens
+      - gpu_memory_utilization
+    speculative_graph:
+      - num_speculative_tokens
+      - max_cudagraph_capture_size
+      - cudagraph_capture_sizes
+    prefill:
+      - enable_chunked_prefill
+      - long_prefill_token_threshold
+    compilation:
+      - compilation_mode
+      - compilation_enable_sp
+  high_risk_parameters:
+    - gpu_memory_utilization
+    - compilation_mode
+    - compilation_enable_sp
+    - fused_mc2
+measurement_policy:
+  minimum_successful_requests: 8
+  require_zero_failed_requests: true
+  minimum_throughput_gain_percent: 3.0
+  maximum_ttft_regression_percent: 10.0
+  maximum_tpot_regression_percent: 10.0
+  aligned_l1:
+    require_all_repetitions: true
+    minimum_repetitions: 1
+    minimum_throughput_gain_percent: 3.0
+    noise_cv_multiplier: 2.0
+    maximum_single_workload_throughput_regression_percent: 5.0
+    maximum_ttft_p50_ratio: 1.20
+    maximum_ttft_p90_ratio: 1.20
+    maximum_tpot_p50_ratio: 1.15
+    maximum_tpot_p90_ratio: 1.15

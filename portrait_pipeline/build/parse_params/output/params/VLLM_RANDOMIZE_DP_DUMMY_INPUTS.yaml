@@ -1,0 +1,73 @@
+name: VLLM_RANDOMIZE_DP_DUMMY_INPUTS
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1166
+- vllm/envs.py:149
+- vllm/v1/worker/gpu_model_runner.py:5260
+value_type: bool
+default: false
+valid_choices:
+- 0 (false)
+- 1 (true)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+impact_detail: 'When enabled (set to "1"), this env var causes the v1 GPU model runner to replace input_ids with random token
+  IDs during data-parallel dummy runs and profile runs (vllm/v1/worker/gpu_model_runner.py:5260-5278). The randomization is
+  only active when data_parallel_size > 1. The purpose is to balance expert selection in MoE models during these warmup/dummy
+  phases. This affects only the profiling/dummy execution path, not actual inference, so the runtime performance impact is
+  indirect and minimal — it may slightly improve load balancing quality for MoE models under data parallelism, which could
+  marginally affect throughput. The env var is excluded from torch.compile cache keys (vllm/envs.py:1887), so changing it
+  does not trigger recompilation. No vllm-ascend override was found; the parameter behaves identically on Ascend NPU as on
+  GPU.
+
+  '
+usage_locations:
+- file: vllm/envs.py:1166
+  context: Environment variable definition — reads VLLM_RANDOMIZE_DP_DUMMY_INPUTS, defaults to "0" (false)
+- file: vllm/envs.py:149
+  context: Typed environment variable declaration as bool, default False
+- file: vllm/v1/worker/gpu_model_runner.py:5260
+  context: maybe_randomize_inputs context manager — replaces input_ids with random tokens during DP dummy/profile runs when
+    enabled and dp_size > 1
+- file: vllm/envs.py:1887
+  context: Excluded from torch.compile cache key factors — changes do not invalidate compilation cache
+related_parameters:
+- name: VLLM_DP_SIZE
+  relation: Randomization only activates when data_parallel_size > 1; VLLM_DP_SIZE controls the data parallel world size
+- name: VLLM_DP_RANK
+  relation: Part of the same data-parallel configuration group; dummy runs occur on each DP rank
+constraints:
+- VLLM_RANDOMIZE_DP_DUMMY_INPUTS has no effect when data_parallel_size is 1 (single DP rank)
+tuning_advice:
+  summary: 'Enable only when using data parallelism with MoE models to improve expert load balancing during profile/dummy
+    runs; otherwise leave disabled (default).
+
+    '
+  suggested_values:
+  - scenario: Data-parallel inference with MoE models (e.g., Mixtral) on Ascend NPU
+    value: '1'
+    reason: 'Randomizing dummy inputs helps balance expert selection during the profiling phase, which can lead to more accurate
+      expert load distribution estimates and potentially better throughput in MoE data-parallel deployments.
+
+      '
+  - scenario: Data-parallel inference with dense (non-MoE) models, or single DP rank
+    value: '0'
+    reason: 'Randomization only benefits MoE expert balancing; for dense models or single-rank deployments it adds unnecessary
+      overhead with no benefit.
+
+      '
+  caveats:
+  - This parameter only affects the profiling/dummy run phase, not actual inference execution
+  - Has no effect when data_parallel_size is 1
+  - Excluded from torch.compile cache keys, so toggling it does not trigger recompilation
+  - On Ascend NPU, behavior is identical to GPU — no Ascend-specific override exists
+  quick_guide: 'Set to "1" only for MoE models under data parallelism (dp_size > 1) to improve expert load balancing quality;
+    leave at default "0" otherwise.
+
+    '
+analysis_date: '2026-07-06'

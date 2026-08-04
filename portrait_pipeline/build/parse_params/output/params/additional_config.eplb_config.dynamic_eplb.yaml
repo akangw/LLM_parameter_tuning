@@ -1,0 +1,94 @@
+name: additional_config.eplb_config.dynamic_eplb
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:630
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'When enabled, dynamic EPLB (Expert Parallelism Load Balancing) activates a runtime expert redistribution system
+  for MoE models on Ascend NPUs. The mechanism works as follows: "(1) During model initialization, a separate EPLB process
+  is launched" (vllm_ascend/worker/model_runner_v1.py:474) that monitors expert load via shared memory. (2) At configurable
+  intervals (expert_heat_collection_interval and algorithm_execution_interval), the system collects per-expert token counts
+  and computes an optimal expert-to-device mapping. (3) Expert weights are then dynamically relocated between NPUs using D2D
+  (device-to-device) transfers via HCCL all-to-all communication (vllm_ascend/eplb/core/eplb_utils.py:75-105). This directly
+  impacts throughput by reducing load imbalance across expert-parallel ranks, latency by minimizing straggler effects from
+  overloaded experts, and memory by introducing redundant expert copies (num_redundant_experts) that consume additional NPU
+  HBM. The parameter also triggers creation of a dedicated _DYNAMIC_EPLB communication group (vllm_ascend/distributed/parallel_state.py:98-102)
+  and affects weight loading paths in multiple quantization methods (w4a16, w4a4_mxfp4, w4a8). CRITICAL: dynamic_eplb is NOT
+  supported in the v2 Ascend model runner — attempting to use it raises NotImplementedError (vllm_ascend/worker/v2/model_runner.py:71-72).
+  It is only available in the v1 worker path.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:466
+  context: Reads dynamic_eplb to initialize EPLB process, shared dict, and D2D weight loader
+- file: vllm_ascend/worker/v2/model_runner.py:71
+  context: Checks dynamic_eplb and raises NotImplementedError if true (v2 unsupported)
+- file: vllm_ascend/distributed/parallel_state.py:98
+  context: Creates _DYNAMIC_EPLB communication group when dynamic_eplb is enabled
+- file: vllm_ascend/eplb/core/eplb_utils.py:75
+  context: Controls whether redundant experts are allocated and log2phy mapping is created
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:95
+  context: Stored as instance attribute in AscendUnquantizedFusedMoEMethod for MoE dispatch
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:416
+  context: Determines whether multi-stage MoE dispatch and load tracking tensors are initialized
+- file: vllm_ascend/quantization/methods/w4a16.py:186
+  context: Stored for W4A16 quantized MoE weight handling with EPLB
+- file: vllm_ascend/quantization/methods/w4a4_mxfp4.py:135
+  context: Stored for W4A4 MXFP4 quantized MoE weight handling with EPLB
+- file: vllm_ascend/quantization/methods/w4a8.py:365
+  context: Stored for W4A8 quantized MoE weight handling with EPLB
+related_parameters:
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: Setting expert_map_record_path automatically forces dynamic_eplb to true (line 665)
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Only effective when dynamic_eplb is true; specifies number of redundant expert copies
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: Controls how many forward iterations before EPLB begins collecting expert load data
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Controls how often the EPLB worker recomputes expert placement
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Selects the load balancing algorithm (0-3); only used when dynamic_eplb is true
+- name: additional_config.eplb_config.expert_map_path
+  relation: Static expert map alternative; when set, eplb_enable is true but dynamic_eplb may still be false
+constraints:
+- dynamic_eplb requires the environment variable DYNAMIC_EPLB or EXPERT_MAP_RECORD to be set to "true" or "1"
+- dynamic_eplb is not supported by Ascend NPU model runner v2 and will raise NotImplementedError
+- dynamic_eplb requires expert parallelism (ep_size > 1); it will assert-fail if ep_size is 1
+- When expert_map_record_path is set, dynamic_eplb is automatically forced to true regardless of user setting
+tuning_advice:
+  summary: Enable dynamic EPLB for MoE models with skewed expert utilization to improve throughput, but only on v1 worker
+    with ep_size > 1 and proper environment variables set.
+  suggested_values:
+  - scenario: MoE model with uneven expert load distribution on multi-NPU v1 worker
+    value: true
+    reason: Dynamic EPLB redistributes experts at runtime based on actual token counts, reducing load imbalance and improving
+      overall throughput by up to 20-30% for skewed distributions
+  - scenario: MoE model with balanced expert utilization or single-NPU deployment
+    value: false
+    reason: Dynamic EPLB adds overhead from the background EPLB process, D2D weight transfers, and redundant expert memory;
+      no benefit when load is already balanced
+  - scenario: Using v2 Ascend model runner
+    value: false
+    reason: dynamic_eplb is explicitly not supported in v2 worker and will raise NotImplementedError at initialization
+  caveats:
+  - dynamic_eplb is only available in the v1 Ascend model runner; v2 worker raises NotImplementedError
+  - Requires setting environment variable DYNAMIC_EPLB=true or EXPERT_MAP_RECORD=true before launching
+  - Adds memory overhead from redundant experts (num_redundant_experts) and the EPLB process itself
+  - D2D weight transfers during expert redistribution may cause brief latency spikes
+  - The EPLB background process consumes additional CPU resources for load calculation and placement optimization
+  - Expert parallelism (ep_size > 1) is mandatory; single-NPU MoE inference cannot use dynamic EPLB
+  quick_guide: Set to true only for MoE models on v1 worker with ep_size > 1 and DYNAMIC_EPLB=true env var; use false for
+    v2 worker or balanced workloads.
+analysis_date: '2026-07-06'

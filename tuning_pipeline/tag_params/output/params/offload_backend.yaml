@@ -1,0 +1,119 @@
+name: --offload-backend
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:12
+- vllm/config/offload.py:83
+- vllm/config/offload.py:97
+- vllm/engine/arg_utils.py:1138
+- vllm/engine/arg_utils.py:2142
+- vllm/config/vllm.py:290
+- vllm_ascend/worker/model_runner_v1.py:252
+- vllm_ascend/worker/model_runner_v1.py:271
+- vllm_ascend/worker/model_runner_v1.py:4570
+value_type: str
+default: auto
+valid_choices:
+- auto
+- uva
+- prefetch
+cli_example: --offload-backend uva --cpu-offload-gb 8
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option selects the model-weight offloading strategy. In the pinned upstream factory, auto chooses prefetch
+  when offload_group_size is positive, otherwise UVA when cpu_offload_gb is positive, and otherwise a no-op that leaves weights
+  on the accelerator. UVA places eligible parameters in host memory and accesses or copies them during forward execution;
+  prefetch moves a configured pattern of layers to CPU and uses asynchronous transfers plus accelerator buffer slots. The
+  active choice therefore changes device and host memory use as well as transfer work on the inference path, affecting latency
+  and throughput. The pinned Ascend NPU runner inherits the upstream runner and invokes its initialization inside a wrapper
+  that maps CUDA stream and event APIs to torch.npu, so the selector is used on the Ascend path rather than being replaced
+  by an Ascend-specific value.
+usage_locations:
+- file: vllm/config/offload.py:83
+  context: Defines the selector, its three choices, and the auto-selection precedence.
+- file: vllm/config/offload.py:97
+  context: Validates prefetch settings and warns when fields for an unselected backend will be ignored.
+- file: vllm/engine/arg_utils.py:1138
+  context: Registers the command-line option from OffloadConfig metadata.
+- file: vllm/engine/arg_utils.py:2142
+  context: Builds OffloadConfig from the selector and the UVA and prefetch sub-configurations.
+- file: vllm/config/vllm.py:290
+  context: Stores the resulting offload configuration in VllmConfig for model-runner use.
+- file: vllm_ascend/worker/model_runner_v1.py:252
+  context: Defines the Ascend NPU runner as a subclass of the upstream GPUModelRunner.
+- file: vllm_ascend/worker/model_runner_v1.py:271
+  context: Runs the parent model-runner initialization, which creates the selected offloader, under the Ascend API wrapper.
+- file: vllm_ascend/worker/model_runner_v1.py:4570
+  context: Maps CUDA stream and event APIs used by inherited initialization to torch.npu equivalents.
+related_parameters:
+- name: --cpu-offload-gb
+  relation: A positive value activates UVA under auto and sets the per-device host-offload byte budget.
+- name: --cpu-offload-params
+  relation: Restricts which parameter-name segments are eligible for UVA offloading.
+- name: --offload-group-size
+  relation: A positive value takes precedence under auto and selects the prefetch backend while defining the layer grouping.
+- name: --offload-num-in-group
+  relation: Sets how many layers at the end of each group are offloaded by prefetch.
+- name: --offload-prefetch-step
+  relation: Sets the prefetch lookahead used to overlap host-to-device transfer with execution.
+- name: --offload-params
+  relation: Restricts which parameter-name segments are offloaded by the prefetch backend.
+constraints:
+- With auto, a positive offload_group_size takes precedence over a positive cpu_offload_gb; if neither is positive, no offloading
+  occurs.
+- Explicit uva ignores active prefetch fields with a warning, and explicit prefetch ignores active UVA fields with a warning.
+- Prefetch requires offload_num_in_group to be less than or equal to offload_group_size and offload_prefetch_step to be at
+  least 1.
+- Selecting uva with cpu_offload_gb=0 creates a zero-byte offload budget, so the selector alone does not move weights to host
+  memory.
+tuning_advice:
+  summary: Keep auto as the baseline and activate exactly one offload configuration; avoid weight offloading when the model
+    fits because every active backend trades accelerator memory capacity for host-memory traffic and execution overhead.
+  suggested_values:
+  - scenario: Model fits in accelerator memory
+    value: auto
+    reason: With both activation fields at zero, auto selects the no-op path and avoids host-memory transfers.
+  - scenario: A bounded amount of weight memory must move to the host
+    value: uva
+    reason: Together with a measured positive cpu_offload_gb budget, UVA directly limits the amount made eligible for host
+      placement.
+  - scenario: Layer-pattern offloading is required and transfer overlap can be tuned
+    value: prefetch
+    reason: Together with valid group, count, and lookahead values, prefetch uses asynchronous transfers and reusable accelerator
+      buffers to hide part of the transfer cost.
+  caveats:
+  - The backend value does not determine the offload amount by itself; the corresponding UVA or prefetch fields must also
+    be configured.
+  - UVA performance depends on host-to-accelerator connectivity and platform UVA support; when UVA is unavailable, upstream
+    falls back to copying parameter state on demand.
+  - Prefetch reserves accelerator-side static buffers and can stall when transfer lookahead does not match the model and interconnect,
+    so it does not guarantee lower latency than UVA.
+  - The Ascend wrapper maps inherited stream APIs to torch.npu, but the best backend and sub-configuration remain dependent
+    on the CANN version, topology, model, and workload and require target-machine measurement.
+  quick_guide: Start with auto and no offload fields; if the model does not fit, test either a small positive cpu_offload_gb
+    budget or a valid prefetch group configuration, but do not activate both while auto is selected.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

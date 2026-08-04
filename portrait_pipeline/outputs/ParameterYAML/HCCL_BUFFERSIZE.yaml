@@ -1,0 +1,59 @@
+name: HCCL_BUFFERSIZE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- docs/source/user_guide/feature_guide/netloader.md:96
+- vllm_ascend/model_loader/netloader/executor/netloader_pg.py:92
+value_type: int
+default: external HCCL default; approximately 200 MB according to the pinned Netloader guide
+valid_choices: HCCL-defined buffer-size value; the pinned vLLM and vLLM Ascend sources do not parse the value or document
+  its exact syntax or range.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+impact_detail: HCCL_BUFFERSIZE controls an external HCCL connection-buffer allocation used when Netloader establishes HCCL
+  communication. The pinned Ascend Netloader guide says this requires approximately 200 MB of extra on-chip memory at the
+  external default and explicitly tells users to reserve enough capacity with --gpu-memory-utilization. That allocation reduces
+  the device memory available to vLLM for model execution and KV cache. If the extra reservation does not fit, Netloader connection
+  setup or serving can fail from memory pressure. Neither pinned repository reads or validates this variable, so its exact
+  parsing, allocation formula, and any communication-performance tradeoff are owned by the installed torch_npu/CANN/HCCL stack
+  rather than vLLM. Upstream vLLM contains no reference to HCCL_BUFFERSIZE.
+usage_locations:
+- file: docs/source/user_guide/feature_guide/netloader.md:96
+  context: Documents the approximately 200 MB external default, the extra on-chip memory needed for Netloader HCCL connections,
+    and the need to reserve sufficient device capacity.
+- file: vllm_ascend/model_loader/netloader/executor/netloader_pg.py:92
+  context: Netloader selects the HCCL backend and later constructs ProcessGroupHCCL; the external HCCL implementation, not
+    this Python code, consumes its environment configuration while establishing the process group.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: The Netloader guide recommends leaving sufficient device-memory headroom through this setting for the extra HCCL
+    connection allocation.
+- name: --load-format
+  relation: HCCL_BUFFERSIZE is relevant to the documented vLLM Ascend path when this option selects netloader.
+constraints:
+- The pinned repositories do not define the accepted representation or range; use only values supported by the installed HCCL
+  version.
+- The variable is consumed externally and must be present in each worker's environment before its Netloader HCCL process group
+  is created.
+- Device-memory planning must leave room for the HCCL allocation in addition to model, activation, and KV-cache memory.
+tuning_advice:
+  summary: Keep the external HCCL default and reserve approximately 200 MB of on-chip memory per affected worker unless version-specific
+    HCCL guidance and measurements justify an override.
+  suggested_values:
+  - scenario: Standard Netloader deployment
+    value: external default (approximately 200 MB)
+    reason: This is the only configuration characterized by the pinned Ascend source, and the guide tells users to reserve
+      capacity for it.
+  caveats:
+  - Approximately 200 MB is documentation-level guidance, not a default literal declared or parsed in either pinned repository.
+  - The pinned sources provide no supported minimum, maximum, unit syntax, or evidence that changing the value improves communication
+    performance.
+  - A larger external allocation would leave less memory for vLLM, while an unsupported or insufficient value may prevent
+    reliable HCCL setup; verify behavior against the installed HCCL release before overriding it.
+  quick_guide: Leave HCCL_BUFFERSIZE unset, budget approximately 200 MB of additional on-chip memory for each Netloader worker,
+    and lower --gpu-memory-utilization if necessary to create that headroom.
+analysis_date: '2026-08-03'

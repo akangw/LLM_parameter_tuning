@@ -1,0 +1,115 @@
+name: additional_config.enable_flashcomm1
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:83
+- vllm_ascend/envs.py:70
+- docs/source/user_guide/configuration/additional_config.md:92
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: 'vllm serve Qwen/Qwen3-8B --tensor-parallel-size 2 --additional-config=''{"enable_flashcomm1": true}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: This Ascend-only switch enables the FlashComm1 sequence-parallel execution path. enable_sp() gives an explicitly
+  supplied additional_config value precedence over AscendConfig and the deprecated environment fallback. At runtime, the forward
+  context activates FlashComm1 for MoE batches with token metadata and for dense batches only when num_tokens is greater than
+  1000. The selected linear operators replace ordinary tensor-parallel all-reduce/all-gather behavior with sequence- parallel
+  operations, including fused matrix-multiply/reduce-scatter where supported. Consequently it can materially reduce communication
+  latency and raise throughput for sufficiently large tensor-parallel batches, while the source warns that switching communication
+  methods below the dense-model threshold may degrade performance.
+usage_locations:
+- file: vllm_ascend/utils.py:990
+  context: Resolves and caches the sequence-parallel enablement flag, prioritizing additional_config.enable_flashcomm1 and
+    allowing shared-expert DP to force it on.
+- file: vllm_ascend/ascend_forward_context.py:115
+  context: Applies the runtime token-count policy; dense models require more than 1000 tokens, while MoE models enable the
+    path whenever token metadata is present.
+- file: vllm_ascend/ops/linear_op.py:500
+  context: Chooses ordinary tensor-parallel all-reduce when disabled and the FlashComm1 reduce-scatter sequence-parallel implementation
+    when enabled.
+- file: vllm_ascend/platform.py:641
+  context: Validates that FlashComm1 has tensor_parallel_size greater than 1 and that MoE models also enable expert parallelism.
+- file: vllm_ascend/utils.py:1488
+  context: Makes FlashComm1 sequence parallelism a required prerequisite for DSA context parallelism.
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Deprecated environment fallback; an explicit additional_config.enable_flashcomm1 value takes precedence.
+- name: tensor_parallel_size
+  relation: FlashComm1 requires tensor parallel size greater than 1.
+- name: additional_config.enable_dsa_cp
+  relation: DSA context parallelism requires the sequence-parallel path enabled by FlashComm1.
+- name: additional_config.enable_shared_expert_dp
+  relation: Shared-expert data parallelism forces enable_sp() true when its own prerequisites are met.
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: Enables the separate FlashComm2 path; current validation recommends also enabling FlashComm1 for optimal performance.
+constraints:
+- Requires tensor_parallel_size greater than 1; platform validation asserts otherwise.
+- For MoE models, expert parallelism must also be enabled.
+- For dense models, the runtime FlashComm1 path is used only when num_tokens is greater than 1000; smaller batches remain
+  on the ordinary communication path.
+- additional_config.enable_dsa_cp cannot be enabled unless FlashComm1 sequence parallelism is enabled.
+- An explicit additional_config value overrides the deprecated VLLM_ASCEND_ENABLE_FLASHCOMM1 environment fallback, including
+  an explicit false value.
+tuning_advice:
+  summary: Enable FlashComm1 for communication-bound, tensor-parallel Ascend inference with sufficiently large batches, and
+    benchmark against the default for the exact model and workload.
+  suggested_values:
+  - scenario: High-concurrency dense-model inference with tensor_parallel_size greater than 1 and batches exceeding 1000 tokens
+    value: true
+    reason: Current source activates the optimized communication path above this empirical threshold, where it says performance
+      benefits can be maximized.
+  - scenario: MoE inference with tensor parallelism and expert parallelism enabled
+    value: true
+    reason: MoE forward context permits FlashComm1 whenever token metadata is present, allowing sequence-parallel linear communication
+      paths.
+  - scenario: DSA context parallelism
+    value: true
+    reason: enable_dsa_cp raises an error unless the FlashComm1-backed sequence-parallel path is enabled.
+  - scenario: Single-device or tensor_parallel_size equal to 1
+    value: false
+    reason: FlashComm1 is unsupported without tensor parallelism and platform validation requires tensor_parallel_size greater
+      than 1 when enabled.
+  - scenario: Predominantly small dense batches
+    value: false
+    reason: The runtime does not activate FlashComm1 at 1000 tokens or fewer, and source comments warn that changing communication
+      methods at low concurrency can degrade performance.
+  caveats:
+  - The 1000-token cutoff is an empirical runtime threshold for dense models, not a universal request-concurrency target;
+    benchmark using actual batched token counts.
+  - Enabling the configuration does not mean every invocation uses FlashComm1 because forward-context model and token-count
+    gates still apply.
+  - MoE use additionally requires expert parallelism, while shared-expert DP can force sequence parallelism on independently
+    of this value.
+  - Prefer this additional_config key over VLLM_ASCEND_ENABLE_FLASHCOMM1 because the environment variable is deprecated and
+    scheduled for removal.
+  - FlashComm2 is a distinct optimization with separate configuration and applicability; do not treat this boolean as its
+    replacement.
+  quick_guide: Start with false; set true for TP greater than 1 when large batches, MoE plus EP, or DSA CP justify it, then
+    compare end-to-end latency and throughput on the target Ascend deployment.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

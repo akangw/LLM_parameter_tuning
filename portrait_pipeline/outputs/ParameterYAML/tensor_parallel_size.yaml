@@ -1,0 +1,94 @@
+name: --tensor-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/parallel.py:113
+- vllm/engine/arg_utils.py:943
+- vllm/config/model.py:1141
+- vllm_ascend/worker/worker.py:762
+- vllm_ascend/worker/model_runner_v1.py:2625
+- vllm_ascend/platform.py:459
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:32
+value_type: int
+default: 1
+valid_choices: A positive integer compatible with the model head counts, available NPU world size, and any context-parallel
+  configuration.
+cli_example: --tensor-parallel-size 8
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Tensor-parallel size is the number of model-parallel ranks across which vLLM partitions tensor-parallel layers.
+  Increasing it distributes model weights and layer computation across more NPUs, reducing per-rank weight memory, but it
+  also enlarges the HCCL model-parallel group and adds collective communication that can hurt latency or throughput when communication
+  dominates. In vllm-ascend the value is passed directly into model-parallel initialization. It also controls token padding
+  and graph-size eligibility when FlashComm sequence parallelism is active, so larger values can introduce padding work for
+  small or irregular batches.
+usage_locations:
+- file: vllm_ascend/worker/worker.py:762
+  context: Passes the configured TP size into HCCL-backed model-parallel group initialization.
+- file: vllm_ascend/worker/model_runner_v1.py:2625
+  context: Rounds scheduled token counts up to a multiple of TP size when Ascend sequence parallelism is enabled.
+- file: vllm_ascend/platform.py:459
+  context: Filters Ascend graph capture sizes to TP-compatible multiples when sequence parallelism is active.
+- file: vllm_ascend/ascend_config.py:106
+  context: Requires TP greater than one before Ascend shared-expert data parallelism can become active.
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:32
+  context: Checks that executor world size equals TP times pipeline parallel size times prefill context parallel size.
+- file: vllm/config/model.py:1141
+  context: Verifies that the model attention-head count is divisible by TP size and applies DCP/GQA compatibility checks.
+- file: vllm/config/parallel.py:474
+  context: Requires TP size to be divisible by decode context parallel size.
+related_parameters:
+- name: --pipeline-parallel-size
+  relation: TP, pipeline parallelism, and prefill context parallelism multiply to the model-worker world size.
+- name: --prefill-context-parallel-size
+  relation: Ascend includes PCP with TP when forming the worker world size and aligning batched-token counts for sequence
+    parallelism.
+- name: --decode-context-parallel-size
+  relation: DCP reuses TP ranks, so TP must be divisible by DCP and additional GQA/MQA head constraints apply.
+- name: --data-parallel-size
+  relation: Data parallel replicas multiply the overall deployment process count while each replica contains its TP group.
+- name: compilation_config.pass_config.enable_sp
+  relation: When Ascend sequence parallelism is enabled, scheduled tokens and graph sizes are aligned to TP-size multiples.
+- name: additional_config.finegrained_tp_config
+  relation: Ascend can configure separate tensor-parallel sizes for selected model components instead of relying only on the
+    global TP size.
+constraints:
+- TP size must be a positive integer; the default is 1.
+- The model's total number of attention heads must be divisible by TP size.
+- TP size must be divisible by --decode-context-parallel-size.
+- For non-MLA GQA/MQA with DCP greater than one, TP size must exceed the number of KV heads and DCP must not exceed TP size
+  divided by the KV-head count.
+- In the Ascend multiprocessing executor, world size must equal TP size times pipeline parallel size times prefill context
+  parallel size.
+- Ascend FlashComm sequence parallelism requires TP size greater than one; usable graph capture sizes must include TP-size
+  multiples.
+tuning_advice:
+  summary: Choose the smallest TP size that fits the model in aggregate NPU memory and satisfies model-head and topology constraints,
+    then benchmark representative traffic because extra HCCL communication and sequence-parallel padding can erase the benefit
+    of using more ranks.
+  suggested_values:
+  - scenario: Model fits on one NPU and low-request latency is the priority
+    value: 1
+    reason: This avoids tensor-parallel collectives and is the current default.
+  - scenario: Model does not fit on one NPU
+    value: Smallest supported divisor of the attention-head count that makes the model fit
+    reason: This gains the required per-rank weight-memory reduction while limiting HCCL group size and collective overhead.
+  - scenario: Ascend dynamic-batch experiments on supported Qwen or Llama 8B-32B workloads
+    value: 8
+    reason: The pinned Ascend dynamic-batch guide reports its tested better-performing cases with tensor_parallel_size=8,
+      but still calls for workload-specific tuning.
+  caveats:
+  - More TP ranks reduce per-rank model-weight memory but do not guarantee lower end-to-end latency or higher throughput;
+    communication topology, model shape, batch size, and CANN/HCCL behavior matter.
+  - With Ascend FlashComm sequence parallelism, scheduled tokens are rounded to TP-size multiples, so large TP sizes can waste
+    compute on small or irregular batches.
+  - Explicit graph capture sizes can be discarded if they are not TP-size multiples; startup fails if no compatible size remains.
+  - TP values must also fit the physical and executor topology represented by the configured world size.
+  quick_guide: Start at TP=1 when the model fits; otherwise increase only to the smallest valid head-count divisor that fits,
+    then benchmark latency, throughput, and HBM headroom.
+analysis_date: '2026-07-28'

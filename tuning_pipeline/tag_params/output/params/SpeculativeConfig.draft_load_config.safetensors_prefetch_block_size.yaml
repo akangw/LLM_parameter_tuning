@@ -1,0 +1,102 @@
+name: SpeculativeConfig.draft_load_config.safetensors_prefetch_block_size
+type: nested
+category: memory
+scope: both
+source_file:
+- vllm/config/load.py:13
+- vllm/config/load.py:90
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+value_type: int
+default: 16777216
+valid_choices: '>= 1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This nested field sets the byte count for each read performed by each safetensors page-cache prefetch worker
+  while the speculative draft model is loaded. The pinned upstream default loader passes it to the ordinary safetensors iterator,
+  which uses it when the prefetch strategy is explicit or when the null strategy automatically enables prefetch for NFS, NFS4,
+  or Lustre checkpoints that fit the host-RAM gate. Larger blocks mean fewer Python read calls for a fixed checkpoint size
+  but larger temporary userspace buffers per active worker; smaller blocks trade lower per-read memory for more loop and read-call
+  overhead. It affects draft-model cold-start I/O and transient host memory, not the draft computation graph, NPU memory,
+  or steady-state token throughput. The pinned Ascend proposer passes the complete draft_load_config to the upstream model
+  loader without overriding this field, so the same behavior applies to Ascend speculative draft loading.
+usage_locations:
+- file: vllm/config/load.py:13
+  context: Defines the pinned default as 16 MiB.
+- file: vllm/config/load.py:90
+  context: Defines the integer field with a minimum of one byte and documents it as the read size for safetensors checkpoint
+    prefetch.
+- file: vllm/config/speculative.py:186
+  context: Declares draft_load_config and states that the target model load configuration is used when a separate draft configuration
+    is absent.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Classifies draft_load_config as an internal field populated by vLLM rather than a supported user key in speculative_config.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads the speculative draft_load_config and passes it to get_model while constructing the Ascend draft proposer.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config.safetensors_load_strategy
+  relation: This block size is consumed only when explicit or automatic page-cache prefetch is active in the ordinary safetensors
+    loading path.
+- name: SpeculativeConfig.draft_load_config.safetensors_prefetch_num_threads
+  relation: Sets the maximum concurrent readers; together with block size it determines the temporary read buffers that can
+    be in flight.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: Non-safetensors and specialized loader paths can bypass the ordinary safetensors iterator that consumes this value.
+- name: SpeculativeConfig.draft_load_config.model_loader_extra_config
+  relation: Enabling the alternate multithreaded safetensors loader bypasses this page-cache prefetch setting in the pinned
+    upstream implementation.
+constraints:
+- The value must be an integer greater than or equal to 1; both LoadConfig validation and the prefetch helpers enforce this.
+- The default is 16777216 bytes (16 MiB).
+- The field has no effect unless page-cache prefetch is active in the ordinary safetensors iterator.
+- Each active worker reads one block at a time, so increasing the value increases its temporary userspace read buffer.
+- Block size does not reduce the page-cache space needed to warm the checkpoint or make an oversized checkpoint safe to prefetch.
+- draft_load_config and this nested field are internal speculative-decoding configuration populated by vLLM, not supported
+  user-provided keys in --speculative-config.
+tuning_advice:
+  summary: Keep the inherited 16 MiB default unless cold-cache measurements on the draft checkpoint's actual storage show
+    that a different read granularity is beneficial.
+  suggested_values:
+  - scenario: Ordinary deployment or no storage-specific benchmark
+    value: 16777216
+    reason: This is the pinned-source default and avoids speculative tuning of a startup-only I/O detail.
+  - scenario: Transient host-memory pressure with several active prefetch workers
+    value: 4194304
+    reason: A 4 MiB block reduces each worker's temporary read buffer, at the cost of more read calls that may lengthen cold
+      start.
+  - scenario: High-latency storage where read-call granularity demonstrably limits cold start
+    value: 67108864
+    reason: A 64 MiB block makes fewer read calls for fixed checkpoint bytes, but needs more temporary memory per worker and
+      must be justified by measurement.
+  caveats:
+  - Measure draft-model initialization or time to readiness with a cold filesystem cache; this field does not tune request-time
+    latency or decode throughput.
+  - Approximate concurrent temporary read-buffer capacity scales with active prefetch workers times block size.
+  - Filesystem readahead, cache state, shard sizes, rank count, worker count, and storage concurrency can dominate the result.
+  - Automatic prefetch runs only for recognized network filesystems when the checkpoint is at most 90% of available RAM; explicit
+    prefetch above that threshold only warns.
+  - The nested field is internal and normally inherits the target LoadConfig rather than being supplied through --speculative-config.
+  quick_guide: Keep 16 MiB. Consider a smaller block only for measured transient-buffer pressure and a larger block only when
+    cold-cache profiling proves that read-call overhead limits draft startup.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

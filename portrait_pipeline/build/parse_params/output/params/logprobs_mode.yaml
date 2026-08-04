@@ -1,0 +1,108 @@
+name: --logprobs-mode
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:227
+- vllm/engine/arg_utils.py:521
+- vllm/engine/arg_utils.py:798
+- vllm_ascend/sample/sampler.py:67
+- vllm_ascend/sample/rejection_sampler.py:134
+- vllm_ascend/_310p/sample/sampler.py:68
+value_type: str
+default: raw_logprobs
+valid_choices:
+- raw_logprobs
+- processed_logprobs
+- raw_logits
+- processed_logits
+cli_example: --logprobs-mode processed_logprobs
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: "This parameter controls what intermediate values are returned in logprobs/prompt_logprobs fields of the API\
+  \ response. It does NOT change the sampling result (the chosen token is identical regardless of mode). The performance impact\
+  \ comes from two sources:\n1. **Sampler fast-path eligibility (GPU-only, not Ascend).** In upstream vLLM v1,\n   `TopKTopPSampler.__init__`\
+  \ (vllm/v1/sample/ops/topk_topp_sampler.py:30-109) checks\n   whether `logprobs_mode` is `processed_logits` or `processed_logprobs`.\
+  \ If it is,\n   the FlashInfer/aiter fast-path is disabled and the sampler falls back to the\n   PyTorch-native implementation.\
+  \ This is because the fast-path kernels cannot return\n   intermediate logits/logprobs after top-k/top-p filtering. **On\
+  \ Ascend NPU, this\n   fast-path logic is irrelevant** — the Ascend sampler (`AscendTopKTopPSampler` in\n   vllm_ascend/sample/sampler.py:131-160\
+  \ and vllm_ascend/_310p/sample/sampler.py:62-87)\n   always uses its own `forward_native` implementation and does not have\
+  \ a FlashInfer\n   equivalent. Therefore, the mode choice does not affect which sampling kernel is used\n   on Ascend.\n\
+  \n2. **Extra computation in the sampler.** When `logprobs_mode` is `processed_logits`\n   or `processed_logprobs`, the Ascend\
+  \ sampler computes and returns the intermediate\n   logits/logprobs after top-k/top-p filtering (vllm_ascend/sample/sampler.py:141-157,\n\
+  \   vllm_ascend/_310p/sample/sampler.py:68-84). This involves an additional\n   `log_softmax` call for `processed_logprobs`\
+  \ mode. The overhead is small (a single\n   softmax/log_softmax per token) and only applies when logprobs are actually requested\n\
+  \   by the client. When logprobs are not requested, this code path is not executed.\n\n3. **Speculative decoding.** In the\
+  \ rejection sampler (both upstream\n   vllm/v1/sample/rejection_sampler.py:138 and vllm_ascend/sample/rejection_sampler.py:134),\n\
+  \   the mode determines whether `raw_target_logits` or `target_logits` (after processors)\n   is used for logprobs computation.\
+  \ The `is_processed_logprobs_mode` flag also controls\n   whether a clone of `raw_target_logits` is made before applying\
+  \ processors\n   (vllm/v1/sample/rejection_sampler.py:151-155). This clone adds a minor memory and\n   compute overhead\
+  \ for non-processed modes.\n\nOverall, the performance impact is low because: (a) the extra computation is minimal (softmax/log_softmax),\
+  \ (b) it only occurs when logprobs are requested, and (c) on Ascend there is no fast-path kernel to lose.\n"
+usage_locations:
+- file: vllm/config/model.py:227
+  context: Field definition with default 'raw_logprobs' and docstring describing the four modes
+- file: vllm/engine/arg_utils.py:521
+  context: EngineArgs field declaration, passed through to ModelConfig
+- file: vllm/engine/arg_utils.py:798
+  context: CLI argument registration via add_cli_args
+- file: vllm_ascend/sample/sampler.py:67
+  context: AscendSampler.__init__ accepts logprobs_mode and passes it to parent and AscendTopKTopPSampler
+- file: vllm_ascend/sample/sampler.py:141
+  context: AscendTopKTopPSampler.forward_native checks logprobs_mode to decide what to return
+- file: vllm_ascend/_310p/sample/sampler.py:68
+  context: AscendTopKTopPSampler310.forward_native checks logprobs_mode for 310P-specific path
+- file: vllm_ascend/sample/rejection_sampler.py:134
+  context: Rejection sampler overrides logprobs_mode to 'processed_logits' or 'raw_logits' for bonus token sampling
+- file: vllm_ascend/sample/rejection_sampler.py:175
+  context: Rejection sampler selects target_logits vs raw_target_logits based on is_processed_logprobs_mode
+- file: vllm/v1/sample/ops/topk_topp_sampler.py:30
+  context: Upstream TopKTopPSampler checks logprobs_mode to decide FlashInfer fast-path eligibility (GPU only)
+- file: vllm/v1/sample/rejection_sampler.py:68
+  context: Upstream rejection sampler derives is_processed_logprobs_mode and is_logits_logprobs_mode from logprobs_mode
+related_parameters:
+- name: --max-logprobs
+  relation: Controls how many logprobs are returned; logprobs-mode determines what those values represent (raw vs processed,
+    logprobs vs logits)
+- name: logprobs (SamplingParams)
+  relation: The per-request logprobs field in SamplingParams triggers logprobs computation; logprobs-mode is the server-level
+    default for what content to return
+constraints:
+- 'Must be one of: raw_logprobs, processed_logprobs, raw_logits, processed_logits'
+tuning_advice:
+  summary: Choose based on API semantics, not performance — the overhead difference between modes is negligible on Ascend
+    NPU.
+  suggested_values:
+  - scenario: Default usage — standard OpenAI-compatible logprobs
+    value: raw_logprobs
+    reason: Matches the default vLLM behavior and OpenAI API semantics. No extra softmax computation in the sampler when logprobs
+      are requested.
+  - scenario: Need logprobs after temperature, top_k, top_p, and other processors are applied
+    value: processed_logprobs
+    reason: Returns logprobs that reflect the actual sampling distribution after all transformations. Adds a small log_softmax
+      overhead per token when logprobs are requested.
+  - scenario: Need raw logits for custom post-processing or debugging
+    value: raw_logits
+    reason: Returns the unprocessed logits directly from the model output. Useful for debugging logit processors or implementing
+      custom sampling logic externally.
+  - scenario: Need processed logits (after processors but before softmax)
+    value: processed_logits
+    reason: Returns logits after applying all processors (temperature, top_k/top_p, penalties, etc.) but before converting
+      to probabilities.
+  caveats:
+  - On Ascend NPU, all four modes use the same sampling kernel (AscendTopKTopPSampler.forward_native) — there is no fast-path
+    to lose unlike GPU where FlashInfer is disabled for processed modes.
+  - The extra log_softmax computation for processed_logprobs mode is only triggered when the client actually requests logprobs
+    in SamplingParams. Requests without logprobs incur zero overhead regardless of this setting.
+  - In speculative decoding, the rejection sampler internally overrides logprobs_mode to 'processed_logits' or 'raw_logits'
+    for bonus token sampling (vllm_ascend/sample/rejection_sampler.py:134). This override is hardcoded and independent of
+    the user's --logprobs-mode setting.
+  - The vllm-ascend AscendSampler has a TODO comment (vllm_ascend/sample/sampler.py:68) indicating that full logprobs_mode
+    support is still being worked on. Currently only processed_logits and processed_logprobs are explicitly handled in the
+    Ascend sampler's forward_native.
+  quick_guide: Use raw_logprobs (default) for standard OpenAI-compatible behavior; switch to processed_logprobs only if you
+    need logprobs that reflect the post-processing sampling distribution.
+analysis_date: '2026-07-06'

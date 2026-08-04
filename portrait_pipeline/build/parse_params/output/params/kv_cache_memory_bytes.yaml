@@ -1,0 +1,79 @@
+name: --kv-cache-memory-bytes
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1086
+- vllm/config/cache.py:158
+- vllm_ascend/worker/worker.py:348
+value_type: int
+default: 'null'
+valid_choices: any positive integer (bytes), or None to auto-infer
+cli_example: --kv-cache-memory-bytes 4294967296
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter directly controls the size of the KV cache allocated per GPU/NPU. When set to a non-None value,
+  it bypasses the automatic memory profiling and gpu_memory_utilization calculation entirely. On Ascend NPU, the vllm-ascend
+  worker (vllm_ascend/worker/worker.py:348) checks this value first in determine_available_memory(). If set, it skips the
+  profiling-based memory calculation and returns the user-specified value directly. This means the entire KV cache allocation
+  is under manual control — setting it too low wastes NPU HBM and reduces max batch size / throughput; setting it too high
+  causes OOM. The value is per-GPU (per-NPU), so total KV cache across TP ranks is kv_cache_memory_bytes × tp_size. On 310P
+  RC devices, the available memory is further halved (vllm_ascend/_310p/worker_310p.py:126) to reserve workspace for operators,
+  making manual tuning even more critical.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/worker.py:348
+  context: Fast path in determine_available_memory() — if set, skips profiling and returns this value directly as KV cache
+    size
+- file: vllm_ascend/_310p/worker_310p.py:126
+  context: 310P RC device path — available KV cache memory is halved from requested memory minus system used memory
+- file: vllm/v1/worker/gpu_worker.py:366
+  context: Upstream GPU worker fast path — same skip-profiling logic as Ascend worker
+- file: vllm/config/cache.py:158
+  context: Field definition in CacheConfig with docstring explaining it overrides gpu_memory_utilization
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Ignored when --kv-cache-memory-bytes is set (non-None). The two are mutually exclusive in effect.
+- name: --num-gpu-blocks-override
+  relation: Alternative manual control at block granularity; kv_cache_memory_bytes is at byte granularity
+constraints:
+- When set, --gpu-memory-utilization is completely ignored for KV cache sizing
+- The value must not exceed the available free NPU memory after model weights and activations are loaded, or OOM will occur
+- On 310P RC devices, the effective KV cache memory is halved internally to reserve workspace for operators
+- The value is per-NPU; total KV cache across tensor-parallel ranks is kv_cache_memory_bytes × tensor_parallel_size
+tuning_advice:
+  summary: Use only when you need precise manual control over KV cache size; otherwise rely on automatic profiling with --gpu-memory-utilization
+    for safer defaults.
+  suggested_values:
+  - scenario: First-time deployment on Ascend NPU (recommended approach)
+    value: null (do not set)
+    reason: Let vllm-ascend auto-profile memory usage. The Ascend worker's determine_available_memory() will calculate optimal
+      KV cache size based on gpu_memory_utilization and actual model memory footprint. This avoids OOM from incorrect manual
+      estimates.
+  - scenario: Reproducing a known-good KV cache size across identical NPU deployments
+    value: <bytes from previous successful run's log>
+    reason: 'The Ascend worker logs the initial free memory and reserved KV cache size. Copy the logged value to lock in a
+      proven configuration. Check the log line: ''Initial free memory X GiB, reserved Y GiB for KV Cache as specified by kv_cache_memory_bytes''.'
+  - scenario: 310P RC device with shared host/device memory
+    value: <conservative estimate, typically 30-40% of total NPU memory>
+    reason: 310P RC devices share host and device memory, and the worker halves the available KV cache memory. Start conservative
+      and increase gradually while monitoring for OOM.
+  caveats:
+  - On Ascend NPU, setting this parameter skips memory profiling entirely — the model is still compiled via profile_run()
+    but no memory calculation is performed. You are fully responsible for avoiding OOM.
+  - 'The Ascend worker log explicitly warns: ''This does not respect the gpu_memory_utilization config.'' If you later change
+    --gpu-memory-utilization, it will have no effect on KV cache size.'
+  - 'If you OOM after setting this value, the log advises: ''check the difference of initial free memory between the current
+    run and the previous run where kv_cache_memory_bytes is suggested and update it correspondingly.'' NPU memory availability
+    can vary between runs due to driver state or other processes.'
+  - On 310P RC devices, the effective KV cache is halved (// 2) from the computed available memory. Manual values should account
+    for this halving.
+  - This value is per-NPU. For multi-NPU tensor-parallel setups, multiply by tp_size to get total KV cache memory consumption.
+  quick_guide: Leave unset for automatic profiling; set only when migrating a proven KV cache size between identical Ascend
+    NPU deployments, using the logged value from a previous successful run.
+analysis_date: '2026-07-06'

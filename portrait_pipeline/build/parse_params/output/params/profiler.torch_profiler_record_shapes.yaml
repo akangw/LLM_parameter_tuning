@@ -1,0 +1,74 @@
+name: profiler.torch_profiler_record_shapes
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/profiler/wrapper.py:181
+- vllm/profiler/wrapper.py:221
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether torch.profiler.profile() records tensor shapes during profiling sessions.
+  When enabled, the profiler captures shape information for each tensor operation, which increases profiling overhead (CPU
+  time spent recording metadata) and trace file size. This overhead only manifests when profiling is active (controlled by
+  profiler.torch_profiler_dir and related scheduling parameters). During normal inference without profiling, this parameter
+  has zero impact. On Ascend NPU, the torch profiler uses CANN''s profiling infrastructure under the hood, and recording shapes
+  adds additional metadata collection that can slow down already-profiled steps. The parameter is passed directly to torch.profiler.profile()
+  at wrapper.py:221 and logged at wrapper.py:181. vllm-ascend does not override or modify this parameter.
+
+  '
+usage_locations:
+- file: vllm/profiler/wrapper.py:181
+  context: Logged as part of profiler configuration debug output
+- file: vllm/profiler/wrapper.py:221
+  context: Passed as record_shapes argument to torch.profiler.profile()
+related_parameters:
+- name: profiler.torch_profiler_with_memory
+  relation: Companion profiling option; both increase profiling overhead when enabled
+- name: profiler.torch_profiler_with_stack
+  relation: Companion profiling option; both increase profiling overhead when enabled
+- name: profiler.torch_profiler_with_flops
+  relation: Companion profiling option; both increase profiling overhead when enabled
+- name: profiler.torch_profiler_dir
+  relation: Parent profiling configuration; record_shapes only has effect when profiling is active
+constraints:
+- This parameter has no effect unless profiler.torch_profiler_dir is set to enable profiling.
+tuning_advice:
+  summary: 'Keep disabled (default) for production inference to avoid profiling overhead. Enable only during debugging or
+    performance analysis sessions.
+
+    '
+  suggested_values:
+  - scenario: Production inference on Ascend NPU
+    value: false
+    reason: 'Eliminates profiling overhead entirely. Recording tensor shapes adds metadata collection per operation that increases
+      step latency during active profiling windows.
+
+      '
+  - scenario: Debugging tensor shape mismatches or model architecture issues
+    value: true
+    reason: 'Provides shape information in trace files, useful for diagnosing dimension errors or unexpected tensor layouts.
+      Accept the profiling overhead during the debugging session.
+
+      '
+  caveats:
+  - 'Enabling this increases trace file size significantly, especially for models with many tensor operations. On Ascend NPU,
+    large traces can slow down CANN''s trace processing pipeline.
+
+    '
+  - 'This parameter only affects steps within the active profiling window (controlled by profiler.active_iterations). Steps
+    outside the window are unaffected.
+
+    '
+  quick_guide: 'Leave at default (false) unless actively debugging tensor shape issues with the torch profiler.
+
+    '
+analysis_date: '2026-07-06'

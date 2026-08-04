@@ -1,0 +1,7 @@
+name: SpeculativeConfig.moe_backend
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source this field is declared and documented as a draft-model MoE backend override,
+  but no executable code reads it or transfers it into a draft kernel configuration. Runtime MoE backend selection instead
+  reads KernelConfig.moe_backend, and the pinned vllm-ascend source has no consumer or override for SpeculativeConfig.moe_backend.
+  Changing this field therefore has no latency, throughput, or memory effect in the pinned sources.

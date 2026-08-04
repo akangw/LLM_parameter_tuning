@@ -1,0 +1,89 @@
+name: structured_outputs.enable_in_reasoning
+type: nested
+category: other
+scope: vllm
+source_file:
+- vllm/v1/structured_output/__init__.py:96
+- vllm/entrypoints/openai/api_server.py:336
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether structured output grammar bitmask filling is active during the model''s reasoning
+  phase (i.e., before the final answer generation). When enabled, the StructuredOutputManager.should_fill_bitmask() method
+  always returns True, meaning grammar constraints are applied to every token generated during reasoning. This adds a small
+  per-token overhead for bitmask computation and application on every decoding step within the reasoning segment. The overhead
+  is proportional to the number of reasoning tokens generated. When disabled (default), bitmask filling is deferred until
+  after reasoning ends, so reasoning tokens are generated without grammar constraint overhead. The performance impact is low
+  because bitmask operations are relatively lightweight compared to model forward passes, and the effect is limited to requests
+  that use structured output with reasoning parsers.
+
+  '
+usage_locations:
+- file: vllm/v1/structured_output/__init__.py:96
+  context: 'Read from vllm_config.structured_outputs_config.enable_in_reasoning and stored as self.enable_in_reasoning in
+    StructuredOutputManager. Used in should_fill_bitmask() to decide whether to apply grammar constraints during reasoning.
+
+    '
+- file: vllm/entrypoints/openai/api_server.py:336
+  context: 'Propagated to the API server process via set_enable_structured_outputs_in_reasoning() so that tool parsers in
+    the frontend can see the same flag value as the engine core.
+
+    '
+related_parameters:
+- name: structured_outputs.reasoning_parser
+  relation: 'enable_in_reasoning only has effect when a reasoning_parser is configured. Without a reasoning parser, there
+    is no reasoning phase to apply structured output constraints to.
+
+    '
+- name: structured_outputs.reasoning_parser_plugin
+  relation: 'Similar to reasoning_parser — enable_in_reasoning is only meaningful when reasoning parsing is active.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Enable only if your use case requires grammar-constrained reasoning tokens; otherwise leave disabled to avoid
+    per-token bitmask overhead during reasoning.
+
+    '
+  suggested_values:
+  - scenario: 'Standard structured output usage where reasoning content does not need to conform to the output schema.
+
+      '
+    value: false
+    reason: 'Avoids unnecessary bitmask computation on every reasoning token, reducing per-step latency during the reasoning
+      phase.
+
+      '
+  - scenario: 'Use cases requiring the reasoning trace itself to be constrained by the structured output grammar (e.g., chain-of-thought
+      that must follow a specific format).
+
+      '
+    value: true
+    reason: 'Ensures grammar constraints are applied throughout reasoning, preventing the model from generating reasoning
+      tokens that violate the output schema.
+
+      '
+  caveats:
+  - 'This parameter has no effect if no reasoning_parser is configured.
+
+    '
+  - 'The overhead scales linearly with the number of reasoning tokens generated. For models that produce very long reasoning
+    traces, the cumulative latency impact may become noticeable.
+
+    '
+  - 'On Ascend NPU, the bitmask application logic runs on the CPU side (grammar compilation and mask application are not NPU-accelerated),
+    so the relative overhead may be slightly higher than on GPU systems where CPU-GPU transfer latency is lower.
+
+    '
+  quick_guide: 'Keep disabled (default) unless your reasoning trace must conform to the structured output schema.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,81 @@
+name: --mm-processor-cache-type
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:62
+- vllm/config/multimodal.py:132
+- vllm/engine/arg_utils.py:1186
+- docs/configuration/optimization.md:358
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:64
+value_type: str
+default: lru
+valid_choices:
+- lru
+- shm
+cli_example: --mm-processor-cache-type shm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: Selects the multi-modal preprocessor/mapper cache implementation. The default lru mode uses a mirrored LRU
+  cache, whereas shm uses a shared-memory FIFO cache. Current upstream documentation identifies shared memory as more efficient
+  when multiple worker processes participate because cached data is accessible to all processes instead of being mirrored.
+  The pinned Ascend multiprocess executor creates and passes a shared worker lock to each worker, providing the required cross-worker
+  coordination primitive for this cache path. The choice therefore trades shared-memory coordination against duplicated cache
+  memory and can affect multi-modal throughput as well as host-memory use.
+usage_locations:
+- file: vllm/config/multimodal.py:62
+  context: Defines MMCacheType as the lru and shm literal choices.
+- file: vllm/config/multimodal.py:132
+  context: Sets lru as the default and documents lru as mirrored LRU and shm as shared-memory FIFO.
+- file: vllm/engine/arg_utils.py:1186
+  context: Registers the command-line option from MultiModalConfig metadata.
+- file: docs/configuration/optimization.md:358
+  context: Documents shm as more efficient with multiple workers because cache data is accessible to all processes.
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:64
+  context: Creates the shared worker lock that the Ascend multiprocess executor passes to workers.
+related_parameters:
+- name: --mm-processor-cache-gb
+  relation: Sets the cache capacity; the upstream config documents duplicated cache memory across API and engine processes.
+- name: --mm-shm-cache-max-object-size-mb
+  relation: Limits each object stored by the shared-memory processor cache and is effective only with shm.
+- name: VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME
+  relation: Names the object-storage shared-memory buffer when the cache type is shm.
+constraints:
+- The accepted values are lru and shm.
+- --mm-shm-cache-max-object-size-mb must remain at its default unless --mm-processor-cache-type is shm; MultiModalConfig otherwise
+  raises a ValueError.
+- The shared-memory path requires sufficient shared-memory capacity for the selected cache and object-size settings.
+tuning_advice:
+  summary: Keep lru for a simple baseline. For multi-modal serving with multiple worker processes, benchmark shm when shared
+    memory is available; it avoids mirrored cache data and is the mode upstream documents as more efficient in that case.
+  suggested_values:
+  - scenario: Single-worker or baseline multi-modal deployment
+    value: lru
+    reason: Uses the default mirrored LRU cache without introducing shared-memory coordination.
+  - scenario: Multi-worker multi-modal serving with sufficient shared-memory capacity
+    value: shm
+    reason: Makes cached data accessible to all processes instead of mirroring it, reducing duplication and potentially improving
+      throughput.
+  caveats:
+  - shm changes cache placement and depends on available shared-memory capacity rather than providing a universal speedup.
+  - Tune --mm-processor-cache-gb and --mm-shm-cache-max-object-size-mb together with shm because they bound cache capacity
+    and per-object storage.
+  - Do not customize --mm-shm-cache-max-object-size-mb while using lru; the current configuration validator rejects that combination.
+  quick_guide: Use lru by default; test shm for multi-worker multi-modal workloads when shared-memory capacity is provisioned.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

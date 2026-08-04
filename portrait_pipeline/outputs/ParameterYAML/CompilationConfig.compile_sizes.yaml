@@ -1,0 +1,101 @@
+name: CompilationConfig.compile_sizes
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:549
+- vllm/config/compilation.py:1055
+- vllm/v1/cudagraph_dispatcher.py:92
+- vllm/envs.py:1652
+- docs/design/torch_compile.md:210
+- vllm_ascend/worker/worker.py:500
+value_type: unknown
+default: null
+valid_choices: null, an empty list, or a list containing integers and the exact string "cudagraph_capture_sizes"
+cli_example: vllm serve <model> --compilation-config '{"compile_sizes":[1,2,4,8]}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field requests separately compiled static specializations for selected token-batch sizes. Upstream documentation
+  explains that fully static shapes enable Inductor autotuning and can produce faster kernels than the general symbolic-shape
+  compilation, improving steady-state latency or throughput when traffic actually hits those sizes. Each added size also creates
+  compilation and autotuning work on first use and additional cached variants. During configuration finalization, vLLM deduplicates
+  the supplied entries, expands the special string "cudagraph_capture_sizes" to the effective graph-capture sizes, and replaces
+  null with an empty effective list. On Ascend, compile_or_warm_up_model copies the effective sizes, removes sizes that will
+  already be covered by active graph capture, and performs a dummy run for every remaining size in descending order; therefore
+  extra entries directly increase engine-start warm-up work and transient execution memory pressure even when their steady-state
+  benefit is workload-dependent.
+usage_locations:
+- file: vllm/config/compilation.py:1055
+  context: Deduplicates user entries, accepts only integer entries or the exact cudagraph_capture_sizes alias, expands that
+    alias, and normalizes the effective field to a list of integers.
+- file: vllm/v1/cudagraph_dispatcher.py:92
+  context: When CUDA graphs are active, rejects a compile size at or below the capture maximum if graph padding would change
+    that size.
+- file: docs/design/torch_compile.md:210
+  context: Documents static-size compilation, its max-autotune performance opportunity, and its potentially slow first-run
+    compilation.
+- file: vllm_ascend/worker/worker.py:500
+  context: Uses effective compile sizes as model dummy-run warm-up sizes, excludes active graph-capture sizes, supplements
+    uncovered compile ranges, and executes the resulting sizes from largest to smallest.
+related_parameters:
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: The special alias expands to these sizes; graph-compatible compile sizes must also survive graph padding, and
+    Ascend avoids duplicate dummy runs for sizes covered by active graph capture.
+- name: CompilationConfig.cudagraph_mode
+  relation: Determines whether graph-padding compatibility is enforced and whether Ascend removes capture sizes from the explicit
+    compile warm-up list.
+- name: CompilationConfig.compile_ranges_endpoints
+  relation: Defines dynamic compilation ranges around the single-size specializations; Ascend adds a range-end warm-up only
+    when no compile or capture size already lies in that range.
+- name: CompilationConfig.mode
+  relation: Determines whether compiled execution is enabled; static specialization has no steady-state compilation benefit
+    in a fully eager configuration.
+- name: VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE
+  relation: Controls the max-autotune behavior that upstream enables by default for static shapes supplied through compile_sizes.
+constraints:
+- Every string entry must be exactly "cudagraph_capture_sizes"; any other string triggers an assertion during configuration
+  finalization.
+- Every non-string entry must be an integer or configuration finalization triggers an assertion.
+- With graph capture active, each effective compile size at or below max_cudagraph_capture_size must already be a size that
+  graph padding leaves unchanged; otherwise the CUDA-graph dispatcher raises ValueError and instructs the user to choose from
+  cudagraph_capture_sizes.
+- 'The supplied list is not preserved verbatim: entries are deduplicated and the cudagraph_capture_sizes alias is expanded
+  during post-initialization.'
+tuning_advice:
+  summary: Leave this unset initially, then add only frequently observed token-batch sizes whose measured steady-state gain
+    repays compilation and startup cost.
+  suggested_values:
+  - scenario: General serving or startup-sensitive Ascend deployment
+    value: <unset>
+    reason: The default creates no explicit static specializations and avoids additional compile-size dummy runs; dynamic
+      compile ranges and graph capture still perform their normal warm-up.
+  - scenario: CUDA-alike Inductor workload dominated by a few stable token-batch sizes
+    value:
+    - 1
+    - 2
+    - 4
+    - 8
+    reason: This is the pinned upstream documentation's example for enabling fully-static, autotuned kernels; retain only
+      sizes shown by production traces and benchmarks to be beneficial.
+  - scenario: Static compilation should align automatically with graph-capture sizes
+    value:
+    - cudagraph_capture_sizes
+    reason: The alias expands to the effective capture-size list and guarantees the selected sizes are drawn from graph-compatible
+      boundaries.
+  caveats:
+  - More sizes increase cold-start compilation, autotuning, warm-up work, and the number of cached compiled variants; they
+    are not free even if rarely used.
+  - Upstream's documented speedup mechanism is specific to Inductor static shapes. Ascend uses its platform compiler, so do
+    not assume the same gain; benchmark on the target CANN, model, and traffic.
+  - On Ascend, an effective compile size covered by active graph capture is removed from the explicit dummy-run list because
+    capture handles it separately.
+  - Explicit integer sizes can become invalid after graph-size rounding or padding changes; using the alias is safer when
+    the intent is to mirror capture sizes.
+  quick_guide: Start unset, record the normalized effective sizes and startup time, then test a small set of frequent sizes
+    against steady-state latency and throughput. Keep a size only when its repeatable gain outweighs extra compile, warm-up,
+    cache, and memory cost.
+analysis_date: '2026-07-30'

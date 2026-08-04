@@ -1,0 +1,61 @@
+name: --enable-flashinfer-autotune
+type: cli
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/kernel.py:138
+- vllm/config/vllm.py:192
+- vllm/engine/arg_utils.py:2072
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+cli_example: --enable-flashinfer-autotune
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+impact_detail: The current upstream KernelConfig defines this boolean to run FlashInfer autotuning during kernel warmup. It
+  therefore trades additional warmup/startup latency for tuned FlashInfer kernel choices when that backend is available. Optimization
+  levels O0 through O2 set it false, while O3 sets it true; the source also records that O1 and O2 disable it because of a
+  reported FlashInfer correctness issue. The target Ascend tree contains no direct handling of this flag, so no target-Ascend
+  runtime benefit is established by the pinned sources.
+usage_locations:
+- file: vllm/config/kernel.py:138
+  context: Defines the flag and states that true runs FlashInfer autotuning during kernel warmup.
+- file: vllm/config/vllm.py:192
+  context: Optimization-level defaults set the flag false at O0, O1, and O2 and true at O3; O1 and O2 cite a FlashInfer correctness
+    issue.
+- file: vllm/engine/arg_utils.py:2072
+  context: Copies the CLI value into KernelConfig and rejects simultaneous top-level and nested configuration values.
+related_parameters:
+- name: --optimization-level
+  relation: 'Supplies the default: false at O0 through O2 and true at O3.'
+- name: --kernel-config
+  relation: Its enable_flashinfer_autotune field is mutually exclusive with this top-level CLI option.
+- name: --attention-backend
+  relation: Autotuning is relevant only when a FlashInfer-backed kernel path is available.
+constraints:
+- --enable-flashinfer-autotune and --kernel-config.enable_flashinfer_autotune are mutually exclusive.
+- The current source disables this setting at optimization levels O1 and O2 because of a cited FlashInfer correctness issue.
+- No direct target-Ascend implementation of this flag was found in the pinned vllm-ascend tree.
+tuning_advice:
+  summary: Leave this unset to use the optimization-level default. Enable it only for a validated upstream CUDA/FlashInfer
+    deployment where added kernel warmup time is acceptable and correctness has been tested.
+  suggested_values:
+  - scenario: Typical startup-sensitive deployment or an unverified FlashInfer setup
+    value: false
+    reason: O0 through O2 use false, and the current source documents a correctness-related disablement at O1 and O2.
+  - scenario: Validated upstream CUDA deployment using FlashInfer where startup warmup is acceptable
+    value: true
+    reason: The KernelConfig documentation states that true runs FlashInfer autotuning during kernel warmup; O3 selects this
+      default.
+  caveats:
+  - Enabling adds autotuning work during kernel warmup, so startup latency must be measured separately from steady-state serving.
+  - The source cites a FlashInfer correctness issue for the O1 and O2 false defaults; do not assume autotuning is safe for
+    every version or workload.
+  - The pinned vllm-ascend repository has no direct handling of this option, so it is not a demonstrated Ascend tuning knob.
+  quick_guide: Use the optimization-level default; set true only after validating FlashInfer correctness and acceptable warmup
+    time on the intended upstream CUDA workload.
+analysis_date: '2026-07-27'

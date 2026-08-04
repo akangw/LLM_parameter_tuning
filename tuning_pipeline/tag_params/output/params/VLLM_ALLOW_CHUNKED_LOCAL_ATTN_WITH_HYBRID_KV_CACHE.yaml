@@ -1,0 +1,112 @@
+name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+type: env
+category: kv_cache
+scope: both
+source_file:
+- vllm/envs.py:1539
+- vllm/config/vllm.py:1318
+- vllm/v1/kv_cache_interface.py:388
+- vllm_ascend/platform.py:777
+- vllm_ascend/core/single_type_kv_cache_manager.py:268
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE=0 vllm serve MODEL
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: This environment variable controls the automatic hybrid-KV-cache decision only when the model configuration
+  has attention_chunk_size set. The pinned default is 1 (true), so hybrid KV cache remains eligible by default. Setting it
+  to 0 makes VllmConfig mark the hybrid manager for disabling; the resulting uniform/full-sized allocation gives up the chunked-local-attention
+  cache bound, while avoiding the latency regression explicitly documented in the same decision path. ChunkedLocalAttentionSpec
+  bounds cache allocation by min(attention_chunk_size + max_num_batched_tokens, max_model_len), so retaining hybrid allocation
+  can reduce KV-cache memory and admit longer contexts; the latency trade-off can also affect throughput. Ascend inherits
+  this upstream configuration path, explicitly returns true from support_hybrid_kv_cache(), and supplies a ChunkedLocalAttentionSpec
+  manager path that reapplies the upstream admission cap. Therefore the trade-off applies on Ascend, but its magnitude must
+  be measured on the target NPU and workload.
+usage_locations:
+- file: vllm/envs.py:1539
+  context: Parses the variable as bool(int(value)) with a pinned default string of "1".
+- file: vllm/config/vllm.py:1318
+  context: When attention_chunk_size is set and Eagle is not active, a false value marks the hybrid KV cache manager for disabling
+    because of the documented latency regression.
+- file: vllm/v1/kv_cache_interface.py:388
+  context: ChunkedLocalAttentionSpec calculates its per-request cache bound from the attention chunk size plus the maximum
+    batched-token allowance.
+- file: vllm_ascend/platform.py:777
+  context: AscendPlatform explicitly declares hybrid KV cache support, so the upstream platform-support gate does not disable
+    it.
+- file: vllm_ascend/core/single_type_kv_cache_manager.py:268
+  context: Ascend builds a manager for ChunkedLocalAttentionSpec and reapplies its bounded admission calculation.
+related_parameters:
+- name: attention_chunk_size
+  relation: The environment variable is consulted only when the loaded model configuration has a non-null attention_chunk_size.
+- name: --disable-hybrid-kv-cache-manager
+  relation: An explicit disable keeps hybrid allocation off regardless of this variable; an explicit force-enable conflicts
+    with a false variable and the runtime raises a configuration error.
+- name: --speculative-config
+  relation: Eagle speculative decoding with chunked local attention unconditionally requires hybrid KV cache to be disabled
+    before this variable is considered.
+- name: --kv-transfer-config
+  relation: With the hybrid-manager CLI setting left automatic, configuring KV transfer independently marks hybrid allocation
+    for disabling.
+constraints:
+- The value is parsed with bool(int(...)); use integer-form values such as 1 and 0, while non-integer text fails during environment
+  parsing.
+- It has no effect when model_config.attention_chunk_size is null.
+- It cannot enable hybrid KV cache for chunked local attention combined with Eagle speculative decoding.
+- It does not override an explicit --disable-hybrid-kv-cache-manager setting or other independent runtime reasons to disable
+  hybrid allocation.
+- Setting it to 0 while explicitly forcing the hybrid manager on with --no-disable-hybrid-kv-cache-manager causes VllmConfig
+  validation to raise an error.
+tuning_advice:
+  summary: Keep the true default when KV-cache capacity or longer contexts matter; test false when measured latency is more
+    important and sufficient cache memory is available.
+  suggested_values:
+  - scenario: Chunked-local-attention model on Ascend where KV-cache memory or maximum usable context is the limiting resource.
+    value: true
+    reason: Preserves eligibility for the bounded ChunkedLocalAttentionSpec cache allocation instead of forcing uniform/full-sized
+      cache treatment.
+  - scenario: Chunked-local-attention serving where benchmarks show an unacceptable hybrid-manager latency regression and
+      memory headroom is sufficient.
+    value: false
+    reason: Makes automatic configuration disable hybrid KV cache for this model path, trading higher cache demand for avoidance
+      of the documented regression.
+  caveats:
+  - The source documents a latency regression but does not quantify it; benchmark prefill and decode latency plus throughput
+    on the target Ascend hardware.
+  - The pinned code default is true even though nearby comments and the warning retain wording about disabling the combination
+    by default; the executable getenv default is authoritative.
+  - Other configuration gates, especially Eagle speculative decoding, KV transfer in automatic mode, and explicit hybrid-manager
+    settings, can dominate this variable.
+  - Memory benefit depends on attention_chunk_size, max_num_batched_tokens, max_model_len, and the model's mix of attention-layer
+    types.
+  quick_guide: Use 1 for memory efficiency and longer contexts; try 0 only after measuring a latency regression and confirming
+    adequate KV-cache headroom.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

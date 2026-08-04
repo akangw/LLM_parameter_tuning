@@ -1,0 +1,68 @@
+name: additional_config.hamming_sparse
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:262
+- vllm_ascend/attention/kvcomp_attn/attention_utils.py:150
+value_type: dict
+default:
+  enabled: false
+  sparse_json_location: ''
+valid_choices: A dict with keys 'enabled' (bool) and 'sparse_json_location' (str)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, hamming_sparse activates a sparse attention computation path in vllm_ascend/attention/kvcomp_attn/attention_utils.py:150.
+  The function is_enable_hamming_sparse() checks additional_config["enable_hamming_sparse"] and disables itself if speculative
+  decoding is active. The sparse attention path can reduce computation by skipping certain attention operations based on a
+  Hamming-distance sparsity pattern defined in the JSON config file. This primarily affects attention kernel selection, which
+  can lower per-token latency and improve throughput for compatible models. However, the effect is model-specific and depends
+  on the sparsity pattern quality. The parameter is only read during attention kernel dispatch, not during model loading or
+  memory allocation, so memory impact is negligible.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:262
+  context: 'Parsed from additional_config dict with default {''enabled'': False, ''sparse_json_location'': ''''}'
+- file: vllm_ascend/ascend_config.py:263
+  context: enable_hamming_sparse extracted from hamming_sparse['enabled']
+- file: vllm_ascend/ascend_config.py:264
+  context: sparse_json extracted from hamming_sparse['sparse_json_location']
+- file: vllm_ascend/ascend_config.py:265
+  context: _check_enable_hamming_sparse() validates the JSON file exists when enabled
+- file: vllm_ascend/attention/kvcomp_attn/attention_utils.py:150
+  context: is_enable_hamming_sparse() reads enable_hamming_sparse and disables if speculative_config is active
+related_parameters:
+- name: speculative_config
+  relation: Hamming sparse is automatically disabled when speculative decoding is active (attention_utils.py:151)
+constraints:
+- When enabled, sparse_json_location must point to an existing JSON file on disk
+- Hamming sparse is automatically disabled when speculative decoding is active
+tuning_advice:
+  summary: 'Enable hamming_sparse only for models with known sparsity patterns and provide a valid sparse JSON config; it
+    is automatically disabled with speculative decoding.
+
+    '
+  suggested_values:
+  - scenario: Default / no sparsity pattern available
+    value:
+      enabled: false
+      sparse_json_location: ''
+    reason: Disables the sparse path, using standard dense attention which is safe for all models
+  - scenario: Model with pre-computed Hamming sparsity pattern
+    value:
+      enabled: true
+      sparse_json_location: /path/to/sparse_config.json
+    reason: Activates sparse attention to reduce computation; requires a valid JSON file defining the sparsity structure
+  caveats:
+  - Hamming sparse is silently disabled when speculative decoding is active — do not rely on it in speculative scenarios
+  - The sparse JSON file must exist on disk at startup; otherwise a ValueError is raised
+  - Performance gains depend entirely on the quality of the sparsity pattern — a poor pattern may yield no benefit or even
+    slight overhead from the sparsity check
+  quick_guide: Keep disabled unless you have a validated sparse JSON config for your model; it is incompatible with speculative
+    decoding.
+analysis_date: '2026-07-06'

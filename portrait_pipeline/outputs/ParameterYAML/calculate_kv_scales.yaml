@@ -1,0 +1,53 @@
+name: --calculate-kv-scales
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:109
+- vllm/config/cache.py:238
+- vllm_ascend/worker/model_runner_v1.py:2021
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --calculate-kv-scales
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This deprecated option dynamically calculates FP8 KV-cache k_scale and v_scale instead of loading checkpoint
+  scales or using 1.0. Dynamic scale calculation introduces operations that are incompatible with graph capture. The target
+  Ascend model runner disables its graph mode for the first calculation and clears the flag afterwards, so enabling it can
+  increase first-run latency and affect graph-based execution even though it does not change the steady-state flag after initialization.
+usage_locations:
+- file: vllm/config/cache.py:109
+  context: Defines the false default and documents FP8 scale loading fallback behavior.
+- file: vllm/config/cache.py:238
+  context: Warns that the option is deprecated and scheduled for removal.
+- file: vllm_ascend/worker/model_runner_v1.py:2021
+  context: Disables graph capture while calculating scales and then clears the flag.
+related_parameters:
+- name: --kv-cache-dtype
+  relation: Dynamic scale calculation is relevant to FP8 KV-cache use.
+- name: --enforce-eager
+  relation: Graph-capture policy affects the cost of dynamic scale calculation.
+constraints:
+- This option is deprecated and the source states it will be removed in v0.19.
+- The option only has its documented scale-calculation role when kv_cache_dtype is fp8.
+tuning_advice:
+  summary: Keep the default false and supply checkpoint scales when available; use true only for an FP8 calibration need.
+  suggested_values:
+  - scenario: Production FP8 KV cache with checkpoint-provided scales
+    value: false
+    reason: This preserves checkpoint scales and avoids the dynamic calculation/graph-capture disruption.
+  - scenario: FP8 KV cache without usable checkpoint scales and with a deliberate calibration step
+    value: true
+    reason: The option enables dynamic k_scale and v_scale calculation for that initialization path.
+  caveats:
+  - The option is deprecated, so new deployment automation should not depend on it long term.
+  - On the target Ascend runner, calculation disables graph capture for the calculation pass.
+  quick_guide: Leave false for normal serving; enable only when FP8 scales must be calculated rather than loaded.
+analysis_date: '2026-07-27'

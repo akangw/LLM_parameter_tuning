@@ -1,0 +1,79 @@
+name: additional_config.eplb_config.expert_map_path
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:631
+value_type: str
+default: null
+valid_choices: a valid .json file path that exists and is readable
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter provides a pre-computed expert placement map for Expert Parallel Load Balancing (EPLB) on Ascend
+  NPUs. When set, it enables static EPLB by loading an expert-to-physical-device mapping from a JSON file, which determines
+  how MoE experts are distributed across NPUs in an expert-parallel configuration. The map directly affects token routing
+  efficiency: a well-balanced map reduces cross-NPU communication and expert load imbalance, improving throughput and tail
+  latency. Conversely, a poorly constructed map can cause severe load skew, where some NPUs are overloaded while others idle,
+  degrading overall inference performance. The parameter is read in `init_eplb_config` (vllm_ascend/eplb/core/eplb_utils.py:71)
+  where it triggers `expert_file_to_tensor` to parse the JSON and compute `global_placement`, `local_expert_map`, and `log2phy`
+  (logical-to-physical mapping). In the v1 model runner (vllm_ascend/worker/model_runner_v1.py:467), a non-null `expert_map_path`
+  sets `self.eplb_enable = True`, activating the EPLB code path that uses the loaded map for expert dispatch. Without this
+  parameter (and with `dynamic_eplb=False`), experts are distributed using a default round-robin placement, which may not
+  be optimal for real-world token distributions.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:658
+  context: 'Validation: checks file extension is .json and file exists and is readable'
+- file: vllm_ascend/worker/model_runner_v1.py:467
+  context: Sets self.eplb_enable = True when expert_map_path is not None
+- file: vllm_ascend/eplb/core/eplb_utils.py:71
+  context: Loads expert map from file via expert_file_to_tensor, computes placement and log2phy
+- file: vllm_ascend/eplb/eplb_updator.py:35
+  context: Passed to init_eplb for EPLB updater initialization
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Setting expert_map_path implicitly enables EPLB (eplb_enable=True) even if dynamic_eplb=False
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: When expert_map_path is set, num_redundant_experts is computed as physical_count - n_experts from the map file,
+    overriding the config value
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: expert_map_record_path is used to save a new expert map after dynamic EPLB runs; expert_map_path loads a pre-existing
+    map
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: The policy type affects how the expert map is used during dynamic rebalancing; when expert_map_path provides a
+    static map, policy_type still applies if dynamic EPLB is also active
+constraints:
+- expert_map_path must point to a file with .json extension
+- The file must exist on the filesystem and be readable by the process
+- EPLB (and thus expert_map_path) requires expert parallelism (ep_size > 1); it will assert-fail if ep_size == 1
+- The expert map file must be generated before use; using an invalid or missing file causes runtime errors
+tuning_advice:
+  summary: 'Use a pre-computed expert map only when you have profiled your model''s token distribution under realistic load
+    and generated an optimized placement. For most deployments, start with dynamic EPLB (dynamic_eplb=True) and use expert_map_record_path
+    to capture the learned map for subsequent static reuse.
+
+    '
+  suggested_values:
+  - scenario: First deployment or unknown token distribution
+    value: null
+    reason: Let dynamic EPLB learn the optimal placement; setting a static map without profiling data may hurt performance
+  - scenario: Production deployment with stable, profiled token distribution
+    value: /path/to/profiled_expert_map.json
+    reason: Reusing a profiled expert map eliminates the warm-up overhead of dynamic EPLB and provides consistent, optimized
+      expert placement from the first request
+  caveats:
+  - Using expert_map_path without first generating the map (via dynamic EPLB and expert_map_record_path) will cause runtime
+    errors — the file must exist and contain valid placement data
+  - A static expert map that does not match the actual token distribution can cause severe load imbalance, reducing throughput
+    and increasing latency compared to default round-robin placement
+  - The expert map is layer-specific; ensure the map file was generated for the same model architecture and number of layers
+  - When expert_map_path is set, num_redundant_experts is derived from the map file (physical_count - n_experts), overriding
+    any user-specified value
+  quick_guide: Set to null initially; use dynamic EPLB to profile and capture an optimized map via expert_map_record_path,
+    then reuse the recorded map as expert_map_path in production
+analysis_date: '2026-07-06'

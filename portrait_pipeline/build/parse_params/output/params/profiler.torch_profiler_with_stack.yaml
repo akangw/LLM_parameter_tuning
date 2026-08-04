@@ -1,0 +1,70 @@
+name: profiler.torch_profiler_with_stack
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/config/profiler.py:48
+- vllm_ascend/profiler/torch_npu_profiler.py:70
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --profiler-config.torch_profiler_with_stack=false
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On Ascend NPU, this parameter controls whether Python stack/module information is collected during profiling.
+  In vllm-ascend''s torch_npu_profiler.py (line 70), the parameter is mapped to `with_modules` in torch_npu.profiler.profile()
+  — NOT `with_stack`. The code comment at line 68-69 explicitly notes: "\"torch_npu.profiler.with_modules is equivalent to
+  torch.profiler.with_stack." The with_stack option in torch_npu.profiler introduces significant time overhead." This means
+  enabling stack tracing on Ascend NPU adds substantial profiling overhead that directly impacts runtime latency and throughput
+  during profiling sessions. The vllm-ascend documentation (service_profiling_guide.md:32) confirms this: "vLLM enables python
+  stack by default, which can significantly inflate the collected performance data." The overhead comes from the NPU profiler
+  needing to capture and serialize Python call stacks for every recorded operation, which is computationally expensive on
+  the host CPU and can slow down the inference pipeline.
+
+  '
+usage_locations:
+- file: vllm_ascend/profiler/torch_npu_profiler.py:70
+  context: Passed as with_modules to torch_npu.profiler.profile() — controls stack/module tracing on NPU
+- file: vllm/v1/engine/async_llm.py:192
+  context: Passed as with_stack to torch.profiler.profile() for AsyncLLM CPU traces
+- file: vllm/profiler/wrapper.py:183
+  context: Logged in debug output for profiler config diagnostics
+- file: vllm/profiler/wrapper.py:223
+  context: Passed as with_stack to torch.profiler.profile() for worker-side GPU traces
+related_parameters:
+- name: profiler.profiler
+  relation: Must be set to 'torch' for this parameter to take effect; otherwise the torch profiler is not used
+- name: profiler.torch_profiler_dir
+  relation: Directory where profiler traces (with or without stack info) are saved
+- name: profiler.torch_profiler_with_memory
+  relation: Another profiling overhead parameter; enabling both stack and memory profiling compounds overhead
+constraints:
+- Only takes effect when profiler.profiler is set to 'torch'
+- On Ascend NPU, the parameter is mapped to with_modules in torch_npu.profiler, not with_stack
+tuning_advice:
+  summary: Disable stack tracing (set to false) during performance benchmarking on Ascend NPU to avoid significant profiling
+    overhead that distorts latency and throughput measurements.
+  suggested_values:
+  - scenario: Performance benchmarking or production profiling where minimal overhead is critical
+    value: false
+    reason: Eliminates the significant time overhead of Python stack collection on Ascend NPU, providing more accurate throughput
+      and latency measurements
+  - scenario: Debugging or detailed performance analysis where call stack context is needed
+    value: true
+    reason: Enables module-level tracing (with_modules) which provides call stack context for identifying performance bottlenecks,
+      at the cost of profiling overhead
+  caveats:
+  - On Ascend NPU, this parameter controls with_modules in torch_npu.profiler, not with_stack — the behavior differs from
+    upstream vLLM's GPU profiler
+  - The vllm-ascend documentation warns that enabling stack tracing can 'significantly inflate the collected performance data'
+  - Profiling overhead from stack tracing can mask real performance issues — always benchmark with this disabled first
+  - The overhead is on the host CPU side (stack unwinding and serialization), not on the NPU itself, but it still slows down
+    the overall inference pipeline
+  quick_guide: Set to false for accurate Ascend NPU performance measurements; enable only when call stack context is needed
+    for debugging.
+analysis_date: '2026-07-06'

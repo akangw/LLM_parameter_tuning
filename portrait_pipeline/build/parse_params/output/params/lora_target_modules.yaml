@@ -1,0 +1,71 @@
+name: --lora-target-modules
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1258
+- vllm/engine/arg_utils.py:577
+- vllm/engine/arg_utils.py:1999
+value_type: list[str]
+default: None
+valid_choices: Any list of module suffix strings (e.g., ['o_proj', 'qkv_proj']); None means all supported modules
+cli_example: --lora-target-modules o_proj qkv_proj
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls which linear layer modules in the model have LoRA adapters applied. By restricting
+  LoRA to a subset of target modules (e.g., only attention projection layers), the total number of LoRA parameters is reduced.
+  This directly affects: 1) Memory usage: fewer LoRA weights to store in GPU/NPU memory, reducing per-adapter footprint. 2)
+  Compute overhead: fewer LoRA matrix multiplications during forward pass, reducing per-token latency. 3) Throughput: lower
+  compute and memory pressure allows higher batch sizes or more concurrent adapters. On Ascend NPU, LoRA operations are executed
+  as additional matmul kernels appended to the base model''s linear layers. Each targeted module suffix adds LoRA A and B
+  matrices that must be loaded and computed. Reducing the target set decreases the number of these extra kernel launches and
+  memory accesses, which is particularly beneficial on NPU architectures where kernel launch overhead can be significant.
+  The parameter is passed to LoRAConfig.target_modules and used during model initialization to filter which modules get LoRA
+  adapters. When set to None (default), all supported linear modules receive LoRA adapters, maximizing flexibility but also
+  maximizing overhead.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:577
+  context: EngineArgs.lora_target_modules field definition, defaulting to LoRAConfig.target_modules
+- file: vllm/engine/arg_utils.py:1258
+  context: CLI argument registration in the LoRA config group
+- file: vllm/engine/arg_utils.py:1999
+  context: Passed to LoRAConfig constructor as target_modules parameter
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for --lora-target-modules to have any effect
+- name: --max-loras
+  relation: Number of concurrent adapters; reducing target modules allows more adapters within same memory budget
+- name: --max-lora-rank
+  relation: LoRA rank interacts with target module count to determine total parameter overhead
+constraints:
+- Only effective when --enable-lora is set to True
+- Module suffix strings must match the actual linear layer names in the model architecture
+tuning_advice:
+  summary: Restrict LoRA to attention projection modules (q_proj, v_proj, o_proj) for best performance on Ascend NPU, avoiding
+    MLP layers unless task requires it.
+  suggested_values:
+  - scenario: General throughput optimization on Ascend NPU
+    value: '[''q_proj'', ''v_proj'', ''o_proj'']'
+    reason: Attention projections are most critical for adaptation quality; excluding MLP layers (gate_proj, up_proj, down_proj)
+      significantly reduces LoRA parameter count and NPU kernel launches without major quality loss.
+  - scenario: Maximum adapter capacity (many concurrent LoRAs)
+    value: '[''q_proj'', ''v_proj'']'
+    reason: Minimal target set reduces per-adapter memory footprint, allowing more concurrent adapters within NPU memory limits.
+  - scenario: Maximum adaptation quality (few adapters, latency-tolerant)
+    value: None
+    reason: All supported modules receive LoRA, maximizing expressiveness at the cost of higher memory and compute overhead.
+  caveats:
+  - On Ascend NPU, each additional target module adds two matmul operations (LoRA A and B) per transformer layer, increasing
+    kernel launch overhead which can be more pronounced than on GPU.
+  - Excluding all projection modules for a given attention or MLP block may cause the adapter to have no trainable parameters
+    for that component, potentially degrading fine-tuning quality.
+  - Module naming conventions vary by model architecture; verify target module names match the specific model being served.
+  quick_guide: For Ascend NPU deployments, set --lora-target-modules to attention projections only (q_proj, v_proj, o_proj)
+    to balance adaptation quality with NPU compute efficiency.
+analysis_date: '2026-07-06'

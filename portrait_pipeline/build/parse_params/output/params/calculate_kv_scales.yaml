@@ -1,0 +1,69 @@
+name: --calculate-kv-scales
+type: cli
+category: quantization
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1103
+- vllm/config/cache.py:109
+- vllm_ascend/worker/model_runner_v1.py:2021
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --calculate-kv-scales
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter triggers dynamic calculation of k_scale and v_scale for FP8 KV cache quantization
+  during the first forward pass. On Ascend NPU, the vllm-ascend v1 worker (model_runner_v1.py:2021) detects this flag and
+  forces CUDAGraphMode.NONE for the first forward pass, then sets the flag to False for subsequent passes. This means the
+  first inference step runs in eager mode without graph optimization, increasing cold-start latency. The upstream v1 worker
+  (gpu_model_runner.py:4082) has identical behavior. The parameter is deprecated and will be removed in v0.19; scales will
+  be loaded from checkpoints or default to 1.0. On Ascend, the CUDAGraph disablement is particularly impactful because Ascend''s
+  graph capture (torchair) has different overhead characteristics than CUDA graphs.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:2021
+  context: 'v1-ascend: Forces CUDAGraphMode.NONE on first forward pass when calculate_kv_scales is True'
+- file: vllm/v1/worker/gpu_model_runner.py:4082
+  context: 'v1-upstream: Same CUDAGraph disablement logic for first forward pass'
+- file: vllm/v1/worker/gpu_model_runner.py:445
+  context: 'v1-upstream: Reads calculate_kv_scales from cache_config during initialization'
+- file: vllm/model_executor/layers/attention/attention.py:226
+  context: 'upstream: Passes calculate_kv_scales to attention layer for per-token-head scale computation'
+- file: vllm/model_executor/layers/attention/mla_attention.py:370
+  context: 'upstream: MLA attention also reads calculate_kv_scales for FP8 scale handling'
+- file: vllm/config/cache.py:238
+  context: 'upstream: Deprecation warning validator'
+related_parameters:
+- name: --kv-cache-dtype
+  relation: calculate_kv_scales only has effect when kv_cache_dtype is fp8
+- name: compilation_config.cudagraph_mode
+  relation: calculate_kv_scales forces cudagraph_mode to NONE for the first forward pass
+constraints:
+- This parameter is deprecated and will be removed in v0.19.
+- Only has effect when --kv-cache-dtype is set to fp8.
+- Cannot be used with llm-compressor models that set kv_cache_scheme; those models force calculate_kv_scales to False.
+tuning_advice:
+  summary: Keep this parameter disabled (default) on Ascend NPU to avoid disabling graph optimization on the first forward
+    pass.
+  suggested_values:
+  - scenario: Default / production deployment on Ascend NPU
+    value: 'False'
+    reason: Avoids forcing CUDAGraphMode.NONE on the first forward pass, which would increase cold-start latency. FP8 scales
+      should be loaded from model checkpoints or default to 1.0.
+  - scenario: Debugging FP8 KV cache scale issues
+    value: 'True'
+    reason: Enables dynamic scale calculation for one forward pass to verify or debug FP8 quantization behavior, at the cost
+      of disabling graph optimization for that pass.
+  caveats:
+  - On Ascend NPU (v1 worker), enabling this flag forces the first forward pass to run without graph optimization, increasing
+    cold-start latency.
+  - The flag auto-resets to False after the first forward pass, so the performance penalty is one-time per model load.
+  - This parameter is deprecated upstream and will be removed in v0.19; relying on it is not future-proof.
+  quick_guide: Leave at default (False) for production; scales are loaded from checkpoints automatically.
+analysis_date: '2026-07-06'

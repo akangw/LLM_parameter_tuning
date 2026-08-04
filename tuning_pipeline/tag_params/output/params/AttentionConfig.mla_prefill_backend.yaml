@@ -1,0 +1,103 @@
+name: AttentionConfig.mla_prefill_backend
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/attention.py:55
+- vllm/v1/attention/backends/mla/prefill/registry.py:30
+- vllm/v1/attention/backends/mla/prefill/selector.py:78
+- vllm/v1/attention/backends/mla/prefill/base.py:48
+- docs/design/attention_backends.md:194
+- vllm_ascend/patch/platform/patch_mla_prefill_backend.py:20
+value_type: str
+default: null
+valid_choices:
+- FLASH_ATTN
+- FLASHINFER
+- TRTLLM_RAGGED
+- TOKENSPEED_MLA
+- null
+cli_example: -ac.mla_prefill_backend=FLASH_ATTN
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM this field bypasses automatic MLA prefill backend selection and chooses the kernel implementation
+  used for MLA prefill. FLASH_ATTN, FLASHINFER, TRTLLM_RAGGED, and TOKENSPEED_MLA have different kernels, dependency requirements,
+  supported hardware, and model-shape restrictions, so forcing one can materially change time to first token and prefill throughput.
+  Null lets the selector validate candidates in device-dependent priority order. In the pinned vllm-ascend source, the plugin
+  patches the selector to return AscendMLAPrefillBackend regardless of this field because AscendSFAImpl/AscendMLAImpl handles
+  the complete forward pass; therefore this parameter is not an effective Ascend performance control.
+usage_locations:
+- file: vllm/config/attention.py:98
+  context: Parses case-insensitive string input into MLAPrefillBackendEnum and gives an explicit value precedence over the
+    deprecated MLA prefill flags.
+- file: vllm/v1/attention/backends/mla/prefill/selector.py:109
+  context: Validates and returns the explicitly selected backend; when the field is null, falls through to automatic backend
+    selection.
+- file: vllm/v1/attention/backends/mla/prefill/base.py:48
+  context: Validates backend compute capability, model dtype, required dependency availability, and DeepSeek-R1-compatible
+    MLA dimensions where required.
+- file: vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+  context: Replaces the upstream selector with an unconditional AscendMLAPrefillBackend return, so configured upstream enum
+    values are ignored on Ascend.
+related_parameters:
+- name: AttentionConfig.use_trtllm_ragged_deepseek_prefill
+  relation: Deprecated compatibility flag that selects TRTLLM_RAGGED only when mla_prefill_backend is null.
+- name: AttentionConfig.disable_flashinfer_prefill
+  relation: Deprecated compatibility flag that selects FLASH_ATTN only when mla_prefill_backend remains null.
+- name: AttentionConfig.flash_attn_version
+  relation: Controls the FlashAttention generation after FLASH_ATTN is selected.
+constraints:
+- This parameter applies only to MLA prefill; it does not select the MLA decode backend.
+- FLASHINFER, TRTLLM_RAGGED, and TOKENSPEED_MLA require compute capability 10.x and DeepSeek-R1-compatible MLA dimensions
+  (qk_nope_head_dim=128, qk_rope_head_dim=64, v_head_dim=128).
+- All registered backends require float16 or bfloat16 model dtype, and an explicit backend fails configuration when its required
+  dependency is unavailable.
+- FLASH_ATTN requires an available flash_attn_varlen_func; the other explicit backends require their corresponding FlashInfer
+  or TokenSpeed package support.
+- Null is the automatic-selection value. The mla_prefill_backend string validator does not recognize the literal string auto.
+- On vllm-ascend the patched selector ignores this setting and always supplies AscendMLAPrefillBackend.
+tuning_advice:
+  summary: Leave the field null as the upstream baseline, then force a compatible backend only after benchmarking representative
+    MLA prompt lengths and concurrency. Leave it unset on Ascend.
+  suggested_values:
+  - scenario: General upstream GPU deployment
+    value: <unset>
+    reason: Automatic selection checks the device, dtype, model dimensions, and installed dependencies before choosing a backend.
+  - scenario: Hopper or older CUDA GPU
+    value: FLASH_ATTN
+    reason: The pinned selector's automatic priority list contains only FLASH_ATTN outside compute capability 10.x; an explicit
+      value is mainly useful for reproducibility.
+  - scenario: Blackwell DeepSeek-R1-compatible MLA benchmark
+    value: FLASH_ATTN, TRTLLM_RAGGED, FLASHINFER, or TOKENSPEED_MLA
+    reason: These are the registered choices eligible for comparison when their dependencies are installed; retain an override
+      only if end-to-end prefill measurements improve.
+  - scenario: Ascend NPU deployment
+    value: <unset>
+    reason: The plugin ignores this field and routes MLA prefill through its Ascend-specific implementation.
+  caveats:
+  - The pinned automatic order on compute capability 10.x is FLASH_ATTN, TRTLLM_RAGGED, FLASHINFER, then TOKENSPEED_MLA; availability
+    and validation can cause later candidates to be tried.
+  - Forcing a backend converts automatic fallback into a configuration error when that backend is incompatible or missing.
+  - The best backend depends on GPU generation, installed kernel versions, dtype, model dimensions, prompt-length distribution,
+    and concurrency; benchmark time to first token and aggregate throughput together.
+  - Although the config field's docstring names three choices, the pinned registry and selector also support TOKENSPEED_MLA.
+  quick_guide: Start with null, confirm the selected backend in runtime logs, benchmark only valid alternatives on upstream
+    CUDA, and keep an explicit value only for a repeatable gain. Do not tune this field on Ascend.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

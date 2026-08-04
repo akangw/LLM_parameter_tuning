@@ -1,0 +1,128 @@
+name: speculative.model
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:535
+- vllm/config/speculative.py:541
+- vllm/config/speculative.py:543
+- vllm/config/speculative.py:545
+- vllm/config/speculative.py:547
+value_type: str
+default: <computed>
+valid_choices:
+- A HuggingFace model name or path (e.g., 'meta-llama/Llama-3.1-8B')
+- A local path to model weights
+- Auto-set to target model path for MTP/EAGLE methods
+- Auto-set to 'ngram' for ngram method
+- Auto-set to 'ngram_gpu' for ngram_gpu method
+- Auto-set to 'suffix' for suffix method
+- Auto-set to 'extract_hidden_states' for extract_hidden_states method
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter specifies the draft model weights used for speculative decoding. On Ascend NPU, the draft model
+  directly affects inference performance through several mechanisms:
+
+  1. **Draft model loading and memory**: The draft model is loaded onto the NPU and consumes device memory. In vllm-ascend''s
+  AscendSpecDecodeBaseProposer._get_model() (vllm_ascend/spec_decode/llm_base_proposer.py:222), the draft model is loaded
+  with its own VllmConfig and occupies separate KV cache space. The model size directly impacts available memory for the target
+  model''s KV cache.
+
+  2. **Draft quality vs. overhead tradeoff**: A larger/more accurate draft model produces better speculative tokens (higher
+  acceptance rate), reducing the number of target model forward passes needed. However, each draft forward pass consumes NPU
+  compute. The balance between draft model cost and acceptance rate determines net throughput gain.
+
+  3. **Ascend-specific dispatch paths**: In vllm_ascend/worker/model_runner_v1.py:1553, the code checks `self.speculative_config.use_eagle()
+  or self.speculative_config.uses_draft_model()` to determine whether to use padded batch drafting. The draft model type affects
+  which attention metadata path is used (vllm_ascend/attention/attention_v1.py:546-557), with draft models using separate
+  graph parameters and attention metadata structures.
+
+  4. **Method-specific model assignment**: In vllm/config/speculative.py:530-551, the model parameter is auto-assigned based
+  on the speculative method: - "MTP methods: model = target_model_config.model (same weights, different heads)" - "EAGLE methods:
+  model = user-provided eagle head weights" - "ngram/ngram_gpu/suffix/extract_hidden_states: model = method name string" -
+  "draft_model method: model = user-provided standalone draft model path"
+
+  5. **Ascend attention graph selection**: In vllm_ascend/attention/attention_v1.py:546-551, when `_EXTRA_CTX.is_draft_model`
+  is True, the code selects draft-specific graph parameters (`get_draft_graph_prefill_params()` or `get_draft_graph_params()`)
+  instead of target model graph parameters. This affects NPU graph compilation and execution efficiency.
+
+  6. **Sequence length constraints**: In vllm_ascend/worker/model_runner_v1.py:2244-2247, the draft model has its own max_model_len
+  (`effective_drafter_max_model_len`), and input sequences must fit within this limit. A draft model with a smaller context
+  window than the target model can bottleneck long-sequence inference.
+
+  '
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:222
+  context: Logs draft model path when loading in AscendSpecDecodeBaseProposer._get_model()
+- file: vllm_ascend/worker/model_runner_v1.py:1553
+  context: Checks use_eagle() or uses_draft_model() to determine draft token proposal path
+- file: vllm_ascend/worker/model_runner_v1.py:2252
+  context: Checks use_eagle() or uses_draft_model() for padded batch drafting decision
+- file: vllm_ascend/attention/attention_v1.py:546
+  context: Uses _EXTRA_CTX.is_draft_model to select draft-specific graph parameters
+- file: vllm_ascend/attention/mla_v1.py:849
+  context: Checks speculative_config.use_eagle() and _EXTRA_CTX.is_draft_model for MLA attention path
+- file: vllm/config/speculative.py:530-551
+  context: Auto-assigns model based on speculative method in __init__ post-processing
+- file: vllm/v1/core/sched/scheduler.py:217
+  context: Sets num_lookahead_tokens when uses_draft_model() is True
+- file: vllm/v1/worker/gpu_model_runner.py:538
+  context: Instantiates DraftModelProposer when uses_draft_model() is True
+related_parameters:
+- name: speculative.method
+  relation: Determines how speculative.model is interpreted and auto-assigned
+- name: speculative.num_speculative_tokens
+  relation: Number of tokens the draft model generates per step; must be compatible with draft model training
+- name: speculative.draft_tensor_parallel_size
+  relation: TP size for draft model; must equal target TP size on Ascend
+- name: speculative.draft_model_config
+  relation: ModelConfig derived from speculative.model; controls draft model architecture settings
+- name: speculative.draft_load_config
+  relation: LoadConfig for draft model weights; affects loading format and memory usage
+constraints:
+- When method is 'draft_model', the draft model vocab size must match the target model vocab size
+- When method is 'draft_model', draft_tensor_parallel_size must equal tensor_parallel_size
+- When method is 'mtp' or 'eagle', the model parameter is auto-set and should not be manually specified
+- When method is 'ngram', 'ngram_gpu', 'suffix', or 'extract_hidden_states', the model parameter is auto-set to a method identifier
+  string
+- The draft model must fit in NPU device memory alongside the target model
+- The draft model's max_model_len must be sufficient for the target model's sequences when using padded batch drafting
+tuning_advice:
+  summary: Choose a draft model that balances acceptance rate against forward pass cost on Ascend NPU; for MTP methods the
+    model is auto-set to the target model.
+  suggested_values:
+  - scenario: Using MTP (Multi-Token Prediction) speculative decoding
+    value: <auto-set to target model path>
+    reason: MTP methods reuse the target model weights and only add small prediction heads; the model parameter is automatically
+      set to target_model_config.model in vllm/config/speculative.py:535
+  - scenario: Using EAGLE speculative decoding with a trained eagle head
+    value: <path to eagle head weights>
+    reason: EAGLE requires a separately trained eagle head model; provide the HuggingFace model name or local path to the
+      eagle head weights
+  - scenario: Using standalone draft model (draft_model method)
+    value: <smaller model from same family, e.g., 'meta-llama/Llama-3.2-1B' for 'meta-llama/Llama-3.1-8B' target>
+    reason: A smaller model from the same family provides good acceptance rates with lower draft forward pass cost on Ascend
+      NPU; the draft model must share the same tokenizer/vocab
+  - scenario: Memory-constrained Ascend NPU deployment
+    value: <smallest compatible draft model>
+    reason: Draft model consumes additional NPU memory for weights and KV cache; on memory-constrained devices (e.g., Atlas
+      300I Duo), use the smallest draft model that still provides acceptable acceptance rates
+  caveats:
+  - On Ascend NPU, the draft model uses separate graph compilation parameters (vllm_ascend/attention/attention_v1.py:546-551),
+    which may cause additional compilation overhead on first run
+  - The draft model's max_model_len limits the effective sequence length for speculative decoding; if draft max_model_len
+    is smaller than target max_model_len, long sequences may fall back to non-speculative execution
+  - When using padded batch drafting (default on Ascend v1), the draft model must support the same batch padding as the target
+    model
+  - Draft model TP size must match target TP size on Ascend (vllm/v1/spec_decode/draft_model.py:46-51); this constraint is
+    enforced with a ValueError
+  - For MTP methods on Ascend, the model is auto-set and the draft heads are part of the target model checkpoint; ensure the
+    checkpoint includes MTP heads
+  quick_guide: For MTP/EAGLE on Ascend, use auto-set model; for standalone draft models, choose a model from the same family
+    that is 5-10x smaller than the target to balance acceptance rate and NPU compute cost.
+analysis_date: '2026-07-06'

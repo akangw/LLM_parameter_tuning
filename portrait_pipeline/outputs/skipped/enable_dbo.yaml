@@ -1,0 +1,5 @@
+name: --enable-dbo
+type: cli
+performance_impact: none
+skip_reason: Ascend platform code explicitly ignores enable_dbo, warns the user, and resets ParallelConfig.enable_dbo to false;
+  it therefore has no latency, throughput, or memory effect on Ascend.

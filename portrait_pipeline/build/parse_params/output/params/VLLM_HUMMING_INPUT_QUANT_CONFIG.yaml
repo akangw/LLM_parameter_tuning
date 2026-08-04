@@ -1,0 +1,49 @@
+name: VLLM_HUMMING_INPUT_QUANT_CONFIG
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:1224
+- vllm/envs.py:156
+- vllm/model_executor/layers/quantization/humming.py:314
+- vllm/model_executor/layers/quantization/utils/humming_utils.py:87
+value_type: dict
+default: null
+valid_choices: A JSON string or path to a JSON file containing a dict with humming quantization config keys
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls the activation (input) quantization configuration for the Humming quantization
+  kernel, which is a GPU-specific quantization method (related to DeepSeek models). On Ascend NPU, the Humming kernel is NOT
+  supported — it is a CUDA/GPU-specific kernel. The vllm-ascend plugin does not reference or override this parameter. The
+  parameter is only consumed in upstream vLLM code paths (humming.py, humming_utils.py) that are never executed on Ascend
+  hardware because the Humming quantization method is not registered or used in the Ascend backend. Therefore, setting this
+  environment variable has no effect on Ascend NPU runtime performance. It is effectively a no-op on Ascend.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/quantization/humming.py:314
+  context: Reads VLLM_HUMMING_INPUT_QUANT_CONFIG to build force_input_schema for Humming layer quantization config
+- file: vllm/model_executor/layers/quantization/utils/humming_utils.py:87
+  context: Reads VLLM_HUMMING_INPUT_QUANT_CONFIG to determine input schema for Humming MoE layers
+related_parameters:
+- name: VLLM_HUMMING_ONLINE_QUANT_CONFIG
+  relation: Sibling parameter for online quantization config of the same Humming kernel; also GPU-specific and no-op on Ascend
+- name: VLLM_HUMMING_USE_F16_ACCUM
+  relation: Sibling parameter controlling fp16 accumulator for Humming kernel; also GPU-specific and no-op on Ascend
+- name: VLLM_HUMMING_MOE_GEMM_TYPE
+  relation: Sibling parameter controlling GEMM type for Humming MoE; also GPU-specific and no-op on Ascend
+constraints: []
+tuning_advice:
+  summary: This parameter is GPU-specific (Humming kernel) and has no effect on Ascend NPU. No tuning is needed.
+  suggested_values: []
+  caveats:
+  - The Humming quantization family (VLLM_HUMMING_*) is CUDA/GPU-specific and is not supported on Ascend NPU. Setting any
+    of these environment variables will have no effect on Ascend.
+  - For Ascend NPU quantization, use Ascend-native quantization methods such as those provided through CANN or vllm-ascend's
+    own quantization support.
+  quick_guide: Ignore this parameter on Ascend NPU — it is GPU-specific and has no effect.
+analysis_date: '2026-07-06'

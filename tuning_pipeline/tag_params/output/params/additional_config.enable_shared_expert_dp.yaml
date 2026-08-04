@@ -1,0 +1,107 @@
+name: additional_config.enable_shared_expert_dp
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:106
+- vllm_ascend/ops/linear_op.py:694
+- vllm_ascend/ops/fused_moe/prepare_finalize.py:132
+- vllm_ascend/ops/fused_moe/fused_moe.py:842
+- vllm_ascend/utils.py:990
+- docs/source/user_guide/configuration/additional_config.md:78
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --enable-expert-parallel --tensor-parallel-size 2 --additional-config='{"enable_shared_expert_dp":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only option requests data-parallel replication of shared-expert layers instead of tensor-parallel
+  sharding. It is stored as true only when expert parallelism is enabled and tensor_parallel_size is greater than one. In
+  that effective configuration, shared-expert linear layers bypass the normal parallel operator, so every rank holds and computes
+  the full shared expert; MoE preparation/finalization also skips TP token slicing and its matching gather, and shared-expert
+  output skips the otherwise-required TP all-reduce on supported communication paths. Removing these collectives can reduce
+  communication latency and improve throughput, while replicating the weights and retaining unsliced tensors increases per-NPU
+  memory consumption. Enabling it also forces sequence parallelism, which changes surrounding MoE communication and speculative-decoding
+  gather/reduce behavior.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:106
+  context: Reads the nested option, gates it on enable_expert_parallel and TP size greater than one, then forces sequence
+    parallelism when it is effective.
+- file: vllm_ascend/ops/linear_op.py:694
+  context: Disables the normal tensor-parallel operator for module prefixes naming shared experts, leaving their linear weights
+    replicated on each rank.
+- file: vllm_ascend/ops/fused_moe/prepare_finalize.py:132
+  context: The All2All and MC2 preparation paths skip TP padding, token slicing, and matching gather work when shared-expert
+    DP is enabled; the DP-group finalizer also avoids its shared-expert reduce-scatter case.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:842
+  context: Suppresses the tensor-parallel all-reduce of shared-expert output for All2All, MC2, and fused-MC2 communication
+    when shared-expert DP is active.
+- file: vllm_ascend/utils.py:990
+  context: Forces the global sequence-parallel switch on for this option and exposes the shared-expert-DP predicate used by
+    linear and MoE execution paths.
+related_parameters:
+- name: enable_expert_parallel
+  relation: Must be true; otherwise AscendConfig silently stores this option as false.
+- name: tensor_parallel_size
+  relation: Must be greater than one; at TP size one the option is stored as false.
+- name: additional_config.enable_flashcomm1
+  relation: Both can enable the global sequence-parallel path; shared-expert DP forces that path even when FLASHCOMM1 is not
+    enabled.
+- name: additional_config.multistream_overlap_shared_expert
+  relation: Can overlap shared-expert computation on another stream, including when shared-expert DP is enabled, but is a
+    separate optimization switch.
+- name: additional_config.mix_placement
+  relation: Cannot be enabled together with effective shared-expert DP.
+constraints:
+- Requires enable_expert_parallel=true and tensor_parallel_size greater than one; if either condition is false, the effective
+  value is false.
+- Cannot be combined with additional_config.mix_placement=true; AscendConfig raises ValueError for that combination.
+- Applies only to MoE implementations whose shared-expert modules follow the recognized shared_expert/shared_experts naming
+  and execution paths. The pinned configuration guide describes support as limited to DeepSeek-series models, although pinned
+  examples also exercise the option with newer MoE model families.
+tuning_advice:
+  summary: Enable for a supported MoE deployment with EP and TP greater than one when collective communication is the bottleneck
+    and there is enough NPU memory to replicate every shared-expert layer.
+  suggested_values:
+  - scenario: Communication-bound supported MoE with ample NPU memory
+    value: true
+    reason: Replicates shared experts and removes their TP sharding collectives, trading memory capacity for lower communication
+      overhead.
+  - scenario: Memory-constrained deployment or unsupported model path
+    value: false
+    reason: Preserves shared-expert tensor parallelism and its smaller per-rank weight footprint; this is also the default
+      and safer compatibility path.
+  - scenario: Expert parallelism disabled or tensor parallel size is one
+    value: false
+    reason: The implementation forces the effective value to false, so requesting true provides no benefit in this configuration.
+  caveats:
+  - Full shared-expert weights are resident on each applicable TP rank, and unsliced intermediate tensors can add working
+    memory beyond weight cost.
+  - The exact latency and throughput gain depends on model architecture, token load, TP topology, and the selected MoE communication
+    backend.
+  - Sequence parallelism is enabled as a side effect and can alter other padding, gather/reduce, and speculative-decoding
+    paths.
+  - Do not combine it with mix placement; configuration validation rejects the pair during startup.
+  quick_guide: Start false; for a supported EP+TP MoE, measure collective time and peak NPU memory, then enable only if the
+    communication gain fits the replicated-weight memory budget.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

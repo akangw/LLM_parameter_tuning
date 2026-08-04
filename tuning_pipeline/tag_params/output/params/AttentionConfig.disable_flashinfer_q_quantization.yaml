@@ -1,0 +1,105 @@
+name: AttentionConfig.disable_flashinfer_q_quantization
+type: nested
+category: quantization
+scope: both
+source_file:
+- vllm/config/attention.py:52
+- vllm/v1/attention/backends/flashinfer.py:640
+- vllm/v1/attention/backends/flashinfer.py:1319
+- vllm/v1/attention/backends/flashinfer.py:1625
+- vllm_ascend/platform.py:1035
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: -ac.disable_flashinfer_q_quantization=true
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM's FlashInfer backend, false permits a supported TRT-LLM attention path to use a query dtype
+  derived from the quantized KV-cache dtype (FP8 for FP8 KV cache and also FP8 for an NVFP4 KV cache). True instead keeps
+  Q in the model dtype. The same flag disables FlashInferImpl.supports_quant_query_input. If a batch cannot use TRT-LLM attention
+  throughout, metadata construction falls back to model-dtype Q regardless of the flag. For TRT-LLM prefill with FP8 KV and
+  non-FP8 Q, the implementation dequantizes selected KV blocks into a mock model-dtype cache, adding conversion work and potentially
+  reducing throughput or increasing latency; the NVFP4 TRT-LLM prefill path requires FP8 Q. In the pinned vllm-ascend source,
+  a true value is classified as GPU-specific and reset to false during platform configuration, so users cannot use it to tune
+  the Ascend-native attention implementation.
+usage_locations:
+- file: vllm/config/attention.py:52
+  context: Declares the boolean with default false and describes it as the opt-out for FP8 Q when FP8 KV is used.
+- file: vllm/v1/attention/backends/flashinfer.py:640
+  context: Selects FP8-compatible Q for supported TRT-LLM attention when false, or model-dtype Q when true or unsupported.
+- file: vllm/v1/attention/backends/flashinfer.py:947
+  context: Falls back to model-dtype Q when the current batch cannot use TRT-LLM attention for every active prefill/decode
+    path.
+- file: vllm/v1/attention/backends/flashinfer.py:1319
+  context: Makes quantized query input support conditional on TRT-LLM attention support and this flag remaining false.
+- file: vllm/v1/attention/backends/flashinfer.py:1625
+  context: Requires FP8 Q for NVFP4 TRT-LLM prefill and otherwise dequantizes FP8 KV blocks for a non-FP8-Q prefill path.
+- file: vllm_ascend/platform.py:1035
+  context: Resets a true value to false as a GPU-specific attention option during Ascend platform configuration.
+related_parameters:
+- name: AttentionConfig.backend
+  relation: The behavior described here is implemented by the upstream FlashInfer attention backend; other backends do not
+    consume this flag.
+- name: AttentionConfig.use_trtllm_attention
+  relation: Quantized Q is selected only when TRT-LLM attention is supported, and per-batch dispatch determines whether that
+    path remains usable.
+- name: CacheConfig.cache_dtype
+  relation: FP8 or NVFP4 KV-cache dtype determines the quantized Q dtype and the fallback conversion behavior.
+constraints:
+- The flag affects upstream FlashInfer execution only when TRT-LLM attention is supported; otherwise Q uses the model dtype
+  regardless.
+- A false value does not guarantee FP8 Q because metadata construction switches to model dtype if any active attention path
+  in the batch cannot use TRT-LLM.
+- NVFP4 TRT-LLM prefill requires FP8 Q and explicitly instructs users to keep disable_flashinfer_q_quantization=false.
+- On vllm-ascend, a true value is overwritten with false before runtime attention execution.
+tuning_advice:
+  summary: Keep the default false for performance-oriented upstream FlashInfer deployments and for NVFP4 KV cache. Use true
+    only as a targeted numerical or debugging experiment with a compatible FP8-KV workload; on Ascend leave it false because
+    the platform overrides it.
+  suggested_values:
+  - scenario: Upstream FlashInfer with FP8 or NVFP4 KV cache and supported TRT-LLM attention
+    value: false
+    reason: Allows the implementation to use FP8 Q and avoids the non-FP8-Q FP8-KV prefill conversion path; NVFP4 prefill
+      requires it.
+  - scenario: Controlled upstream FP8-KV precision investigation where model-dtype Q is required
+    value: true
+    reason: Keeps Q in the model dtype, making it useful for isolating the numerical effect of FP8 query quantization despite
+      possible performance loss.
+  - scenario: vllm-ascend deployment
+    value: false
+    reason: This is the only effective value because the Ascend platform resets true to false and uses its plugin-managed
+      attention backend.
+  caveats:
+  - The pinned source establishes execution-path differences but provides no benchmark magnitude; measure latency and throughput
+    on the target GPU, model, and request mix.
+  - Setting true with FP8 KV can make TRT-LLM prefill build a dequantized mock KV cache, so the cost depends on prefill shapes
+    and selected blocks.
+  - Setting true is incompatible with the pinned NVFP4 TRT-LLM prefill path, which asserts that Q is FP8.
+  - On Ascend, configuration logs a warning and resets true to false, so an apparent user setting is not the effective runtime
+    value.
+  quick_guide: Keep false by default; test true only for an upstream FlashInfer FP8-KV numerical investigation, never for
+    NVFP4 prefill or Ascend tuning.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

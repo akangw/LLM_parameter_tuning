@@ -1,0 +1,102 @@
+name: compilation.use_inductor_graph_partition
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls whether Inductor-based graph partitioning is used to split the computation graph at
+  cudagraph_unsafe operations. When enabled, graph splitting happens at Inductor codegen time after all passes and fusions
+  are finished, rather than using Dynamo-based piecewise splitting. This affects three key areas on Ascend NPU:
+
+  1. **CUDA Graph wrapping strategy**: When use_inductor_graph_partition is true and piecewise cudagraphs are enabled, vLLM
+  uses a custom partition wrapper (vllm/compilation/decorators.py:743) that wraps each Inductor partition with the platform''s
+  static graph wrapper class. On Ascend, this means NPU graph capture happens per-partition rather than on the full graph,
+  which can reduce memory pressure but may increase graph capture overhead.
+
+  2. **Sequence Parallelism (SP) compatibility**: Both SequenceParallelismPass (vllm/compilation/passes/fusion/sequence_parallelism.py:603)
+  and AsyncTPPass (vllm/compilation/passes/fusion/collective_fusion.py:971) assert that use_inductor_graph_partition must
+  be true when splitting_ops is set, because these passes require full-graph compilation mode. On Ascend NPU with tensor parallelism,
+  enabling SP can improve throughput for large batch sizes by distributing sequence dimensions across TP ranks.
+
+  3. **ROCm AITER rotary embedding fusion**: The enable_rope_kvcache_fusion function (vllm/config/vllm.py:152) checks use_inductor_graph_partition
+  as a gating condition for rotary embedding custom op fusion. While this is primarily a ROCm feature, the code path exists
+  in the shared compilation config.
+
+  On Ascend NPU, the primary performance impact comes from the interaction with piecewise CUDA graph mode and sequence parallelism.
+  Enabling this parameter allows SP passes to function, which can significantly improve throughput for large-batch inference
+  on multi-NPU setups, but may increase compilation time and memory fragmentation due to per-partition graph capture.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:155
+  context: Controls whether inductor_partition_rule_context is activated during compilation
+- file: vllm/compilation/backends.py:652
+  context: Determines whether piecewise CUDA graph wrapping is applied to the backend
+- file: vllm/compilation/decorators.py:743
+  context: Gates the custom CUDA graph partition wrapper for piecewise cudagraph mode
+- file: vllm/compilation/decorators.py:778
+  context: Controls cleanup of custom partition wrappers after compilation
+- file: vllm/compilation/passes/fusion/sequence_parallelism.py:603
+  context: Asserted as true when splitting_ops is set for SequenceParallelismPass
+- file: vllm/compilation/passes/fusion/collective_fusion.py:971
+  context: Asserted as true when splitting_ops is set for AsyncTPPass
+- file: vllm/config/vllm.py:152
+  context: Checked in enable_rope_kvcache_fusion for ROCm AITER rotary embedding fusion
+- file: vllm/v1/worker/utils.py:534
+  context: Asserted for sequence parallelism residual scattering in v1 worker
+related_parameters:
+- name: compilation_config.splitting_ops
+  relation: When splitting_ops is non-empty, use_inductor_graph_partition must be true; otherwise SP and AsyncTP passes will
+    raise assertion errors
+- name: compilation_config.cudagraph_mode
+  relation: Piecewise cudagraph mode interacts with use_inductor_graph_partition to determine whether per-partition or full-graph
+    CUDA graph wrapping is used
+- name: compilation_config.pass_config.enable_sp
+  relation: Sequence parallelism requires use_inductor_graph_partition to be true when splitting_ops is set
+- name: parallel_config.tensor_parallel_size
+  relation: Sequence parallelism (which requires this parameter) is only beneficial when tensor_parallel_size > 1
+constraints:
+- use_inductor_graph_partition must be true when compilation_config.splitting_ops is non-empty, otherwise SequenceParallelismPass
+  and AsyncTPPass will raise assertion errors
+- Sequence parallelism (enable_sp) requires use_inductor_graph_partition to be true when splitting_ops is set
+tuning_advice:
+  summary: 'Enable use_inductor_graph_partition when using sequence parallelism or custom splitting operations on Ascend NPU;
+    otherwise keep it disabled to avoid unnecessary compilation overhead.
+
+    '
+  suggested_values:
+  - scenario: Multi-NPU inference with tensor parallelism > 1 and sequence parallelism enabled
+    value: 'true'
+    reason: Required for SequenceParallelismPass and AsyncTPPass to function; these passes improve throughput for large batch
+      sizes by distributing sequence dimensions across TP ranks
+  - scenario: Single-NPU inference or tensor parallelism without sequence parallelism
+    value: 'false'
+    reason: Inductor-based graph partitioning adds compilation overhead without providing benefits when SP is not used; Dynamo-based
+      splitting is sufficient
+  - scenario: Using custom splitting_ops for graph partitioning
+    value: 'true'
+    reason: The code asserts that use_inductor_graph_partition must be true when splitting_ops is non-empty; violating this
+      causes assertion failures
+  caveats:
+  - On Ascend NPU, enabling this parameter with piecewise cudagraph mode causes per-partition NPU graph capture, which may
+    increase memory fragmentation compared to full-graph capture
+  - Inductor-based graph partitioning happens after all fusions are complete, which can produce different optimization outcomes
+    compared to Dynamo-based splitting
+  - The enable_rope_kvcache_fusion path that checks this parameter is primarily for ROCm AITER; on Ascend NPU this fusion
+    path may not be applicable
+  - Compilation time may increase when this parameter is enabled due to additional Inductor partitioning passes
+  quick_guide: Enable only when using sequence parallelism (enable_sp) or custom splitting_ops on multi-NPU Ascend setups;
+    disable otherwise
+analysis_date: '2026-07-06'

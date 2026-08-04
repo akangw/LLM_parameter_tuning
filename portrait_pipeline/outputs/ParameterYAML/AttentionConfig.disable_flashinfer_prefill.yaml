@@ -1,0 +1,72 @@
+name: AttentionConfig.disable_flashinfer_prefill
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/attention.py:49
+- vllm/config/attention.py:109
+- vllm/v1/attention/backends/mla/prefill/selector.py:78
+- vllm_ascend/platform.py:1024
+- vllm_ascend/patch/platform/patch_mla_prefill_backend.py:20
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: -ac.disable_flashinfer_prefill=true
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM, a truthy value is migrated during AttentionConfig initialization to mla_prefill_backend=FLASH_ATTN
+  when no newer backend choice has already been established. That bypasses automatic MLA prefill backend selection and can
+  therefore change prefill latency and throughput on hardware where another valid backend would otherwise be selected. False
+  or null leaves this compatibility flag inactive. In the pinned vllm-ascend source the platform resets a truthy disable_flashinfer_prefill
+  value to false, and the plugin patches the MLA selector to return its Ascend-specific no-op prefill backend because the
+  actual prefill forward pass is handled by AscendSFAImpl/AscendMLAImpl. Thus this flag is not an effective Ascend performance
+  control.
+usage_locations:
+- file: vllm/config/attention.py:109
+  context: Migrates deprecated MLA prefill flags during AttentionConfig initialization; a truthy disable_flashinfer_prefill
+    selects FLASH_ATTN unless mla_prefill_backend is already non-null.
+- file: vllm/v1/attention/backends/mla/prefill/selector.py:109
+  context: Honors the migrated mla_prefill_backend before the automatic, device-dependent MLA prefill backend selection path.
+- file: vllm_ascend/platform.py:1024
+  context: Treats disable_flashinfer_prefill as a GPU-specific attention flag and resets any truthy value to false during
+    Ascend platform configuration.
+- file: vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+  context: Replaces the upstream MLA prefill selector with the Ascend backend, independently of this deprecated flag.
+related_parameters:
+- name: AttentionConfig.mla_prefill_backend
+  relation: This is the replacement option. An explicit non-null value takes precedence and prevents migration of disable_flashinfer_prefill.
+- name: AttentionConfig.use_trtllm_ragged_deepseek_prefill
+  relation: This deprecated flag is processed first and selects TRTLLM_RAGGED, so it takes precedence if both legacy flags
+    are true.
+constraints:
+- The flag is deprecated and the pinned source says it will be removed in v0.22; use AttentionConfig.mla_prefill_backend instead.
+- Only a truthy value triggers migration; false and null leave mla_prefill_backend unchanged.
+- An explicit AttentionConfig.mla_prefill_backend value takes precedence over all deprecated MLA prefill flags.
+- On vllm-ascend the flag is reset to false and does not select the runtime Ascend MLA prefill implementation.
+tuning_advice:
+  summary: Do not tune this deprecated compatibility flag. Use AttentionConfig.mla_prefill_backend for upstream GPU deployments,
+    and leave the flag false or unset on Ascend.
+  suggested_values:
+  - scenario: Ascend deployment
+    value: false
+    reason: The Ascend platform rejects the GPU-specific flag and uses its patched Ascend MLA prefill path, so enabling it
+      provides no performance benefit.
+  - scenario: Upstream GPU deployment requiring FlashAttention MLA prefill
+    value: false
+    reason: Keep the deprecated flag inactive and select FLASH_ATTN explicitly with AttentionConfig.mla_prefill_backend instead.
+  caveats:
+  - Setting this flag true can be masked by an explicit mla_prefill_backend or by the earlier use_trtllm_ragged_deepseek_prefill
+    migration.
+  - Backend performance depends on model dimensions, dtype, GPU generation, installed kernels, and workload; benchmark the
+    replacement backend on the target system.
+  - The pinned upstream selector only considers FlashInfer and TRTLLM ragged paths for compatible configurations, while Hopper
+    and older devices list only FlashAttention in the automatic priority order.
+  quick_guide: Leave this flag unset; on upstream choose -ac.mla_prefill_backend=FLASH_ATTN only when measurements justify
+    forcing FlashAttention, and on Ascend rely on the plugin-selected implementation.
+analysis_date: '2026-07-29'

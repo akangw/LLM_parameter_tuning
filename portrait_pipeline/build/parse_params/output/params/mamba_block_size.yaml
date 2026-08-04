@@ -1,0 +1,91 @@
+name: --mamba-block-size
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1118
+- vllm/config/cache.py:120
+- vllm_ascend/patch/platform/patch_mamba_config.py:114
+- vllm_ascend/patch/platform/patch_mamba_config_310.py:28
+- vllm_ascend/platform.py:287
+value_type: int
+default: <computed>
+valid_choices: positive integer, multiple of 8
+cli_example: --mamba-block-size 64
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'Controls the block size (in tokens) for Mamba layer KV cache allocation in hybrid Mamba/Attention models.
+  On Ascend NPU, vllm-ascend aggressively overrides this value to enforce alignment between attention and Mamba page sizes
+  — a hardware requirement for efficient NPU memory management. When `mamba_cache_mode` is "align" and prefix caching is enabled,
+  `mamba_block_size` is forcibly set equal to `block_size` (patch_mamba_config.py:114). When `mamba_cache_mode` is "all",
+  the value is computed as the LCM of the user-specified (or model-default) chunk size and the kernel block alignment size
+  (128 on 310P), then used to derive the attention block size (patch_mamba_config_310.py:69-73). In kv_transfer scenarios
+  without prefix caching, `mamba_block_size` must be a multiple of `block_size` (platform.py:291). The parameter directly
+  affects: "(1) Mamba cache memory footprint — larger blocks reduce the number" of cached states but increase per-block memory;
+  (2) prefix caching granularity — smaller blocks enable finer-grained cache reuse at the cost of more cache entries; (3)
+  causal_conv1d kernel alignment — values not divisible by 8 cause kernel inefficiency or errors. On Ascend, the effective
+  value is almost always determined by the platform patch rather than the user, making this parameter primarily informational
+  for understanding the computed cache layout.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:114
+  context: Forces mamba_block_size = block_size when prefix caching is enabled and mamba_cache_mode is 'align'
+- file: vllm_ascend/patch/platform/patch_mamba_config_310.py:69-85
+  context: Computes mamba_block_size as LCM of chunk_size and kernel alignment (128), then derives attention block_size; for
+    'align' mode, sets mamba_block_size = block_size
+- file: vllm_ascend/platform.py:287-293
+  context: In kv_transfer without prefix caching, validates mamba_block_size is a multiple of block_size or defaults to block_size
+- file: vllm/v1/attention/backends/mamba_attn.py:311-322
+  context: Used to compute prefix caching block indices for Mamba attention in v1 scheduler
+- file: vllm/model_executor/layers/mamba/abstract.py:45
+  context: Passed to MambaSpec to define KV cache block size for Mamba layers
+- file: vllm/model_executor/layers/mamba/mamba_mixer.py:266
+  context: Read at runtime to determine Mamba cache block size during forward pass
+related_parameters:
+- name: --block-size
+  relation: On Ascend with mamba_cache_mode='align', mamba_block_size is forced equal to block_size; in kv_transfer scenarios,
+    mamba_block_size must be a multiple of block_size
+- name: --enable-prefix-caching
+  relation: mamba_block_size can only be explicitly set when prefix caching is enabled; otherwise it defaults to max_model_len
+- name: --mamba-cache-mode
+  relation: 'Determines how mamba_block_size is computed: ''align'' forces equality with block_size, ''all'' uses LCM with
+    kernel alignment, ''none'' disables Mamba caching'
+- name: --max-model-len
+  relation: Default value for mamba_block_size when prefix caching is disabled
+constraints:
+- --mamba-block-size can only be explicitly set when --enable-prefix-caching is also enabled
+- Value must be a positive integer greater than 0
+- Value must be a multiple of 8 to align with the causal_conv1d kernel
+- On Ascend with kv_transfer enabled and mamba_cache_mode='align', mamba_block_size must be a multiple of block_size
+- On Ascend 310P with mamba_cache_mode='all', mamba_block_size is overridden to the LCM of the base chunk size and kernel_block_alignment_size
+  (128)
+tuning_advice:
+  summary: On Ascend NPU, mamba_block_size is almost always overridden by vllm-ascend platform patches — manual tuning has
+    limited effect; focus on --block-size and --mamba-cache-mode instead.
+  suggested_values:
+  - scenario: Hybrid Mamba/Attention model on Ascend with prefix caching and mamba_cache_mode='align' (recommended)
+    value: <auto — set equal to --block-size by platform patch>
+    reason: vllm-ascend forces mamba_block_size = block_size to ensure attention and Mamba page sizes are exactly equal, which
+      is required for efficient NPU memory management and avoids padding overhead
+  - scenario: Hybrid Mamba/Attention model on Ascend 310P with mamba_cache_mode='all'
+    value: <auto — computed as LCM of model chunk size and 128>
+    reason: The 310P platform patch computes mamba_block_size automatically to satisfy kernel block alignment (128) while
+      respecting the model's native chunk size; manual override is ignored
+  - scenario: Pure Mamba model (no attention layers) on Ascend
+    value: 64 or 128
+    reason: Larger block sizes reduce the number of cached Mamba states and memory overhead; choose a multiple of 8 that balances
+      cache granularity with memory usage
+  caveats:
+  - On Ascend, user-specified --mamba-block-size is frequently overridden by platform patches — check logs for the actual
+    computed value
+  - When mamba_cache_mode='align', mamba_block_size is silently set to block_size regardless of user input
+  - On 310P, the kernel_block_alignment_size is hardcoded to 128, which may force larger-than-expected block sizes
+  - Small mamba_block_size values increase the number of cached Mamba states, raising memory pressure on NPU HBM
+  - Model Runner V2 does not support mamba_cache_mode='align', limiting v2 worker usage with hybrid models
+  quick_guide: On Ascend, rely on vllm-ascend auto-computation — set --mamba-cache-mode align and tune --block-size instead
+    of manually setting --mamba-block-size.
+analysis_date: '2026-07-06'

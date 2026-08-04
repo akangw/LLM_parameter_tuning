@@ -1,0 +1,65 @@
+name: FORCE_NUM_KV_SPLITS
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/v1/attention/backends/mla/cutlass_mla.py:155
+- vllm/_custom_ops.py:3096
+- vllm/_custom_ops.py:3123
+value_type: int
+default: unset; internally -1 selects automatic split-count detection
+valid_choices: A non-empty string accepted by Python int(); the source specifically recommends 1 as a recovery override and
+  comments that num_kv_splits is currently limited to 16.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: FORCE_NUM_KV_SPLITS replaces the SM100 CUTLASS MLA decode kernel's automatically selected KV split count with
+  an explicit integer. The same value is supplied both to the workspace-size operator and every decode invocation, so it can
+  change decode parallelism, workspace requirements, kernel latency, and resulting throughput. When the variable is unset
+  or empty, vLLM passes -1 for automatic detection. This override is narrowly scoped to the CUTLASS_MLA backend, which supports
+  CUDA compute-capability major 10; the pinned vllm-ascend repository contains no implementation or override for this variable.
+usage_locations:
+- file: vllm/v1/attention/backends/mla/cutlass_mla.py:155
+  context: Reads the environment variable while constructing CutlassMLAImpl; a non-empty value is converted with int(), while
+    unset or empty selects the internal -1 auto-detect sentinel.
+- file: vllm/v1/attention/backends/mla/cutlass_mla.py:271
+  context: Passes the selected split count to the SM100 CUTLASS MLA workspace-size calculation before decode.
+- file: vllm/v1/attention/backends/mla/cutlass_mla.py:274
+  context: Passes the same split count into every SM100 CUTLASS MLA decode operation.
+- file: vllm/_custom_ops.py:3096
+  context: Forwards num_kv_splits to the compiled sm100_cutlass_mla_decode operator.
+- file: vllm/_custom_ops.py:3123
+  context: Forwards num_kv_splits to the compiled workspace-size operator.
+related_parameters: []
+constraints:
+- A non-empty value must be parseable by Python int() or CutlassMLAImpl construction raises ValueError.
+- The override is consumed only by CUTLASS_MLA, whose backend declares support for compute-capability major 10 and a kernel
+  block size of 128.
+- The source comment says num_kv_splits is currently limited to 16 to avoid hanging issues, although this Python layer does
+  not enforce a numeric range.
+tuning_advice:
+  summary: Leave the variable unset for automatic selection; use 1 as the documented recovery override if the SM100 CUTLASS
+    MLA decode path hangs.
+  suggested_values:
+  - scenario: Normal SM100 CUTLASS MLA serving
+    value: unset
+    reason: The implementation maps an absent variable to -1 so the compiled operators can automatically select the split
+      count.
+  - scenario: SM100 CUTLASS MLA decode hangs with automatic split selection
+    value: 1
+    reason: The source comment explicitly recommends FORCE_NUM_KV_SPLITS=1 as the recovery setting for hanging behavior.
+  caveats:
+  - Treat this as a low-level diagnostic and tuning override rather than a generally beneficial setting; a fixed split count
+    bypasses adaptation to request batch and sequence shape.
+  - The workspace-size calculation and decode kernel must receive the same split count; vLLM does this automatically through
+    the shared instance field.
+  - The pinned source provides no benchmark data or enforced lower bound, and the Python layer accepts integers beyond the
+    commented limit; test latency, throughput, workspace memory, and stability on the exact workload before using another
+    fixed value.
+  - This variable has no effect when another attention backend is selected or on the pinned vllm-ascend implementation.
+  quick_guide: Keep it unset by default; if SM100 CUTLASS MLA hangs, set FORCE_NUM_KV_SPLITS=1 and verify stability and performance.
+analysis_date: '2026-07-28'

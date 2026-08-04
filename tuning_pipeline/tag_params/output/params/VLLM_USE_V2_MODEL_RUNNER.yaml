@@ -1,0 +1,132 @@
+name: VLLM_USE_V2_MODEL_RUNNER
+type: env
+category: model
+scope: both
+source_file:
+- vllm/envs.py:1711
+- vllm/config/vllm.py:1199
+- vllm_ascend/worker/worker.py:144
+- vllm_ascend/worker/v2/model_runner.py:58
+- vllm_ascend/platform.py:849
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This process-start environment variable selects the model-runner architecture. The default value 0 makes Ascend's
+  NPUWorker construct the established NPUModelRunner, while a true value makes it construct vllm_ascend.worker.v2.model_runner.NPUModelRunner,
+  which subclasses upstream GPUModelRunner V2 and replaces request state, input buffers, speculative-decoding setup, execution
+  context, and profiling behavior with Ascend-specific implementations. The V2 path also activates Ascend's new forward-context
+  construction, including token-dependent MoE communication-method selection and sequence-parallel/flash-communication flags;
+  the V1 path returns an empty mapping there and uses the older Ascend forward context. Because these are distinct scheduling,
+  input-buffer, graph/profile, attention-metadata, and communication paths, changing the flag can materially alter latency,
+  throughput, and peak/runtime memory. In V2, several Ascend attention backends also report the compatibility name FLASH_ATTN
+  instead of their V1 names so upstream V2 KV-cache initialization assertions pass. Current Ascend source explicitly warns
+  that its V2 runner is still developing, and the pinned source contains no benchmark establishing that either runner is universally
+  faster or smaller.
+usage_locations:
+- file: vllm/envs.py:1711
+  context: Defines the flag with default string 0 and converts the environment value through int() and bool(); zero is false
+    and a nonzero integer is true.
+- file: vllm/config/vllm.py:1199
+  context: Runs the upstream V2 compatibility validation whenever the environment flag is true.
+- file: vllm/config/vllm.py:1855
+  context: Rejects currently unsupported V2 configurations, including hybrid/Mamba models, prefill context parallelism, most
+    speculative methods, dual batch overlap, routed-expert capture, custom logits processors, KV-sharing fast prefill, and
+    EC transfer.
+- file: vllm_ascend/worker/worker.py:144
+  context: Captures the environment choice in each NPUWorker and forces it back to V1 when paired with vLLM 0.21.0.
+- file: vllm_ascend/worker/worker.py:326
+  context: Constructs the Ascend V2 NPUModelRunner when enabled; otherwise constructs the V1 NPUModelRunner, and warns that
+    V2 remains under development.
+- file: vllm_ascend/worker/v2/model_runner.py:58
+  context: Implements the Ascend V2 runner on upstream GPUModelRunner V2, with Ascend-specific request state, input buffers,
+    Eagle speculator, NPU streams, graph handling, and MoE profile runs.
+- file: vllm_ascend/worker/v2/model_runner.py:64
+  context: Rejects prefill or decode context parallelism and dynamic EPLB in the Ascend V2 runner.
+- file: vllm_ascend/platform.py:849
+  context: Returns no new-style forward-context fields for V1; V2 proceeds to select MoE communication and configure profile,
+    sequence-parallel, flash-communication, padding, and graph fields.
+- file: vllm_ascend/ascend_forward_context.py:365
+  context: Stores and retrieves Ascend extra forward-context fields through additional_kwargs in V2, versus direct attributes
+    on the context in V1.
+- file: vllm_ascend/attention/mla_v1.py:85
+  context: Reports ASCEND_MLA in V1 and the compatibility name FLASH_ATTN in V2 to satisfy upstream V2 KV-cache initialization
+    assertions.
+related_parameters:
+- name: prefill_context_parallel_size
+  relation: Values above 1 are rejected by upstream V2 validation and by the Ascend V2 runner.
+- name: decode_context_parallel_size
+  relation: Values above 1 are rejected by the Ascend V2 runner.
+- name: dynamic_eplb
+  relation: Ascend's additional-config dynamic EPLB option is not implemented by the V2 runner.
+- name: speculative_config.method
+  relation: Upstream V2 validation permits only eagle, eagle3, and mtp when speculative decoding is configured; Ascend V2
+    supplies its own Eagle speculator.
+- name: mamba_cache_mode
+  relation: The align mode contains an explicit assertion that V2 is disabled.
+constraints:
+- 'The value is parsed as an integer before boolean conversion: 0 disables V2, any nonzero integer enables it, and a non-integer
+  string fails during environment parsing.'
+- On Ascend with vLLM 0.21.0, NPUWorker warns and locally falls back to V1 even when the environment flag is enabled.
+- Current upstream V2 validation rejects hybrid/Mamba models, prefill context parallelism, speculative methods other than
+  eagle/eagle3/mtp, dual batch overlap, routed-expert capture, custom logits processors, KV-sharing fast prefill, and EC transfer.
+- Ascend V2 additionally rejects decode context parallelism and dynamic EPLB, and the worker identifies the V2 implementation
+  as still under development.
+- Changing this process-start flag requires recreating workers; it is not a per-request tuning control.
+tuning_advice:
+  summary: Keep the default V1 runner for general Ascend production use; evaluate V2 only for a compatible workload in a controlled
+    benchmark and adopt it only when measured end-to-end results justify the architecture change.
+  suggested_values:
+  - scenario: General Ascend production or any workload using a currently unsupported V2 feature
+    value: '0'
+    reason: This retains the established Ascend runner and avoids the V2 compatibility errors and under-development path documented
+      in the pinned source.
+  - scenario: Compatible Ascend workload being evaluated for V2 runner behavior
+    value: '1'
+    reason: This selects the new runner, its V2 scheduling/input-state integration, and its token-dependent Ascend MoE/communication
+      forward context; benchmark it against 0 because the source provides no universal performance guarantee.
+  - scenario: Ascend deployed with vLLM 0.21.0
+    value: '0'
+    reason: The Ascend worker explicitly does not support V2 with that version and falls back to V1.
+  caveats:
+  - 'Do not infer a speedup merely from the V2 name: the two runners differ across scheduling, buffer management, graph/profile
+    execution, and communication, so results depend on model, batch shape, parallel topology, and compilation mode.'
+  - Before enabling V2, check every configured feature against both upstream validation and the stricter Ascend runner checks;
+    an incompatible configuration fails initialization rather than degrading gracefully.
+  - V2 attention backends reporting FLASH_ATTN is a compatibility-name workaround in current Ascend code; it does not by itself
+    prove that a different attention kernel executes.
+  - Compare steady-state prefill/decode latency and throughput plus post-warmup peak NPU and host memory, and include startup/profile/graph-capture
+    costs when they matter operationally.
+  quick_guide: Use 0 by default on Ascend; try 1 only after compatibility checks, then retain it only if workload-specific
+    measurements show a benefit.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

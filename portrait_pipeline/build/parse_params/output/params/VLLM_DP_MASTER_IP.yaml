@@ -1,0 +1,73 @@
+name: VLLM_DP_MASTER_IP
+type: env
+category: communication
+scope: both
+source_file:
+- vllm/envs.py:1162
+- vllm/envs.py:147
+- vllm/config/parallel.py:816
+value_type: str
+default: 127.0.0.1
+valid_choices: any valid IPv4 address string
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'VLLM_DP_MASTER_IP specifies the IP address of the master node in a data-parallel (DP) deployment. It is read
+  in vllm/config/parallel.py:816 when the distributed executor backend is not "ray" or "mp" (i.e., the offline SPMD case).
+  The value is stored as `self.data_parallel_master_ip` and used to establish the distributed communication backend (e.g.,
+  torch.distributed or Ray) for coordinating multiple DP ranks. An incorrect or unreachable IP will cause the DP initialization
+  to hang or fail, preventing the engine from starting. When DP is correctly configured, this parameter has no direct effect
+  on per-step inference performance; it only affects the one-time setup cost and the ability to form the DP group. Therefore,
+  its performance impact is low — it influences whether DP works at all, but not the steady-state throughput or latency of
+  a successfully initialized deployment. On Ascend NPU, the same mechanism applies: the IP is used for HCCL/network communication
+  setup between DP ranks. The vllm-ascend plugin does not override or alter this parameter''s behavior.
+
+  '
+usage_locations:
+- file: vllm/envs.py:1162
+  context: Environment variable definition with default '127.0.0.1'
+- file: vllm/config/parallel.py:816
+  context: Read into self.data_parallel_master_ip for offline SPMD DP mode
+- file: vllm/envs.py:1885
+  context: Excluded from torch.compile cache key factors (no impact on compilation)
+- file: examples/offline_data_parallel.py:123
+  context: Set in Ascend offline DP example to configure master IP
+- file: tests/e2e/conftest.py:860
+  context: Set to '127.0.0.1' in Ascend DP test worker setup
+- file: tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:82
+  context: Set in Ascend ACL graph capture/replay DP test worker
+related_parameters:
+- name: VLLM_DP_MASTER_PORT
+  relation: Must be set together; defines the full address for DP master node communication
+- name: VLLM_DP_SIZE
+  relation: DP world size; must be > 1 for this parameter to have any effect
+- name: VLLM_DP_RANK
+  relation: DP rank of the current process; used alongside master IP for distributed init
+- name: VLLM_DP_RANK_LOCAL
+  relation: Local DP rank; used alongside master IP for distributed init
+constraints:
+- VLLM_DP_MASTER_IP must be a valid, reachable IP address from all DP worker nodes.
+- VLLM_DP_MASTER_IP is only used when data_parallel_size > 1 and the distributed executor backend is not 'ray' or 'mp' (i.e.,
+  offline SPMD mode).
+- In offline data parallel mode, this parameter is only supported for MoE models; dense models will raise a ValueError.
+tuning_advice:
+  summary: 'Set VLLM_DP_MASTER_IP to the IP address of the node running the DP rank-0 process. For single-node multi-NPU deployments,
+    the default ''127.0.0.1'' is sufficient. For multi-node deployments, ensure the IP is reachable and not blocked by firewalls.
+
+    '
+  suggested_values:
+  - scenario: Single-node multi-NPU DP (all ranks on one machine)
+    value: 127.0.0.1
+    reason: Localhost is sufficient and avoids network configuration issues.
+  - scenario: Multi-node DP with a dedicated master node
+    value: <master-node-ip>
+    reason: Must be the IP address of the node where DP rank 0 will run, reachable from all worker nodes.
+  caveats:
+  - This parameter has no effect if data_parallel_size is 1 (the default).
+  - Incorrect IP will cause the distributed initialization to hang or timeout, not fail immediately.
+  - On Ascend, ensure the IP is reachable over the HCCL communication network (usually the high-speed interconnect subnet).
+  quick_guide: Use '127.0.0.1' for single-node DP; set to the master node's IP for multi-node DP.
+analysis_date: '2026-07-06'

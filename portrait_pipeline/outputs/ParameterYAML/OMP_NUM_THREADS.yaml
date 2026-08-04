@@ -1,0 +1,85 @@
+name: OMP_NUM_THREADS
+type: env
+category: parallelism
+scope: both
+source_file:
+- docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:69
+- docs/source/tutorials/features/pd_disaggregation_mooncake_multi_node.md:266
+- docs/source/tutorials/models/DeepSeek-V3.2.md:136
+- docs/source/user_guide/feature_guide/large_scale_ep.md:123
+- docs/getting_started/installation/cpu.md:148
+value_type: int
+default: null
+valid_choices: A positive integer accepted by the active OpenMP runtime.
+cli_example: export OMP_NUM_THREADS=1
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'OMP_NUM_THREADS limits the OpenMP thread team size used by native CPU work in the process. Too few threads
+  can underuse available host cores, while too many threads per vLLM rank can oversubscribe the host and add scheduling contention,
+  increasing latency and reducing throughput. The pinned Ascend repository does not read this variable in vllm_ascend Python
+  code, but its deployment recipes deliberately export it before starting vllm: model and long-context examples commonly use
+  1, whereas Mooncake, large-scale expert-parallel, KV-pool, and other distributed examples use 10. These are workload-specific
+  launch presets, not a repository-wide default. Upstream vLLM documents a direct CPU-backend effect only when VLLM_CPU_OMP_THREADS_BIND=nobind;
+  its default auto binding policy determines the OpenMP thread count from the selected CPU cores instead.'
+usage_locations:
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:69
+  context: Sets one OpenMP thread in the Ascend dynamic chunked pipeline-parallel startup script, alongside OMP_PROC_BIND=false.
+- file: docs/source/tutorials/features/pd_disaggregation_mooncake_multi_node.md:266
+  context: Sets ten OpenMP threads for each documented Mooncake prefill/decode node launch, illustrating a distributed deployment
+    preset.
+- file: docs/source/tutorials/models/DeepSeek-V3.2.md:136
+  context: Sets ten OpenMP threads in the documented single-node DeepSeek-V3.2 Ascend serving script and repeats the value
+    for multi-node launches.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:123
+  context: Sets ten OpenMP threads per process in the large-scale expert-parallel deployment template.
+- file: docs/getting_started/installation/cpu.md:148
+  context: Upstream CPU-backend documentation states that OMP_NUM_THREADS determines thread count only when VLLM_CPU_OMP_THREADS_BIND
+    is set to nobind.
+related_parameters:
+- name: OMP_PROC_BIND
+  relation: Controls OpenMP thread affinity; the cited Ascend launch recipes usually disable binding while setting OMP_NUM_THREADS
+    explicitly.
+- name: VLLM_CPU_OMP_THREADS_BIND
+  relation: On the upstream CPU backend, its default auto mode derives thread placement and count from CPU topology; setting
+    nobind delegates the count to OMP_NUM_THREADS.
+- name: VLLM_CPU_NUM_OF_RESERVED_CPU
+  relation: Applies to upstream auto binding and reserves host cores for non-OpenMP vLLM work; it has no effect when VLLM_CPU_OMP_THREADS_BIND
+    is nobind.
+constraints:
+- Use a positive integer; zero, negative, or malformed values are not portable OpenMP thread-count settings.
+- The variable is process-wide and each local vLLM rank can create its own OpenMP team, so total runnable threads can scale
+  with local rank count.
+- On upstream CPU deployments, OMP_NUM_THREADS controls thread count only when VLLM_CPU_OMP_THREADS_BIND=nobind; auto binding
+  supersedes it.
+- The pinned Ascend documentation provides per-deployment values rather than a universal default or a formula based on host
+  core count.
+- Set the environment variable before launching vllm so native libraries initialize with the intended thread limit.
+tuning_advice:
+  summary: Preserve the value in the matching Ascend deployment recipe, then benchmark host utilization and end-to-end latency
+    before changing it; do not treat 1 or 10 as a universal default.
+  suggested_values:
+  - scenario: Ascend model or long-context recipe that explicitly specifies one thread
+    value: 1
+    reason: Matches the pinned dynamic pipeline-parallel and several current model launch scripts and minimizes host oversubscription
+      across many ranks.
+  - scenario: Ascend Mooncake, large-scale EP, or similar recipe that explicitly specifies ten threads
+    value: 10
+    reason: Matches the pinned distributed deployment templates; retain it as the baseline for those recipes before workload-specific
+      benchmarking.
+  - scenario: Upstream CPU backend with manual OpenMP control
+    value: 1
+    reason: A conservative starting point after setting VLLM_CPU_OMP_THREADS_BIND to nobind; increase toward the physical
+      cores assigned per rank only when measurements show useful scaling without oversubscription.
+  caveats:
+  - The optimum is per process and depends on physical cores, NUMA placement, local rank count, and other CPU-threaded libraries.
+  - More threads do not imply higher throughput; contention and thread-management overhead can make a larger value slower.
+  - A value taken from one Ascend recipe may be inappropriate for another model, topology, or deployment mode.
+  - For the upstream CPU backend, prefer its documented auto binding unless manual affinity and thread-count control are required.
+  - This setting governs host-side OpenMP concurrency and does not increase NPU compute parallelism or NPU memory capacity.
+  quick_guide: Use the exact value in the selected Ascend guide. Otherwise start with one thread per process, watch CPU saturation
+    and tail latency, and increase only within the physical-core budget per local rank; on upstream CPU, select VLLM_CPU_OMP_THREADS_BIND=nobind
+    before expecting this variable to control the thread count.
+analysis_date: '2026-08-03'

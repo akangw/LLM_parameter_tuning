@@ -1,0 +1,110 @@
+name: SpeculativeConfig.model
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/speculative.py:82
+- vllm/config/speculative.py:505
+- vllm/config/speculative.py:627
+- docs/features/speculative_decoding/README.md:62
+- docs/features/speculative_decoding/draft_model.md:8
+- docs/source/user_guide/feature_guide/speculative_decoding.md:48
+- vllm_ascend/spec_decode/llm_base_proposer.py:213
+value_type: str
+default: null
+valid_choices: A local path or model identifier for a compatible draft checkpoint, EAGLE head, or auxiliary weights; method-specific
+  sentinel values include ngram, ngram_gpu, suffix, and extract_hidden_states. It may be omitted for methods such as MTP that
+  derive the draft from the target model.
+cli_example: --speculative-config '{"method":"draft_model","model":"Qwen/Qwen3-0.6B","num_speculative_tokens":5}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This field selects what supplies speculative proposals. For a model-based method, vLLM constructs a separate
+  draft ModelConfig from this identifier and loads its weights; the selected architecture, size, quantization metadata, and
+  prediction quality therefore determine draft-forward latency, extra weight and KV-cache memory, and the acceptance rate
+  that converts target verification passes into accepted tokens. A small, accurate drafter can reduce inter-token latency
+  and raise throughput, while a large or poorly matched drafter can add more work and memory than speculation saves. The value
+  also participates in method selection: an omitted method defaults to ngram only for model=ngram or [ngram], otherwise to
+  draft_model; model-native MTP can fill model from the target checkpoint; and non-neural ngram, GPU ngram, suffix, and hidden-state
+  extraction paths use sentinel values instead of an external neural drafter. On Ascend, the resolved draft configuration
+  is loaded by AscendSpecDecodeBaseProposer and may share embeddings or the LM head with the target to reduce NPU memory.
+  Ascend documentation additionally requires EAGLE drafters to run with draft tensor parallel size 1, so the checkpoint choice
+  must be considered with its parallelism and token count.'
+usage_locations:
+- file: vllm/config/speculative.py:505
+  context: Infers ngram only for the ngram sentinel and otherwise defaults an omitted method to draft_model.
+- file: vllm/config/speculative.py:531
+  context: Fills model from the target checkpoint for model-native MTP, or assigns method-specific sentinels when model was
+    omitted.
+- file: vllm/config/speculative.py:627
+  context: Constructs the separate draft ModelConfig from this identifier and target-model settings.
+- file: vllm/config/speculative.py:655
+  context: Detects EAGLE, EAGLE3, DFlash, Medusa, MLP-speculator, and MTP methods from the selected draft name or configuration.
+- file: docs/features/speculative_decoding/README.md:62
+  context: Documents model as the draft checkpoint, EAGLE head, or auxiliary identifier and notes that several non-model methods
+    may omit it.
+- file: docs/features/speculative_decoding/draft_model.md:8
+  context: Demonstrates pairing a smaller Qwen draft checkpoint with a larger target and five speculative tokens.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md:48
+  context: Shows an Ascend EAGLE checkpoint configured as model and documents the NPU-specific draft parallelism requirement.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:213
+  context: Loads the resolved draft model through the Ascend proposer using the draft ModelConfig derived from this selection.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: Controls how model is interpreted and can also be inferred from the sentinel, model name, or loaded checkpoint
+    configuration.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Sets proposal depth and is required for a selected model unless the draft configuration supplies n_predict.
+- name: SpeculativeConfig.draft_model_config
+  relation: Is constructed from model for neural drafting and carries the resolved architecture and memory/compute properties.
+- name: SpeculativeConfig.draft_tensor_parallel_size
+  relation: Controls how the selected drafter is sharded; Ascend EAGLE requires a value of 1.
+- name: SpeculativeConfig.quantization
+  relation: Can reduce the selected draft model's compute and weight-memory cost when the checkpoint and backend support it.
+- name: SpeculativeConfig.max_model_len
+  relation: Caps the selected draft model's usable context and can limit its KV-cache footprint.
+constraints:
+- A neural draft model must be compatible with the target tokenizer and must have the same vocabulary size unless its supported
+  architecture implements an explicit vocabulary mapping.
+- A provided neural model requires num_speculative_tokens unless its configuration supplies n_predict; requested token counts
+  must satisfy any n_predict divisibility requirement.
+- If method is omitted, only model values ngram and "[ngram]" select ngram directly; other values initially default to draft_model
+  before architecture-based detection.
+- For method=mtp with no model, vLLM uses the target model checkpoint and aligns draft quantization with the target when no
+  draft quantization was specified.
+- On Ascend, an EAGLE or EAGLE3 checkpoint must be compatible with the target and its draft_tensor_parallel_size must be 1.
+- Local or remote model loading, trust_remote_code, revision, and supported architecture constraints apply to the selected
+  identifier.
+tuning_advice:
+  summary: Prefer a supported drafter that is much cheaper than the target yet accurate on the actual workload. Benchmark
+    acceptance length, end-to-end token latency, throughput, and peak device memory together.
+  suggested_values:
+  - scenario: Ascend deployment with a validated EAGLE checkpoint
+    value: A target-compatible EAGLE or EAGLE3 model identifier
+    reason: EAGLE can provide high speculative gain while sharing selected target weights on Ascend; set the matching method
+      explicitly and use draft tensor parallel size 1.
+  - scenario: A substantially smaller compatible causal LM is available
+    value: The smallest draft checkpoint that preserves high measured acceptance
+    reason: Lower draft compute and weight memory improve the chance that accepted tokens repay proposal and verification
+      overhead.
+  - scenario: The target checkpoint has supported native MTP layers
+    value: Omit model and set method=mtp
+    reason: With method=mtp, omitting model lets vLLM derive the draft configuration from the target checkpoint and avoids
+      choosing an unrelated external drafter.
+  - scenario: Prompts contain strong repeated substrings
+    value: Omit model and set method=ngram or method=suffix
+    reason: Use method=ngram or method=suffix without an external draft checkpoint to avoid neural draft weights and their
+      device-memory cost.
+  caveats:
+  - A smaller checkpoint is not automatically faster end to end; low acceptance can erase its lower proposal latency.
+  - The optimal choice changes with prompt domain, sampling settings, batch size, sequence length, speculative-token count,
+    and device.
+  - External draft weights add startup I/O and device memory, and can reduce the batch capacity available to the target.
+  - Explicitly set method for EAGLE3 and other specialized checkpoints instead of relying only on name-based detection.
+  - Sentinel values are compatibility paths; prefer the explicit method field for ngram, suffix, MTP, and hidden-state extraction.
+  quick_guide: Start with native MTP when supported; otherwise test a small validated EAGLE or causal-LM drafter. Keep it
+    only if end-to-end benchmarks show higher accepted-token throughput or lower latency within the memory budget.
+analysis_date: '2026-07-31'

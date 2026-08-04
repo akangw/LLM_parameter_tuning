@@ -1,0 +1,90 @@
+name: --max-lora-rank
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1244
+- vllm/config/lora.py:34
+- vllm_ascend/lora/punica_npu.py:26
+value_type: int
+default: '16'
+valid_choices: positive integer (typically 1-256, constrained by model architecture)
+cli_example: --max-lora-rank 64
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter controls the maximum rank of LoRA adapters that can be loaded. It directly determines the size
+  of pre-allocated LoRA weight buffers in GPU/NPU memory. In vllm-ascend, the value also triggers a critical code path selection
+  in PunicaWrapperNPU (vllm_ascend/lora/punica_npu.py:26): when max_lora_rank >= 128 or on AscendDeviceType._310P, the system
+  falls back to PyTorch-native LoRA ops (bgmv_expand/shrink from vllm.lora.ops.torch_ops) instead of using the optimized vllm-ascend
+  custom ops (vllm_ascend.lora.lora_ops). This fallback can significantly impact throughput and latency because the custom
+  Ascend ops are tuned for NPU execution, while the PyTorch fallback may not leverage NPU-specific optimizations. Additionally,
+  max_lora_rank affects the shape of all pre-allocated LoRA weight tensors (lora_a_stacked, lora_b_stacked) in every LoRA-enabled
+  linear layer, MoE layer, and column-parallel layer — memory consumption scales linearly with this value. The parameter is
+  also used in the computation graph hash (vllm/config/lora.py:88), meaning changes to it will invalidate cached compilation
+  artifacts.
+
+  '
+usage_locations:
+- file: vllm_ascend/lora/punica_npu.py:26
+  context: Selects between Ascend-optimized LoRA ops and PyTorch fallback based on max_lora_rank >= 128 or _310P device
+- file: vllm/lora/layers/base_linear.py:114
+  context: Sets lora_a_out_size for ReplicatedLinear layers to max_lora_rank
+- file: vllm/lora/layers/base_linear.py:121
+  context: Sets lora_a_out_size for ColumnParallelLinear (fully_sharded path divides by tp_size)
+- file: vllm/lora/layers/column_parallel_linear.py:218
+  context: Sets lora_a_output_size_per_partition for column-parallel linear with multiple slices
+- file: vllm/lora/layers/fused_moe.py:94
+  context: Sets the intermediate dimension for w13_lora_a_stacked in fused MoE layers
+- file: vllm/v1/worker/lora_model_runner_mixin.py:105
+  context: Used for dummy LoRA warmup rank (capped at 8 if max_lora_rank >= 8)
+- file: vllm/config/lora.py:88
+  context: Included in compute_hash for compilation cache key
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for max-lora-rank to have any effect
+- name: --max-loras
+  relation: Together with max-lora-rank determines total LoRA buffer memory (max_loras × max_lora_rank × hidden_dim)
+- name: --fully-sharded-loras
+  relation: When enabled, max-lora-rank is divided by tp_size for column-parallel layers, reducing per-GPU memory
+- name: --lora-dtype
+  relation: Data type of LoRA weights; combined with max-lora-rank determines byte size of buffers
+- name: --max-cpu-loras
+  relation: Controls CPU-side LoRA storage; max-lora-rank affects the size of each CPU-stored adapter
+constraints:
+- max_lora_rank must be a positive integer
+- max_lora_rank must be compatible with the LoRA adapter files being loaded (actual rank cannot exceed this value)
+- When fully_sharded_loras is enabled, max_lora_rank must be divisible by tensor_parallel_size
+tuning_advice:
+  summary: 'Set max_lora_rank to the actual maximum rank of your LoRA adapters — avoid over-provisioning to save memory. On
+    Ascend NPU, keep max_lora_rank below 128 to use optimized custom ops instead of the slower PyTorch fallback.
+
+    '
+  suggested_values:
+  - scenario: Typical LoRA fine-tuned models (rank 8-64)
+    value: '64'
+    reason: Covers most common LoRA ranks while staying below the 128 threshold for Ascend custom ops
+  - scenario: Memory-constrained deployment with low-rank adapters (rank ≤ 16)
+    value: '16'
+    reason: Matches the default; minimizes pre-allocated buffer memory while supporting common small ranks
+  - scenario: High-rank adapters (rank ≥ 128) on Ascend NPU
+    value: '128'
+    reason: If you must use rank ≥ 128, set exactly to the adapter rank to avoid wasting memory; note that this triggers PyTorch
+      fallback ops on Ascend
+  - scenario: Using fully_sharded_loras with tensor parallelism
+    value: multiple of tp_size
+    reason: max_lora_rank must be divisible by tp_size when fully_sharded_loras is enabled, otherwise LoRA weight partitioning
+      will fail
+  caveats:
+  - On Ascend NPU, max_lora_rank >= 128 forces a fallback to PyTorch-native LoRA ops (bgmv_expand/shrink) instead of the optimized
+    vllm-ascend custom ops, which can reduce throughput by 10-30% depending on batch size and sequence length
+  - On AscendDeviceType._310P, the PyTorch fallback is always used regardless of max_lora_rank value
+  - Memory consumption for LoRA buffers scales as O(max_loras × max_lora_rank × hidden_size × num_lora_layers) — over-provisioning
+    max_lora_rank wastes significant NPU memory
+  - The v1 worker uses max_lora_rank for dummy LoRA warmup (capped at 8), so very large values do not increase warmup time
+    but still allocate full-sized buffers
+  quick_guide: Set --max-lora-rank to match your largest adapter's actual rank; keep below 128 on Ascend NPU for best performance.
+analysis_date: '2026-07-06'

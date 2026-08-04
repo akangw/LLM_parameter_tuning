@@ -1,0 +1,89 @@
+name: --hf-overrides
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:816
+- vllm/config/model.py:275
+value_type: dict
+default: '''{}'''
+valid_choices: A JSON dictionary of HuggingFace config overrides, or a callable
+cli_example: '''--hf-overrides ''''{"rope_theta": 1000000, "rope_type": "yarn"}'''''''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'This parameter directly modifies the HuggingFace model configuration before model initialization. On Ascend
+  NPU, it is commonly used to override RoPE parameters (rope_theta, rope_type, factor, original_max_position_embeddings) for
+  long-sequence inference, which affects attention computation patterns and memory layout. It can also override model architectures
+  (e.g., reranker models switching from CausalLM to SequenceClassification), quantization config (setting quantization_config
+  to None to strip fp8 quant), and model-specific flags (use_index_cache, index_topk_freq for DeepSeek-V4). These overrides
+  change the model graph structure, operator selection, and memory allocation, directly impacting throughput, latency, and
+  memory usage on Ascend hardware. The parameter is excluded from hash computation for KV cache block hashing (vllm/config/model.py:372),
+  meaning changes to hf_overrides do not invalidate cached KV blocks. vllm-ascend does not override this parameter; it inherits
+  the upstream behavior.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:275
+  context: Field definition in ModelConfig; forwarded to HuggingFace config or called as callable
+- file: vllm/engine/arg_utils.py:1527
+  context: Passed to ModelConfig constructor during engine initialization
+- file: vllm/entrypoints/chat_utils.py:1939
+  context: Checked to determine tool-call ID type for Kimi models
+- file: vllm/config/speculative.py:642
+  context: Used as hf_config_override for draft model config in speculative decoding
+- file: tests/e2e/pull_request/four_card/long_sequence/test_chunked_prefill_cp.py:97
+  context: Ascend test overrides rope_parameters for long-sequence chunked prefill with context parallelism
+- file: tests/e2e/pull_request/four_card/test_deepseek_v4.py:105
+  context: Ascend test overrides use_index_cache and index_topk_freq for DeepSeek-V4
+- file: tests/ut/attention/a2/test_mla_cp_precision.py:102
+  context: Ascend unit test strips quantization_config via hf_overrides for MLA precision testing
+related_parameters:
+- name: --hf-config-path
+  relation: Alternative way to provide HuggingFace config; hf_overrides applies on top of the loaded config
+- name: --max-model-len
+  relation: RoPE overrides in hf_overrides are often used to extend max_model_len for long sequences
+- name: --quantization
+  relation: hf_overrides can set quantization_config to None to disable quantization from model config
+constraints:
+- The value must be a JSON-serializable dictionary or a callable that accepts and returns a HuggingFace config dictionary.
+- When provided as a JSON string on CLI, it must be valid JSON with double-quoted keys and values.
+- Override keys must correspond to valid fields in the target model's HuggingFace config; invalid keys are silently ignored
+  or may cause model loading errors.
+tuning_advice:
+  summary: Use hf_overrides to adjust RoPE parameters for long-sequence inference on Ascend NPU, or to override model architecture
+    for reranker/compatibility scenarios.
+  suggested_values:
+  - scenario: Long-sequence inference (>32K tokens) on Ascend NPU with YaRN RoPE
+    value: '''{"rope_parameters": {"rope_type": "yarn", "rope_theta": 1000000, "factor": 4, "original_max_position_embeddings":
+      32768}}'''
+    reason: Extends the model's effective context length using YaRN scaling; tested in vllm-ascend chunked prefill with context
+      parallelism tests
+  - scenario: DeepSeek-V4 with index cache optimization on Ascend NPU
+    value: '''{"use_index_cache": true, "index_topk_freq": 4}'''
+    reason: Enables index cache with frequency 4 for DeepSeek-V4 MoE models, improving expert selection throughput on Ascend
+      hardware
+  - scenario: Qwen3-Reranker original model loading on Ascend NPU
+    value: '''{"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker":
+      true}'''
+    reason: Routes the model to sequence classification architecture for efficient score API usage; documented in vllm-ascend
+      tutorials
+  - scenario: Stripping quantization config for precision testing or debugging
+    value: '''{"quantization_config": null}'''
+    reason: Removes quantization config from model config, forcing full-precision execution; used in vllm-ascend attention
+      precision unit tests
+  caveats:
+  - RoPE overrides must match the model's expected parameter names; incorrect keys are silently ignored and may not produce
+    the desired scaling effect.
+  - Overriding architectures changes the model class instantiated by vLLM; ensure the target architecture is supported by
+    vllm-ascend on NPU.
+  - hf_overrides is excluded from KV cache hashing, so changing it does not invalidate cached blocks — but this also means
+    different overrides can share the same cache, potentially causing subtle correctness issues.
+  - When using hf_overrides with speculative decoding, the overrides are applied to the draft model config as well, which
+    may affect draft model behavior.
+  quick_guide: Use hf_overrides to tune RoPE parameters for long-sequence Ascend inference or to switch model architectures
+    for reranker models; provide a JSON dictionary with valid HuggingFace config keys.
+analysis_date: '2026-07-06'

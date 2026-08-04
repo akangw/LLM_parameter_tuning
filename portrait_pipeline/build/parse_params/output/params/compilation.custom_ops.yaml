@@ -1,0 +1,80 @@
+name: compilation.custom_ops
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:979
+- vllm/config/vllm.py:1003
+- vllm/model_executor/custom_op.py:187
+- vllm/model_executor/custom_op.py:275
+- vllm_ascend/platform.py:572
+value_type: list[str]
+default: <computed>
+valid_choices:
+- '''["all"]'''
+- '''["none"]'''
+- '''["+op_name", "-op_name", ...]'''
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls which custom ops (e.g., fused_moe, quant_fp8, grouped_topk, apply_rotary_emb) are
+  dispatched at runtime. On Ascend NPU, vllm-ascend forcibly sets custom_ops to ["all"] for all devices except 310P (vllm_ascend/platform.py:572),
+  overriding any user-specified value. This activates Ascend-optimized kernel implementations (forward_oot path in custom_op.py:204-205)
+  which directly affect compute throughput, memory bandwidth utilization, and kernel launch overhead. Disabling custom ops
+  falls back to PyTorch-native implementations, which are typically much slower on NPU hardware. The parameter also influences
+  whether certain ops get compiled via torch.compile (custom_op.py:191-194) — when custom ops are disabled, forward_native
+  may still be compiled, but the optimized Ascend-specific kernel is lost.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:572
+  context: Force-enables all custom ops on Ascend (except 310P) during platform config initialization
+- file: vllm/model_executor/custom_op.py:275
+  context: 'CustomOp.enabled() checks custom_ops list to decide dispatch: +name enables, -name disables'
+- file: vllm/model_executor/custom_op.py:187
+  context: dispatch_forward() populates enabled_custom_ops/disabled_custom_ops sets from the list
+- file: vllm/config/vllm.py:979
+  context: Auto-appends +quant_fp8 when blocked weights are detected and -quant_fp8 is not present
+- file: vllm/config/vllm.py:1003
+  context: Defaults to 'none' for inductor backend, 'all' otherwise, if neither 'all' nor 'none' is specified
+related_parameters:
+- name: compilation.mode
+  relation: custom_ops default depends on compilation mode (vllm/config/vllm.py:1000-1005)
+- name: compilation.backend
+  relation: custom_ops default depends on backend type (vllm/config/vllm.py:1000-1005)
+- name: compilation.cudagraph_mode
+  relation: Some custom ops are enforce-enabled for CUDA graph compatibility (custom_op.py:183)
+constraints:
+- Cannot both enable and disable the same custom op (e.g., '+fused_moe' and '-fused_moe' simultaneously)
+- On Ascend NPU (non-310P), custom_ops is forcibly set to ['all'] by vllm-ascend, overriding any user configuration
+- The special values 'all' and 'none' are mutually exclusive with explicit +/- op specifications
+tuning_advice:
+  summary: On Ascend NPU (non-310P), this parameter is automatically set to ['all'] by vllm-ascend and should not be manually
+    changed — Ascend-optimized kernels are essential for performance.
+  suggested_values:
+  - scenario: Ascend NPU (A2/A3/A4/A5/A6, non-310P)
+    value: '''["all"]'''
+    reason: vllm-ascend automatically sets this; Ascend-optimized custom ops provide 2-10x speedup over PyTorch-native fallbacks
+      for critical operations like fused_moe, apply_rotary_emb, and quant_fp8
+  - scenario: Ascend 310P (edge inference)
+    value: '''["all"]'''
+    reason: 310P has its own optimized kernel implementations; enabling all custom ops ensures the 310P-specific kernels are
+      dispatched
+  - scenario: Debugging or comparing native vs. optimized kernel performance
+    value: '''["none"]'''
+    reason: Disables all custom ops to fall back to PyTorch-native implementations for baseline performance comparison
+  caveats:
+  - On Ascend NPU (non-310P), vllm-ascend silently overrides any user-specified custom_ops value to ['all'] — manual tuning
+    of this parameter has no effect
+  - Disabling custom ops on Ascend can cause severe performance degradation (5-10x slower) because Ascend-optimized fused
+    kernels are replaced with unoptimized PyTorch-native implementations
+  - The 'all' setting enables every registered custom op, which may increase compilation time on first run due to just-in-time
+    kernel compilation
+  - On 310P devices, the override at platform.py:572 is skipped, so custom_ops can be tuned — but 310P-specific tests still
+    default to ['all']
+  quick_guide: Leave at default ['all'] on Ascend NPU — vllm-ascend enforces this automatically for optimal performance.
+analysis_date: '2026-07-06'

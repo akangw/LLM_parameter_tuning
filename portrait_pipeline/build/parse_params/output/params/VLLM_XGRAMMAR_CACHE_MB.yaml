@@ -1,0 +1,57 @@
+name: VLLM_XGRAMMAR_CACHE_MB
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:1343
+- vllm/envs.py:185
+value_type: int
+default: '512'
+valid_choices: positive integer (MB)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'Controls the in-memory cache size for the xgrammar grammar compiler, which is used for structured output generation
+  (JSON schema, regex, etc.). The value is converted to bytes (multiplied by 1024*1024) and passed as `cache_limit_bytes`
+  to the xgrammar GrammarCompiler constructor in vllm/v1/structured_output/backend_xgrammar.py:68. A larger cache allows more
+  compiled grammars to be retained, avoiding recompilation overhead for repeated schema requests. The default 512 MB is stated
+  to accommodate roughly 1000 JSON schemas. On Ascend NPU, this parameter affects host memory usage (not device HBM), and
+  its performance impact is limited to structured output workloads where grammar compilation latency matters. For most deployments,
+  the default is sufficient.
+
+  '
+usage_locations:
+- file: vllm/v1/structured_output/backend_xgrammar.py:68
+  context: Passed as cache_limit_bytes to xgr.GrammarCompiler constructor
+- file: vllm/envs.py:1343
+  context: Environment variable definition with default 512
+- file: vllm/envs.py:185
+  context: 'Type annotation declaration (VLLM_XGRAMMAR_CACHE_MB: int = 0)'
+related_parameters: []
+constraints:
+- Must be a positive integer representing megabytes.
+tuning_advice:
+  summary: 'Increase only if you observe frequent grammar recompilation in structured output workloads with many distinct
+    schemas; otherwise keep the default 512 MB.
+
+    '
+  suggested_values:
+  - scenario: Typical structured output workloads (up to ~1000 distinct JSON schemas)
+    value: '512'
+    reason: Default value is sufficient for most use cases and avoids unnecessary host memory consumption.
+  - scenario: Very large number of distinct schemas (thousands) causing cache eviction and recompilation
+    value: '1024'
+    reason: Doubling the cache reduces recompilation overhead when many unique schemas are in use.
+  - scenario: Memory-constrained environments with minimal structured output usage
+    value: '128'
+    reason: Reduces host memory footprint when structured output is rarely used or uses few schemas.
+  caveats:
+  - This cache uses host (CPU) memory, not Ascend NPU HBM — increasing it does not affect device memory pressure.
+  - Only relevant when using xgrammar as the structured output backend; has no effect with other backends.
+  - Grammar compilation is typically a one-time cost per unique schema; the cache primarily helps in multi-tenant scenarios
+    with diverse schemas.
+  quick_guide: Keep default 512 MB unless monitoring shows frequent grammar recompilation with many distinct schemas.
+analysis_date: '2026-07-06'

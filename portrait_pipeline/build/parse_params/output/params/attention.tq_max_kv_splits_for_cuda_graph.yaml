@@ -1,0 +1,45 @@
+name: attention.tq_max_kv_splits_for_cuda_graph
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/v1/attention/backends/turboquant_attn.py:295
+value_type: int
+default: <computed>
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: 'This parameter is read exclusively by the TurboQuant attention backend (vllm/v1/attention/backends/turboquant_attn.py:295)
+  to fix the number of KV splits used during CUDA graph decode. By pinning the split count, the grid dimensions become constant
+  across all graph captures, which allows the CUDA graph allocator to pre-allocate buffers and avoid inflating the memory
+  estimate. On Ascend NPU, CUDA graphs are not used (the platform relies on CANN graph compilation or eager execution instead),
+  so this parameter has no direct effect on Ascend runtime performance. It only matters when the TurboQuant backend is selected
+  on GPU platforms.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/backends/turboquant_attn.py:295
+  context: Reads vllm_config.attention_config.tq_max_kv_splits_for_cuda_graph to set self.max_num_kv_splits for fixed grid
+    dimensions in CUDA graph decode.
+related_parameters:
+- name: attention_backend
+  relation: Only effective when the attention backend is set to 'turboquant' (GPU-only backend).
+constraints:
+- Must be a positive integer.
+tuning_advice:
+  summary: 'This parameter only affects the TurboQuant GPU attention backend and has no effect on Ascend NPU. Ascend users
+    can safely ignore it.
+
+    '
+  suggested_values:
+  - scenario: Ascend NPU deployment (any model)
+    value: default
+    reason: TurboQuant is a GPU-only backend; this parameter is not read on Ascend.
+  caveats:
+  - This parameter is specific to the TurboQuant attention backend, which is not supported on Ascend NPU.
+  quick_guide: Ignore on Ascend NPU — only relevant for GPU TurboQuant backend.
+analysis_date: '2026-07-06'

@@ -1,0 +1,85 @@
+name: additional_config.weight_prefetch_config.enabled
+type: nested
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:583
+- vllm_ascend/ops/weight_prefetch.py:46
+- docs/source/user_guide/feature_guide/weight_prefetch.md:1
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"weight_prefetch_config":{"enabled":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'Enabling this Ascend-only switch activates weight prefetch for attention and for the model-appropriate feed-forward
+  path: MoE models enable the MoE path, while dense models enable the MLP path. The implementation issues prefetch operations
+  before the corresponding linear computation so weight movement can overlap vector work such as quantization, gating, RMSNorm,
+  or SwiGLU and warm the L2 cache before Cube computation. This can reduce MTE contention and improve throughput when concurrency
+  provides enough overlap. It is not an unconditional latency optimization: the current Ascend guide says the prefetch pipeline
+  itself affects computation and recommends disabling it when low latency is more important than high throughput. Benefit
+  and overhead depend on concurrency, model architecture, quantization path, layer sizes, and the sibling prefetch_ratio values.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:51
+  context: Reads weight_prefetch_config from upstream VllmConfig.additional_config and constructs the typed Ascend configuration.
+- file: vllm_ascend/ascend_config.py:583
+  context: Reads enabled from the nested dictionary with a false default.
+- file: vllm_ascend/worker/model_runner_v1.py:304
+  context: Installs the configured WeightPrefetchMethod for the v1 model runner.
+- file: vllm_ascend/ops/weight_prefetch.py:48
+  context: Gates direct MLA/SFA weight prefetch and initializes the module-specific prefetch switches.
+- file: vllm_ascend/ops/weight_prefetch.py:59
+  context: Enables the MoE path only when this switch is true and the loaded model is MoE.
+- file: vllm_ascend/ops/weight_prefetch.py:65
+  context: Enables the MLP path only when this switch is true and the loaded model is dense.
+- file: docs/source/user_guide/feature_guide/weight_prefetch.md:1
+  context: Documents the overlap mechanism, throughput-versus-latency tradeoff, tuning method, and supported configuration
+    syntax.
+related_parameters:
+- name: additional_config.weight_prefetch_config.prefetch_ratio
+  relation: Selects how much of each attention, MoE, or MLP weight is prefetched; zero or missing effective ratios can disable
+    individual module work even when enabled is true.
+- name: sequence_parallel
+  relation: The documented MLP down-projection prefetch path depends on sequence parallel, so enabled=true alone does not
+    activate that optimization in every dense configuration.
+constraints:
+- This is an Ascend platform-specific key passed inside --additional-config; upstream vLLM treats additional_config as opaque
+  platform data.
+- MoE prefetch becomes active for a forward pass only when the token count is at least 96.
+- Dense MLP prefetch becomes active only when the Ascend forward context is available and the token count is below 500.
+- Individual ratios are filtered to the inclusive range 0.0 through 1.0, and a module whose effective ratios are all zero
+  remains disabled.
+- The current guide documents an 18 MiB maximum prefetch and requires sequence parallel for MLP down-projection prefetch.
+tuning_advice:
+  summary: Keep false for latency-first or low-concurrency service; test true for throughput-oriented Ascend workloads and
+    tune ratios from profiling rather than assuming the defaults suit every model and batch shape.
+  suggested_values:
+  - scenario: Throughput-oriented Ascend serving with enough concurrent work to overlap weight movement
+    value: true
+    reason: Enables the separate prefetch pipeline that can hide memory-transfer work behind vector computation and reduce
+      MTE contention.
+  - scenario: Low-latency or low-concurrency serving
+    value: false
+    reason: The Ascend guide warns that prefetch affects computation and may provide no advantage at lower concurrency; disabling
+      also avoids prefetch synchronization overhead.
+  - scenario: Initial deployment before workload-specific profiling
+    value: false
+    reason: This is the source default and avoids introducing a workload-sensitive optimization until a representative throughput
+      benchmark demonstrates a gain.
+  caveats:
+  - A larger prefetch is not always better; insufficient overlap wastes work, while excessive prefetch can contend with computation
+    and degrade performance.
+  - The documented default ratios were validated for specific Qwen3 W8A8 concurrency points and are not universal recommendations.
+  - MoE and dense models use different feed-forward paths, and the implementation applies additional per-forward token thresholds.
+  - Attention behavior varies by execution and quantization path; W8A8 avoids duplicating an O-projection prefetch already
+    performed by its linear method.
+  - Profile the CMO prefetch operation against the vector operation intended to hide it; the prefetch should complete no later
+    than the overlapping vector work.
+  quick_guide: Benchmark false versus true at representative concurrency. Retain true only when throughput improves without
+    unacceptable latency, then tune prefetch_ratio per layer from an Ascend profiling timeline.
+analysis_date: '2026-08-02'

@@ -1,0 +1,119 @@
+name: CompilationConfig.pass_config.enable_sp
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:129
+- vllm/config/vllm.py:1032
+- vllm/config/compilation.py:1151
+- vllm_ascend/platform.py:221
+- vllm_ascend/ascend_config.py:247
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:74
+- docs/source/user_guide/feature_guide/sequence_parallelism.md:15
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --tensor-parallel-size 2 --compilation-config '{"pass_config":{"enable_sp":true}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This switch enables compilation-pass sequence parallelism. The pass rewrites tensor-parallel all-reduce plus
+  normalization into reduce-scatter, local normalization, and all-gather; on Ascend it registers both the dense/VL SequenceParallelismPass
+  and the MoE follow-up pass. Ascend''s documented benefit comes from reducing post-normalization communication for quantized
+  tensors where supported and from making communication-computation fusion possible, while fixed collective overhead can make
+  small-token ranges slower. Ascend therefore applies the passes only to compiled ranges beginning at its SP threshold: 1000
+  tokens for dense models and 1 for MoE models when sp_min_token_num is not supplied. The declared null is resolved during
+  configuration: the pinned default optimization level O2 selects true for dense models, but user-provided true or false takes
+  precedence and validation can disable true when prerequisites are not met.'
+usage_locations:
+- file: vllm/config/vllm.py:1032
+  context: Makes fused GEMM/communication imply SP, requires tensor parallelism greater than one, computes an upstream token
+    threshold, and disables SP when the threshold heuristic cannot support the model.
+- file: vllm/config/compilation.py:1151
+  context: Clears graph splitting operations and changes piecewise CUDA-graph mode to full graph when SP is enabled without
+    Inductor graph partitioning.
+- file: vllm/config/compilation.py:1451
+  context: Rounds CUDA-graph capture shapes to satisfy both speculative-decoding and tensor-parallel divisibility requirements.
+- file: vllm_ascend/platform.py:221
+  context: Supplies an Ascend SP threshold of 1000 tokens for dense models or 1 for MoE models when the user enables SP without
+    setting a threshold.
+- file: vllm_ascend/ascend_config.py:247
+  context: Derives enable_sp_by_pass only for non-eager execution with this switch enabled, allowing Ascend runtime paths
+    to recognize graph-pass SP.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:74
+  context: Registers SequenceParallelismPass followed by SequenceParallelismMoePass when the switch is true.
+- file: vllm_ascend/compilation/passes/sequence_parallelism.py:228
+  context: Applies the Ascend SP graph rewrite only when the compiled token range starts at or above the model-specific minimum.
+related_parameters:
+- name: CompilationConfig.pass_config.sp_min_token_num
+  relation: Sets the minimum compiled token range where SP transformations apply; Ascend defaults it to 1000 for dense models
+    and 1 for MoE models.
+- name: CompilationConfig.pass_config.fuse_gemm_comms
+  relation: Async tensor-parallel GEMM/collective fusion requires SP and forces this switch true.
+- name: ParallelConfig.tensor_parallel_size
+  relation: SP requires a tensor-parallel size greater than one.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: When false, SP requires full-graph compilation and causes splitting operations to be cleared.
+- name: CompilationConfig.cudagraph_mode
+  relation: Piecewise CUDA graphs are changed to full mode when full-graph SP is required, and capture shapes must be compatible
+    with TP divisibility.
+- name: additional_config.enable_flashcomm1
+  relation: Controls Ascend Flash Comm V1, a separate custom-op optimization; it should not be confused with this graph-pass
+    SP switch.
+constraints:
+- Tensor parallel size must be greater than 1; upstream validation otherwise disables SP.
+- Ascend graph-pass SP requires graph mode, so enforce_eager must be false for enable_sp_by_pass to become active.
+- The pinned Ascend support matrix limits graph-pass SP to VL models without quantization; non-VL models use the separate
+  Flash Comm V1 path, and quantized graph-pass SP is still under adaptation.
+- With use_inductor_graph_partition=false, SP requires full-graph compilation; configured splitting operations are cleared
+  and piecewise CUDA-graph mode is changed to FULL.
+- CUDA-graph capture sizes used with SP must be divisible by tensor parallel size. With speculative decoding, a compatible
+  common multiple must exist for tensor_parallel_size and num_speculative_tokens + 1.
+- Upstream may disable SP when its device-, dtype-, TP-, and hidden-size-based threshold heuristic returns no useful threshold;
+  setting sp_min_token_num explicitly bypasses that heuristic.
+tuning_advice:
+  summary: On Ascend, enable graph-pass SP only for a supported VL model in graph mode with TP greater than one, and benchmark
+    token ranges on both sides of the default threshold.
+  suggested_values:
+  - scenario: Supported unquantized VL model on Ascend with TP greater than 1
+    value: true
+    reason: Enables the Ascend dense and MoE graph passes; the default threshold prevents the dense pass from running below
+      1000 tokens.
+  - scenario: Ascend eager mode, quantized model, or non-VL model
+    value: false
+    reason: These cases are outside the pinned graph-pass support matrix; non-VL workloads should evaluate the separate Flash
+      Comm V1 setting instead.
+  - scenario: Upstream CUDA deployment
+    value: false
+    reason: Use false as a conservative baseline and enable only on supported hardware after verifying that the thresholded
+      workload benefits; fuse_gemm_comms may enable SP automatically when AsyncTP is selected.
+  caveats:
+  - 'SP is not inherently faster: reduce-scatter and all-gather add fixed overhead, so lowering sp_min_token_num can regress
+    small-token latency.'
+  - The null field default is resolved by the optimization profile and model properties. In the pinned upstream default O2
+    profile it becomes true for dense models, while an explicit user value is preserved.
+  - Enabling SP changes compilation and CUDA-graph shape handling and can increase warm-up cost or remove otherwise useful
+    capture sizes.
+  - Ascend graph-pass SP and Flash Comm V1 are complementary implementations with different support matrices; enabling this
+    field does not itself enable additional_config.enable_flashcomm1.
+  quick_guide: 'Ascend: use true only for supported unquantized VL graph-mode serving with TP>1, keep the automatic 1000-token
+    dense threshold initially, and compare latency and throughput against explicit false.'
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - vlm
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

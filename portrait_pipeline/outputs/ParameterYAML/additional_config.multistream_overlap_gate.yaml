@@ -1,0 +1,103 @@
+name: additional_config.multistream_overlap_gate
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:132
+- vllm_ascend/distributed/parallel_state.py:104
+- vllm_ascend/ops/fused_moe/fused_moe.py:386
+- vllm_ascend/ops/fused_moe/prepare_finalize.py:376
+- vllm_ascend/quantization/methods/w8a8_dynamic.py:259
+- vllm_ascend/quantization/methods/w8a8_mxfp8.py:270
+- docs/source/user_guide/configuration/additional_config.md:80
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"multistream_overlap_gate":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Enabling this Ascend-only option changes the fused-MoE critical path. It creates a gate NPU stream and an auxiliary
+  fc3_quant_x model-parallel group. For MoE layers with shared experts, shared-expert computation and top-k expert selection
+  execute on the gate stream after it waits for the current stream; the current stream then performs the MoE prepare path
+  before synchronizing with the gate stream. On the expert-parallel all-gather prepare path, hidden-state gathering is also
+  moved to a separate quant stream, while router logits and selected-expert results are supplied through the FlashCommon3
+  context. This can hide routing, shared-expert, and communication work behind one another, reducing per-layer latency and
+  improving throughput when those operations are large enough to amortize stream and synchronization overhead. It does not
+  change model weights or KV-cache capacity, although the extra streams and process group consume small runtime resources.
+  The pinned upstream vLLM repository has no corresponding setting.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:132
+  context: Reads the nested additional-config boolean with a false default.
+- file: vllm_ascend/distributed/parallel_state.py:104
+  context: Creates the auxiliary fc3_quant_x model-parallel group when the option is enabled.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:386
+  context: Enables the shared-expert gate-overlap path only for a layer that actually has shared experts and creates the gate
+    NPU stream.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:603
+  context: Runs shared-expert computation and top-k routing on the gate stream, then synchronizes the current stream before
+    expert execution.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:855
+  context: Publishes the shared-expert module through FlashCommon3 and later consumes the asynchronously computed shared output.
+- file: vllm_ascend/ops/fused_moe/prepare_finalize.py:376
+  context: On the expert-parallel prepare path, moves hidden-state all-gather to a quant stream and synchronizes before returning.
+- file: vllm_ascend/quantization/methods/w8a8_dynamic.py:259
+  context: Reuses top-k weights and IDs computed by the gate stream instead of invoking expert selection again for W8A8_DYNAMIC
+    MoE.
+- file: vllm_ascend/quantization/methods/w8a8_mxfp8.py:270
+  context: Reuses the gate-stream top-k results in the W8A8_MXFP8 MoE implementation.
+- file: docs/source/user_guide/configuration/additional_config.md:80
+  context: Documents the false default and limits the option to MoE models with shared experts.
+related_parameters:
+- name: additional_config.multistream_overlap_shared_expert
+  relation: Provides a separate shared-expert overlap path; when gate overlap is active for a shared-expert layer, the shared
+    result is produced through FlashCommon3 and the ordinary shared-expert forward path is bypassed, so benchmark the modes
+    independently before combining them.
+- name: additional_config.enable_shared_expert_dp
+  relation: Changes whether the gate-stream shared-expert result needs a tensor-parallel all-reduce for ALLTOALL, MC2, and
+    FUSED_MC2 communication modes, affecting the amount of communication available to overlap.
+- name: expert_parallel_size
+  relation: The expert-parallel prepare path can place hidden-state all-gather on the auxiliary quant stream when gate overlap
+    is enabled.
+constraints:
+- The documented and implemented target is an Ascend fused-MoE layer with shared experts; this option has no upstream vLLM
+  equivalent.
+- Do not enable it for a MoE layer without shared experts. The generic enabled path asserts that a FlashCommon3 context and
+  shared-expert module exist, so unsupported use is not guaranteed to be silently ignored.
+- The optimization adds explicit stream waits around asynchronous work; workloads with little routing, shared-expert, or collective
+  work may not amortize that coordination overhead.
+- W8A8_DYNAMIC and W8A8_MXFP8 methods require the FlashCommon3 top-k context when enabled; the source uses assertions rather
+  than a fallback to synchronous selection.
+tuning_advice:
+  summary: Keep false as the compatibility baseline; test true only for supported shared-expert MoE models on Ascend and retain
+    it when representative end-to-end measurements show a latency or throughput improvement.
+  suggested_values:
+  - scenario: Shared-expert MoE with costly routing/shared-expert work and expert-parallel communication
+    value: true
+    reason: Allows gate-stream computation and the prepare/all-gather work to overlap, potentially shortening the fused-MoE
+      critical path.
+  - scenario: MoE without shared experts, a dense model, or an unverified execution path
+    value: false
+    reason: Matches the default and avoids runtime context assertions on unsupported models as well as unnecessary streams
+      and process-group setup.
+  - scenario: Supported shared-expert MoE with no measured gain at the production batch and token mix
+    value: false
+    reason: Avoids stream switches, waits, and auxiliary communication resources when the available parallel work does not
+      amortize them.
+  caveats:
+  - The pinned source and documentation provide no universal speedup or batch-size threshold; benefit depends on model, quantization,
+    parallel layout, and request mix.
+  - Benchmark warm steady state with the actual TP/DP/EP configuration because enable_shared_expert_dp and the MoE communication
+    type change the all-reduce behavior.
+  - Test this option separately from multistream_overlap_shared_expert first, since both alter scheduling of shared-expert
+    work.
+  - Treat assertion failures or output mismatches as incompatibility and revert to false; the enabled paths intentionally
+    assume their asynchronous context is populated.
+  quick_guide: Start false. For a supported shared-expert MoE on Ascend, enable true in isolation, warm up, compare TPOT,
+    request latency, and throughput at representative concurrency, and keep it only if correctness is stable and the improvement
+    is repeatable.
+analysis_date: '2026-08-01'

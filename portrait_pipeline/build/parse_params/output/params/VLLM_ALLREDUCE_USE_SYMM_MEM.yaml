@@ -1,0 +1,80 @@
+name: VLLM_ALLREDUCE_USE_SYMM_MEM
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1559
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether vLLM uses PyTorch symmetric memory (torch.distributed._symm_mem)
+  for tensor-parallel allreduce operations on CUDA GPUs. When enabled (default), the SymmMemCommunicator is used for TP allreduce,
+  which can reduce latency by leveraging hardware multicast capabilities on supported NVIDIA GPUs (SM90+). On Ascend NPU,
+  this mechanism is NOT applicable — Ascend uses HCCL for collective communication, and the SymmMemCommunicator path is CUDA-specific.
+  The parameter is read in cuda_communicator.py:53 and only affects the CUDA communicator path. On Ascend, the communication
+  backend is handled by HCCL via the vllm-ascend plugin, which does not reference this environment variable. Therefore, this
+  parameter has no direct effect on Ascend NPU performance. However, leaving it at the default value (1) may cause harmless
+  warning messages during initialization if symmetric memory is unavailable, which is always the case on Ascend.
+
+  '
+usage_locations:
+- file: vllm/distributed/device_communicators/cuda_communicator.py:53
+  context: 'Reads VLLM_ALLREDUCE_USE_SYMM_MEM to decide whether to use SymmMemCommunicator for TP allreduce. Only applies
+    when unique_name contains "tp".
+
+    '
+- file: vllm/distributed/device_communicators/symm_mem.py:101
+  context: 'Logs a warning suggesting users set VLLM_ALLREDUCE_USE_SYMM_MEM=0 if symmetric memory initialization fails.
+
+    '
+- file: vllm/model_executor/layers/batch_invariant.py:992
+  context: 'Overrides VLLM_ALLREDUCE_USE_SYMM_MEM to "0" when batch invariance mode is enabled, to ensure deterministic allreduce
+    behavior.
+
+    '
+related_parameters:
+- name: VLLM_ALLREDUCE_USE_FLASHINFER
+  relation: 'Alternative allreduce backend for CUDA; mutually exclusive in practice with symmetric memory allreduce. Both
+    are CUDA-specific and irrelevant on Ascend.
+
+    '
+- name: VLLM_BATCH_INVARIANT
+  relation: 'When enabled, VLLM_ALLREDUCE_USE_SYMM_MEM is forcibly set to 0 to ensure deterministic communication.
+
+    '
+constraints:
+- Symmetric memory allreduce is only available for tensor-parallel (TP) groups, not for other process groups.
+- Symmetric memory requires NVIDIA GPU hardware support (SM90+ with multicast capability); it is not available on Ascend NPU.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has no effect on communication performance. Set to 0 to suppress harmless initialization
+    warnings.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: '0'
+    reason: 'Symmetric memory allreduce is a CUDA-specific feature and is not supported on Ascend NPU. Setting to 0 avoids
+      unnecessary warning messages during SymmMemCommunicator initialization.
+
+      '
+  caveats:
+  - 'On Ascend NPU, tensor-parallel allreduce is handled by HCCL via the vllm-ascend plugin. This environment variable does
+    not affect HCCL communication in any way.
+
+    '
+  - 'Leaving this at the default value (1) on Ascend will cause a one-time warning log about symmetric memory initialization
+    failure, but does not affect functionality or performance.
+
+    '
+  quick_guide: 'Set VLLM_ALLREDUCE_USE_SYMM_MEM=0 on Ascend NPU to suppress irrelevant CUDA-specific warnings.
+
+    '
+analysis_date: '2026-07-06'

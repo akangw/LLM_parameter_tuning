@@ -1,0 +1,69 @@
+name: shutdown-timeout
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1472
+- vllm/config/vllm.py:356
+value_type: int
+default: 0
+valid_choices: '>= 0'
+cli_example: --shutdown-timeout 30
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls the grace period (in seconds) during engine shutdown for in-flight requests to complete.
+  When set to 0 (default), all running requests are immediately aborted. When set to a positive value, the engine waits up
+  to that many seconds for requests to finish before aborting the remainder. The performance impact is low because it only
+  affects the shutdown phase, not steady-state throughput or latency. However, in production deployments with long-running
+  requests, a non-zero timeout can prevent unnecessary request failures during graceful rolling restarts, indirectly improving
+  perceived latency for end users. On Ascend NPU, the behavior is identical to upstream vLLM — vllm-ascend does not override
+  or modify this parameter. The shutdown logic in vllm/v1/engine/core.py:1240 reads `self.vllm_config.shutdown_timeout` and
+  either aborts immediately (timeout=0) or drains requests with a deadline. The API server launcher (vllm/entrypoints/launcher.py:110)
+  and CLI serve entrypoint (vllm/entrypoints/cli/serve.py:225,309) also use this value when propagating shutdown signals to
+  engine processes.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/core.py:1240
+  context: Core engine reads shutdown_timeout to decide abort-vs-drain behavior
+- file: vllm/entrypoints/cli/serve.py:225
+  context: CLI serve uses shutdown_timeout when waiting for engine processes to exit
+- file: vllm/entrypoints/cli/serve.py:309
+  context: CLI serve uses shutdown_timeout when waiting for API server processes to exit
+- file: vllm/entrypoints/launcher.py:110
+  context: API server launcher reads shutdown_timeout for graceful shutdown handling
+related_parameters: []
+constraints:
+- shutdown_timeout must be greater than or equal to 0
+tuning_advice:
+  summary: 'Set to a positive value (e.g., 30 seconds) in production to allow in-flight requests to complete during graceful
+    shutdown; keep at 0 for development or when immediate termination is preferred.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with graceful rolling restarts
+    value: 30
+    reason: 'Allows up to 30 seconds for in-flight requests to complete before aborting, reducing client-visible errors during
+      orchestrated shutdowns.
+
+      '
+  - scenario: Development or testing environments
+    value: 0
+    reason: 'Immediate abort simplifies debugging and avoids waiting for long-running test requests to finish.
+
+      '
+  caveats:
+  - 'A very large timeout can delay shutdown indefinitely if requests are stuck or extremely long-running; ensure your request
+    timeout (e.g., max-model-len) is compatible with the shutdown timeout.
+
+    '
+  - 'This parameter has no effect on Ascend-specific behavior — it is purely an upstream vLLM feature and works identically
+    on NPU.
+
+    '
+  quick_guide: 'Use --shutdown-timeout 30 in production for graceful shutdown; use 0 (default) in development.
+
+    '
+analysis_date: '2026-07-06'

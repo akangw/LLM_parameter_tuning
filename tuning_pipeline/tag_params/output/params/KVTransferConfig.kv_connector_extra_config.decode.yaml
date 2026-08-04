@@ -1,0 +1,129 @@
+name: KVTransferConfig.kv_connector_extra_config.decode
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm/config/kv_transfer.py:60
+- vllm/config/kv_transfer.py:121
+- vllm_ascend/ascend_config.py:177
+- vllm_ascend/utils.py:1438
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1566
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1644
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1374
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1473
+- examples/offline_disaggregated_prefill_npu.py:59
+- docs/source/tutorials/models/GLM5.md:1385
+value_type: dict
+default:
+  tp_size: 1
+valid_choices:
+  tp_size: positive integer matching the decode instance tensor_parallel_size
+  dp_size: positive integer matching the decode instance data_parallel_size
+  pp_size: 1 when supplied; omitted defaults to 1
+cli_example: --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer", "kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":1},
+  "decode":{"dp_size":1,"tp_size":1}}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This nested mapping describes the decode-side parallel topology to the Ascend Mooncake connector; it does not
+  itself set vLLM parallelism. The connector requires decode tp_size and dp_size, uses tp_size when mapping prefill ranks
+  and KV heads to decode ranks, and permits only decode pp_size=1. Ascend also derives PD TP/head ratios from the prefill
+  and decode TP sizes, which can activate KV-cache rearrangement and all-to-all resharding when the sizes differ. Consequently,
+  the actual decode DP/TP layout determines device count, per-rank model/KV-cache memory, compute and communication behavior,
+  while an inaccurate mapping is rejected or can make transfer routing unusable rather than serving as an independent tuning
+  override.
+usage_locations:
+- file: vllm_ascend/utils.py:1438
+  context: On a KV consumer, validates supplied decode tp_size and dp_size against the instance tensor_parallel_size and data_parallel_size.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1644
+  context: MooncakeConnector reads mandatory decode tp_size and dp_size, defaults pp_size to one, and rejects any other decode
+    pipeline-parallel size.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1566
+  context: Worker initialization rejects a decode TP size larger than prefill TP; later transfer mapping and KV-head grouping
+    use the recorded decode TP.
+- file: vllm_ascend/ascend_config.py:177
+  context: Computes the prefill-to-decode TP ratio and KV-head ratio used for unequal-TP PD KV-cache reshaping and transfer.
+- file: examples/offline_disaggregated_prefill_npu.py:59
+  context: The pinned Ascend offline PD example supplies the identical decode topology on the producer and consumer configurations.
+- file: docs/source/tutorials/models/GLM5.md:1385
+  context: Ascend model guidance shows that decode DP/TP layouts are workload dependent, recommending different layouts for
+    latency and throughput.
+related_parameters:
+- name: KVTransferConfig.kv_connector_extra_config.prefill
+  relation: Supplies the peer prefill topology; prefill tp_size must be at least and, in AscendConfig, divisible by decode
+    tp_size.
+- name: tensor_parallel_size
+  relation: The decode mapping's tp_size must equal the actual decode consumer tensor parallel size.
+- name: data_parallel_size
+  relation: The decode mapping's dp_size must equal the actual decode consumer data parallel size.
+- name: pipeline_parallel_size
+  relation: Mooncake's decode pp_size is fixed at one, so decode pipeline parallelism is not supported by this connector path.
+- name: KVTransferConfig.kv_connector
+  relation: The nested topology is consumed by the Ascend Mooncake connector; the upstream KVTransferConfig merely stores
+    connector-specific extra data.
+- name: KVTransferConfig.kv_role
+  relation: Consumer and both roles trigger local validation of the decode mapping; both producer and consumer Mooncake workers
+    need peer topology metadata.
+constraints:
+- For Ascend MooncakeConnectorV1 and its hybrid implementation, both tp_size and dp_size must be present in the decode mapping.
+- On the decode consumer, tp_size and dp_size must exactly match the effective tensor_parallel_size and data_parallel_size.
+- Decode pp_size defaults to 1 and must equal 1 when specified.
+- Prefill tp_size must be greater than or equal to decode tp_size; the non-MLA Ascend configuration additionally requires
+  prefill tp_size to be divisible by decode tp_size.
+- For hybrid KV caches containing Mamba state, the Mooncake hybrid connector requires prefill and decode TP sizes to be equal.
+tuning_advice:
+  summary: 'Treat this mapping as a declaration of a benchmarked decode topology, not as a second control plane: first choose
+    the decode instance''s real DP/TP configuration for the model, memory capacity, hardware, and traffic, then copy those
+    exact sizes into decode on every participating Mooncake process.'
+  suggested_values:
+  - scenario: Single-device functional validation
+    value:
+      dp_size: 1
+      tp_size: 1
+    reason: Matches the pinned offline Ascend PD example and avoids unequal-TP KV resharding while validating the deployment.
+  - scenario: Latency-oriented GLM5 deployment from pinned Ascend guidance
+    value:
+      dp_size: 4
+      tp_size: 8
+    reason: The pinned GLM5 guide recommends DP4/TP8 on decode for its stated low-latency 1P1D configuration; use it only
+      with that actual topology and comparable model and hardware.
+  - scenario: Throughput-oriented GLM5 deployment from pinned Ascend guidance
+    value:
+      dp_size: 8
+      tp_size: 4
+    reason: The pinned GLM5 guide recommends DP8/TP4 on decode for its stated high-throughput configuration, illustrating
+      that the best split is workload specific.
+  caveats:
+  - Changing this dictionary alone does not repartition the engine; a mismatch with the decode process is a configuration
+    error.
+  - 'The task-level fallback of {tp_size: 1} is used by AscendConfig when the whole decode entry is absent, but Mooncake initialization
+    requires an explicit decode mapping containing both tp_size and dp_size.'
+  - Lower decode TP than prefill TP can add KV-head regrouping, all-to-all resharding, and transfer complexity; equal TP avoids
+    that specific path but is not automatically the fastest end-to-end layout.
+  - Published model layouts are examples, not universal optima; verify latency, throughput, memory headroom, and transfer
+    stability on the target model, CANN version, NPU topology, and request distribution.
+  quick_guide: Set decode.dp_size and decode.tp_size to the decode server's actual sizes, keep decode.pp_size at one, ensure
+    prefill TP compatibility, and benchmark the real deployment rather than tuning this metadata independently.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,55 @@
+name: kv_transfer.kv_rank
+type: nested
+category: communication
+scope: vllm-ascend
+source_file: []
+value_type: int
+default: <computed>
+valid_choices: '''0 or 1 (currently only 1P1D is supported)'''
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter identifies the role of the current vLLM instance in a disaggregated prefill-decode (1P1D) deployment
+  using KV cache transfer over Mooncake. The kv_rank value determines whether the instance acts as a KV producer (prefill,
+  rank 0) or KV consumer (decode, rank 1). This directly affects the entire serving topology: prefill instances generate and
+  send KV cache blocks, while decode instances receive and reuse them. Incorrect assignment breaks the KV transfer pipeline,
+  causing requests to fail or hang. On Ascend NPU, the KV transfer uses HCCL/NPU buffers (kv_buffer_device: "npu"), so the
+  rank also determines which NPU memory regions are allocated for KV sending vs receiving. The documentation explicitly states
+  "Currently only 1P1D is supported", meaning only ranks 0 and 1 are valid.
+
+  '
+usage_locations:
+- file: vllm_ascend/... (MooncakeConnectorV1)
+  context: Parsed from --kv-transfer-config JSON to configure the Mooncake KV connector role
+related_parameters:
+- name: kv_transfer.kv_role
+  relation: 'Semantically coupled: kv_rank 0 corresponds to kv_role ''kv_producer'', kv_rank 1 to ''kv_consumer'''
+- name: kv_transfer.kv_connector
+  relation: Must be set to 'MooncakeConnectorV1' for kv_rank to take effect
+- name: kv_transfer.kv_parallel_size
+  relation: Defines the number of parallel KV transfer instances; currently must be 1
+- name: kv_transfer.kv_buffer_device
+  relation: Must be 'npu' for Ascend deployments; determines memory allocation for KV buffers
+constraints:
+- kv_rank must be 0 (prefill/producer) or 1 (decode/consumer); only 1P1D topology is supported
+- kv_rank must be unique within a KV transfer group; no two instances can share the same rank
+- kv_rank 0 must be paired with kv_role 'kv_producer' and kv_rank 1 with kv_role 'kv_consumer'
+tuning_advice:
+  summary: Assign kv_rank=0 to prefill instances and kv_rank=1 to decode instances in 1P1D deployments
+  suggested_values:
+  - scenario: Prefill instance in 1P1D disaggregated serving
+    value: 0
+    reason: Designates this instance as the KV cache producer; it computes and sends KV blocks to decode instances
+  - scenario: Decode instance in 1P1D disaggregated serving
+    value: 1
+    reason: Designates this instance as the KV cache consumer; it receives KV blocks from the prefill instance to accelerate
+      decode
+  caveats:
+  - Only 1P1D (one prefill, one decode) topology is currently supported; multi-node prefill or decode pools are not yet available
+  - Both prefill and decode instances must use the same kv_parallel_size (currently 1) and compatible kv_connector_extra_config
+  - Network port configuration (kv_port) must be distinct between producer and consumer instances to avoid conflicts
+  quick_guide: Set kv_rank=0 for prefill, kv_rank=1 for decode in 1P1D Mooncake KV transfer deployments
+analysis_date: '2026-07-06'

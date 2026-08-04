@@ -1,0 +1,65 @@
+name: compilation.cudagraph_mm_encoder
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/v1/worker/gpu_model_runner.py:6165
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter triggers CUDA graph capture for the multimodal encoder (e.g., ViT) in vLLM''s
+  v1 worker path. The encoder forward pass is captured as a CUDA graph for each token budget level, which can reduce kernel
+  launch overhead and improve latency for multimodal models. However, on Ascend NPU, CUDA graphs are not natively supported
+  — vllm-ascend replaces CUDA graph mechanisms with Ascend-specific graph capture (e.g., torch_npu graph or CANN graph). The
+  cudagraph_mm_encoder flag is only checked in the upstream v1 GPU model runner (vllm/v1/worker/gpu_model_runner.py:6165)
+  and has no corresponding override or handling in vllm-ascend''s v1 or v2 worker paths. As a result, this parameter has no
+  effect on Ascend NPU runtime — the encoder CUDA graph manager is never initialized on NPU because the Ascend worker does
+  not read this flag. The performance impact is classified as low because it is effectively a no-op on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_model_runner.py:6165
+  context: 'Checked during model capture to decide whether to initialize EncoderCudaGraphManager for multimodal encoder CUDA
+    graph capture. Only active when cudagraph_mode is not NONE and the model supports encoder CUDA graphs.
+
+    '
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: 'cudagraph_mm_encoder is only effective when cudagraph_mode is not set to NONE. If CUDA graphs are globally disabled,
+    encoder CUDA graph capture is skipped regardless of this flag.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'This parameter has no effect on Ascend NPU. It is a CUDA-specific optimization for multimodal encoder graph capture
+    that is not implemented in vllm-ascend.
+
+    '
+  suggested_values:
+  - scenario: Any Ascend NPU deployment
+    value: false
+    reason: 'The parameter is not read by vllm-ascend''s worker paths. Setting it to true has no effect on Ascend hardware
+      and may cause confusion during debugging.
+
+      '
+  caveats:
+  - 'This is a CUDA-only optimization. vllm-ascend does not implement encoder CUDA graph capture for multimodal models. Enabling
+    this flag on Ascend NPU will not improve performance and will not cause errors — it is simply ignored.
+
+    '
+  - 'For Ascend NPU multimodal inference optimization, consider Ascend-specific graph capture mechanisms (e.g., torch_npu
+    graph capture via VLLM_ASCEND_ENABLE_GRAPH or similar env vars) instead of CUDA graph flags.
+
+    '
+  quick_guide: 'Leave at default (false) on Ascend NPU — this CUDA-specific flag is ignored by vllm-ascend.
+
+    '
+analysis_date: '2026-07-06'

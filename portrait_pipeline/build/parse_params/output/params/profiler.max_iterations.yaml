@@ -1,0 +1,65 @@
+name: profiler.max_iterations
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/config/profiler.py:130
+- vllm/profiler/wrapper.py:28
+value_type: int
+default: '0'
+valid_choices: non-negative integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls how many engine iterations the profiler records before automatically stopping. It
+  does not directly affect inference performance — it only limits the duration of profiling data collection. However, when
+  used with the "torch" profiler backend and ignore_frontend=False (the default), the upstream vllm code warns that combining
+  max_iterations with the torch profiler "may result in high overhead" (vllm/config/profiler.py:130). This overhead comes
+  from the torch profiler''s instrumentation of every operation during the profiling window. On Ascend NPU, the vllm-ascend
+  TorchNPUProfilerWrapper (tests/ut/profiler/ test_torch_npu_profiler.py:265) inherits the same WorkerProfiler base class
+  behavior from upstream vllm (vllm/profiler/wrapper.py:28), so the same overhead warning applies. The parameter is purely
+  an observability control — it bounds profiling duration, not inference behavior. Setting it to 0 (default) means no automatic
+  stop; the profiler runs until stop_profile is called explicitly.
+
+  '
+usage_locations:
+- file: vllm/profiler/wrapper.py:28
+  context: WorkerProfiler.__init__ reads max_iterations to set self._max_iters; logs a message if > 0
+- file: vllm/config/profiler.py:130
+  context: _validate_profiler_config warns about high overhead when max_iterations > 0 with torch profiler and ignore_frontend=False
+related_parameters:
+- name: profiler.delay_iterations
+  relation: Works together with max_iterations to define the profiling window (delay before start, then max duration)
+- name: profiler.profiler
+  relation: When set to 'torch', max_iterations > 0 triggers a high-overhead warning unless ignore_frontend is True
+- name: profiler.ignore_frontend
+  relation: When False (default), max_iterations > 0 with torch profiler causes high overhead warning
+constraints:
+- max_iterations must be a non-negative integer
+- When profiler is 'torch' and ignore_frontend is False, using max_iterations > 0 may result in high profiling overhead
+tuning_advice:
+  summary: Set max_iterations to a small positive value (e.g., 5-10) to capture a representative profiling window without
+    excessive overhead; use 0 only when you need continuous profiling and will manually stop it.
+  suggested_values:
+  - scenario: Quick performance snapshot on Ascend NPU
+    value: '5'
+    reason: Captures enough iterations to see steady-state behavior after warmup, while minimizing torch profiler overhead
+      on NPU
+  - scenario: Debugging a specific inference issue with manual stop control
+    value: '0'
+    reason: Allows the profiler to run indefinitely until stop_profile is called, giving full control over the profiling window
+  - scenario: Production profiling with ignore_frontend=True
+    value: '10'
+    reason: When frontend overhead is excluded, a slightly longer window provides more statistically stable profiling data
+  caveats:
+  - On Ascend NPU with the torch profiler backend, each profiled iteration adds instrumentation overhead — keep max_iterations
+    as small as possible to minimize impact on measured performance
+  - The default value of 0 means the profiler will NOT stop automatically; you must call stop_profile explicitly or the profiler
+    runs for the entire lifetime of the engine
+  - The high-overhead warning from upstream vllm applies equally to vllm-ascend since TorchNPUProfilerWrapper inherits WorkerProfiler
+    behavior
+  quick_guide: Use max_iterations=5 for quick NPU profiling snapshots; set to 0 only when you need manual stop control.
+analysis_date: '2026-07-06'

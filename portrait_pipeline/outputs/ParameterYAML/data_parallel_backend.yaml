@@ -1,0 +1,73 @@
+name: --data-parallel-backend
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1003
+- vllm/config/parallel.py:36
+- vllm/config/parallel.py:133
+- vllm/config/parallel.py:855
+- vllm_ascend/worker/worker.py:294
+- vllm_ascend/_310p/worker_310p.py:173
+value_type: str
+default: mp
+valid_choices:
+- mp
+- ray
+cli_example: --data-parallel-backend mp
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: This setting selects the launch and coordination backend for data-parallel ranks. The default mp path uses
+  the configured local data-parallel size, while the ray path selects Ray distributed inference when data-parallel backend
+  is ray. On the target Ascend workers, ray also bypasses the single-node local-world-size versus visible-NPU-count assertion.
+  It therefore affects whether a multi-replica deployment can be placed and how its processes are coordinated, which can change
+  usable device capacity and end-to-end throughput; it does not change the model parallelism graph.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1003
+  context: Defines the CLI option with mp as default and documents mp and ray as its supported backends.
+- file: vllm/engine/arg_utils.py:1758
+  context: Rejects ray when nnodes is greater than one; multi-node use requires mp.
+- file: vllm/engine/arg_utils.py:1854
+  context: Uses the ray packing strategy to derive a local data-parallel size when the backend is ray.
+- file: vllm/config/parallel.py:855
+  context: Selects the ray distributed-inference backend when data_parallel_backend is ray.
+- file: vllm_ascend/worker/worker.py:294
+  context: On Ascend, the local-world-size visible-NPU assertion applies only when this backend is not ray under the listed
+    single-node conditions.
+- file: vllm_ascend/_310p/worker_310p.py:173
+  context: The Ascend 310P worker applies the same backend-dependent NPU-count assertion.
+related_parameters:
+- name: --data-parallel-size
+  relation: Backend selection is relevant when data parallelism creates more than one rank.
+- name: --data-parallel-size-local
+  relation: Determines local data-parallel sizing and participates in the target Ascend NPU-count check.
+- name: --distributed-executor-backend
+  relation: Ray or external_launcher executor backends also bypass the target Ascend local-world-size check.
+- name: --nnodes
+  relation: A value greater than one is supported only with data_parallel_backend=mp.
+constraints:
+- Only mp and ray are valid values.
+- nnodes > 1 requires data_parallel_backend=mp.
+- On the target Ascend workers, with data_parallel_size > 1, data_parallel_size_local > 0, nnodes_within_dp == 1, and no ray
+  or external_launcher distributed executor, mp requires local_world_size to be no greater than the visible NPU count.
+tuning_advice:
+  summary: Keep mp for the normal and multi-node target Ascend deployment. Use ray only for a deliberately Ray-managed single-node
+    data-parallel layout that needs its placement behavior and has been benchmarked in the target environment.
+  suggested_values:
+  - scenario: Normal single-node or multi-node target Ascend deployment
+    value: mp
+    reason: It is the default, and current upstream explicitly requires it when nnodes is greater than one.
+  - scenario: Single-node data-parallel deployment managed through Ray
+    value: ray
+    reason: The current configuration selects Ray distributed inference, and target Ascend workers skip their local visible-NPU-count
+      assertion for this backend.
+  caveats:
+  - ray is invalid when nnodes is greater than one.
+  - Changing this option changes launch and placement behavior, so measure end-to-end throughput on the target cluster rather
+    than assuming a universal gain.
+  - This field is excluded from the parallel-config compute hash as a runtime launch detail.
+  quick_guide: Use mp by default; select ray only for a validated single-node Ray data-parallel deployment.
+analysis_date: '2026-07-27'

@@ -1,0 +1,91 @@
+name: DS_ENABLE_EXCLUSIVE_CONNECTION
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:36
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:113
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:56
+- docs/source/user_guide/feature_guide/kv_pool.md:829
+- docs/source/user_guide/feature_guide/kv_pool.md:901
+value_type: bool
+default: false
+valid_choices:
+- 0 (false)
+- 1 (true)
+cli_example: export DS_ENABLE_EXCLUSIVE_CONNECTION=1
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: In the pinned vLLM Ascend implementation, YuanrongConfig.load_from_env() parses this environment variable with
+  bool(int(...)), defaulting to false, and YuanrongBackend passes the result unchanged as HeteroClient(enable_exclusive_connection=...).
+  That client is subsequently used for Yuanrong KV existence checks, host-to-device reads, and device-to-host writes, so changing
+  its connection mode can affect the latency and effective throughput of KV-pool operations. The setting is isolated to AscendStoreConnector
+  deployments selecting the yuanrong backend; upstream vLLM contains no reference to it. The pinned sources do not quantify
+  the cost or benefit of exclusive mode, so its performance impact and direction should be established by deployment-specific
+  measurement.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:36
+  context: Parses the environment string as an integer and then a boolean while loading YuanrongConfig.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:113
+  context: Passes the parsed boolean to the Yuanrong HeteroClient constructor before client initialization.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:56
+  context: Maps the backend name yuanrong to YuanrongBackend; other AscendStore backends do not instantiate this client.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:829
+  context: Documents 0 as the default, 1 as enabling exclusive connection mode, and the HeteroClient option receiving it.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:901
+  context: Shows that the setting applies when AscendStoreConnector is configured with backend yuanrong.
+related_parameters:
+- name: DS_WORKER_ADDR
+  relation: Required by YuanrongConfig and supplies the host and port used to construct the same HeteroClient.
+- name: DS_ENABLE_REMOTE_H2D
+  relation: Sibling boolean environment variable passed to the same HeteroClient constructor to select its data-transfer behavior.
+- name: backend
+  relation: Must be set to yuanrong in kv_connector_extra_config for KVPoolWorker to instantiate YuanrongBackend.
+constraints:
+- DS_WORKER_ADDR must be present and use a host:port value for YuanrongBackend initialization to succeed.
+- The value must be accepted by Python int(); an empty or non-integer string raises ValueError during backend initialization.
+- The guide documents 0 and 1; although bool(int(value)) maps any nonzero integer to true, use the documented values for clarity.
+- The variable has no effect when AscendStoreConnector is not used with the yuanrong backend.
+tuning_advice:
+  summary: Keep the documented default unless the Yuanrong deployment specifically requires exclusive connections or controlled
+    measurements show that this client mode improves KV-pool performance for the target concurrency and topology.
+  suggested_values:
+  - scenario: Baseline or unmeasured Yuanrong KV-pool deployment
+    value: 0
+    reason: This is the pinned implementation and documentation default, and current sources provide no general performance
+      advantage for enabling exclusive mode.
+  - scenario: Yuanrong deployment that requires exclusive client connections or shows a measured KV-transfer improvement
+    value: 1
+    reason: This is the documented switch that passes true to HeteroClient.enable_exclusive_connection.
+  caveats:
+  - The pinned vLLM Ascend repository does not describe the Yuanrong client's connection allocation or quantify latency and
+    throughput differences between modes.
+  - Benchmark KV-pool load and store operations under representative concurrency; a result from one worker count or topology
+    may not transfer to another.
+  - Changing the environment after YuanrongBackend initialization does not reconfigure the already constructed HeteroClient;
+    restart the vLLM process.
+  - Failures in Yuanrong get and put operations are caught and logged by the backend, so include backend error logs and cache-hit
+    behavior when interpreting end-to-end results.
+  quick_guide: Use 0 by default; test 1 only for the active Yuanrong backend and retain it only with a measured or deployment-required
+    benefit.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

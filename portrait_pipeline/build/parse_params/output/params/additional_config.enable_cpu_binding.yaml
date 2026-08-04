@@ -1,0 +1,89 @@
+name: additional_config.enable_cpu_binding
+type: nested
+category: hardware
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:135
+- vllm_ascend/platform.py:1096
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: '''--additional-config ''''{"enable_cpu_binding": false}'''''''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls Ascend-native CPU core binding for worker processes on ARM-based Ascend servers. When
+  enabled (default), it pins worker processes and key runtime threads to specific CPU cores based on NPU topology affinity,
+  reducing NUMA cross-node memory access and CPU cache misses. This directly affects host-side overhead during inference,
+  including tokenization, scheduling, and CPU-NPU data transfer coordination. The feature is automatically activated when
+  users specify --numa-bind (a GPU-oriented vLLM parameter unsupported on Ascend), which vllm-ascend silently converts to
+  enable_cpu_binding=True in vllm_ascend/platform.py:1096. Disabling it removes CPU affinity constraints, which may help in
+  containerized or virtualized environments where core pinning conflicts with the orchestrator''s CPU management, but typically
+  degrades performance on bare-metal ARM servers due to increased memory access latency.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:135
+  context: 'Reads enable_cpu_binding from additional_config dict with default True. Stored as self.enable_cpu_binding on AscendConfig.
+
+    '
+- file: vllm_ascend/platform.py:1096
+  context: 'When --numa-bind is set (unsupported on Ascend), automatically sets enable_cpu_binding=True in additional_config
+    as a seamless replacement for Ascend-native CPU binding.
+
+    '
+related_parameters:
+- name: parallel_config.numa_bind
+  relation: 'vllm-ascend silently converts --numa-bind to enable_cpu_binding=True. Setting --numa-bind automatically enables
+    CPU binding on Ascend.
+
+    '
+- name: parallel_config.numa_bind_nodes
+  relation: 'Ignored on Ascend NPU; Ascend-native CPU binding performs automatic topo-affinity core allocation instead.
+
+    '
+- name: parallel_config.numa_bind_cpus
+  relation: 'Ignored on Ascend NPU; Ascend-native CPU binding performs automatic topo-affinity core allocation instead.
+
+    '
+constraints:
+- This parameter is Ascend-specific and has no effect on non-Ascend platforms.
+- CPU binding is only effective on ARM-based Ascend servers; x86 servers may not benefit.
+tuning_advice:
+  summary: 'Keep enabled (default) on bare-metal ARM Ascend servers for optimal performance; disable only in containerized/virtualized
+    environments where CPU pinning conflicts with the orchestrator.
+
+    '
+  suggested_values:
+  - scenario: Bare-metal ARM Ascend server deployment
+    value: true
+    reason: 'CPU binding reduces NUMA cross-node latency and improves host-side throughput by pinning workers to NPU-affine
+      cores. This is the default and recommended setting for production deployments.
+
+      '
+  - scenario: Containerized or virtualized environments with CPU orchestration
+    value: false
+    reason: 'CPU pinning may conflict with container orchestrators (e.g., Kubernetes CPU manager) or hypervisor CPU scheduling.
+      Disabling avoids contention and potential performance degradation from double-pinning.
+
+      '
+  caveats:
+  - 'Disabling CPU binding on bare-metal ARM servers typically increases inference latency due to cross-NUMA memory access
+    and reduced CPU cache locality.
+
+    '
+  - 'This parameter only affects host-side CPU placement; it does not change model execution logic or numerical results.
+
+    '
+  - 'When --numa-bind is set, vllm-ascend automatically enables CPU binding even if enable_cpu_binding is not explicitly configured.
+
+    '
+  quick_guide: 'Keep the default (true) on bare-metal ARM Ascend servers; set to false only in containerized environments
+    where CPU pinning causes conflicts.
+
+    '
+analysis_date: '2026-07-06'

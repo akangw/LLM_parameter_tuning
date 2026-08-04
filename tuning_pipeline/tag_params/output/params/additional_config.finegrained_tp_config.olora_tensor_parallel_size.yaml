@@ -1,0 +1,112 @@
+name: additional_config.finegrained_tp_config.olora_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:422
+- vllm_ascend/utils.py:974
+- vllm_ascend/attention/dsa_v1.py:1663
+- vllm_ascend/attention/context_parallel/dsa_cp.py:941
+- vllm/model_executor/models/deepseek_v4.py:992
+value_type: int
+default: 0
+valid_choices: Any integer accepted by the nested dictionary parser; use 0 or 1 for the default O-LoRA batch-matmul path,
+  or an integer greater than 1 that evenly divides data_parallel_size to select the wo_a module path.
+cli_example: --additional-config '{"finegrained_tp_config":{"olora_tensor_parallel_size":2}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On non-A5 Ascend DeepSeek-V4 attention paths, values greater than 1 replace the explicit torch_npu.npu_transpose_batchmatmul
+  call for the O-LoRA wo_a projection with a call through the existing ColumnParallelLinear module. Values 0 and 1 both retain
+  the explicit batch-matmul path. This can change projection kernel selection and therefore token latency and throughput in
+  the DSA and DSA context-parallel implementations. The pinned implementation does not use this field to create a communication
+  group, choose the wo_a layer''s tensor-parallel world size, or alter weight allocation: the upstream DeepSeek-V4 model constructs
+  wo_a using the ordinary tensor-parallel group, while Ascend''s fine-grained process-group initialization does not read the
+  O-LoRA field. Consequently, no independent memory reduction or scalable O-LoRA TP degree should be inferred from the configured
+  number at this commit. The A5 branch always uses its quantized batch-matmul implementation and does not consult this switch.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:422
+  context: Reads the nested value with default 0 and applies the common fine-grained-TP validation rules.
+- file: vllm_ascend/ascend_config.py:435
+  context: For any value greater than 0, requires graph mode and a KV-consumer D node in a PD deployment.
+- file: vllm_ascend/ascend_config.py:456
+  context: Includes the value in the MoE-only and data_parallel_size divisibility checks shared by module TP settings.
+- file: vllm_ascend/utils.py:974
+  context: Defines the effective runtime gate as olora_tensor_parallel_size greater than 1.
+- file: vllm_ascend/attention/dsa_v1.py:1663
+  context: Selects the wo_a module call instead of npu_transpose_batchmatmul on the non-A5 DeepSeek-V4 DSA path.
+- file: vllm_ascend/attention/context_parallel/dsa_cp.py:941
+  context: Applies the same module-versus-explicit-batch-matmul selection in the DSA context-parallel path.
+- file: vllm/model_executor/models/deepseek_v4.py:992
+  context: Upstream constructs wo_a as a ColumnParallelLinear using the ordinary tensor-model-parallel world size.
+- file: vllm_ascend/distributed/parallel_state.py:135
+  context: Fine-grained group initialization reads o_proj, lm_head, embedding, and MLP sizes but does not read olora_tensor_parallel_size.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: Every positive configured value must evenly divide data_parallel_size, although this field does not itself create
+    a DP-based process group in the pinned implementation.
+- name: parallel_config.tensor_parallel_size
+  relation: The upstream DeepSeek-V4 wo_a ColumnParallelLinear is constructed using the ordinary tensor-parallel world size.
+- name: model_config.enforce_eager
+  relation: A positive value is rejected when enforce_eager is true; the O-LoRA switch is graph-mode only.
+- name: kv_transfer_config.is_kv_consumer
+  relation: A positive value requires a configured KV consumer, restricting it to the decode node of PD disaggregation.
+- name: model_config.is_moe
+  relation: Generic fine-grained-TP validation rejects every positive value for a model not classified as MoE.
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: This sibling setting does initialize a dedicated fine-grained group; it should not be assumed to describe the
+    pinned O-LoRA field's implementation.
+constraints:
+- This Ascend-only key has no corresponding definition or runtime gate in the pinned upstream vLLM repository.
+- Values greater than 0 require graph mode, a configured KV consumer on the PD decode node, and an MoE model.
+- Every value greater than 0 must evenly divide parallel_config.data_parallel_size; values larger than data_parallel_size
+  therefore fail validation.
+- Runtime enablement is strictly greater than 1, so 1 satisfies positive-value validation but still uses the default explicit
+  batch-matmul path.
+- Negative integers are not explicitly rejected by the pinned constructor and behave as disabled, but they are undocumented
+  and should not be used.
+- On A5 devices, the DSA implementation takes an earlier quantized batch-matmul branch and never checks olora_tp_enable.
+- The pinned documentation does not list olora_tensor_parallel_size among the documented finegrained_tp_config keys.
+tuning_advice:
+  summary: Keep 0 unless a non-A5 DeepSeek-V4 PD decode workload in graph mode is being benchmarked specifically to compare
+    the wo_a module path with the explicit O-LoRA batch matmul.
+  suggested_values:
+  - scenario: Default, A5 hardware, eager execution, a non-PD deployment, a prefill node, or a non-MoE model
+    value: 0
+    reason: It preserves the default path and avoids unsupported positive-value configurations; A5 does not consult the runtime
+      switch.
+  - scenario: Eligible non-A5 DeepSeek-V4 graph-mode PD decode node where profiling shows the wo_a module path is faster
+    value: 2
+    reason: Two is the smallest value that enables the runtime gate; it must evenly divide data_parallel_size.
+  - scenario: Testing whether a larger accepted number changes scaling
+    value: 0
+    reason: The pinned runtime only checks whether the value exceeds 1 and does not use its magnitude as an O-LoRA process-group
+      size, so larger numbers have no source-backed scaling benefit.
+  caveats:
+  - Benchmark end-to-end decode latency and throughput; no comparative benchmark for this undocumented O-LoRA switch is present
+    in the pinned sources.
+  - Do not attribute weight-memory savings to this setting alone because no O-LoRA-specific fine-grained group or allocation
+    is created from it.
+  - The generic validation error strings mention lmhead even when the failing value is the O-LoRA field, which can make configuration
+    failures misleading.
+  - 'Behavior is model- and device-path-specific: the observed consumers are DeepSeek-V4 DSA implementations, and A5 bypasses
+    the switch.'
+  quick_guide: Leave at 0. On an eligible non-A5 DeepSeek-V4 decode node, try 2 only when data_parallel_size is divisible
+    by 2, compare it against 0 under the real workload, and keep it only for a measured latency or throughput win.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

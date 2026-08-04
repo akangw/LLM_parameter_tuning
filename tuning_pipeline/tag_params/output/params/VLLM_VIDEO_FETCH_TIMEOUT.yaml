@@ -1,0 +1,75 @@
+name: VLLM_VIDEO_FETCH_TIMEOUT
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:811
+value_type: int
+default: 30
+valid_choices: Positive integer number of seconds.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: VLLM_VIDEO_FETCH_TIMEOUT supplies the base HTTP timeout for synchronous and asynchronous video URL downloads.
+  It does not affect video decoding or model execution, and cached, data, and file URLs do not perform this HTTP fetch. For
+  an uncached HTTP URL, increasing the value permits a slow transfer to run longer, while decreasing it makes a stalled or
+  unreachable URL fail sooner. The HTTP connection retry wrappers use this base timeout for the first attempt and multiply
+  it by four on each subsequent attempt, so the default retry count of three can use per-attempt timeouts of 30, 120, and
+  480 seconds. No override or separate use exists in the pinned vllm-ascend repository.
+usage_locations:
+- file: vllm/envs.py:811
+  context: Parses the environment variable as an integer and supplies the default base video-fetch timeout of 30 seconds.
+- file: vllm/connections.py:122
+  context: Applies the supplied base timeout to synchronous HTTP fetch attempts and multiplies it by four for each retry.
+- file: vllm/connections.py:168
+  context: Applies the same retry-count and per-attempt timeout growth to asynchronous HTTP fetches.
+- file: docs/features/multimodal_inputs.md:812
+  context: Documents the 30-second video URL fetch default and the environment-variable override.
+related_parameters:
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls the number of HTTP attempts; each later attempt receives four times the preceding timeout.
+- name: VLLM_MEDIA_CACHE
+  relation: A cache hit avoids the HTTP download to which this timeout applies.
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Sets the analogous base HTTP timeout for image URL downloads.
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Sets the analogous base HTTP timeout for audio URL downloads.
+constraints:
+- The value must be parseable by Python int at environment access time.
+- Use a positive value because the underlying HTTP clients reject non-positive timeouts.
+- The timeout applies to each HTTP attempt, not to the complete request including all retries and retry backoff.
+tuning_advice:
+  summary: Keep 30 seconds unless normal video URL transfers need more time or failed URLs take too long to surface.
+  suggested_values:
+  - scenario: Typical reachable video sources
+    value: 30
+    reason: Preserves the documented default and allows a moderate transfer window without extending failure latency further.
+  - scenario: Consistently slow remote video storage
+    value: 60
+    reason: Gives each initial download more time, but should be tested with representative object sizes and network conditions.
+  - scenario: Fast failure is preferred for unreliable URL inputs
+    value: 10
+    reason: Reduces the first-attempt wait, provided valid video transfers reliably complete inside this window.
+  caveats:
+  - With three attempts, the per-attempt timeout sequence is the configured value, four times that value, and sixteen times
+    that value, plus retry backoff delays.
+  - Raising this value does not accelerate successful downloads or NPU inference; it only enlarges the permitted wait for
+    HTTP I/O.
+  - Lower values can reject valid large or slow video transfers before they complete.
+  quick_guide: Start at 30; raise it only for observed valid-download timeouts, or lower it only after measuring normal video
+    transfer duration.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

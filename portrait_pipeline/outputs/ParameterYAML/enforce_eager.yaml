@@ -1,0 +1,75 @@
+name: --enforce-eager
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/model.py:215
+- vllm/engine/arg_utils.py:792
+- vllm/config/vllm.py:941
+- vllm_ascend/platform.py:436
+- vllm_ascend/worker/worker.py:503
+- vllm_ascend/worker/model_runner_v1.py:593
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enforce-eager
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enables pure eager execution. Upstream configuration disables torch.compile and CUDAGraphs, forces compilation
+  mode and CUDAGraph mode to NONE, and clears graph capture sizes. On Ascend, this also skips ACL graph capture, prevents
+  ACL graph dispatch, and leaves NPU graph-pool memory at zero. It therefore trades the launch/dispatch benefits of compiled
+  graph execution for compatibility and lower graph-memory consumption.
+usage_locations:
+- file: vllm/config/vllm.py:941
+  context: Forces compilation mode and CUDAGraph mode to NONE when eager mode is enabled.
+- file: vllm/config/vllm.py:1134
+  context: Disables CUDAGraph and clears its capture-size settings under eager execution.
+- file: vllm_ascend/platform.py:436
+  context: Disables Ascend compilation and clears default splitting operations in eager mode.
+- file: vllm_ascend/worker/worker.py:503
+  context: Only warms graph capture sizes and calls capture_model when eager mode is disabled.
+- file: vllm_ascend/worker/model_runner_v1.py:593
+  context: ACL graph dispatch requires a non-eager model configuration.
+- file: vllm_ascend/ascend_config.py:429
+  context: Fine-grained oproj and oLoRA tensor parallelism reject eager mode because they require graph mode.
+related_parameters:
+- name: compilation.mode
+  relation: enforce_eager=true forces the mode to NONE.
+- name: compilation.cudagraph_mode
+  relation: enforce_eager=true forces the graph mode to NONE.
+- name: compilation.cudagraph_capture_sizes
+  relation: enforce_eager=true clears graph capture sizes.
+- name: oproj_tensor_parallel_size
+  relation: Nonzero values require graph mode and are rejected with enforce_eager=true.
+- name: olora_tensor_parallel_size
+  relation: Nonzero values require graph mode and are rejected with enforce_eager=true.
+constraints:
+- oproj_tensor_parallel_size > 0 is unsupported when enforce_eager=true.
+- olora_tensor_parallel_size > 0 is unsupported when enforce_eager=true.
+- On Ascend FA3, FULL_DECODE_ONLY ACL graph mode is rejected unless eager mode is enabled or a different graph/backend configuration
+  is used.
+tuning_advice:
+  summary: Keep the default false for production throughput and latency; enable eager mode only when graph or compilation
+    compatibility prevents the target workload from running.
+  suggested_values:
+  - scenario: Normal Ascend production inference
+    value: false
+    reason: Allows Ascend compilation and ACL graph capture/dispatch to remain available.
+  - scenario: Debugging graph/compile failures or requiring an eager-compatible path
+    value: true
+    reason: Disables compilation and graph capture, which isolates execution to eager mode.
+  - scenario: Ascend FA3 with FULL_DECODE_ONLY graph mode
+    value: true
+    reason: The Ascend FA3 implementation directs users to eager mode or a different graph/backend configuration.
+  caveats:
+  - Eager mode disables torch.compile, CUDAGraphs, and Ascend ACL graph capture.
+  - It can reduce graph-pool memory, but normally increases execution overhead and lowers throughput.
+  - Fine-grained oproj and oLoRA tensor parallelism cannot be enabled in eager mode.
+  quick_guide: Use false by default; set true only for compatibility or debugging needs.
+analysis_date: '2026-07-27'

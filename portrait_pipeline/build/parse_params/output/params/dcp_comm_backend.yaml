@@ -1,0 +1,69 @@
+name: --dcp-comm-backend
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:951
+- vllm/config/parallel.py:322
+value_type: str
+default: ag_rs
+valid_choices:
+- ag_rs
+- a2a
+cli_example: --dcp-comm-backend a2a
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls the communication pattern used for Decode Context Parallel (DCP) attention. The default "ag_rs" uses
+  AllGather + ReduceScatter (3 NCCL calls per layer). The "a2a" backend uses All-to-All exchange of partial outputs + LSE,
+  then combines with a Triton kernel, reducing NCCL calls from 3 to 2 per layer for MLA models. On Ascend NPU, this parameter
+  affects HCCL communication volume and kernel launch overhead during the decode phase. The "a2a" backend is only effective
+  when decode_context_parallel_size > 1 and is specifically optimized for MLA (Multi-head Latent Attention) models. The backend
+  selection is read in attention backends (flash_attn.py:669, flashinfer.py:609,1342) and mla_attention.py:482 to determine
+  which DCP combine function to use (dcp_a2a_lse_reduce vs cp_lse_ag_out_rs).
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:322
+  context: Field definition with default "ag_rs" and docstring describing the two backends
+- file: vllm/config/parallel.py:480
+  context: Validation that "a2a" requires decode_context_parallel_size > 1
+- file: vllm/v1/attention/backends/flash_attn.py:669
+  context: Reads dcp_comm_backend to select dcp_combine function (dcp_a2a_lse_reduce vs cp_lse_ag_out_rs)
+- file: vllm/v1/attention/backends/flashinfer.py:609
+  context: Sets self.dcp_a2a flag based on dcp_comm_backend == "a2a"
+- file: vllm/v1/attention/backends/flashinfer.py:1342
+  context: Selects dcp_combine partial function based on dcp_comm_backend
+- file: vllm/model_executor/layers/attention/mla_attention.py:482
+  context: Sets self.dcp_a2a flag for MLA attention path
+related_parameters:
+- name: --decode-context-parallel-size
+  relation: dcp_comm_backend='a2a' requires decode_context_parallel_size > 1; the backend only activates when DCP is enabled
+- name: --tensor-parallel-size
+  relation: tp_size must be divisible by dcp_size; DCP reuses GPUs from the TP group
+constraints:
+- dcp_comm_backend='a2a' requires decode_context_parallel_size > 1
+- tensor_parallel_size must be divisible by decode_context_parallel_size
+tuning_advice:
+  summary: Use 'a2a' for MLA models with DCP enabled to reduce HCCL communication overhead; stick with 'ag_rs' for non-MLA
+    models or when DCP is not used.
+  suggested_values:
+  - scenario: MLA models (e.g., DeepSeek-V2/V3) with decode_context_parallel_size > 1
+    value: a2a
+    reason: Reduces HCCL calls from 3 to 2 per layer by using All-to-All exchange with Triton combine kernel, lowering communication
+      latency on Ascend NPU.
+  - scenario: Non-MLA models or decode_context_parallel_size = 1
+    value: ag_rs
+    reason: The 'a2a' backend is designed for MLA attention and requires DCP > 1; 'ag_rs' is the safe default for all other
+      cases.
+  caveats:
+  - The 'a2a' backend is specifically optimized for MLA (Multi-head Latent Attention) models and may not provide benefits
+    for standard attention architectures.
+  - On Ascend NPU, the Triton combine kernel used by 'a2a' may have different performance characteristics compared to CUDA;
+    verify with benchmarks.
+  - DCP communication overhead reduction is only meaningful when decode_context_parallel_size > 1; with dcp_size=1 there is
+    no communication to optimize.
+  quick_guide: For MLA models with DCP > 1, set --dcp-comm-backend a2a to reduce HCCL calls; otherwise keep default 'ag_rs'.
+analysis_date: '2026-07-06'

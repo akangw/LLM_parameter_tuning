@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tags"],
+  "properties": {
+    "tags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "optimize_target",
+        "deploy_topology",
+        "hardware",
+        "deploy_scenario"
+      ],
+      "properties": {
+        "model": {
+          "type": "array",
+          "items": {"enum": ["dense", "moe", "mla", "vlm", "quantized"]}
+        },
+        "optimize_target": {
+          "type": "array",
+          "items": {"enum": ["ttft", "tpot", "throughput", "memory"]}
+        },
+        "deploy_topology": {
+          "type": "array",
+          "items": {"enum": ["single_node", "multi_node"]}
+        },
+        "hardware": {
+          "type": "array",
+          "items": {"enum": ["a2", "a3"]}
+        },
+        "deploy_scenario": {
+          "type": "array",
+          "items": {"enum": ["long_input", "long_output", "high_concurrency"]}
+        }
+      }
+    }
+  }
+}

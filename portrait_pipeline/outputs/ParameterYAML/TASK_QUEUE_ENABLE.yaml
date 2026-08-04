@@ -1,0 +1,75 @@
+name: TASK_QUEUE_ENABLE
+type: env
+category: scheduling
+scope: vllm-ascend
+source_file:
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:166
+- docs/source/tutorials/features/suffix_speculative_decoding.md:80
+- docs/source/tutorials/models/Qwen3-Dense.md:158
+- Dockerfile:62
+value_type: int
+default: 2
+valid_choices:
+- 1
+- 2
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: TASK_QUEUE_ENABLE is consumed by the external torch_npu/CANN runtime rather than by vLLM Python code. The Ascend
+  performance guide sets it to 2 to optimize the operator-delivery queue and explicitly warns that this changes peak memory
+  and can degrade performance when memory is tight. Ascend model and feature recipes instead commonly set it to 1, which the
+  pinned documentation describes as operator-dispatch pipeline level 1 and as disabling manual memory control in ACLGraph.
+  Queueing operator dispatch can reduce host-side launch stalls and thereby improve latency or throughput when delivery is
+  a bottleneck, but deeper or more aggressive queueing can increase the number of in-flight operations and their live allocations.
+  Neither pinned repository implements or parses the variable, pinned upstream vLLM has no occurrence, and the pinned sources
+  provide no benchmark numbers or complete external-runtime value semantics.
+usage_locations:
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:166
+  context: Recommends value 2 as a scheduling optimization for the operator-delivery queue and warns that it affects peak
+    memory and may regress under tight memory.
+- file: docs/source/tutorials/features/suffix_speculative_decoding.md:80
+  context: Sets value 1 before server launch and identifies it as dispatch pipeline level 1 with manual ACLGraph memory control
+    disabled.
+- file: docs/source/tutorials/models/Qwen3-Dense.md:158
+  context: Repeats the documented value-1 dispatch and ACLGraph-memory behavior in a model-serving recipe.
+- file: Dockerfile:62
+  context: Sets value 1 in the standard Ascend container image environment, making it the repository's broadly deployed container
+    setting.
+related_parameters:
+- name: PYTORCH_NPU_ALLOC_CONF
+  relation: Controls allocator behavior and therefore available memory headroom when task queueing raises peak live memory.
+- name: ASCEND_LAUNCH_BLOCKING
+  relation: Ascend launch recipes set this separately when configuring asynchronous operator dispatch; blocking launches can
+    negate queueing benefits.
+constraints:
+- Set the variable before process and NPU-runtime initialization; vLLM does not dynamically apply or validate it.
+- The pinned repositories document values 1 and 2 but do not contain the external torch_npu/CANN implementation, so other
+  integer values and their behavior are not established by these sources.
+- Value 1 is specifically documented as pipeline level 1 and disabling manual ACLGraph memory control; do not assume value
+  2 has identical ACLGraph behavior from the pinned evidence.
+tuning_advice:
+  summary: Use 1 for the repository's model recipes and container baseline; test 2 only when operator delivery is measurably
+    limiting performance and enough accelerator-memory headroom remains.
+  suggested_values:
+  - scenario: General model serving or documented feature recipes
+    value: 1
+    reason: This is the setting repeated across current Ascend launch recipes and baked into the standard repository Dockerfile.
+  - scenario: Operator-delivery bottleneck with measured memory headroom
+    value: 2
+    reason: The Ascend performance guide explicitly recommends 2 to optimize the operator-delivery queue, while warning about
+      peak-memory impact.
+  caveats:
+  - Benchmark end-to-end latency and throughput after a fresh worker start; the pinned sources provide no quantified benefit.
+  - Monitor peak NPU memory and allocation failures because the performance guide says queue optimization changes peak memory
+    and may regress when memory is tight.
+  - The task metadata records 2 as the external default, while repository Dockerfiles and most model recipes explicitly override
+    it to 1; preserve the recipe value when reproducing those deployments.
+  - Consult the matching torch_npu/CANN release documentation before using undocumented values because vLLM-ascend does not
+    validate this external runtime control.
+  quick_guide: Start with 1; if profiling shows host/operator dispatch is the bottleneck, compare 2 under the same load and
+    keep it only when speed improves without unacceptable peak-memory growth.
+analysis_date: '2026-08-03'

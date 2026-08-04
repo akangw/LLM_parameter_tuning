@@ -1,0 +1,7 @@
+name: ParallelConfig.sd_worker_cls
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source this field is only declared and excluded from the parallel-configuration hash; there
+  is no runtime consumer that uses it to select a speculative-decoding worker. The pinned vLLM Ascend repository also has
+  no reference to or override for the field. Changing it therefore cannot affect latency, throughput, or memory in these pinned
+  sources.

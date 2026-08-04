@@ -1,0 +1,7 @@
+name: --mm-encoder-fp8-scale-save-margin
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source, this float is defined with default 1.5 and validated as greater than zero in vllm/config/multimodal.py:176,
+  then propagated into MultiModalConfig by vllm/engine/arg_utils.py:1559. No current vLLM runtime consumer or FP8-scale-saving
+  implementation references it, and the pinned vllm-ascend tree has no parameter-specific override or consumer. Changing this
+  value therefore has no effective latency, throughput, or memory impact.

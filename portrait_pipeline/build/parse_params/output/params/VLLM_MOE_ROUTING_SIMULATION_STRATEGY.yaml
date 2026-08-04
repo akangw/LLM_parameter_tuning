@@ -1,0 +1,58 @@
+name: VLLM_MOE_ROUTING_SIMULATION_STRATEGY
+type: env
+category: model
+scope: vllm
+source_file:
+- vllm/envs.py:1421
+value_type: str
+default: '''""'''
+valid_choices: Any strategy name registered in RoutingSimulator (e.g., 'uniform_random', 'normal_routing')
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable activates the RoutingSimulatorRouter, which replaces the standard MoE routing logic
+  with a simulated routing strategy. When set to a non-empty string, the router factory (vllm/model_executor/layers/fused_moe/router/router_factory.py:117-125)
+  creates a RoutingSimulatorRouter instead of the default FusedTopKRouter or other specialized routers. The RoutingSimulatorRouter._compute_routing
+  method (routing_simulator_router.py:341-348) calls RoutingSimulator.simulate_routing() with the specified strategy name
+  to generate synthetic top-k expert selections and weights, bypassing the actual router_logits computation. This is primarily
+  a testing/debugging tool — the upstream code comment explicitly warns that "custom strategies may not produce correct model
+  outputs." On Ascend NPU, using this parameter in production would produce incorrect inference results, making any performance
+  measurement meaningless. The performance impact is rated "low" because this parameter is not intended for production use
+  and would only affect throughput/latency in a testing context where output correctness is not required.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/router/router_factory.py:117
+  context: Router factory checks VLLM_MOE_ROUTING_SIMULATION_STRATEGY; if non-empty, creates RoutingSimulatorRouter instead
+    of normal router
+- file: vllm/model_executor/layers/fused_moe/router/routing_simulator_router.py:341
+  context: RoutingSimulatorRouter._compute_routing reads the env var to select the simulation strategy
+- file: vllm/envs.py:1421
+  context: Environment variable definition with default empty string
+related_parameters:
+- name: VLLM_MOE_ROUTING_SIMULATION_STRATEGY
+  relation: Self-reference; the env var value is passed as strategy_name to RoutingSimulator.simulate_routing()
+constraints:
+- This parameter is intended for testing and debugging only; custom strategies may not produce correct model outputs.
+- The strategy name must be registered in RoutingSimulator via RoutingSimulator.register_strategy() before use.
+tuning_advice:
+  summary: Do not set this environment variable in production deployments on Ascend NPU — it replaces real MoE routing with
+    simulated routing and produces incorrect outputs.
+  suggested_values:
+  - scenario: Production inference on Ascend NPU
+    value: '''""'''
+    reason: Leaving this env var unset (default) ensures normal MoE routing logic is used, producing correct model outputs.
+  - scenario: Testing MoE routing behavior with simulated strategies
+    value: '''"uniform_random"'''
+    reason: Use for offline testing of MoE layer mechanics without relying on actual router logits; not suitable for accuracy-sensitive
+      workloads.
+  caveats:
+  - This parameter is a testing tool, not a performance tuning knob. Using it in production will produce garbage outputs.
+  - No vllm-ascend override was found for this parameter; it behaves identically on Ascend NPU as on upstream GPU.
+  - The RoutingSimulatorRouter has highest priority in the router factory selection order, so setting this env var will override
+    all other routing configurations (grouped top-k, custom routing, EPLB, etc.).
+  quick_guide: Leave unset for production; only set for MoE routing simulation tests.
+analysis_date: '2026-07-06'

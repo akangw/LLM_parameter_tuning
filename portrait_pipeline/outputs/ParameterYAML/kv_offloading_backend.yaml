@@ -1,0 +1,70 @@
+name: --kv-offloading-backend
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:38
+- vllm/config/cache.py:173
+- vllm/config/vllm.py:682
+- vllm_ascend/distributed/kv_transfer/__init__.py:61
+value_type: str
+default: native
+valid_choices:
+- native
+- lmcache
+cli_example: --kv-offloading-backend native
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: CacheConfig restricts this selector to native or lmcache and defaults it to native. VllmConfig._post_init_kv_transfer_config
+  returns without configuring offloading unless kv_offloading_size is set. With native, it configures an OffloadingConnector,
+  or SimpleCPUOffloadConnector when VLLM_USE_SIMPLE_KV_OFFLOAD is enabled, and supplies the requested size in bytes. With
+  lmcache, it configures LMCacheConnectorV1 and assigns each KV rank kv_offloading_size divided by tensor_parallel_size times
+  pipeline_parallel_size. Thus the choice trades accelerator-memory relief for host-memory use and transfer work that can
+  affect latency and throughput. On Ascend, the integration registers LMCacheAscendConnector and replaces the upstream SimpleCPUOffloadConnector
+  with an NPU-specific implementation when that connector is selected.
+usage_locations:
+- file: vllm/config/cache.py:173
+  context: Defines the native default and states that offloading requires kv_offloading_size.
+- file: vllm/config/vllm.py:682
+  context: Activates the selected backend only after an offloading size is configured and selects its connector settings.
+- file: vllm/engine/arg_utils.py:1127
+  context: Exposes the CacheConfig field as the --kv-offloading-backend CLI argument.
+- file: vllm_ascend/distributed/kv_transfer/__init__.py:61
+  context: Registers Ascend LMCache support and the NPU-specific simple CPU offload connector override.
+related_parameters:
+- name: --kv-offloading-size
+  relation: Must be set for this backend selector to take effect; it supplies the CPU offload capacity.
+- name: --tensor-parallel-size
+  relation: The lmcache branch divides the configured offload size across tensor-parallel and pipeline-parallel KV ranks.
+- name: --pipeline-parallel-size
+  relation: The lmcache branch divides the configured offload size across tensor-parallel and pipeline-parallel KV ranks.
+- name: VLLM_USE_SIMPLE_KV_OFFLOAD
+  relation: When enabled, the native branch selects SimpleCPUOffloadConnector instead of OffloadingConnector.
+constraints:
+- The only supported values are native and lmcache.
+- This setting has no effect unless --kv-offloading-size is configured.
+- The lmcache allocation is per KV rank, computed from the configured size and TP times PP rank count.
+tuning_advice:
+  summary: Start with native when CPU KV offloading is required; select lmcache only for a deployment that has its LMCache
+    integration configured.
+  suggested_values:
+  - scenario: Standard single-service CPU offload deployment
+    value: native
+    reason: It is the default backend and directly configures vLLM's built-in offloading connector from the requested CPU
+      capacity.
+  - scenario: Deployment using the LMCache integration
+    value: lmcache
+    reason: It selects the LMCache connector and derives a per-KV-rank local CPU allocation from the total configured size.
+  caveats:
+  - Enabling any backend moves KV-cache capacity to host memory and can add transfer work, so benchmark latency and throughput
+    with representative traffic.
+  - lmcache capacity per KV rank decreases as tensor or pipeline parallel size increases for a fixed --kv-offloading-size.
+  - On Ascend, the simple CPU offload connector is replaced by an NPU-specific implementation only when VLLM_USE_SIMPLE_KV_OFFLOAD
+    selects that connector.
+  quick_guide: Set --kv-offloading-size first, keep --kv-offloading-backend native initially, and benchmark before changing
+    to lmcache.
+analysis_date: '2026-07-27'

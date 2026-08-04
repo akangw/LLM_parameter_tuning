@@ -1,0 +1,87 @@
+name: attention.mla_prefill_backend
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/attention.py:100
+- vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+value_type: str
+default: null
+valid_choices:
+- FLASH_ATTN
+- FLASHINFER
+- TRTLLM_RAGGED
+- ASCEND
+cli_example: '--attention-config ''{"mla_prefill_backend": "ASCEND"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'On Ascend NPU, vllm-ascend monkey-patches the upstream MLA prefill backend selector (vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48)
+  so that `get_mla_prefill_backend` always returns `AscendMLAPrefillBackend`, regardless of what the user sets in `attention.mla_prefill_backend`.
+  The Ascend backend delegates actual computation to `AscendSFAImpl`/`AscendMLAImpl` (as noted in the NotImplementedError
+  messages at lines 36 and 45), which use CANN-optimized sparse-flash-attention (SFA) kernels tuned for the Da Vinci architecture.
+  This means the user-facing parameter is effectively ignored on Ascend — the backend is forced to ASCEND. However, the parameter
+  still matters because: (1) If a user explicitly sets FLASH_ATTN, FLASHINFER, or TRTLLM_RAGGED, the upstream selector (vllm/v1/attention/backends/mla/prefill/selector.py:109-127)
+  will attempt to validate and import those backends before the Ascend patch takes effect, potentially causing ImportError
+  or validation failures on NPU. (2) The forced ASCEND backend determines the actual prefill performance characteristics —
+  SFA kernels are optimized for long-context MLA prefill on Ascend 910B/910C, offering better throughput and memory efficiency
+  than generic FA3/FlashInfer backends would on NPU.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+  context: Monkey-patches get_mla_prefill_backend to always return AscendMLAPrefillBackend
+- file: vllm/v1/attention/backends/mla/prefill/selector.py:109
+  context: Reads attention_config.mla_prefill_backend to select prefill backend class
+- file: vllm/model_executor/layers/attention/mla_attention.py:1363
+  context: Checks selected backend for prefill query quantization support
+- file: vllm/config/attention.py:106
+  context: Migrates deprecated flags (use_trtllm_ragged_deepseek_prefill, disable_flashinfer_prefill) to mla_prefill_backend
+related_parameters:
+- name: attention.use_trtllm_ragged_deepseek_prefill
+  relation: Deprecated; migrated to mla_prefill_backend=TRTLLM_RAGGED
+- name: attention.disable_flashinfer_prefill
+  relation: Deprecated; migrated to mla_prefill_backend=FLASH_ATTN
+- name: attention.use_cudnn_prefill
+  relation: Removed; raises ValueError directing users to mla_prefill_backend
+constraints:
+- On Ascend NPU, setting mla_prefill_backend to FLASH_ATTN, FLASHINFER, or TRTLLM_RAGGED may cause ImportError or validation
+  failure because vllm-ascend forces the ASCEND backend.
+- The cuDNN MLA prefill backend has been removed; setting use_cudnn_prefill raises a ValueError directing users to use mla_prefill_backend
+  instead.
+- FP8 prefill query quantization requires device capability 100 (GB200) and is only supported by FLASHINFER, TRTLLM_RAGGED,
+  and TOKENSPEED_MLA backends — not available on Ascend NPU.
+tuning_advice:
+  summary: 'On Ascend NPU, leave mla_prefill_backend unset (None) or explicitly set it to ASCEND. vllm-ascend forces the ASCEND
+    backend regardless, and setting other values may trigger unnecessary validation/import errors.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments (910B/910C)
+    value: null
+    reason: 'vllm-ascend overrides the backend selector to always use AscendMLAPrefillBackend, which delegates to CANN-optimized
+      SFA kernels. Leaving the parameter unset avoids triggering upstream backend validation that may fail on NPU.
+
+      '
+  - scenario: Explicit configuration for documentation/clarity
+    value: ASCEND
+    reason: 'Setting ASCEND explicitly documents the intent and aligns with the forced backend, though it has no functional
+      difference from leaving it unset.
+
+      '
+  caveats:
+  - Setting FLASH_ATTN, FLASHINFER, or TRTLLM_RAGGED on Ascend NPU will NOT change the actual backend — vllm-ascend forces
+    ASCEND — but may cause the upstream selector to attempt imports/validation of GPU-specific backends, potentially raising
+    errors.
+  - The ASCEND backend's run_prefill_new_tokens and run_prefill_context_chunk methods raise NotImplementedError because actual
+    computation is handled by AscendSFAImpl/AscendMLAImpl at a lower level — this is expected behavior.
+  - FP8 prefill query quantization (backend_supports_prefill_query_quantization) is not supported on Ascend NPU because it
+    requires device capability 100.
+  quick_guide: 'Leave mla_prefill_backend unset on Ascend NPU — vllm-ascend automatically uses the optimized ASCEND backend
+    with SFA kernels.
+
+    '
+analysis_date: '2026-07-06'

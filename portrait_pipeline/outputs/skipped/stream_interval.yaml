@@ -1,0 +1,8 @@
+name: --stream-interval
+type: cli
+performance_impact: none
+skip_reason: In pinned vLLM, the CLI value is validated (integer >= 1) and copied from EngineArgs into SchedulerConfig, but
+  the only current-source occurrences are the field definition, CLI registration, EngineArgs mirror, and config construction;
+  no runtime output-processing or scheduling code reads the field. Pinned vLLM Ascend has no stream_interval reference of
+  its own (its optional recompute scheduler config only copies inherited SchedulerConfig fields), so changing this option
+  has no latency, throughput, or memory effect in either pinned source tree.

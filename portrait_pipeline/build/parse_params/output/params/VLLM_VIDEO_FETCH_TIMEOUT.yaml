@@ -1,0 +1,56 @@
+name: VLLM_VIDEO_FETCH_TIMEOUT
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:811
+value_type: int
+default: '30'
+valid_choices: positive integer (seconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls the timeout (in seconds) for fetching video data from URLs when serving
+  multimodal models. It is passed as `fetch_timeout` to the `load_from_url` / `load_from_url_async` methods in `vllm/multimodal/media/connector.py`.
+  A higher value allows more time for slow network connections or large video downloads to complete before the request fails.
+  A lower value causes faster failure on unreachable URLs, which can reduce tail latency for requests with invalid video URLs.
+  This parameter does NOT affect NPU computation, memory allocation, or throughput for successful requests — it only affects
+  the failure mode for video URL fetching. There is no vllm-ascend override; the behavior is identical on Ascend NPU.
+
+  '
+usage_locations:
+- file: vllm/multimodal/media/connector.py:467
+  context: Passed as fetch_timeout to load_from_url in fetch_video (sync)
+- file: vllm/multimodal/media/connector.py:489
+  context: Passed as fetch_timeout to load_from_url_async in fetch_video_async
+related_parameters:
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Analogous timeout for image URL fetching (default 5s)
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Analogous timeout for audio URL fetching (default 10s)
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Number of retries for media fetching; each retry quadruples the timeout
+constraints:
+- Must be a positive integer representing seconds.
+tuning_advice:
+  summary: 'Increase this timeout only if video URLs are consistently slow to respond (e.g., remote storage with high latency).
+    The default of 30 seconds is sufficient for most deployments.
+
+    '
+  suggested_values:
+  - scenario: Default / standard deployment
+    value: '30'
+    reason: Adequate for typical video URLs; avoids excessive wait time on failures.
+  - scenario: Slow or high-latency video sources (e.g., remote object storage over WAN)
+    value: '120'
+    reason: Provides extra time for large video downloads over slow connections, as used in ROCm test environments.
+  caveats:
+  - This timeout only affects video URL fetching, not NPU inference performance.
+  - Setting an excessively high value can cause requests with unreachable video URLs to hang for a long time, increasing tail
+    latency.
+  - Each retry (controlled by VLLM_MEDIA_FETCH_MAX_RETRIES) quadruples the timeout, so the total wait can be much longer than
+    this value alone.
+  quick_guide: Use the default 30s unless video sources are known to be slow; then increase to 120s.
+analysis_date: '2026-07-06'

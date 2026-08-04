@@ -1,0 +1,6 @@
+name: --interleave-mm-strings
+type: cli
+performance_impact: none
+skip_reason: Current upstream source defines this as a boolean multimodal prompt-formatting option for fully interleaved content
+  while using string chat-template content; it is passed into MultiModalConfig but has no current-source latency, throughput,
+  or memory control path. The pinned vLLM-Ascend tree has no matching implementation or override.

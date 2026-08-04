@@ -1,0 +1,118 @@
+name: speculative.method
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:85
+- vllm_ascend/spec_decode/__init__.py:33
+value_type: str
+default: <computed>
+valid_choices:
+- ngram
+- ngram_gpu
+- suffix
+- medusa
+- eagle
+- eagle3
+- mtp
+- dflash
+- draft_model
+- extract_hidden_states
+- deepseek_mtp
+cli_example: '''--speculative-config ''''{"method": "eagle", "num_speculative_tokens": 3}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter selects the speculative decoding proposer, which directly controls the draft token generation\
+  \ mechanism. On Ascend NPU, the method value determines which Ascend-specific proposer class is instantiated (vllm_ascend/spec_decode/__init__.py:33-51).\
+  \ Different methods have fundamentally different performance characteristics:\n- \"\\\"eagle\\\"/\\\"eagle3\\\"/\\\"mtp\\\
+  \" use AscendEagleProposer, which leverages the\"\n  target model's hidden states to predict draft tokens. eagle3 additionally\n\
+  \  enables auxiliary hidden state outputs (model_runner_v1.py:580-582).\n\n- \"\\\"ngram\\\" uses AscendNgramProposer with\
+  \ CPU-side pattern matching.\"\n  On 310P, ngram forces uniform_decode_query_len=1 for graph capture\n  (model_runner_310p.py:87-91),\
+  \ which can reduce decode throughput.\n\n- \"\\\"ngram_gpu\\\" uses AscendNgramProposerNPU with NPU-accelerated matching.\"\
+  \n- \"\\\"draft_model\\\" uses a separate draft model via AscendDraftModelProposer,\"\n  consuming additional NPU memory\
+  \ for the draft model weights.\n\n- \"\\\"mtp\\\" triggers special attention state handling: in both v1 and v2\"\n  workers,\
+  \ mtp sets attn_state to SpecDecoding for seq_len=1 cases\n  (model_runner_v1.py:1331-1334, attn_utils.py:168-172), enabling\n\
+  \  optimized speculative decode paths. It also affects rotary embedding\n  (rotary_embedding.py:229,284) and KV transfer\
+  \ layer counting\n  (mooncake_connector.py:473-475).\n\n- \"\\\"extract_hidden_states\\\" enables auxiliary hidden state\
+  \ outputs\"\n  (model_runner_v1.py:583-585), increasing memory bandwidth usage.\n\nThe method also interacts with MoE expert\
+  \ parallelism: \"on A3 devices,\" speculative method guards affect whether fused MC2 dispatch is enabled (ascend_forward_context.py:285-298).\n\
+  In v2 worker, only eagle-based methods are supported; all others raise NotImplementedError (v2/spec_decode/eagle/__init__.py:36).\
+  \ This means v2 users are restricted to eagle/eagle3/mtp methods.\n"
+usage_locations:
+- file: vllm_ascend/spec_decode/__init__.py:33
+  context: Dispatches to Ascend-specific proposer class based on method string
+- file: vllm_ascend/worker/model_runner_v1.py:580
+  context: Checks method for eagle3 and extract_hidden_states to enable aux hidden states
+- file: vllm_ascend/worker/model_runner_v1.py:1331
+  context: Checks method=="mtp" to set SpecDecoding attention state for seq_len=1
+- file: vllm_ascend/worker/v2/attn_utils.py:168
+  context: Checks method=="mtp" to set SpecDecoding attention state in v2 worker
+- file: vllm_ascend/worker/v2/spec_decode/eagle/__init__.py:36
+  context: Raises NotImplementedError for non-eagle methods in v2 worker
+- file: vllm_ascend/_310p/model_runner_310p.py:87
+  context: Checks method=="ngram" to force uniform_decode_query_len=1 on 310P
+- file: vllm_ascend/ops/rotary_embedding.py:229
+  context: Checks method=="mtp" to enable MTP-specific rotary embedding path
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:473
+  context: Checks method=="mtp" to set num_draft_layers=1 for KV transfer
+- file: vllm_ascend/ascend_forward_context.py:285
+  context: Speculative method guard affects fused MC2 dispatch on A3 devices
+- file: vllm/config/speculative.py:86
+  context: Field definition with docstring describing auto-detection behavior
+- file: vllm/config/speculative.py:508
+  context: __post_init__ auto-detects method from model parameter or defaults to draft_model
+- file: vllm/config/vllm.py:826
+  context: Validates method compatibility with async scheduling
+related_parameters:
+- name: speculative.model
+  relation: If model is provided, method is auto-detected; if model is absent, method must be explicitly set
+- name: speculative.num_speculative_tokens
+  relation: Required alongside method; controls how many tokens are speculatively generated per step
+- name: speculative.disable_padded_drafter_batch
+  relation: Affects MTP method behavior; must be False for async scheduling compatibility
+- name: scheduler_config.async_scheduling
+  relation: Only eagle/mtp/draft_model/ngram_gpu methods support async scheduling
+constraints:
+- method must be one of the recognized speculative method names (ngram, ngram_gpu, suffix, medusa, eagle, eagle3, mtp, dflash,
+  draft_model, extract_hidden_states, deepseek_mtp)
+- In v2 worker, only eagle-based methods (eagle, eagle3, mtp) are supported; all other methods raise NotImplementedError
+- When async_scheduling is enabled, method must be eagle, mtp, draft_model, or ngram_gpu
+- When method is not provided and model is not set to "ngram" or "[ngram]", method defaults to "draft_model"
+- deepseek_mtp is deprecated and automatically converted to "mtp"
+- eagle3 with pipeline parallel is not supported
+tuning_advice:
+  summary: Choose speculative method based on model architecture, worker version, and available NPU resources; prefer eagle/mtp
+    for v2 worker and general-purpose deployment
+  suggested_values:
+  - scenario: DeepSeek-V3 models with MTP support
+    value: mtp
+    reason: MTP is the native speculative method for DeepSeek-V3; Ascend has optimized attention state handling and rotary
+      embedding paths for mtp
+  - scenario: General-purpose speculative decoding on v2 worker
+    value: eagle
+    reason: v2 worker only supports eagle-based methods; eagle provides good speedup with moderate memory overhead
+  - scenario: Memory-constrained deployment without draft model
+    value: ngram
+    reason: ngram uses CPU-side pattern matching without additional NPU memory; suitable when draft model cannot fit in NPU
+      memory
+  - scenario: Maximum throughput with available NPU memory
+    value: eagle3
+    reason: eagle3 uses auxiliary hidden states for improved draft quality, potentially yielding higher acceptance rates and
+      throughput
+  - scenario: 310P devices with ngram
+    value: ngram
+    reason: 310P has specific ngram support with graph capture optimization, though uniform_decode_query_len=1 may limit peak
+      throughput
+  caveats:
+  - v2 worker only supports eagle/eagle3/mtp; using other methods requires v1 worker
+  - ngram on 310P forces uniform_decode_query_len=1, which may reduce decode throughput
+  - draft_model method requires additional NPU memory for draft model weights
+  - mtp method may have interactions with chunked prefill and PD disaggregation
+  - Method auto-detection from model parameter may not always select the optimal method for Ascend NPU
+  quick_guide: Use mtp for DeepSeek-V3, eagle for v2 worker general use, ngram for memory-constrained scenarios; verify worker
+    version compatibility before deployment
+analysis_date: '2026-07-06'

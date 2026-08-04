@@ -1,0 +1,77 @@
+name: AttentionConfig.use_trtllm_ragged_deepseek_prefill
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/attention.py:42
+- vllm_ascend/platform.py:1029
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: '--attention-config ''{"use_trtllm_ragged_deepseek_prefill": true}'''
+deprecated: true
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'In upstream vLLM, true is a deprecated compatibility switch: during AttentionConfig post-initialization it
+  sets mla_prefill_backend to TRTLLM_RAGGED when no explicit mla_prefill_backend was supplied. The selected backend executes
+  FlashInfer''s trtllm_ragged_attention_deepseek kernel for MLA prefill, so it can materially change prefill latency, throughput,
+  and workspace/output memory relative to another MLA prefill backend. Selection is valid only on CUDA compute capability
+  major 10 (Blackwell), with float16 or bfloat16, the required FlashInfer symbol installed, and DeepSeek-R1-compatible MLA
+  dimensions. On Ascend, the plugin treats this as a GPU-specific option, warns and resets the boolean to false; it also patches
+  MLA backend selection to return AscendMLAPrefillBackend, whose actual prefill work is handled by AscendSFAImpl/AscendMLAImpl.
+  Consequently this flag does not tune runtime performance on Ascend.'
+usage_locations:
+- file: vllm/config/attention.py:124
+  context: Migrates true to mla_prefill_backend=TRTLLM_RAGGED and emits a deprecation warning.
+- file: vllm/v1/attention/backends/mla/prefill/selector.py:109
+  context: Validates and selects the migrated explicit MLA prefill backend.
+- file: vllm/v1/attention/backends/mla/prefill/trtllm_ragged.py:21
+  context: Implements the selected TRT-LLM ragged MLA prefill backend and its compatibility rules.
+- file: vllm_ascend/platform.py:1029
+  context: Lists the flag among GPU-specific attention options that Ascend resets to false.
+- file: vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+  context: Forces MLA prefill backend construction to use the Ascend placeholder backend.
+related_parameters:
+- name: AttentionConfig.mla_prefill_backend
+  relation: Supersedes this deprecated flag; an explicit value takes precedence.
+- name: AttentionConfig.disable_flashinfer_prefill
+  relation: Another deprecated migration flag; this TRTLLM flag is processed first when both are true.
+- name: VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE
+  relation: Sizes the workspace buffer used by the TRTLLM_RAGGED implementation.
+constraints:
+- Deprecated and scheduled for removal in v0.22; use mla_prefill_backend=TRTLLM_RAGGED instead.
+- TRTLLM_RAGGED requires CUDA compute capability major 10, float16 or bfloat16, an available flashinfer.prefill.trtllm_ragged_attention_deepseek
+  symbol, and DeepSeek-R1 MLA dimensions (128/64/128).
+- If AttentionConfig.mla_prefill_backend is already set, it takes precedence and this flag is not migrated.
+- On Ascend the plugin resets this GPU-specific boolean to false and forces the Ascend MLA prefill path, so enabling it provides
+  no performance benefit.
+tuning_advice:
+  summary: Keep this deprecated flag false. On supported CUDA systems, select TRTLLM_RAGGED through mla_prefill_backend and
+    benchmark it against the other valid MLA prefill backends; on Ascend, leave it false because it is ignored.
+  suggested_values:
+  - scenario: Ascend NPU deployments
+    value: false
+    reason: vllm-ascend resets the flag and uses AscendSFAImpl/AscendMLAImpl, so true only produces a warning and cannot select
+      the GPU kernel.
+  - scenario: New CUDA configurations
+    value: false
+    reason: The compatibility flag is deprecated; use the explicit mla_prefill_backend=TRTLLM_RAGGED setting if the model,
+      GPU, dtype, and FlashInfer installation pass validation.
+  - scenario: Temporary compatibility with an older Blackwell DeepSeek-R1 launch configuration
+    value: true
+    reason: This preserves the old request to select TRTLLM_RAGGED, but only while migrating to the replacement option and
+      only after workload-specific benchmarking.
+  caveats:
+  - 'Enabling the flag is not a universal speedup: backend performance depends on prompt shapes, batching, model dimensions,
+    dtype, and installed kernel versions.'
+  - On an unsupported CUDA device or model, or without the required FlashInfer symbol, the migrated explicit backend fails
+    validation rather than silently falling back.
+  - An explicitly configured mla_prefill_backend causes the migration method to return before processing this flag.
+  quick_guide: 'Ascend: false. CUDA: keep false and use mla_prefill_backend=TRTLLM_RAGGED explicitly only on compatible Blackwell/DeepSeek-R1
+    deployments after benchmarking.'
+analysis_date: '2026-07-30'

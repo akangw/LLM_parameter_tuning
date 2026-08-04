@@ -1,0 +1,44 @@
+name: compilation.enabled_custom_ops
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/model_executor/custom_op.py:187
+value_type: list[str]
+default: <computed>
+valid_choices: <computed>
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This is an internal, runtime-populated set that tracks which custom ops are currently enabled. It is not a
+  user-facing configuration parameter — it is populated automatically by the CustomOp.dispatch_forward() method (vllm/model_executor/custom_op.py:187)
+  based on each op''s enabled() check and _enforce_enable flag. The set is used by the compilation config to know which ops
+  should use platform-specific (e.g., Ascend OOT) implementations vs. the native PyTorch fallback. On Ascend NPU, when current_platform.is_out_of_tree()
+  returns True, enabled custom ops will dispatch to forward_oot() (line 204-205), which by default delegates to forward_native().
+  The performance impact is indirect: this set controls whether certain ops use optimized platform kernels or fallback paths,
+  but the set itself is a passive tracker, not a tuning knob. No vllm-ascend override was found for this specific field.
+
+  '
+usage_locations:
+- file: vllm/model_executor/custom_op.py:187
+  context: CustomOp.dispatch_forward() adds op name to enabled_custom_ops when op is enabled
+related_parameters:
+- name: compilation.disabled_custom_ops
+  relation: Complementary set — disabled ops are added to disabled_custom_ops instead
+- name: compilation_config
+  relation: Parent object that owns both enabled_custom_ops and disabled_custom_ops sets
+constraints: []
+tuning_advice:
+  summary: 'This is an internal tracking set, not a user-tunable parameter. No direct tuning is possible.
+
+    '
+  suggested_values: []
+  caveats:
+  - This is not a user-facing parameter — it is populated automatically at runtime by the CustomOp dispatch mechanism.
+  - On Ascend NPU, enabled custom ops dispatch to forward_oot() which defaults to forward_native(), so the performance effect
+    depends on whether vllm-ascend provides optimized OOT implementations for specific ops.
+  quick_guide: No user action needed — this is an internal runtime tracker.
+analysis_date: '2026-07-06'

@@ -1,0 +1,97 @@
+name: SpeculativeConfig.suffix_decoding_max_spec_factor
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py
+- vllm_ascend/spec_decode/suffix_proposer.py
+- tests/e2e/pull_request/one_card/spec_decode/test_suffix.py
+value_type: float
+default: 1.0
+valid_choices: float >= 0
+cli_example: --speculative-config '{"method":"suffix","num_speculative_tokens":16,"suffix_decoding_max_spec_factor":1.0}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'For suffix decoding, this factor caps the adaptive proposal length relative to the matched prefix: max_spec_tokens
+  = suffix_decoding_max_spec_factor * prefix_match_length. Raising it permits longer drafts when a long repeated prefix is
+  found, which can reduce target-model decode iterations and improve throughput and inter-token latency when continuation
+  acceptance is high. It can also propose more tokens that are later rejected, increasing verification work and harming latency
+  or throughput on weak or misleading matches. Lower values make speculation more conservative; 0 prevents a positive proposal
+  allowance from this factor. The effective draft length is also bounded by num_speculative_tokens and the suffix tree depth.
+  Ascend uses the upstream suffix-decoding proposer through an Ascend adapter, so the same trade-off applies there; its pinned
+  end-to-end test exercises a value of 2.0.'
+usage_locations:
+- file: vllm/config/speculative.py
+  context: Declares the default and documents the prefix-match-length formula; the suffix-specific validator rejects negative
+    values.
+- file: vllm_ascend/spec_decode/suffix_proposer.py
+  context: AscendSuffixDecodingProposer subclasses the upstream proposer and passes the full vLLM configuration to it, preserving
+    this suffix-decoding knob.
+- file: tests/e2e/pull_request/one_card/spec_decode/test_suffix.py
+  context: Ascend end-to-end acceptance testing configures the suffix method with suffix_decoding_max_spec_factor set to 2.0.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: This factor is used only when the speculative method is suffix.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Provides the overall maximum number of speculative tokens, bounding the adaptive length selected from this factor.
+- name: SpeculativeConfig.suffix_decoding_max_tree_depth
+  relation: Limits combined prefix-match and speculation tree depth and becomes the default num_speculative_tokens for suffix
+    decoding when that value is omitted.
+- name: SpeculativeConfig.suffix_decoding_min_token_prob
+  relation: Independently filters candidate continuation tokens by estimated probability; stricter filtering can reduce how
+    often the factor's length cap is reached.
+constraints:
+- Must be greater than or equal to 0; negative values fail suffix configuration validation.
+- Has performance effect only when SpeculativeConfig.method is suffix.
+- Suffix decoding requires the Arctic Inference package; pinned vLLM validation raises an import error when it is unavailable.
+- The realized proposal length remains subject to num_speculative_tokens and suffix_decoding_max_tree_depth.
+tuning_advice:
+  summary: Keep 1.0 as the baseline, then tune from measured draft-token acceptance, throughput, and inter-token latency on
+    representative repetitive traffic.
+  suggested_values:
+  - scenario: General suffix-decoding deployment
+    value: 1.0
+    reason: The default allows proposal length to grow with match length without making it more aggressive than the matched
+      prefix.
+  - scenario: High repetition and consistently high speculative acceptance
+    value: 2.0
+    reason: Allows longer drafts that may reduce decode iterations; this value is also exercised by the pinned Ascend suffix
+      acceptance test.
+  - scenario: Low acceptance or latency regressions from rejected drafts
+    value: 0.5
+    reason: Restricts draft growth while retaining adaptive suffix speculation.
+  - scenario: Diagnostic baseline with no positive allowance from this factor
+    value: 0.0
+    reason: Useful for isolating the benefit and overhead of adaptive suffix proposals.
+  caveats:
+  - A larger factor is beneficial only when the matched continuation remains accurate; prefix length alone does not guarantee
+    acceptance.
+  - Increasing the factor may have no observable effect when num_speculative_tokens or suffix_decoding_max_tree_depth is already
+    the tighter bound.
+  - Workload repetition, concurrency, model behavior, and device execution determine the optimum, so validate upstream and
+    Ascend deployments separately.
+  quick_guide: Start at 1.0. Try 2.0 only when acceptance remains high and draft length is not already capped elsewhere; try
+    0.5 when rejected-token work degrades TPOT or throughput.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

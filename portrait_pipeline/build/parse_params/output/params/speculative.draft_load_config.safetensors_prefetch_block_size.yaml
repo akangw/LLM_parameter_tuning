@@ -1,0 +1,62 @@
+name: speculative.draft_load_config.safetensors_prefetch_block_size
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: int
+default: '4096'
+valid_choices: '''positive integer (bytes)'''
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls the read buffer size when prefetching safetensors checkpoint files for speculative
+  decoding draft models. It is defined in vllm/config/speculative.py as part of DraftModelLoadConfig. The parameter affects
+  I/O throughput during model loading: larger block sizes can reduce the number of read syscalls and improve sequential read
+  throughput from disk, potentially reducing model loading latency. However, it also increases the memory footprint of the
+  read buffer during loading. On Ascend NPU, this parameter has the same effect as on GPU platforms — it only affects the
+  safetensors file reading phase, not the actual inference computation. The performance impact is limited to model loading
+  time and does not affect runtime inference throughput or latency once the model is loaded. No vllm-ascend override or Ascend-specific
+  behavior was found for this parameter.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.draft_load_config
+  relation: Parent configuration object that contains this parameter
+- name: speculative.draft_tensor_parallel_size
+  relation: Draft model loading is only triggered when speculative decoding is enabled with a draft model
+constraints:
+- Must be a positive integer representing bytes
+tuning_advice:
+  summary: 'Use the default value (4096 bytes) unless model loading time is a critical bottleneck and the system has abundant
+    free memory during loading.
+
+    '
+  suggested_values:
+  - scenario: Default / general use
+    value: '4096'
+    reason: 'The default 4KB block size aligns with typical filesystem page sizes and provides a good balance between read
+      efficiency and memory overhead during safetensors loading.
+
+      '
+  - scenario: Loading large draft models from high-throughput storage (NVMe SSD, network storage)
+    value: '65536'
+    reason: 'Larger block sizes (64KB–1MB) can improve sequential read throughput from fast storage by reducing the number
+      of I/O operations, potentially cutting model loading time.
+
+      '
+  - scenario: Memory-constrained loading environment
+    value: '1024'
+    reason: 'Smaller block sizes reduce the peak memory footprint of the read buffer during loading, which may be necessary
+      when loading large models on systems with limited RAM.
+
+      '
+  caveats:
+  - This parameter only affects model loading time, not inference performance
+  - Excessively large values may waste memory without proportional I/O improvement due to diminishing returns
+  - The optimal value depends on the underlying storage characteristics (block device, filesystem, network latency)
+  quick_guide: Keep the default 4096 unless model loading speed is a bottleneck
+analysis_date: '2026-07-06'

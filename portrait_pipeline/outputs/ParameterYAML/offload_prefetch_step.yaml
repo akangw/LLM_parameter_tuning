@@ -1,0 +1,100 @@
+name: --offload-prefetch-step
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:66
+- vllm/config/offload.py:100
+- vllm/engine/arg_utils.py:1153
+- vllm/engine/arg_utils.py:2148
+- vllm/model_executor/models/utils.py:646
+- vllm_ascend/worker/model_runner_v1.py:252
+- vllm_ascend/worker/model_runner_v1.py:271
+- vllm_ascend/worker/model_runner_v1.py:4586
+value_type: int
+default: 1
+valid_choices: Integer >= 0 generally, but integer >= 1 when prefetch offloading is active.
+cli_example: --offload-group-size 8 --offload-num-in-group 2 --offload-prefetch-step 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This value is the lookahead distance among layers selected for prefetch weight offloading. After an offloaded
+  layer executes, the backend starts an asynchronous host-to-accelerator copy for the selected layer this many positions ahead,
+  and execution waits for each layer's copy before using its weights. Increasing the value can give transfers more computation
+  time to overlap and reduce exposed transfer stalls, but the implementation also allocates this many static accelerator-buffer
+  slots for every unique selected parameter shape, so accelerator memory consumption grows directly with the lookahead. The
+  effect is therefore a latency/throughput versus device-memory tradeoff, not a guaranteed speedup. The Ascend runner inherits
+  upstream model-runner initialization inside a wrapper that maps CUDA streams and events to torch.npu, so the upstream prefetch
+  configuration reaches the target NPU path without an Ascend-specific definition.
+usage_locations:
+- file: vllm/config/offload.py:66
+  context: Defines the integer with default 1 and a general lower bound of 0, and documents the latency-hiding versus accelerator-memory
+    tradeoff.
+- file: vllm/config/offload.py:100
+  context: Requires the lookahead to be at least 1 whenever prefetch offloading is selected or a positive group size activates
+    it.
+- file: vllm/engine/arg_utils.py:1153
+  context: Registers the command-line option from PrefetchOffloadConfig metadata.
+- file: vllm/engine/arg_utils.py:2148
+  context: Propagates the parsed lookahead into the prefetch sub-configuration used by the model runner.
+- file: vllm/model_executor/models/utils.py:646
+  context: Routes the model layer generator through the active offloader, whose configured lookahead controls transfer scheduling
+    and buffers.
+- file: vllm_ascend/worker/model_runner_v1.py:252
+  context: Defines the target NPU runner as a subclass of the upstream GPUModelRunner.
+- file: vllm_ascend/worker/model_runner_v1.py:271
+  context: Invokes inherited model-runner initialization inside the Ascend API wrapper.
+- file: vllm_ascend/worker/model_runner_v1.py:4586
+  context: Maps inherited torch.cuda.Stream creation to torch.npu.Stream while the wrapper is active.
+related_parameters:
+- name: --offload-group-size
+  relation: A positive value activates the prefetch backend under auto and determines the grouping from which offloaded layers
+    are selected.
+- name: --offload-num-in-group
+  relation: Determines how many layers per group enter the selected-layer sequence to which this lookahead is applied.
+- name: --offload-params
+  relation: Filters which parameters are copied and therefore determines both transfer volume and per-slot accelerator-buffer
+    size.
+- name: --offload-backend
+  relation: Auto uses this setting only with a positive group size; explicit prefetch activates its validation, while explicit
+    uva ignores prefetch fields.
+- name: --cpu-offload-gb
+  relation: Configures the alternative UVA backend and does not use this prefetch lookahead.
+constraints:
+- The field accepts integers greater than or equal to 0 at the PrefetchOffloadConfig level.
+- When --offload-backend is prefetch or --offload-group-size is positive, the value must be at least 1.
+- Under --offload-backend auto, the value has no runtime effect while --offload-group-size is 0.
+- Explicit --offload-backend uva ignores this prefetch setting.
+- The implementation uses the value as a modulo divisor and buffer-slot count once modules are selected, which is why an active
+  prefetch configuration cannot use 0.
+tuning_advice:
+  summary: Keep the default lookahead of 1 initially; increase it only when profiling shows host-to-accelerator copies on
+    the critical path and measured accelerator-memory headroom can absorb additional static buffer slots.
+  suggested_values:
+  - scenario: Initial prefetch-offloading baseline
+    value: 1
+    reason: This is the default and uses the minimum valid static-buffer depth, minimizing accelerator-memory overhead.
+  - scenario: Transfer waits remain exposed and accelerator memory has measured headroom
+    value: 2
+    reason: One additional selected-layer interval can increase copy/compute overlap, at the cost of doubling the static slot
+      count relative to 1.
+  - scenario: Prefetch offloading is disabled
+    value: 1
+    reason: Leaving the default avoids an invalid value if a positive group size or explicit prefetch backend is enabled later.
+  caveats:
+  - The lookahead counts layers selected for offloading, not every transformer layer, so its effective distance depends on
+    group size and count.
+  - Static-buffer memory scales with the lookahead and the unique selected parameter shapes; verify net peak memory rather
+    than assuming offloaded bytes equal memory saved.
+  - Larger values can yield no benefit or regress performance when step 1 already hides transfers, buffer reuse changes synchronization,
+    or the selected-layer sequence is short.
+  - Host memory bandwidth, NUMA placement, PCIe or platform interconnect bandwidth, parameter filtering, model compute time,
+    and graph mode all affect the result.
+  - The Ascend path relies on inherited upstream offloader code with CUDA APIs mapped to NPU APIs; validate correctness and
+    performance on the exact CANN, PyTorch, and hardware combination.
+  quick_guide: Start at 1, profile transfer waits and peak accelerator memory, then test 2 only if copies remain exposed;
+    keep the smallest value that meets the latency or throughput target.
+analysis_date: '2026-07-27'

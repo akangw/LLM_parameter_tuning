@@ -1,0 +1,68 @@
+name: kv_transfer.kv_connector_module_path
+type: nested
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/distributed/kv_transfer/kv_connector/factory.py:102
+value_type: str
+default: null
+valid_choices: any valid Python module path string, or null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter specifies a Python module path from which to dynamically load a custom KV connector class.
+  When set, it bypasses vLLM''s internal connector registry and uses importlib.import_module() to load the external module
+  at connector initialization time (factory.py:106-107). The performance impact is indirect: the choice of KV connector implementation
+  determines how KV cache is transferred between prefill and decode instances in disaggregated serving, which affects end-to-end
+  latency and throughput. However, this parameter itself only controls the loading mechanism — the actual performance characteristics
+  depend entirely on the external connector implementation being loaded. On Ascend NPU, vllm-ascend does not override or modify
+  this parameter, but the external connector must be compatible with Ascend''s memory model and communication primitives (HCCL)
+  to function correctly.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/factory.py:102
+  context: 'Reads kv_connector_module_path from KVTransferConfig to determine whether to load an external connector module.
+    If non-empty, imports the module and retrieves the connector class by name, bypassing the internal registry.
+
+    '
+related_parameters:
+- name: kv_transfer.kv_connector
+  relation: 'Specifies the connector class name to look up within the external module loaded via kv_connector_module_path.
+    Both must be set together for external connectors to work.
+
+    '
+constraints:
+- kv_connector_module_path cannot be an empty string; if set, it must be a valid Python module path.
+- The external module must contain a class matching the name specified in kv_connector.
+- External v1 KV connectors must accept kv_cache_config as the third constructor argument.
+- Only supported in V1; V2 disaggregated serving does not use this loading path.
+tuning_advice:
+  summary: 'Leave this parameter unset (null) unless you have a custom Ascend-compatible KV connector implementation. The
+    built-in connectors are sufficient for most use cases.
+
+    '
+  suggested_values:
+  - scenario: Standard disaggregated serving on Ascend NPU
+    value: null
+    reason: 'vLLM''s built-in KV connectors (registered in the internal registry) are tested and optimized. External connectors
+      add import overhead and may not be compatible with Ascend''s HCCL communication or memory layout.
+
+      '
+  - scenario: Custom KV transfer protocol required
+    value: '''"my_package.ascend_kv_connector"'''
+    reason: 'Only set this when you have developed a custom connector specifically tested on Ascend NPU. The module must handle
+      NPU memory tensors and use HCCL-compatible communication patterns.
+
+      '
+  caveats:
+  - External connectors are loaded via importlib at runtime, adding a one-time import overhead.
+  - vllm-ascend does not validate external connector compatibility with Ascend NPU; using a GPU-oriented connector will likely
+    fail or produce incorrect results.
+  - The connector class must implement the v1 KV connector interface with a 3-argument constructor (including kv_cache_config),
+    or loading will raise an error.
+  quick_guide: Keep null unless you have a custom Ascend-tested KV connector; use built-in connectors otherwise.
+analysis_date: '2026-07-06'

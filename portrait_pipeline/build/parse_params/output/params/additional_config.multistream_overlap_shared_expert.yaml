@@ -1,0 +1,81 @@
+name: additional_config.multistream_overlap_shared_expert
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:131
+- vllm_ascend/ascend_config.py:283
+- vllm_ascend/utils.py:698
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, this parameter activates multi-stream overlap for shared expert computation in MoE models. The
+  mechanism works by allocating an additional HCCL communication stream that allows the shared expert''s computation to overlap
+  with other operations, reducing idle time on the NPU. In the HCCL_OP_EXPANSION_MODE=AIV path (vllm_ascend/utils.py:698),
+  enabling this flag increases the parallel_factor by 1, which reduces the maximum supported batch sizes for ACL graph capture
+  — a direct throughput/memory tradeoff. The parameter is specifically designed for MoE models with shared experts (e.g.,
+  DeepSeek series, Kimi-K2.5) and is most effective when TP=1 or when enable_shared_expert_dp is also enabled, as documented
+  in the DeepSeek-V3.1 and Kimi-K2.5 tuning guides.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:131
+  context: Read from additional_config dict and stored as AscendConfig.multistream_overlap_shared_expert
+- file: vllm_ascend/ascend_config.py:283
+  context: Checked in _check_mix_placement() — raises ValueError if both mix_placement and multistream_overlap_shared_expert
+    are enabled
+- file: vllm_ascend/utils.py:698
+  context: Increases parallel_factor by 1 when HCCL_OP_EXPANSION_MODE=AIV, reducing max batch sizes for ACL graph capture
+- file: tests/e2e/generate_coverage_md.py:1085
+  context: Test coverage tracking — treated as a variant of multistream_moe for test matrix generation
+related_parameters:
+- name: additional_config.enable_shared_expert_dp
+  relation: Documentation recommends enabling multistream_overlap_shared_expert when enable_shared_expert_dp is true or TP=1
+    for optimal shared expert overlap
+- name: additional_config.mix_placement
+  relation: Mutually exclusive — enabling both raises ValueError at startup
+- name: additional_config.multistream_overlap_gate
+  relation: Sibling parameter that enables multi-stream overlap for the gate computation in MoE models
+- name: parallel_config.tensor_parallel_size
+  relation: Effectiveness depends on TP size; documentation states it is most beneficial when TP=1
+constraints:
+- multistream_overlap_shared_expert and mix_placement cannot be enabled simultaneously; enabling both raises a ValueError
+  at startup
+- This option only takes effect on MoE models with shared experts; it has no effect on dense models or MoE models without
+  shared experts
+tuning_advice:
+  summary: Enable for MoE models with shared experts (DeepSeek, Kimi-K2.5) when TP=1 or enable_shared_expert_dp is true to
+    overlap shared expert computation and improve throughput
+  suggested_values:
+  - scenario: MoE model with shared experts, TP=1
+    value: true
+    reason: With TP=1, there is no tensor-parallel communication for shared experts, so the additional stream can effectively
+      overlap shared expert computation with other operations, improving throughput
+  - scenario: MoE model with shared experts, TP>1 and enable_shared_expert_dp=true
+    value: true
+    reason: When shared experts use data parallelism instead of tensor parallelism, the overlap stream can hide shared expert
+      computation latency behind other work
+  - scenario: MoE model with shared experts, TP>1 and enable_shared_expert_dp=false
+    value: false
+    reason: With tensor parallelism on shared experts, the communication overhead may negate the overlap benefit; the additional
+      stream may not provide meaningful improvement
+  - scenario: Dense model or MoE model without shared experts
+    value: false
+    reason: This parameter has no effect on models without shared experts; enabling it unnecessarily increases the parallel_factor
+      in AIV mode, reducing max batch sizes
+  caveats:
+  - In HCCL_OP_EXPANSION_MODE=AIV, enabling this flag increases the parallel_factor by 1, which reduces the maximum supported
+    batch sizes for ACL graph capture — this may cause graph capture failures if batch sizes are already near the limit
+  - Cannot be combined with mix_placement; the system will refuse to start if both are enabled
+  - The actual performance gain depends on the model architecture and workload; shared expert computation must be a significant
+    portion of total latency for the overlap to be beneficial
+  quick_guide: Set to true for DeepSeek-V3/R1 or Kimi-K2.5 when TP=1 or enable_shared_expert_dp=true; leave false otherwise
+analysis_date: '2026-07-06'

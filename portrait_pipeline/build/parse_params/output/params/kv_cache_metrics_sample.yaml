@@ -1,0 +1,73 @@
+name: --kv-cache-metrics-sample
+type: cli
+category: observability
+scope: vllm
+source_file:
+- vllm/config/observability.py:53
+- vllm/engine/arg_utils.py:611
+- vllm/engine/arg_utils.py:1293
+- vllm/v1/core/sched/scheduler.py:86
+value_type: float
+default: 0.01
+valid_choices: (0.0, 1.0]
+cli_example: --kv-cache-metrics-sample 0.05
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the sampling rate for KV cache residency metrics collection. When --kv-cache-metrics
+  is enabled, the KVCacheMetricsCollector is instantiated in the v1 scheduler (vllm/v1/core/sched/scheduler.py:86) with this
+  sampling rate. The collector tracks per-block lifetime, idle time, and reuse gaps for a fraction of KV cache blocks determined
+  by this rate. A higher sampling rate increases the number of blocks tracked, which adds minor CPU overhead during block
+  allocation/deallocation and metric aggregation at each logging interval. The overhead is proportional to the sampling rate
+  — at the default 0.01 (1%), the performance impact is negligible. At 1.0 (100%), every block allocation triggers metric
+  recording, which may add measurable latency to scheduling decisions and reduce throughput slightly. This parameter has no
+  effect on Ascend NPU specifically — the metrics collection is purely CPU-side Python logic and does not interact with CANN/HCCL/NPU
+  execution. vllm-ascend does not override or modify this parameter.
+
+  '
+usage_locations:
+- file: vllm/config/observability.py:53
+  context: Field definition with default=0.01, gt=0, le=1 constraints
+- file: vllm/engine/arg_utils.py:611
+  context: EngineArgs attribute declaration, reads from ObservabilityConfig
+- file: vllm/engine/arg_utils.py:1293
+  context: CLI argument registration in ObservabilityConfig group
+- file: vllm/v1/core/sched/scheduler.py:86
+  context: Passed to KVCacheMetricsCollector constructor when kv_cache_metrics is enabled
+related_parameters:
+- name: --kv-cache-metrics
+  relation: Must be enabled (True) for --kv-cache-metrics-sample to have any effect. When --kv-cache-metrics is False, the
+    KVCacheMetricsCollector is never instantiated and this sampling rate is ignored.
+- name: --disable-log-stats
+  relation: KV cache metrics require log stats to be enabled. If --disable-log-stats is set, metrics are not collected regardless
+    of --kv-cache-metrics-sample value.
+constraints:
+- kv_cache_metrics_sample must be greater than 0 and less than or equal to 1.0
+- kv_cache_metrics_sample has no effect unless --kv-cache-metrics is enabled
+- kv_cache_metrics_sample has no effect if --disable-log-stats is set (log stats must be enabled)
+tuning_advice:
+  summary: Keep the default 0.01 (1% sampling) unless debugging KV cache behavior; higher values add scheduling overhead with
+    diminishing diagnostic returns.
+  suggested_values:
+  - scenario: Production deployment with standard monitoring
+    value: 0.01
+    reason: Default 1% sampling provides sufficient statistical insight into KV cache residency patterns with negligible performance
+      overhead.
+  - scenario: Debugging KV cache eviction or reuse issues
+    value: 0.1
+    reason: 10% sampling gives more granular per-block metrics for diagnosing cache thrashing or premature eviction without
+      excessive overhead.
+  - scenario: Detailed KV cache profiling or benchmarking
+    value: 1.0
+    reason: 100% sampling captures every block event for complete analysis, but adds measurable scheduling latency — use only
+      for short profiling runs.
+  caveats:
+  - This parameter only takes effect when --kv-cache-metrics is enabled and --disable-log-stats is not set.
+  - At 1.0 sampling rate, every KV cache block allocation triggers metric recording, which can add noticeable latency to the
+    scheduler's critical path.
+  - The performance overhead is CPU-side only and does not affect NPU execution or memory usage.
+  - vllm-ascend does not modify this parameter's behavior; it works identically on Ascend NPU as on GPU.
+  quick_guide: Use default 0.01 for production; increase to 0.1–1.0 only for short-term KV cache debugging sessions.
+analysis_date: '2026-07-06'

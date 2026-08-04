@@ -1,0 +1,92 @@
+name: SpeculativeConfig.draft_tensor_parallel_size
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/config/speculative.py:93
+- vllm/config/speculative.py:744
+- vllm/config/speculative.py:849
+- vllm/config/speculative.py:902
+- vllm_ascend/spec_decode/llm_base_proposer.py:142
+- vllm_ascend/platform.py:313
+- docs/source/user_guide/feature_guide/speculative_decoding.md:80
+value_type: int
+default: <computed>
+valid_choices: An integer >= 1, with runtime validation restricting an explicit value to 1 or the target model's tensor_parallel_size
+cli_example: --speculative-config '{"model":"draft-model","num_speculative_tokens":4,"draft_tensor_parallel_size":1}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This setting becomes the tensor_parallel_size in the draft model''s ParallelConfig. Upstream vLLM computes
+  the effective value during SpeculativeConfig post-initialization: an unset value becomes 1 for an mlp_speculator and otherwise
+  inherits the target model''s tensor_parallel_size; an explicit value must be either 1 or that target TP size. Consequently,
+  1 runs the draft model without tensor sharding, avoiding draft-model TP collectives but concentrating its weights and compute
+  on each participating device, while matching target TP shards draft weights and computation across the target TP group at
+  the cost of inter-device communication. The resulting draft-step latency, memory headroom, and speculative-decoding throughput
+  can therefore change materially, and the faster choice depends on draft-model size, interconnect cost, and batch/workload.
+  Ascend gives this choice additional semantics for EAGLE: its guide requires draft TP=1, and the proposer installs a singleton
+  TP group when draft TP differs from target TP. Ascend also rejects some non-MLA GQA/MQA configurations when decode context
+  parallelism is enabled unless draft TP is greater than the draft KV-head count and large enough for the requested DCP size.'
+usage_locations:
+- file: vllm/config/speculative.py:744
+  context: Computes the effective value with _verify_and_get_draft_tp during speculative-model configuration.
+- file: vllm/config/speculative.py:902
+  context: Copies the target ParallelConfig while replacing tensor_parallel_size with the effective draft TP value.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:142
+  context: For Ascend EAGLE, patches in a singleton TP group when draft TP is 1 and target TP is larger.
+- file: vllm_ascend/platform.py:313
+  context: Validates effective draft TP against Ascend decode-context-parallel head-sharding requirements.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md:80
+  context: Documents that Ascend EAGLE and EAGLE-3 draft models must run with draft_tensor_parallel_size set to 1.
+related_parameters:
+- name: tensor_parallel_size
+  relation: An explicit draft value may only be 1 or this target-model TP size; the latter is also the usual computed default.
+- name: SpeculativeConfig.method
+  relation: Determines whether a draft model is used; Ascend EAGLE-family methods require an unsharded draft model.
+- name: SpeculativeConfig.draft_model_config
+  relation: The draft model type selects the computed default, and its architecture determines whether a TP value is valid.
+- name: ParallelConfig.decode_context_parallel_size
+  relation: On Ascend, DCP greater than 1 adds head-sharding constraints for non-MLA GQA/MQA draft models.
+constraints:
+- The Pydantic field constraint requires an integer greater than or equal to 1.
+- An explicit value must be 1 or equal to the target model's tensor_parallel_size.
+- When unset, mlp_speculator is forced to 1; other draft-model types inherit the target tensor_parallel_size.
+- Ascend EAGLE and EAGLE-3 draft models must use 1, even when the target model uses tensor parallelism.
+- On Ascend with decode_context_parallel_size > 1 and a non-MLA GQA/MQA draft model, effective draft TP must exceed the total
+  draft KV-head count, and DCP size must not exceed draft TP divided by that KV-head count.
+- The draft model must also pass ModelConfig.verify_with_parallel_config for the constructed draft ParallelConfig, so its
+  architecture may impose further divisibility or support constraints.
+tuning_advice:
+  summary: Use 1 where required (Ascend EAGLE/EAGLE-3 and mlp_speculator). For other draft models, start with the computed
+    default matching target TP, then benchmark 1 only if the complete draft model fits comfortably on each device.
+  suggested_values:
+  - scenario: Ascend EAGLE or EAGLE-3 speculative decoding
+    value: 1
+    reason: The pinned Ascend guide requires the draft model to run without tensor parallelism, and the proposer supports
+      this through a singleton TP-group patch.
+  - scenario: mlp_speculator draft model
+    value: 1
+    reason: Upstream vLLM states that this model type cannot currently run with TP greater than 1 and computes 1 when the
+      field is unset.
+  - scenario: Other draft models on a tensor-parallel target
+    value: <same as target tensor_parallel_size>
+    reason: This is the upstream computed default and shards draft weights/compute consistently with the target topology.
+  - scenario: Other supported draft models where single-device drafting is being evaluated
+    value: 1
+    reason: It avoids draft-model TP communication, but should be retained only if the unsharded draft fits and measured end-to-end
+      throughput improves.
+  caveats:
+  - TP=1 is not a general memory-saving setting; removing tensor sharding can increase draft-model memory required per device.
+  - Matching target TP can reduce per-device draft-model storage and compute, but TP collectives can erase the latency benefit
+    for a small draft model.
+  - Leaving the field unset is model-dependent rather than universally equivalent to 1.
+  - Ascend DCP validation can reject TP=1 for a non-MLA GQA/MQA draft model when decode_context_parallel_size is greater than
+    1.
+  - Compare accepted-token throughput and memory headroom, not draft-step speed alone, because speculative acceptance behavior
+    determines end-to-end benefit.
+  quick_guide: 'Ascend EAGLE/EAGLE-3 or mlp_speculator: use 1. Otherwise leave it unset to inherit target TP first; benchmark
+    1 only when the draft model fits unsharded and DCP constraints do not apply.'
+analysis_date: '2026-07-31'

@@ -1,0 +1,60 @@
+name: speculative.draft_load_config.safetensors_load_strategy
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: null
+valid_choices:
+- null
+- lazy
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: "This parameter controls how safetensors weight files are loaded for speculative decoding draft models. When\
+  \ set to null (default), vLLM uses memory-mapped (lazy) loading with automatic prefetching when an NFS filesystem is detected\
+  \ and the checkpoint fits within 90% of available RAM. When set to \"lazy\", weights are memory-mapped from disk without\
+  \ prefetching.\nOn Ascend NPU, the performance impact is indirect and limited to model loading phase: - \"Memory-mapped\
+  \ loading reduces host RAM pressure during initialization, which is beneficial\"\n  on Ascend servers that may have less\
+  \ host RAM relative to GPU servers.\n- \"Prefetching (default null on NFS) can accelerate initial model loading by pre-warming\"\
+  \n  the OS page cache, reducing time-to-first-token for the draft model.\n- \"Once the draft model is loaded onto NPU device\
+  \ memory, this parameter has no further\"\n  runtime effect on per-token latency or steady-state throughput.\n\nNo vllm-ascend\
+  \ specific overrides or Ascend-specific code paths were found for this parameter. The behavior follows upstream vLLM semantics\
+  \ exactly.\n"
+usage_locations: []
+related_parameters:
+- name: speculative.model
+  relation: The draft model whose weights are loaded using this strategy.
+- name: speculative.draft_tensor_parallel_size
+  relation: Draft model parallelism affects total checkpoint size and thus memory pressure during loading.
+constraints:
+- Only valid when speculative decoding is enabled with a draft model that uses safetensors format.
+- Has no effect if the draft model uses other weight formats (e.g., PyTorch .bin files).
+tuning_advice:
+  summary: 'Use default (null) for most Ascend deployments; switch to "lazy" only if host RAM is severely constrained during
+    model loading.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend deployment with sufficient host RAM for the draft model checkpoint
+    value: null
+    reason: 'Default behavior enables automatic prefetching on NFS, which accelerates draft model loading without affecting
+      runtime inference performance on NPU.
+
+      '
+  - scenario: Host RAM is limited and draft model checkpoint is large (e.g., >10GB)
+    value: lazy
+    reason: 'Memory-mapped loading without prefetching minimizes host RAM usage during initialization, preventing OOM on the
+      host side. The tradeoff is slightly slower initial model loading.
+
+      '
+  caveats:
+  - This parameter only affects model loading time and host memory usage, not NPU inference throughput or latency.
+  - On Ascend servers with local NVMe storage (not NFS), the automatic prefetching in default mode may not trigger, making
+    null and "lazy" functionally equivalent.
+  - Draft models are typically much smaller than target models, so the memory savings from "lazy" loading are usually modest.
+  quick_guide: Keep default (null) unless host RAM is critically low during draft model loading.
+analysis_date: '2026-07-06'

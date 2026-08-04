@@ -1,0 +1,127 @@
+name: --load-format
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:29
+- vllm/engine/arg_utils.py:848
+- vllm_ascend/model_loader/netloader/netloader.py:345
+- vllm_ascend/model_loader/rfork/rfork_loader.py:114
+- vllm_ascend/model_loader/rfork/rfork_loader.py:173
+value_type: str
+default: auto
+valid_choices:
+- auto
+- pt
+- safetensors
+- instanttensor
+- npcache
+- dummy
+- tensorizer
+- runai_streamer
+- runai_streamer_sharded
+- bitsandbytes
+- sharded_state
+- gguf
+- mistral
+- netloader
+- rfork
+cli_example: --load-format safetensors
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "Controls which model loader is used to read and initialize model weights on Ascend NPU. The choice directly\
+  \ affects cold-start latency (model loading time), memory usage during loading, and in some cases runtime throughput.\n\
+  Standard formats (auto, pt, safetensors) use DefaultModelLoader which reads weights from disk/HuggingFace cache and copies\
+  \ them to NPU memory. On Ascend, this is the baseline path.\nAscend-specific formats provide significant performance benefits:\
+  \ - \"\\\"sharded_state\\\" loads pre-sharded checkpoints where each TP worker reads only its own\"\n  shard, avoiding full-checkpoint\
+  \ reads and reducing memory pressure during loading.\n- \"\\\"netloader\\\" (vllm-ascend) loads weights over the network\
+  \ from a remote seed instance,\"\n  bypassing local disk I/O entirely. Internally resets load_format to \"auto\" and delegates\n\
+  \  to DefaultModelLoader after receiving weights (netloader.py:345).\n- \"\\\"rfork\\\" (vllm-ascend) performs batch weight\
+  \ transfer from a seed NPU process to the\"\n  new instance's NPU memory via direct device-to-device transfer, avoiding\
+  \ both disk I/O\n  and CPU-side copies. Falls back to \"auto\" on failure (rfork_loader.py:173).\n\nThe \"dummy\" format\
+  \ initializes random weights and is used for profiling/testing — it skips all I/O but produces non-functional models.\n\
+  For speculative decoding on Ascend (v1-ascend), the draft model loading also respects load_format via draft_load_config\
+  \ (llm_base_proposer.py:220), so the choice affects both target and draft model loading performance.\n"
+usage_locations:
+- file: vllm/config/load.py:29
+  context: Field definition with default "auto" and docstring listing all supported formats
+- file: vllm/engine/arg_utils.py:848
+  context: CLI argument registration under LoadConfig group
+- file: vllm/engine/arg_utils.py:1500
+  context: Auto-override to "gguf" when model path ends with .gguf
+- file: vllm/config/vllm.py:1788
+  context: Auto-override to "runai_streamer" for Run:ai object storage URIs
+- file: vllm_ascend/model_loader/netloader/netloader.py:345
+  context: Netloader resets load_format to "auto" before delegating to DefaultModelLoader
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:114
+  context: RFork loader initialization logs load_format=rfork
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:173
+  context: RFork fallback resets load_format to "auto" on transfer failure
+- file: vllm/v1/worker/gpu_model_runner.py:4871
+  context: V1 worker overrides to "dummy" when load_dummy_weights=True
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:220
+  context: Draft model loading uses draft_load_config.load_format for speculative decoding
+related_parameters:
+- name: --model-loader-extra-config
+  relation: Provides configuration for custom loaders (netloader, rfork, tensorizer). Required when using --load-format netloader
+    or --load-format rfork.
+- name: --download-dir
+  relation: Specifies the directory for downloading/caching model weights, used by default loader when load_format is auto/pt/safetensors.
+- name: --safetensors-load-strategy
+  relation: Controls how safetensors weights are loaded (eager, lazy, prefetch, torchao). Only effective when load_format
+    is safetensors or auto (when safetensors files exist).
+- name: --tensor-parallel-size
+  relation: sharded_state format requires pre-sharded checkpoints matching the TP size. RFork seed key includes deployment
+    topology.
+- name: --quantization
+  relation: When quantization is set and using netloader, weights post-processing is applied after loading. bitsandbytes format
+    requires --load-format bitsandbytes.
+constraints:
+- When loading from Run:ai object storage (S3/GCS/Azure), --load-format must be runai_streamer or runai_streamer_sharded,
+  otherwise a ValueError is raised.
+- GGUF model files require --load-format gguf, which is auto-set when the model path ends with .gguf.
+- Model reloading (hot-reload) is only supported for certain load formats; unsupported formats raise NotImplementedError.
+- Netloader requires --model-loader-extra-config to be provided as a JSON string with network configuration.
+- RFork requires --model-loader-extra-config to be provided as a JSON string with planner/seed configuration.
+tuning_advice:
+  summary: Use Ascend-native loaders (sharded_state, rfork, netloader) for faster cold-start on NPU; fall back to safetensors
+    for broad compatibility.
+  suggested_values:
+  - scenario: Production deployment with frequent restarts or scaling events on Ascend NPU
+    value: rfork
+    reason: RFork performs direct NPU-to-NPU weight transfer from a seed instance, eliminating disk I/O and CPU-side copies.
+      This provides the fastest cold-start latency on Ascend when a seed instance is available.
+  - scenario: Large tensor-parallel models (TP >= 4) on Ascend NPU with pre-sharded checkpoints
+    value: sharded_state
+    reason: Each TP worker reads only its own shard, reducing per-worker I/O and memory usage during loading. Requires pre-sharded
+      checkpoints generated by save_sharded_state_310.py.
+  - scenario: Remote weight distribution from a central seed server on Ascend NPU
+    value: netloader
+    reason: Netloader fetches weights over the network from a remote seed, bypassing local disk entirely. Useful when model
+      weights are not stored locally on each node.
+  - scenario: Standard single-node or first-time deployment on Ascend NPU
+    value: safetensors
+    reason: Safetensors format loads faster than pytorch bin (pt) format and is the recommended default for HuggingFace models.
+      Use with --safetensors-load-strategy eager for fastest loading.
+  - scenario: Profiling or testing without real weights on Ascend NPU
+    value: dummy
+    reason: Initializes random weights instantly, skipping all I/O. Useful for benchmarking model architecture performance
+      without weight loading overhead.
+  caveats:
+  - RFork and netloader are vllm-ascend specific and only work on Ascend NPU. They require additional infrastructure (seed
+    instances, planner service).
+  - RFork falls back silently to auto format if seed transfer fails, which may hide configuration issues. Check logs for fallback
+    warnings.
+  - sharded_state requires pre-generated sharded checkpoints matching the exact TP size. Mismatched sharding will cause loading
+    failures.
+  - The instanttensor format is CUDA-specific and has no effect on Ascend NPU.
+  - bitsandbytes format is primarily for CUDA quantization; Ascend NPU uses ascend quantization instead.
+  - When using speculative decoding on Ascend (v1-ascend), the draft model's load_format is controlled separately via speculative_config.draft_load_config,
+    not the main --load-format flag.
+  quick_guide: For fastest Ascend NPU cold-start, use --load-format rfork with a seed instance; otherwise use --load-format
+    safetensors for reliable disk-based loading.
+analysis_date: '2026-07-06'

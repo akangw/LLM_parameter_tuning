@@ -1,0 +1,110 @@
+name: additional_config.SLO_limits_for_dynamic_batch
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:201
+- vllm_ascend/platform.py:601
+- vllm_ascend/core/scheduler_dynamic_batch.py:35
+- docs/source/user_guide/feature_guide/dynamic_batch.md:24
+value_type: int
+default: -1
+valid_choices: Documented values are -1, 0, or a positive integer; values below -1 are undocumented.
+cli_example: --additional-config '{"SLO_limits_for_dynamic_batch":50}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'At the default -1, the Ascend platform leaves scheduler selection unchanged. Any other value makes the platform
+  select SchedulerDynamicBatch and force chunked prefill. Inside that scheduler, BudgetRefiner enables dynamic token-budget
+  refinement only when the value is positive: it uses the SLO limit to select the largest profiled chunk size whose cost is
+  within the limit for the current decode context and request count. Consequently, a larger positive limit relaxes the latency
+  bound and can raise effective throughput through larger chunks, while changing TBT/latency. A value of 0 uses the custom
+  FCFS, decode-first chunked-prefill scheduler but disables lookup-table budget refinement. The documented implementation
+  is currently targeted at Ascend 910 B3, decode token scales below 2048, and selected dense Qwen/Llama workloads; there is
+  no corresponding parameter in the pinned upstream vLLM repository.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:201
+  context: Reads the integer from additional_config and stores it on AscendConfig, defaulting to -1.
+- file: vllm_ascend/platform.py:601
+  context: For every value except -1, selects SchedulerDynamicBatch, forces enable_chunked_prefill, and copies the SLO limit
+    into SchedulerConfig.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:39
+  context: Enables BudgetRefiner only for a positive SLO limit and loads the offline cost table used to choose chunk budgets.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:107
+  context: Refines each scheduling step's token budget from the running decode requests when dynamic refinement is enabled.
+- file: docs/source/user_guide/feature_guide/dynamic_batch.md:24
+  context: Documents enablement semantics, the throughput-versus-latency tradeoff, supported workload, prerequisites, and
+    empirical values.
+related_parameters:
+- name: max_num_batched_tokens
+  relation: Supplies the default scheduling token budget used whenever the profile lookup is disabled or has no matching entry.
+- name: enable_chunked_prefill
+  relation: Is forced true whenever this value is not -1 because SchedulerDynamicBatch uses a chunked-prefill strategy.
+- name: tensor_parallel_size
+  relation: The documented favorable results use tensor_parallel_size=8 on supported dense Qwen and Llama models.
+- name: additional_config.profiling_chunk_config.enabled
+  relation: When enabled, the later Ascend platform override selects ProfilingChunkScheduler instead of SchedulerDynamicBatch.
+- name: additional_config.recompute_scheduler_enable
+  relation: Replaces SchedulerConfig first; this parameter can subsequently override its scheduler class with SchedulerDynamicBatch.
+constraints:
+- Dynamic token-budget refinement requires a positive integer; -1 preserves normal scheduler selection, while 0 selects SchedulerDynamicBatch
+  with refinement disabled.
+- The documented supported hardware is Ascend 910 B3, with decode token number scales below 2048.
+- The offline cost-model CSV must be downloaded, renamed to profile_table.csv, and placed under vllm_ascend/core; without
+  it, BudgetRefiner logs an error and disables refinement.
+- pandas is required to load the profile table.
+- Current documented performance results cover dense Qwen and Llama models from 8B through 32B with tensor_parallel_size=8;
+  other workloads require separate validation.
+tuning_advice:
+  summary: Keep -1 unless running a documented 910 B3 workload with the required cost table. For eligible workloads, benchmark
+    the documented empirical values 35, 50, and 75 against the service's throughput and TBT targets rather than assuming that
+    a larger limit is always preferable.
+  suggested_values:
+  - scenario: Default scheduling behavior
+    value: -1
+    reason: Leaves the existing scheduler selection unchanged and does not force chunked prefill.
+  - scenario: Decode-first chunked scheduling without dynamic budget refinement
+    value: 0
+    reason: Selects SchedulerDynamicBatch and its FCFS/decode-first behavior, but BudgetRefiner remains disabled.
+  - scenario: Conservative documented dynamic-batch trial
+    value: 35
+    reason: It is the smallest of the empirical values documented for supported dense Qwen/Llama workloads and is a prudent
+      first benchmark.
+  - scenario: Intermediate documented dynamic-batch trial
+    value: 50
+    reason: It is the value used by the documentation's complete serving example and offers a middle point for measuring the
+      throughput/TBT tradeoff.
+  - scenario: More relaxed documented SLO trial
+    value: 75
+    reason: It is the largest documented empirical value and may permit larger profiled chunks when higher throughput justifies
+      looser latency limits.
+  caveats:
+  - A positive value alone is insufficient; if profile_table.csv is absent, the scheduler continues with its default budget
+    and dynamic refinement is disabled.
+  - Larger limits can improve effective throughput but relax the latency constraint, so validate TBT and tail latency under
+    representative concurrency and sequence lengths.
+  - The profile table is an offline hardware/workload cost model; empirical values are starting points, not portable guarantees
+    across models or deployment shapes.
+  - Setting 0 is not equivalent to -1 in current code because 0 still installs SchedulerDynamicBatch and forces chunked prefill.
+  - If profiling_chunk_config.enabled is also true, its later platform override wins and SchedulerDynamicBatch is not the
+    effective scheduler class.
+  quick_guide: On supported 910 B3 dense-model serving, install the documented profile table, start at 35 or the example value
+    50, compare 35/50/75 under representative load, and retain the smallest value that meets throughput while satisfying TBT.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  deploy_scenario:
+  - long_input
+  - high_concurrency

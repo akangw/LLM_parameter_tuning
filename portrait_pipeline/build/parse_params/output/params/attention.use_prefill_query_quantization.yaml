@@ -1,0 +1,76 @@
+name: attention.use_prefill_query_quantization
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/model_executor/layers/attention/mla_attention.py:1426
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: '''--attention-config ''''{"use_prefill_query_quantization": true}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled and the KV cache is quantized to FP8, this parameter causes the prefill attention query tensor
+  to be cast to FP8 before the attention computation. This reduces the arithmetic precision and memory bandwidth required
+  during prefill, which can significantly lower prefill latency for long-context workloads (ISL >= 4K). On Ascend NPU, FP8
+  attention kernels leverage the Da Vinci architecture''s native FP8 support, providing additional throughput gains. If the
+  KV cache is not FP8 or the backend does not support FP8 prefill attention, the parameter has no effect and a warning is
+  logged.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/attention/mla_attention.py:1438
+  context: 'Checked in determine_prefill_query_data_type to decide whether to use FP8 for prefill queries. Must be true alongside
+    a quantized KV cache and backend support.
+
+    '
+- file: vllm/model_executor/layers/attention/mla_attention.py:1446
+  context: 'If true but other conditions are not met, a warning is logged advising the user to set --kv-cache-dtype fp8 and
+    ensure backend compatibility.
+
+    '
+related_parameters:
+- name: kv_cache_dtype
+  relation: 'Must be set to a quantized dtype (e.g., fp8) for this parameter to take effect. Without a quantized KV cache,
+    the parameter is ignored.
+
+    '
+- name: backend_supports_prefill_query_quantization
+  relation: 'The attention backend must report support for FP8 prefill attention. This is a runtime check performed by the
+    platform-specific backend.
+
+    '
+constraints:
+- KV cache dtype must be set to a quantized type (e.g., fp8) via --kv-cache-dtype.
+- The attention backend must support FP8 prefill attention; otherwise the parameter is ignored.
+tuning_advice:
+  summary: 'Enable this parameter when using FP8 KV cache on Ascend NPU to reduce prefill latency, especially for long-context
+    workloads.
+
+    '
+  suggested_values:
+  - scenario: FP8 KV cache with long-context workloads (ISL >= 4K) on Ascend NPU
+    value: true
+    reason: 'Quantizing prefill queries to FP8 reduces memory bandwidth and compute costs, leveraging Ascend''s native FP8
+      acceleration for significant prefill latency improvements.
+
+      '
+  - scenario: Non-FP8 KV cache or short-context workloads
+    value: false
+    reason: 'The parameter has no effect without a quantized KV cache. For short-context workloads, the overhead of quantization
+      may outweigh benefits.
+
+      '
+  caveats:
+  - This parameter only affects MLA (Multi-head Latent Attention) models such as DeepSeek-V2/V3.
+  - On Ascend NPU, verify that the installed CANN version and attention backend support FP8 prefill attention.
+  - Enabling this without an FP8 KV cache will log a warning but not crash.
+  quick_guide: 'Set to true when using --kv-cache-dtype fp8 on Ascend NPU for long-context models to accelerate prefill.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,59 @@
+name: profiler.active_iterations
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/profiler/wrapper.py:207
+value_type: int
+default: '5'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls how many iterations the PyTorch profiler actively collects trace data during a profiling
+  session. It is passed directly to torch.profiler.schedule(active=...) (vllm/profiler/wrapper.py:207). A larger value increases
+  the profiling duration, which adds overhead to the measured steps and delays the return to normal execution. However, this
+  overhead only exists when profiling is explicitly enabled (e.g., via VLLM_TORCH_PROFILER_DIR). During normal production
+  serving without profiling, this parameter has zero effect on throughput or latency. On Ascend NPU, the PyTorch profiler
+  overhead may differ from GPU due to CANN''s profiling integration, but the mechanism is identical — more active iterations
+  means longer profiling sessions and more collected trace data.
+
+  '
+usage_locations:
+- file: vllm/profiler/wrapper.py:207
+  context: Passed as active=profiler_config.active_iterations to torch.profiler.schedule()
+related_parameters:
+- name: profiler.warmup_iterations
+  relation: Together with wait_iterations and active_iterations defines the profiler schedule phases
+- name: profiler.wait_iterations
+  relation: Together with warmup_iterations and active_iterations defines the profiler schedule phases
+- name: VLLM_TORCH_PROFILER_DIR
+  relation: Environment variable that enables profiling; active_iterations has no effect unless profiling is enabled
+constraints:
+- Must be a positive integer (>= 1) when profiling is enabled and a schedule is created
+tuning_advice:
+  summary: 'Only relevant when profiling is explicitly enabled. Increase to capture more trace data for analysis; decrease
+    to reduce profiling overhead. Has no effect during normal serving.
+
+    '
+  suggested_values:
+  - scenario: Quick profiling to get a rough performance snapshot
+    value: 3
+    reason: Minimizes profiling overhead while still capturing enough iterations for basic analysis
+  - scenario: Detailed profiling for bottleneck analysis
+    value: 10
+    reason: Captures more iterations to identify patterns and outliers in the trace data
+  - scenario: Production serving (profiling disabled)
+    value: 5
+    reason: Default value; parameter is ignored when profiling is not active
+  caveats:
+  - On Ascend NPU, profiling overhead may be higher than on GPU due to CANN profiler integration — consider using fewer active
+    iterations initially
+  - The total profiling duration is (wait + warmup + active) iterations; adjust all three parameters together to control overhead
+  - Profiling trace files can become very large with many active iterations, especially with stack traces and memory profiling
+    enabled
+  quick_guide: Use 3-5 for quick checks, 10+ for deep analysis; irrelevant when profiling is off
+analysis_date: '2026-07-06'

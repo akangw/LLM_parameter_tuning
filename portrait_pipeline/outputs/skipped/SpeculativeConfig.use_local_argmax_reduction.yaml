@@ -1,0 +1,7 @@
+name: SpeculativeConfig.use_local_argmax_reduction
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source this field is declared with a docstring describing a vocab-parallel argmax optimization,
+  but no runtime code reads the field. The pinned vLLM Ascend source likewise has no runtime consumer; its only exact references
+  are in a unit-test fixture and a dataclass compatibility check. Consequently changing the value cannot affect latency, throughput,
+  or memory in either pinned implementation.

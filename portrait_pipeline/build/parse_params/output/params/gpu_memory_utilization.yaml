@@ -1,0 +1,98 @@
+name: --gpu-memory-utilization
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1083
+- vllm/config/cache.py:66
+- vllm_ascend/worker/worker.py:281
+- vllm_ascend/_310p/worker_310p.py:120
+value_type: float
+default: '0.92'
+valid_choices: 0 < value <= 1
+cli_example: --gpu-memory-utilization 0.9
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter controls the fraction of NPU memory reserved for the model executor, which directly determines
+  the size of the KV cache. On Ascend NPU, the calculation is: `requested_memory = total_npu_memory * gpu_memory_utilization`.
+  The available KV cache memory is then derived by subtracting model weights and activation peak memory from this requested
+  memory. On 310P devices, the available KV cache memory is further halved (`// 2`) to reserve workspace for operators and
+  other caches, making the effective KV cache budget even tighter. A higher value allocates more memory to KV cache, allowing
+  larger batch sizes and longer sequences, which improves throughput. However, setting it too high risks OOM during inference
+  because the warm-up profiling phase may underestimate peak memory usage (e.g., due to uneven expert-parallel load). If `--kv-cache-memory-bytes`
+  is explicitly set, this parameter is ignored entirely. On 310P RC devices, host and device memory are shared, so the calculation
+  also considers system memory usage via psutil.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/worker.py:281
+  context: Computes requested_memory as total_npu_memory * gpu_memory_utilization; raises ValueError if free memory is insufficient
+- file: vllm_ascend/_310p/worker_310p.py:120
+  context: On 310P, available KV cache memory is halved after subtracting non-KV-cache memory from requested_memory
+- file: vllm_ascend/_310p/worker_310p.py:168
+  context: Same requested_memory calculation for 310P worker initialization
+- file: vllm/config/cache.py:66
+  context: Field definition with default=0.92, gt=0, le=1
+- file: vllm/v1/core/kv_cache_utils.py:698
+  context: Error message suggests increasing gpu_memory_utilization when no KV cache memory is available
+- file: vllm/v1/core/kv_cache_utils.py:1858
+  context: Error message suggests increasing gpu_memory_utilization when auto-fit max_model_len fails
+- file: vllm/v1/worker/cpu_worker.py:57
+  context: Also used for CPU worker memory fraction calculation
+related_parameters:
+- name: --kv-cache-memory-bytes
+  relation: When set, gpu_memory_utilization is ignored; KV cache size is taken directly from kv_cache_memory_bytes
+- name: --max-model-len
+  relation: If KV cache is insufficient for max_model_len, either increase gpu_memory_utilization or decrease max_model_len
+- name: --block-size
+  relation: KV cache is divided into blocks; block_size affects how efficiently the allocated memory is used
+- name: --max-num-batched-tokens
+  relation: Peak memory during warm-up profiling depends on max_num_batched_tokens; larger values increase peak memory and
+    reduce available KV cache
+constraints:
+- Value must be greater than 0 and less than or equal to 1.
+- Free NPU memory at startup must be at least total_memory * gpu_memory_utilization, otherwise vLLM raises a ValueError.
+- On 310P devices, available KV cache memory is halved internally; the user-specified value does not account for this halving.
+- If --kv-cache-memory-bytes is set, gpu_memory_utilization is completely ignored.
+tuning_advice:
+  summary: Balance between KV cache capacity and OOM risk; start with 0.9 on Ascend NPU and reduce if OOM occurs.
+  suggested_values:
+  - scenario: General Ascend NPU deployment (recommended default)
+    value: '0.9'
+    reason: vllm-ascend documentation recommends 0.9 as the default for Ascend NPU, which differs from upstream vLLM's 0.92.
+      This provides a good balance between KV cache capacity and safety margin.
+  - scenario: 310P devices (Atlas 300I Duo / 310P RC)
+    value: '0.7'
+    reason: 310P internally halves the available KV cache memory. A lower value like 0.7 helps avoid OOM due to the halving
+      and shared host/device memory on RC devices.
+  - scenario: Large models with expert parallelism (MoE like Mixtral)
+    value: '0.7'
+    reason: Documentation for Mixtral-8x7B uses 0.7 to reduce memory usage. Expert-parallel models have uneven memory distribution
+      that can cause OOM at higher utilization.
+  - scenario: Disaggregated prefill/decode with KV cache transfer
+    value: '0.8'
+    reason: Examples for disaggregated prefill use 0.8 to leave headroom for KV cache transfer overhead and Mooncake connector
+      buffers.
+  - scenario: Netloader enabled (requires HCCL connection buffers)
+    value: '0.85'
+    reason: Netloader requires extra on-chip memory for HCCL connections (~200 MB default HCCL_BUFFERSIZE). Reserve sufficient
+      capacity by lowering gpu_memory_utilization.
+  - scenario: High-throughput production with long sequences
+    value: '0.95'
+    reason: Maximizes KV cache for large batch sizes and long context lengths. Only use if the workload is stable and memory
+      profiling is accurate.
+  caveats:
+  - On 310P devices, the effective KV cache memory is half of what the utilization fraction suggests, due to internal halving
+    for operator workspace.
+  - Setting this too high can cause OOM during actual inference even if warm-up profiling succeeds, because peak memory during
+    warm-up (with max_num_batched_tokens) may differ from real workload peaks (e.g., uneven EP load).
+  - If --kv-cache-memory-bytes is set, this parameter is silently ignored. Use one or the other, not both.
+  - On 310P RC devices, host and device memory are shared; system memory pressure affects available NPU memory.
+  - The upstream vLLM default is 0.92, but vllm-ascend documentation recommends 0.9 as the default for Ascend NPU.
+  quick_guide: Use --gpu-memory-utilization 0.9 as the Ascend default; lower to 0.7-0.8 for 310P devices, MoE models, or when
+    using Netloader/disaggregated prefill.
+analysis_date: '2026-07-06'

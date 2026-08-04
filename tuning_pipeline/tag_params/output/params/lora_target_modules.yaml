@@ -1,0 +1,81 @@
+name: --lora-target-modules
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/lora.py:48
+- vllm/engine/arg_utils.py:1258
+- vllm/engine/arg_utils.py:1999
+- docs/features/lora.md:395
+value_type: list[str]
+default: null
+valid_choices: A space-separated list of model module suffixes, such as o_proj, qkv_proj, gate_proj, or down_proj; null uses
+  all supported LoRA modules.
+cli_example: vllm serve model --enable-lora --lora-target-modules o_proj qkv_proj
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: LoRAConfig.target_modules restricts deployment-time LoRA application to the selected module suffixes; when
+  it is null, all supported LoRA modules are used. EngineArgs passes this value into LoRAConfig only when enable_lora is enabled.
+  Selecting fewer matching modules reduces the LoRA layers participating in inference, so it can reduce adapter memory and
+  LoRA compute, improving latency and throughput relative to applying an adapter to all supported modules. The selected module
+  set is also included in LoRAConfig.compute_hash because it changes the computation graph.
+usage_locations:
+- file: vllm/engine/arg_utils.py:577
+  context: EngineArgs stores the CLI value with the LoRAConfig target_modules default.
+- file: vllm/engine/arg_utils.py:1258
+  context: Registers --lora-target-modules from the LoRAConfig field metadata.
+- file: vllm/engine/arg_utils.py:1999
+  context: Constructs LoRAConfig with target_modules only in the enable_lora path.
+- file: vllm/config/lora.py:93
+  context: Includes the selected target module set in the computation-graph hash.
+related_parameters:
+- name: --enable-lora
+  relation: The target-module setting is passed to LoRAConfig only when LoRA is enabled.
+- name: --max-loras
+  relation: The number of simultaneously supported adapters combines with the per-adapter module selection to determine LoRA
+    resource use.
+- name: --max-lora-rank
+  relation: Rank and the selected modules jointly determine the size and compute of LoRA weights.
+constraints:
+- Effective only when --enable-lora is enabled.
+- Each value must be a suffix that matches a supported module in the served model; module names vary by architecture.
+tuning_advice:
+  summary: Start with only the model modules required by the adapter; a smaller valid target set reduces LoRA overhead, while
+    null retains all supported modules.
+  suggested_values:
+  - scenario: Minimize LoRA inference overhead for an adapter that only needs output projections.
+    value: o_proj
+    reason: The documented suffix restricts LoRA application to output projection modules instead of all supported modules.
+  - scenario: Preserve the adapter's coverage across all supported LoRA modules.
+    value: omit --lora-target-modules
+    reason: Omitting the option leaves the null LoRAConfig default, which applies LoRA to all supported modules.
+  caveats:
+  - A suffix that does not match the served model's supported module names will not provide the intended adapter coverage.
+  - Restricting target modules can change model behavior because the adapter is no longer applied to omitted modules.
+  quick_guide: Enable LoRA, then specify only the valid module suffixes required by the adapter; leave the option unset to
+    use all supported modules.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

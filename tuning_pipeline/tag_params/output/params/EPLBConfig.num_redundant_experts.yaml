@@ -1,0 +1,109 @@
+name: EPLBConfig.num_redundant_experts
+type: nested
+category: parallelism
+scope: vllm
+source_file:
+- vllm/config/parallel.py:68
+- vllm/config/parallel.py:461
+- docs/serving/expert_parallel_deployment.md:153
+- docs/serving/expert_parallel_deployment.md:177
+- vllm/model_executor/models/deepseek_v2.py:288
+- vllm_ascend/models/deepseek_v4.py:265
+- vllm_ascend/ops/fused_moe/fused_moe.py:407
+value_type: int
+default: 0
+valid_choices: non-negative integer
+cli_example: vllm serve <model> --enable-expert-parallel --enable-eplb --eplb-config='{"num_redundant_experts":2}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: This field reserves duplicate physical MoE experts for upstream expert-parallel load balancing. Model implementations
+  compute the global physical count as the logical expert count plus this value and divide that count across EP ranks. The
+  duplicates give EPLB additional placements for hot experts, which can reduce rank imbalance and improve serving throughput
+  and latency, but every duplicate adds expert weights on each MoE layer and leaves less accelerator memory for the KV cache.
+  The pinned upstream guide estimates about 2.4 GB for one redundant expert per EP rank on DeepSeek-V3. A nonzero value is
+  rejected unless EPLB is enabled. On the pinned Ascend stack, this upstream field is still read by model metadata and weight
+  mapping, but the Ascend fused-MoE operator obtains its execution placement and redundant-expert count from the distinct
+  additional_config.eplb_config object; setting this field alone therefore does not configure Ascend dynamic-EPLB placement.
+usage_locations:
+- file: vllm/config/parallel.py:461
+  context: Rejects a nonzero redundant-expert count when ParallelConfig.enable_eplb is false.
+- file: vllm/model_executor/models/deepseek_v2.py:288
+  context: Adds the configured count to the logical expert count, derives the per-rank physical count, and passes the count
+    into FusedMoE.
+- file: docs/serving/expert_parallel_deployment.md:177
+  context: Documents the per-rank distribution formula, memory overhead, a DeepSeek-V3 memory estimate, and example settings.
+- file: vllm_ascend/models/deepseek_v4.py:265
+  context: Ascend DeepSeek-V4 model metadata reads the upstream parallel EPLBConfig value and uses it for physical-expert
+    and weight-mapping metadata.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:407
+  context: The pinned Ascend fused-MoE execution path instead obtains placement from AscendConfig.eplb_config, demonstrating
+    that the same-named additional-config field is a separate control.
+related_parameters:
+- name: ParallelConfig.enable_eplb
+  relation: Must be true for a nonzero value and activates upstream expert load collection and rebalancing.
+- name: ParallelConfig.enable_expert_parallel
+  relation: Must be true when EPLB is enabled because redundant experts are distributed over the expert-parallel group.
+- name: ParallelConfig.tensor_parallel_size
+  relation: Together with data-parallel size, determines whether EPLB has more than one participating rank.
+- name: ParallelConfig.data_parallel_size
+  relation: Together with tensor-parallel size, contributes to the expert-parallel group across which physical experts are
+    distributed.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: This distinct Ascend plugin field controls the pinned Ascend fused-MoE placement path; it must not be assumed
+    to inherit this upstream EPLBConfig value.
+constraints:
+- The value must be an integer greater than or equal to zero.
+- A nonzero value requires ParallelConfig.enable_eplb=true; otherwise configuration validation raises ValueError.
+- EPLB requires enable_expert_parallel=true and tensor_parallel_size * data_parallel_size greater than one.
+- Redundant experts must fit in accelerator memory on every MoE layer; increasing this budget reduces memory available to
+  the KV cache.
+- On the pinned Ascend implementation, configure the separate additional_config.eplb_config field for fused-MoE placement;
+  this upstream field alone is not the Ascend placement control.
+tuning_advice:
+  summary: Keep zero when EPLB is disabled. When upstream EPLB is enabled, start with a small redundant-expert budget, measure
+    expert-load skew and end-to-end serving performance, and increase it only while the balancing gain justifies the model-weight
+    memory cost.
+  suggested_values:
+  - scenario: EPLB disabled or memory-constrained serving
+    value: 0
+    reason: This is the validated default, allocates no duplicate expert weights, and preserves the most memory for model
+      execution and KV cache.
+  - scenario: Initial upstream EPLB benchmark
+    value: 2
+    reason: The pinned upstream deployment guide uses two redundant experts in its single-node examples; it is a conservative
+      starting point for measurement rather than a topology-independent optimum.
+  - scenario: Large-scale upstream expert-parallel deployment with persistent hot-expert skew and sufficient memory
+    value: 32
+    reason: The pinned upstream guide recommends 32 for its large-scale use case so popular experts remain available, but
+      this value should be adopted only after checking the model-specific memory footprint.
+  caveats:
+  - The useful count depends on the model's expert size, number of MoE layers, EP group size, routing skew, traffic, and available
+    accelerator memory; source inspection cannot identify a universal optimum.
+  - More redundancy can improve balance while simultaneously reducing KV-cache capacity, so benchmark request latency and
+    throughput at the intended concurrency rather than judging only EPLB rebalance quality.
+  - The guide's approximately 2.4 GB figure is specific to one redundant expert per EP rank for DeepSeek-V3 and should not
+    be generalized to other models or precisions.
+  - For the pinned Ascend stack, do not copy upstream values into this field and assume that dynamic-EPLB placement changed;
+    inspect and configure additional_config.eplb_config.num_redundant_experts as a separate setting.
+  quick_guide: Use 0 without EPLB; with upstream EPLB, begin at 2, measure load balance, memory headroom, latency, and throughput,
+    then increase only when hot-expert skew remains the bottleneck.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - moe
+  - mla
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,70 @@
+name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_load
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file: []
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter controls whether the Decode node loads KV cache from the KV Pool during disaggregated prefill-decode\
+  \ serving on Ascend NPU. When enabled (true), the Decode node retrieves KV cache data from the shared KV Pool (backed by\
+  \ mooncake, memcache, or yuanrong storage backends) instead of computing it locally. This directly affects: - Latency: \"\
+  Loading KV cache from remote storage introduces RPC overhead and\"\n  network transfer time, which can increase time-to-first-token\
+  \ (TTFT) on the\n  Decode node.\n- Throughput: \"Offloading KV cache loading to the KV Pool can reduce redundant\"\n  computation\
+  \ on the Decode node, potentially improving overall system throughput\n  in disaggregated scenarios.\n- Memory: \"When consumer_is_to_load\
+  \ is false, the Decode node must maintain its\"\n  own KV cache, consuming NPU HBM. When true, KV cache can be loaded on-demand\n\
+  \  from the pool, reducing local memory pressure on the Decode node.\nThis parameter is specific to vllm-ascend's KV Pool\
+  \ feature for disaggregated serving and has no equivalent in upstream vLLM.\n"
+usage_locations: []
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_put
+  relation: Controls whether the Decode node writes KV cache back to the KV Pool; typically used together with consumer_is_to_load
+    for bidirectional KV cache transfer in disaggregated serving.
+- name: kv_transfer_config.kv_connector_extra_config.backend
+  relation: Determines the storage backend (mooncake, memcache, yuanrong) used for KV Pool operations; consumer_is_to_load
+    depends on the configured backend for actual data transfer.
+- name: kv_transfer_config.kv_connector_extra_config.load_async
+  relation: When enabled, KV cache loading is performed asynchronously, which can mitigate the latency impact of consumer_is_to_load
+    by overlapping data transfer with computation.
+constraints:
+- consumer_is_to_load requires a properly configured KV Pool backend (mooncake, memcache, or yuanrong) to function; without
+  a valid backend, enabling this parameter will cause KV cache loading to fail.
+- consumer_is_to_load is only meaningful in disaggregated prefill-decode deployments; in monolithic serving setups, this parameter
+  has no effect.
+tuning_advice:
+  summary: 'Enable consumer_is_to_load on Decode nodes in disaggregated prefill-decode deployments to reduce NPU HBM usage
+    by loading KV cache from the shared KV Pool, but be aware of the added network latency overhead.
+
+    '
+  suggested_values:
+  - scenario: Disaggregated prefill-decode serving where Decode node NPU HBM is constrained
+    value: true
+    reason: Loading KV cache from the KV Pool reduces local memory pressure on the Decode node, allowing larger batch sizes
+      or longer context lengths within the same HBM budget.
+  - scenario: Latency-sensitive disaggregated serving where TTFT must be minimized
+    value: false
+    reason: Keeping consumer_is_to_load disabled avoids RPC and network transfer overhead, ensuring the Decode node can begin
+      processing immediately without waiting for KV cache retrieval.
+  - scenario: Monolithic (non-disaggregated) serving
+    value: false
+    reason: In monolithic deployments, there is no separate KV Pool; enabling this parameter has no effect and should remain
+      at its default value.
+  caveats:
+  - 'Enabling consumer_is_to_load introduces network dependency: if the KV Pool backend becomes unavailable or experiences
+    high latency, Decode node performance will degrade significantly.'
+  - When consumer_is_to_load is true, consider also enabling load_async to overlap KV cache loading with computation and mitigate
+    latency impact.
+  - The mooncake backend (default) may have different performance characteristics compared to memcache or yuanrong; benchmark
+    your specific backend choice when consumer_is_to_load is enabled.
+  quick_guide: Enable on Decode nodes when NPU HBM is the bottleneck in disaggregated serving; keep disabled when TTFT latency
+    is critical.
+analysis_date: '2026-07-06'

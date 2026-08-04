@@ -1,0 +1,7 @@
+name: additional_config.enable_transpose_kv_cache_by_block
+type: nested
+performance_impact: none
+skip_reason: In the pinned vllm-ascend source, this nested value is only parsed and stored as AscendConfig.enable_transpose_kv_cache_by_block;
+  no runtime path reads that field. Both Mooncake KV-cache reformat paths instead read the deprecated VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK
+  environment variable directly, so changing additional_config.enable_transpose_kv_cache_by_block currently has no latency,
+  throughput, or memory effect. The pinned upstream vLLM source contains no matching setting or consumer.

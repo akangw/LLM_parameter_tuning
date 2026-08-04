@@ -1,0 +1,81 @@
+name: VLLM_MQ_MAX_CHUNK_BYTES_MB
+type: env
+category: communication
+scope: both
+source_file:
+- vllm/envs.py:1431
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:54
+value_type: int
+default: 16
+valid_choices: positive integer in MiB
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This environment variable sets the per-slot shared-memory capacity of the RPC broadcast MessageQueue after
+  conversion from MiB to bytes. On the Ascend multiprocessing executor, the queue carries SchedulerOutputs from the leader
+  to worker processes. Serialized messages smaller than the threshold use the local shared-memory ring buffer; messages whose
+  serialized payload plus pickle header reaches or exceeds the threshold use a local ZeroMQ multipart broadcast instead. Increasing
+  the value can keep larger control messages on shared memory but allocates a larger ring buffer; with the queue default of
+  ten slots, each extra MiB increases each created queue's shared-memory reservation by about ten MiB. Lower values save shared
+  memory but send more messages through ZeroMQ. The same setting is consumed by the pinned upstream multiprocessing and Ray
+  v2 executors. It affects control-plane IPC rather than model kernels, so its typical performance impact is low and workload
+  dependent.
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:54
+  context: Ascend converts the configured MiB value to bytes and supplies it to the scheduler-output broadcast MessageQueue
+    on the data-parallel leader.
+related_parameters:
+- name: VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS
+  relation: This nearby environment variable controls multiprocessing execute_model RPC timeout behavior, whereas this parameter
+    selects the local broadcast data path by message size.
+constraints:
+- The value must parse as a base-10 integer when vLLM reads the environment.
+- Use a positive value; non-positive capacities cannot provide a usable shared-memory queue and can fail during shared-memory
+  allocation or message handling.
+- The value is interpreted as MiB and multiplied by 1024 * 1024 before queue construction.
+- The threshold comparison is inclusive, so a serialized message at exactly the capacity uses the ZeroMQ overflow path.
+tuning_advice:
+  summary: Keep the 16 MiB default unless measurements show RPC broadcast IPC is a bottleneck or shared-memory reservation
+    is problematic.
+  suggested_values:
+  - scenario: Typical Ascend multiprocessing or upstream multi-worker deployment
+    value: 16
+    reason: This is the pinned vLLM default and avoids enlarging every ten-slot queue without evidence that messages commonly
+      overflow it.
+  - scenario: Profiling shows frequent slightly-over-16-MiB scheduler broadcasts and adequate host shared memory is available
+    value: 32
+    reason: A measured increase can keep those local broadcasts on the shared-memory path, at the cost of roughly doubling
+      this queue's shared-memory reservation.
+  caveats:
+  - Raising the threshold is not free; the ring buffer preallocates ten slots at the configured capacity for each created
+    local-reader queue.
+  - A larger threshold helps only local messages that would otherwise cross the cutoff; remote readers already communicate
+    over sockets.
+  - Message size depends on batch shape and serialized scheduler outputs, so benchmark on the target model, concurrency, topology,
+    and host shared-memory limits.
+  - This setting does not change NPU kernels, device memory, or model computation.
+  quick_guide: Measure message sizes and overflow frequency first; retain 16 unless a larger shared-memory cutoff produces
+    a repeatable end-to-end benefit.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

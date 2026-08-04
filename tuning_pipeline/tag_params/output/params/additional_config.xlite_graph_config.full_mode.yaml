@@ -1,0 +1,122 @@
+name: additional_config.xlite_graph_config.full_mode
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:549
+- vllm_ascend/platform.py:427
+- vllm_ascend/xlite/xlite.py:205
+- vllm_ascend/xlite/xlite.py:656
+- vllm_ascend/xlite/xlite.py:736
+- docs/source/user_guide/configuration/additional_config.md:110
+- docs/source/user_guide/feature_guide/graph_mode.md:213
+- vllm/config/model.py:215
+- vllm/config/compilation.py:599
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"xlite_graph_config":{"enabled":true,"full_mode":true}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This switch is effective only when Xlite graph mode is enabled. False keeps Xlite on decode requests while
+  prefill uses the wrapped runnable path; on Ascend, that configuration also selects FULL_DECODE_ONLY graph capture. True
+  sends both prefill and decode work through Xlite, but the platform then forces model eager execution, disables compilation,
+  and sets cudagraph mode to NONE. It also sizes Xlite''s max_m from max_num_batched_tokens rather than max_num_seqs. The
+  result is a substantial workload-dependent trade-off: full mode can accelerate prefill through Xlite and improve time to
+  first token, while giving up decode graph replay and potentially increasing the Xlite model/runtime tensor-pool capacity
+  associated with the larger max_m. Measure prefill latency, decode latency, throughput, and NPU memory together; the source
+  does not guarantee that either mode wins for every model or batch.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:549
+  context: Parses the nested boolean with a default of false; Xlite-wide compatibility checks run when enabled is true.
+- file: vllm_ascend/platform.py:427
+  context: In full mode, forces enforce_eager, cudagraph NONE, and compilation NONE; decode-only mode selects FULL_DECODE_ONLY.
+- file: vllm_ascend/platform.py:562
+  context: Selects XliteWorker when the enclosing Xlite configuration is enabled.
+- file: vllm_ascend/xlite/xlite.py:205
+  context: Uses max_num_batched_tokens as max_m in full mode and max_num_seqs otherwise before Xlite model initialization.
+- file: vllm_ascend/xlite/xlite.py:656
+  context: Stores the option in XliteWrapper for per-forward dispatch.
+- file: vllm_ascend/xlite/xlite.py:736
+  context: Detects prefill work and routes it through Xlite only in full mode; decode is routed through Xlite in both modes.
+- file: docs/source/user_guide/configuration/additional_config.md:110
+  context: Documents the false default and defines full mode as Xlite for both prefill and decode.
+- file: vllm/config/model.py:215
+  context: Upstream defines enforce_eager as disabling graph execution in favor of eager PyTorch execution.
+- file: vllm/config/compilation.py:599
+  context: Upstream defines FULL_DECODE_ONLY as full graph capture for decode batches, with mixed prefill-decode batches outside
+    graphs.
+related_parameters:
+- name: additional_config.xlite_graph_config.enabled
+  relation: Must be true for full_mode to select the Xlite worker, change compilation settings, or alter runtime dispatch.
+- name: compilation_config.cudagraph_mode
+  relation: Ascend sets it to NONE for full mode and FULL_DECODE_ONLY for decode-only Xlite mode.
+- name: model_config.enforce_eager
+  relation: Ascend forces it to true in full mode, which disables compilation and graph replay.
+- name: scheduler_config.max_num_batched_tokens
+  relation: Supplies Xlite max_m in full mode and therefore influences supported token capacity and model/runtime pool sizing.
+- name: scheduler_config.max_num_seqs
+  relation: Supplies Xlite max_m in decode-only mode.
+- name: cache_config.block_size
+  relation: Xlite recommends 128; enabling Xlite with another value emits a warning.
+constraints:
+- full_mode has no effect unless additional_config.xlite_graph_config.enabled is true.
+- Enabling Xlite graph mode, in either full or decode-only mode, is incompatible with speculative decoding and raises RuntimeError
+  when speculative_config is present.
+- Enabling Xlite graph mode requires pipeline_parallel_size to equal 1; larger values raise RuntimeError.
+- Xlite must be installed, and the model architecture must be supported by the Xlite strategy map; unsupported architectures
+  raise ValueError during initialization.
+- cache_config.block_size 128 is recommended for Xlite; other values are accepted with a warning rather than rejected.
+tuning_advice:
+  summary: Keep false for decode-focused serving that benefits from decode graph replay. Test true when prefill latency is
+    important, but retain it only when measured end-to-end latency and throughput justify eager execution and its memory use.
+  suggested_values:
+  - scenario: Decode-heavy, throughput-oriented serving
+    value: false
+    reason: Keeps Xlite on decode while Ascend selects FULL_DECODE_ONLY capture instead of forcing all execution eager.
+  - scenario: Prompt-heavy or time-to-first-token-sensitive serving on a supported model
+    value: true
+    reason: Routes prefill as well as decode through Xlite; benchmark because this simultaneously disables compilation and
+      graph replay.
+  - scenario: Xlite disabled, unavailable, or the architecture is unsupported
+    value: false
+    reason: The flag cannot provide a benefit without enabled Xlite and a supported Xlite model strategy.
+  caveats:
+  - Full mode is not simply a broader graph-capture mode; Ascend explicitly disables ACLGraph/CUDAGraph compilation and forces
+    eager execution around Xlite.
+  - max_m may be much larger in full mode because token budget replaces sequence count, which can increase Xlite initialization
+    or runtime-pool memory requirements.
+  - The speculative-decoding and pipeline-parallel restrictions belong to enabled Xlite as a whole, not uniquely to full_mode.
+  - With data parallelism greater than one, decode-only dispatch has an additional token-versus-request guard, while full
+    mode still selects Xlite for prefill and decode.
+  - Documentation and the source strategy map can evolve at different rates; verify the pinned deployment's exact model architecture
+    before enabling Xlite.
+  quick_guide: Enable Xlite first. Start with full_mode=false for decode-oriented serving; try true for prefill-sensitive
+    traffic only with speculative decoding off, pipeline parallel size 1, and benchmarked latency, throughput, and NPU memory.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

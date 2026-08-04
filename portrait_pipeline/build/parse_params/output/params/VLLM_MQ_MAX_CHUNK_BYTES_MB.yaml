@@ -1,0 +1,60 @@
+name: VLLM_MQ_MAX_CHUNK_BYTES_MB
+type: env
+category: communication
+scope: both
+source_file:
+- vllm/envs.py:1431
+- vllm/envs.py:194
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:54
+- vllm/v1/executor/multiproc_executor.py:137
+- vllm/v1/executor/ray_executor_v2.py:302
+value_type: int
+default: '16'
+valid_choices: positive integer (MB)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls the maximum chunk size (in MB) for the RPC message queue used to broadcast scheduler outputs and
+  model runner outputs between worker processes. Objects larger than this threshold are broadcast via ZMQ instead of the message
+  queue''s internal mechanism. On Ascend NPU, this is used in the multiprocessing executor (vllm_ascend/patch/platform/patch_multiproc_executor.py:54)
+  where max_chunk_bytes is computed as VLLM_MQ_MAX_CHUNK_BYTES_MB * 1024 * 1024 and passed to the MessageQueue constructor.
+  The parameter affects the serialization/deserialization path for inter-process communication of scheduler outputs. A value
+  too small causes more objects to fall back to ZMQ broadcast (potentially higher latency for large messages), while a value
+  too large may increase memory pressure in the message queue''s shared memory buffers. The performance impact is low because
+  this only affects the IPC mechanism choice for control-plane messages, not the hot model execution path.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:54
+  context: 'Ascend multiprocessing executor: computes max_chunk_bytes from env var and passes to MessageQueue for scheduler
+    output broadcast'
+- file: vllm/v1/executor/multiproc_executor.py:137
+  context: 'Upstream v1 multiprocessing executor: same usage pattern for DP leader node message queue initialization'
+- file: vllm/v1/executor/ray_executor_v2.py:302
+  context: 'Upstream Ray executor v2: uses env var for broadcast MessageQueue creation in distributed setting'
+related_parameters:
+- name: VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS
+  relation: Both control multiprocessing executor behavior; this timeout governs execute_model RPC calls while VLLM_MQ_MAX_CHUNK_BYTES_MB
+    governs message queue chunking
+constraints:
+- Must be a positive integer representing megabytes
+tuning_advice:
+  summary: Default value of 16 MB is adequate for most Ascend deployments; only tune if experiencing IPC-related latency in
+    multi-worker setups
+  suggested_values:
+  - scenario: Default single-node Ascend deployment with tensor parallelism
+    value: 16
+    reason: The default 16 MB threshold works well for typical scheduler output sizes; no tuning needed
+  - scenario: Large-scale deployment with very large scheduler outputs (e.g., many parallel sequences)
+    value: 64
+    reason: Increasing the threshold reduces ZMQ fallback for moderately large messages, potentially lowering IPC latency
+  caveats:
+  - This parameter only affects the multiprocessing executor path; it has no effect on Ray-based executors on Ascend
+  - Setting the value too high may increase shared memory consumption in the message queue without measurable performance
+    benefit
+  - The vllm-ascend patch does not override the default value; it uses the upstream default of 16 MB
+  quick_guide: Keep the default 16 MB unless profiling shows IPC bottlenecks in the multiprocessing executor
+analysis_date: '2026-07-06'

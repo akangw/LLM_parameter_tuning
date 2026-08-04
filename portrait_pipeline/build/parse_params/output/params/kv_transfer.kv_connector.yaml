@@ -1,0 +1,128 @@
+name: kv_transfer.kv_connector
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/vllm.py:701
+- vllm/config/vllm.py:720
+- vllm_ascend/distributed/kv_transfer/__init__.py:18
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:91
+value_type: str
+default: null
+valid_choices:
+- OffloadingConnector
+- SimpleCPUOffloadConnector
+- LMCacheConnectorV1
+- MultiConnector
+- MooncakeConnectorV1
+- MooncakeHybridConnector
+- MooncakeConnectorStoreV1
+- MooncakeLayerwiseConnector
+- AscendStoreConnector
+- ExampleHiddenStatesConnector
+- NixlConnector
+cli_example: '--kv-transfer-config ''{"kv_connector": "MooncakeConnectorV1"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter selects the KV connector implementation responsible for transmitting KV caches between vLLM
+  instances. It directly controls the mechanism for disaggregated prefill (P/D separation), KV cache offloading, and cross-instance
+  KV sharing. The connector choice determines: "(1) the network transport layer (Mooncake RDMA, TCP/ZMQ," shared memory),
+  (2) whether KV cache is transferred layer-by-layer or as whole blocks, (3) whether HMA (Heterogeneous Memory Architecture)
+  is supported for unified NPU/CPU memory management, and (4) the scheduling behavior for remote KV cache prefetching.
+
+  On Ascend NPU, vllm-ascend overrides the "MultiConnector" registration in vllm_ascend/distributed/kv_transfer/__init__.py:21-27,
+  replacing the upstream MultiConnector with AscendMultiConnector. This custom connector adds HMA support checks and Ascend-specific
+  layerwise transfer capabilities. The Mooncake-based connectors (MooncakeConnectorV1, MooncakeHybridConnector, MooncakeLayerwiseConnector)
+  use the Mooncake TransferEngine for RDMA-based KV transfer over HCCS/NIC, which is critical for low-latency P/D disaggregation
+  on Ascend clusters. The AscendStoreConnector provides a centralized KV pool approach using ZMQ-based RPC for metadata and
+  direct NPU memory access for data transfer.
+
+  The connector is instantiated via KVConnectorFactory (vllm/v1/core/sched/scheduler.py:19) and affects both the scheduler
+  side (KVConnectorRole.SCHEDULER) and worker side (KVConnectorRole.WORKER). The scheduler connector manages KV cache allocation,
+  remote prefetch scheduling, and cache release coordination. The worker connector handles the actual data transfer during
+  model execution. Incorrect connector selection can cause RDMA failures (IBV_WC_REM_ACCESS_ERR), memory registration issues
+  with expandable segments, or silent performance degradation from suboptimal transfer strategies.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:701
+  context: Auto-set to OffloadingConnector or SimpleCPUOffloadConnector when kv_offloading_backend is 'native'
+- file: vllm/config/vllm.py:706
+  context: Auto-set to LMCacheConnectorV1 when kv_offloading_backend is 'lmcache'
+- file: vllm/config/vllm.py:720
+  context: Checked in _verify_kv_transfer_compat to reject incompatible expandable_segments configurations
+- file: vllm_ascend/distributed/kv_transfer/__init__.py:21-27
+  context: Overrides MultiConnector registration with AscendMultiConnector for HMA support
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:91
+  context: Read to determine connector name; warns if using deprecated MooncakeConnectorStoreV1
+- file: vllm/v1/core/sched/scheduler.py:19
+  context: KVConnectorFactory used to instantiate the connector in the scheduler
+- file: vllm/v1/executor/abstract.py:12
+  context: KVOutputAggregator uses connector for aggregating KV transfer outputs
+related_parameters:
+- name: kv_transfer.kv_role
+  relation: Must be set to 'kv_both', 'kv_producer', or 'kv_consumer' depending on the connector and deployment mode
+- name: kv_transfer.kv_connector_extra_config
+  relation: Provides connector-specific configuration such as use_layerwise, consumer_is_to_put, mooncake_rpc_port
+- name: cache_config.kv_offloading_size
+  relation: When set, auto-configures kv_connector to OffloadingConnector or LMCacheConnectorV1
+- name: cache_config.kv_offloading_backend
+  relation: Determines which connector is auto-selected for KV offloading (native or lmcache)
+- name: scheduler_config.disable_hybrid_kv_cache_manager
+  relation: When False, requires all sub-connectors in MultiConnector to support HMA
+- name: parallel_config.tensor_parallel_size
+  relation: Affects KV rank calculation for LMCache offloading; Mooncake connectors use TP group for transfer coordination
+- name: parallel_config.pipeline_parallel_size
+  relation: Affects KV rank calculation; PP group used for layer-wise transfer coordination in Mooncake connectors
+constraints:
+- kv_connector must be set to 'OffloadingConnector' when using NPU KV cache CPU offloading with spec_name 'NPUOffloadingSpec'
+- kv_connector must be set to 'ExampleHiddenStatesConnector' when extracting hidden states for speculative decoding training
+  data
+- When kv_connector is set, expandable_segments must not be enabled (except in sleep mode) to prevent RDMA memory registration
+  failures
+- When disable_hybrid_kv_cache_manager is False, all sub-connectors in MultiConnector must support HMA
+- MooncakeConnectorStoreV1 is deprecated; AscendStoreConnector is the recommended replacement
+tuning_advice:
+  summary: 'Select the KV connector based on deployment topology: MooncakeConnectorV1 for P/D disaggregation over RDMA, AscendStoreConnector
+    for centralized KV pool, OffloadingConnector for CPU offloading, and MultiConnector for hybrid scenarios combining multiple
+    transfer strategies.'
+  suggested_values:
+  - scenario: Disaggregated prefill (P/D separation) on Ascend cluster with HCCS/RoCE
+    value: MooncakeConnectorV1
+    reason: Uses Mooncake TransferEngine for RDMA-based KV transfer with lowest latency; supports async loading and buffer
+      registration for PD-colocated mode
+  - scenario: Layer-wise KV transfer for pipeline-parallel P/D disaggregation
+    value: MooncakeLayerwiseConnector
+    reason: Transfers KV cache layer-by-layer as each PP stage completes, reducing peak memory and enabling overlap of compute
+      and transfer
+  - scenario: Centralized KV cache pool shared across multiple vLLM instances
+    value: AscendStoreConnector
+    reason: Provides ZMQ-based metadata RPC with direct NPU memory access; supports layerwise operations and consumer-side
+      put for flexible pool management
+  - scenario: KV cache offloading to CPU memory on a single Ascend NPU node
+    value: OffloadingConnector
+    reason: Auto-configured when kv_offloading_size is set with native backend; uses CPU as overflow storage for long-context
+      scenarios
+  - scenario: Multiple KV transfer strategies combined (e.g., local CPU offload + remote P/D)
+    value: MultiConnector
+    reason: vllm-ascend overrides with AscendMultiConnector that adds HMA support; allows chaining connectors for complex
+      topologies
+  - scenario: Hybrid RDMA transfer with fallback to TCP for cross-rack communication
+    value: MooncakeHybridConnector
+    reason: Combines Mooncake RDMA for intra-rack transfers with TCP-based fallback for cross-rack scenarios
+  caveats:
+  - MooncakeConnectorStoreV1 is deprecated on Ascend and will be removed; migrate to AscendStoreConnector
+  - Mooncake-based connectors require the Mooncake TransferEngine library and proper HCCS/RoCE network configuration
+  - When using Mooncake connectors with expandable_segments enabled, RDMA memory registration may fail with IBV_WC_REM_ACCESS_ERR
+  - MultiConnector with HMA disabled (disable_hybrid_kv_cache_manager=True) may cause assertion errors if sub-connectors do
+    not all support HMA
+  - 'The connector choice affects CUDA graph mode: AscendStoreConnector with use_layerwise=True requires PIECEWISE CUDA graph
+    mode'
+  - KV connector configuration is validated at engine startup; incompatible combinations will cause initialization failures
+  quick_guide: For P/D disaggregation on Ascend, use MooncakeConnectorV1 with kv_role=kv_both; for centralized KV pool, use
+    AscendStoreConnector; for CPU offloading, set kv_offloading_size to auto-configure OffloadingConnector.
+analysis_date: '2026-07-06'

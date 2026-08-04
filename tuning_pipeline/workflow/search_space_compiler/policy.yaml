@@ -1,0 +1,74 @@
+schema_version: 1
+
+recall:
+  performance_impacts: [high]
+  # This medium-impact parameter is retained because it is already part of the
+  # measured baseline contract and interacts with chunked prefill.
+  supplemental_canonical_names:
+    - long_prefill_token_threshold
+
+activation:
+  minimum_count: 10
+  target_count: 12
+  maximum_count: 15
+  max_per_category: 4
+  core_parameters:
+    - max_num_seqs
+    - max_num_batched_tokens
+    - gpu_memory_utilization
+    - compilation_mode
+    - num_speculative_tokens
+    - enable_chunked_prefill
+    - long_prefill_token_threshold
+
+history_selection:
+  primary_metric: total_token_throughput
+  higher_is_better: true
+  latency_guardrail_metrics: [median_ttft, median_tpot]
+  maximum_latency_regression_percent: 20
+  minimum_evidence_trials: 3
+  attributable_failure_classifications:
+    - parameter_invalid
+    - parameter_oom
+    - parameter_runtime
+    - parameter_regression
+  hard_value_failure_classifications:
+    - parameter_invalid
+    - parameter_oom
+  weights:
+    gain_per_percent: 0.8
+    failure_penalty: 18
+    guardrail_penalty: 12
+    instability_per_percent: 0.3
+    coverage_deficit_bonus: 6
+    unexplored_bonus: 8
+  rotation:
+    maximum_swaps_per_session: 2
+    minimum_score_margin: 2
+    minimum_core_parameters_retained: 5
+
+approval:
+  auto_approve_risks: [low]
+
+scoring:
+  impact:
+    high: 30
+    medium: 16
+    low: 4
+  risk:
+    low: 14
+    medium: 7
+    high: -8
+  integration:
+    existing: 12
+    planned: 4
+  category:
+    scheduling: 8
+    compilation: 7
+    speculation: 7
+    memory: 5
+    parallelism: 4
+    communication: 3
+    kv_cache: 3
+    model: 1
+  baseline_known_bonus: 5

@@ -1,0 +1,85 @@
+name: VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK
+type: env
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:106:109
+- vllm_ascend/ascend_config.py:170:175
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:830:844
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:727:740
+- docs/source/user_guide/configuration/additional_config.md:7:28
+- docs/source/user_guide/release_notes.md:115
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This environment variable selects the fused Ascend custom operator for the head-concatenation part of KV-cache
+  reformatting after Mooncake point-to-point transfer. In both the standard and hybrid connectors, the default true value,
+  together with custom-operator availability, dispatches GQA/MHA concatenation to transpose_kv_cache_by_block; false uses
+  the generic reformat_kv_cache path. The pinned Ascend release notes identify the fused operator as an optimization that
+  speeds GQA transfer, so the setting can affect latency and throughput in prefill/decode disaggregation when transferred
+  cache groups require concatenation. It does not change NZ conversion, which remains on the generic path, and has no effect
+  when no reformat is required. The pinned upstream vLLM repository has no definition or use of this variable, making the
+  behavior Ascend-specific.
+usage_locations:
+- file: vllm_ascend/envs.py:107
+  context: Parses the environment string through int and bool, with "1" as the default.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:830
+  context: The standard Mooncake P2P connector reads the switch after transferred attention groups become ready and chooses
+    the fused operator only for required head concatenation when custom ops are enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:727
+  context: The hybrid Mooncake connector makes the same selection at the final transfer offset; any required NZ-layout conversion
+    still calls the generic implementation.
+- file: vllm_ascend/ascend_config.py:170
+  context: AscendConfig exposes the corresponding enable_transpose_kv_cache_by_block migration key and falls back to this
+    environment value, although the two current connector branches read the environment registration directly.
+- file: docs/source/user_guide/release_notes.md:115
+  context: Documents the fused AscendC operator as an optimization for speeding GQA transfer.
+related_parameters:
+- name: enable_transpose_kv_cache_by_block
+  relation: This is the documented additional-config replacement during migration. In the pinned source AscendConfig stores
+    it, but the relevant Mooncake connector branches still read this environment variable directly.
+- name: enable_kv_nz
+  relation: NZ reformatting can make the connector enter its reformat block, but NZ conversion itself always uses reformat_kv_cache
+    rather than the fused transpose-by-block operator.
+- name: enable_custom_op
+  relation: The fused branch additionally requires enable_custom_op() to be true; otherwise the generic implementation is
+    selected regardless of this environment value.
+constraints:
+- The value must be a string accepted by int(); "0" becomes false and any nonzero integer becomes true, while a non-integer
+  string raises during environment resolution.
+- The optimization is reached only in Ascend Mooncake point-to-point KV transfer flows when GQA/MHA cache groups require head
+  concatenation.
+- Custom operators must be enabled and the _C_ascend transpose_kv_cache_by_block operator must be available for the fused
+  path.
+- The fused operator handles head concatenation only; required NZ-layout conversion remains on the generic path.
+- Ascend documentation marks the environment-variable form as deprecated and scheduled for removal in favor of additional_config.
+tuning_advice:
+  summary: Keep the default enabled for Ascend Mooncake disaggregated serving that performs GQA/MHA KV-cache concatenation,
+    and disable it only for a measured comparison or to isolate fused-operator issues.
+  suggested_values:
+  - scenario: Ascend PD disaggregation with Mooncake P2P transfer and GQA/MHA cache concatenation
+    value: true
+    reason: Selects the fused transpose-by-block operator documented as speeding GQA transfer, provided custom ops are enabled.
+  - scenario: Diagnosing correctness or compatibility in the fused transpose operator
+    value: false
+    reason: Forces the existing generic reformat_kv_cache path and provides a direct behavioral comparison for the same transferred
+      cache groups.
+  caveats:
+  - Standalone serving, transfers that need no head concatenation, and the early hybrid-HMA reformat path do not benefit from
+    this switch.
+  - Enabling the variable does not fuse NZ-layout conversion and cannot override globally disabled custom operators.
+  - The pinned connectors read the environment registration directly, so verify the documented additional-config replacement
+    on the deployed version before relying on it as an exact runtime substitute.
+  - The source establishes the optimized dispatch but provides no universal gain; benchmark end-to-end request latency and
+    throughput on the target model, topology, and transfer shape.
+  quick_guide: Leave enabled for applicable Ascend Mooncake GQA transfers; use false as a temporary fallback or A/B baseline,
+    and plan migration away from the deprecated environment variable.
+analysis_date: '2026-07-28'

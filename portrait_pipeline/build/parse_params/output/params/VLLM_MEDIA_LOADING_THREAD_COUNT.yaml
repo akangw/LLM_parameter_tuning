@@ -1,0 +1,66 @@
+name: VLLM_MEDIA_LOADING_THREAD_COUNT
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:845
+- vllm/envs.py:76
+- vllm/multimodal/media/connector.py:37
+value_type: int
+default: '8'
+valid_choices: positive integer (>= 1)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls the maximum number of worker threads in the global ThreadPoolExecutor used
+  for loading media bytes (images, audio, video) from URLs or local paths during multimodal inference. The pool is created
+  once at module import time in vllm/multimodal/media/connector.py:36-38. A higher thread count allows more concurrent media
+  fetches, which can reduce the time spent waiting for media I/O when processing many multimodal requests simultaneously.
+  However, this only affects the media loading phase (preprocessing), not the core model inference on Ascend NPU. The performance
+  impact is limited to request startup latency and overall throughput when multimodal requests are I/O-bound on media fetching.
+  On Ascend NPU, this parameter has no hardware-specific override or special behavior — it is purely a vLLM upstream parameter
+  with no vllm-ascend modification.
+
+  '
+usage_locations:
+- file: vllm/multimodal/media/connector.py:37
+  context: Creates the global ThreadPoolExecutor with max_workers set to this env var value; used for parallel media loading
+    across all multimodal requests.
+related_parameters:
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Controls the timeout for individual image fetches within the thread pool.
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Controls the timeout for individual video fetches within the thread pool.
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Controls the timeout for individual audio fetches within the thread pool.
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls retry behavior for failed media fetches executed by the thread pool.
+- name: VLLM_MEDIA_CACHE
+  relation: Media caching can reduce the need for thread pool fetches by serving cached content.
+constraints:
+- Must be a positive integer (>= 1). Setting to 1 disables parallel media loading.
+tuning_advice:
+  summary: 'Increase this value only if you observe high media loading latency with many concurrent multimodal requests; otherwise
+    the default of 8 is sufficient.
+
+    '
+  suggested_values:
+  - scenario: Low concurrency or no multimodal requests
+    value: 1
+    reason: Disables the thread pool overhead entirely, saving memory and context switching.
+  - scenario: Moderate multimodal traffic (default)
+    value: 8
+    reason: Default value provides reasonable parallelism for typical multimodal workloads.
+  - scenario: High concurrency with many multimodal requests fetching from slow remote URLs
+    value: 16
+    reason: Increases parallelism to reduce media I/O wait time when many requests are bottlenecked on network fetches.
+  caveats:
+  - This parameter only affects media loading (preprocessing), not model inference throughput on Ascend NPU.
+  - Setting this too high can increase memory usage and thread contention without proportional benefit if the bottleneck is
+    network bandwidth rather than thread count.
+  - No vllm-ascend override exists; behavior is identical to upstream vLLM.
+  quick_guide: Use default 8; increase to 16 only if multimodal request latency is dominated by media fetching from slow URLs.
+analysis_date: '2026-07-06'

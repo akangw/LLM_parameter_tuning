@@ -1,0 +1,61 @@
+name: ec_transfer.ec_buffer_size
+type: nested
+category: communication
+scope: vllm-ascend
+source_file: []
+value_type: int
+default: <computed>
+valid_choices: '''positive integer (bytes)'''
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls the buffer size (in bytes) for the TorchDistributedConnector used in vllm-ascend''s
+  expert-parallel (EP) communication path. During MoE model inference, tokens are dispatched to and combined from different
+  experts across EP ranks. The connector uses a fixed-size buffer to batch these token transfers. A larger buffer reduces
+  the number of communication rounds (improving throughput) but increases peak memory usage. A smaller buffer saves memory
+  but increases communication overhead, potentially reducing throughput. The recommended value from the code hint is 1e9 (approximately
+  1GB), which balances throughput and memory for typical deployments.
+
+  '
+usage_locations: []
+related_parameters:
+- name: enable_expert_parallel
+  relation: ec_transfer.ec_buffer_size is only relevant when expert parallelism is enabled
+- name: expert_parallel_size
+  relation: larger EP groups may benefit from larger buffer sizes to amortize communication overhead
+constraints:
+- ec_buffer_size must be a positive integer representing bytes
+tuning_advice:
+  summary: 'Set ec_buffer_size to balance communication efficiency and memory usage for MoE expert-parallel inference.
+
+    '
+  suggested_values:
+  - scenario: Default/recommended for most MoE deployments
+    value: '1000000000'
+    reason: 'The code hint recommends 1e9 (1GB) as a balanced value that provides good communication throughput without excessive
+      memory consumption.
+
+      '
+  - scenario: Memory-constrained deployments
+    value: '268435456'
+    reason: 'Reducing to 256MB can save ~750MB of memory per EP rank at the cost of more frequent communication rounds, which
+      may be acceptable for smaller MoE models or lower throughput requirements.
+
+      '
+  - scenario: High-throughput, large-scale MoE inference
+    value: '2147483648'
+    reason: 'Increasing to 2GB can further reduce communication overhead for large expert-parallel groups or high-throughput
+      scenarios where memory is abundant.
+
+      '
+  caveats:
+  - This buffer is allocated per EP rank, so total memory consumption scales with expert_parallel_size
+  - The optimal value depends on the MoE model's expert count, token distribution, and available NPU memory
+  - Setting the buffer too small may cause the connector to fall back to more frequent, smaller transfers, increasing latency
+  quick_guide: 'Start with the recommended 1e9 (1GB) and adjust based on available NPU memory and observed communication overhead.
+
+    '
+analysis_date: '2026-07-06'

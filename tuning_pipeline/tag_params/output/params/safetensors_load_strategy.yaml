@@ -1,0 +1,115 @@
+name: --safetensors-load-strategy
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:63
+- vllm/engine/arg_utils.py:851
+- vllm/engine/arg_utils.py:1600
+- docs/source/tutorials/models/DeepSeek-V4-Pro.md:190
+- docs/source/tutorials/models/DeepSeek-V4-Pro.md:581
+value_type: str
+default: null
+valid_choices:
+- null
+- lazy
+- eager
+- prefetch
+- torchao
+cli_example: --safetensors-load-strategy prefetch
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: This option controls how the ordinary safetensors weight iterator reads checkpoint shards, so it affects model
+  startup latency and peak host-memory or page-cache pressure rather than steady-state inference. The null default memory-maps
+  tensors and additionally starts page-cache prefetching when NFS, NFS4, or Lustre is detected and the checkpoint total is
+  at most 90% of available RAM. lazy explicitly keeps memory-mapped loading without that automatic network-filesystem prefetch;
+  eager reads each complete shard into CPU memory before yielding tensors; and prefetch starts background block reads into
+  the OS page cache. The pinned vllm-ascend source has no implementation override, but its DeepSeek-V4 deployment guide explicitly
+  uses prefetch, so Ascend follows the upstream loader behavior when this iterator is selected.
+usage_locations:
+- file: vllm/config/load.py:63
+  context: Defines the null default and documents lazy memory mapping, eager whole-file reads, network-filesystem prefetch,
+    automatic NFS prefetch, and the torchao mode.
+- file: vllm/engine/arg_utils.py:851
+  context: Registers the command-line option from the LoadConfig field metadata.
+- file: vllm/engine/arg_utils.py:1600
+  context: Propagates the parsed option into the LoadConfig consumed by model loading.
+- file: docs/source/tutorials/models/DeepSeek-V4-Pro.md:190
+  context: The pinned vllm-ascend deployment guide uses prefetch in an Ascend DeepSeek-V4-Pro launch command.
+- file: docs/source/tutorials/models/DeepSeek-V4-Pro.md:581
+  context: An Ascend deployment example combines prefetch with enable_multithread_load, a combination whose effective iterator
+    must be checked because the inspected upstream loader gives its multithreaded branch precedence.
+related_parameters:
+- name: --load-format
+  relation: This strategy is consumed only when DefaultModelLoader resolves the checkpoint to its ordinary safetensors path;
+    non-safetensors and specialized loader formats use other iterators.
+- name: --model-loader-extra-config
+  relation: Setting enable_multithread_load selects an iterator that bypasses this strategy.
+- name: --safetensors-prefetch-num-threads
+  relation: Controls the thread-pool size used when explicit or automatic page-cache prefetch is active.
+- name: --safetensors-prefetch-block-size
+  relation: Controls the read block size used by page-cache prefetch.
+- name: --quantization
+  relation: A compatible torchao-serialized checkpoint under torchao quantization causes the loader to replace this value
+    with torchao.
+constraints:
+- The option affects only the ordinary safetensors iterator; PyTorch, GGUF, specialized loader formats, and the multithreaded
+  safetensors branch bypass it.
+- Automatic prefetch under the null default occurs only for NFS, NFS4, or Lustre and only when total checkpoint size is no
+  more than 90% of available RAM.
+- Explicit prefetch still starts when the checkpoint exceeds the 90% RAM threshold, but source emits an out-of-memory warning.
+- eager holds each complete checkpoint shard in host memory while it is deserialized and can substantially increase peak CPU
+  RAM.
+- torchao is an internal loading mode requiring torchao 0.15.0 or newer; the default loader selects it automatically for compatible
+  serialized torchao checkpoints.
+- The field has no source-level enum validator; values other than eager, prefetch, and torchao fall through to the memory-mapped
+  path, but lazy is the documented explicit spelling.
+tuning_advice:
+  summary: Match the strategy to checkpoint storage and host-memory headroom, and first verify that the normal single-threaded
+    safetensors iterator is actually selected.
+  suggested_values:
+  - scenario: General deployment with unknown or mixed storage characteristics
+    value: <unset>
+    reason: The default keeps memory-mapped loading on local storage and automatically prefetches recognized network storage
+      only when the checkpoint fits the source's RAM safety threshold.
+  - scenario: Local NVMe or SSD, or a host where minimizing checkpoint-related RAM pressure is the priority
+    value: lazy
+    reason: Explicit lazy loading uses memory mapping and suppresses the null default's network-filesystem auto-prefetch.
+  - scenario: NFS, NFS4, or Lustre with enough host memory for complete shard reads
+    value: eager
+    reason: Reading each shard sequentially up front can avoid inefficient random reads from high-latency shared storage,
+      at the cost of higher peak CPU memory.
+  - scenario: Recognized network storage where page-cache warming is desired and checkpoint size has safe RAM headroom
+    value: prefetch
+    reason: It starts threaded block reads into the OS page cache before and alongside weight iteration; the pinned Ascend
+      DeepSeek-V4 guide also uses this setting.
+  caveats:
+  - This setting changes cold-start behavior, not steady-state token latency or throughput after weights are loaded.
+  - Explicit prefetch above the 90% available-RAM threshold is allowed but may cause host out-of-memory errors.
+  - Prefetch runs in a daemon background thread and is not fully completed before weight iteration begins.
+  - Ascend examples may also enable multithreaded loading; when enable_multithread_load is true, current upstream control
+    flow bypasses this strategy entirely.
+  - Storage performance depends on filesystem, cache state, shard layout, rank count, and host RAM, so compare clean-cache
+    startup time and peak RSS on the target deployment.
+  quick_guide: Keep the null default first; use lazy for low-memory local storage, and benchmark eager versus prefetch on
+    shared storage only after confirming multithreaded loading is disabled.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

@@ -1,0 +1,6 @@
+name: --dbo-decode-token-threshold
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM Ascend integration, platform configuration resets parallel_config.enable_dbo to false and
+  warns that DBO is ignored (vllm_ascend/platform.py:1121). This threshold only controls DBO decode microbatching in upstream
+  vLLM (vllm/config/parallel.py:201), so it cannot affect latency, throughput, or memory on Ascend while DBO is disabled.

@@ -1,0 +1,7 @@
+name: VLLM_ENGINE_READY_TIMEOUT_S
+type: env
+performance_impact: none
+skip_reason: The pinned upstream source defines and parses this startup-readiness timeout, but contains no runtime consumer,
+  while the pinned vllm-ascend runtime source has no reference or override; Ascend documentation and test configurations only
+  set the variable. Consequently, changing it has no demonstrated effect on successful inference latency, throughput, or memory
+  use in the pinned repositories.

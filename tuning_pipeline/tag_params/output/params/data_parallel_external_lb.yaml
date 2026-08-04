@@ -1,0 +1,82 @@
+name: --data-parallel-external-lb
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:475
+- vllm/engine/arg_utils.py:1015
+- vllm/config/parallel.py:135
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --data-parallel-external-lb
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Enables pure external data-parallel load balancing for online MoE serving: each data-parallel rank is launched
+  as a separate endpoint and an external router distributes requests. This changes the serving topology from vLLM''s internal
+  load balancer to one local EngineCore per client. At multi-node scale it can avoid a centralized internal routing path and
+  its cross-node scheduling traffic, which can improve throughput scalability and tail latency when the external balancer
+  distributes load well. It does not tune model execution kernels; latency and throughput depend on the external router''s
+  request distribution and the deployment topology.'
+usage_locations:
+- file: vllm/engine/arg_utils.py:1755
+  context: Rejects simultaneous use with data-parallel hybrid load balancing.
+- file: vllm/engine/arg_utils.py:1793
+  context: Treats this flag, or an explicit data-parallel rank, as external-LB mode and configures one local DP rank.
+- file: vllm/config/parallel.py:502
+  context: Makes the client manage only local EngineCores in external-LB mode.
+- file: vllm/config/vllm.py:482
+  context: Keeps the DP coordinator for MoE wave coordination when DP is greater than one.
+related_parameters:
+- name: --data-parallel-size
+  relation: Must be greater than 1 when this flag is explicitly set.
+- name: --data-parallel-rank
+  relation: Providing a rank implicitly selects external data-parallel load-balancing mode.
+- name: --data-parallel-size-local
+  relation: Must be 1 or omitted in pure external-LB mode.
+- name: --data-parallel-hybrid-lb
+  relation: Cannot be enabled together with external-LB mode.
+- name: --enable-elastic-ep
+  relation: Elastic expert parallelism is incompatible with external or hybrid DP load balancing.
+constraints:
+- Explicit external-LB mode requires data_parallel_size greater than 1.
+- External DP mode is supported only for MoE models; use independent vLLM instances without data-parallel arguments for non-MoE
+  models.
+- A data-parallel rank or node rank must be supplied, and data_parallel_size_local must be 1 or omitted.
+tuning_advice:
+  summary: Use for multi-rank MoE deployments where each DP rank has its own serving endpoint and an external load balancer
+    can route requests effectively.
+  suggested_values:
+  - scenario: One-pod-per-rank or multi-node MoE deployment behind a capable external router
+    value: true
+    reason: Lets each rank expose its own endpoint and moves request distribution to infrastructure designed for the deployment
+      topology.
+  - scenario: Single endpoint or deployment relying on vLLM to distribute requests across DP ranks
+    value: false
+    reason: Retains vLLM's internal data-parallel load-balancing topology without requiring external rank-aware routing.
+  caveats:
+  - This is a topology choice, not a guaranteed per-request performance improvement; uneven external routing can reduce utilization
+    and worsen tail latency.
+  - The DP coordinator still runs for MoE models with DP greater than one to provide wave coordination.
+  - Current pinned vLLM rejects this mode for non-MoE models and with elastic expert parallelism.
+  quick_guide: Enable only for MoE data parallelism greater than one when every rank is deployed as an externally load-balanced
+    endpoint; otherwise leave it disabled.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

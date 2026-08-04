@@ -1,0 +1,73 @@
+name: compilation.dynamic_shapes_config.type
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:1008
+- vllm/compilation/backends.py:1234
+- vllm/compilation/decorators.py:522
+- vllm/compilation/wrapper.py:103
+value_type: str
+default: BACKED
+valid_choices:
+- BACKED
+- UNBACKED
+- BACKED_SIZE_OBLIVIOUS
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls how torch.compile() handles dynamic shapes during graph capture and guard evaluation. The type affects
+  whether guards are inserted (BACKED), omitted entirely (UNBACKED), or handled with size-oblivious semantics (BACKED_SIZE_OBLIVIOUS).
+  On Ascend NPU, this directly impacts compilation cache hit rates and recompilation frequency. When guards fail at runtime
+  due to shape mismatches, torch.compile triggers expensive recompilation, increasing latency and reducing throughput. UNBACKED
+  avoids guard failures but may cause data-dependent errors. BACKED_SIZE_OBLIVIOUS is an experimental middle ground. The parameter
+  is read in vllm/compilation/wrapper.py:103 to configure guard_filter_fn — when evaluate_guards is true and type is BACKED,
+  shape guards are filtered to only SHAPE_ENV types, and counter-0/1 specializations are relaxed (backends.py:1234-1249).
+  In decorators.py:522, the type is accessed during AOT compilation path setup. No vllm-ascend override was found for this
+  parameter, so upstream behavior applies on Ascend NPU.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:1008
+  context: Logged as part of compilation config metadata for cache keying
+- file: vllm/compilation/backends.py:1234
+  context: Checked alongside evaluate_guards to relax counter-0/1 specializations for BACKED type
+- file: vllm/compilation/decorators.py:522
+  context: Read during AOT compilation path setup in the compiled model wrapper
+- file: vllm/compilation/wrapper.py:103
+  context: Used to configure guard_filter_fn and validate evaluate_guards compatibility
+related_parameters:
+- name: compilation.dynamic_shapes_config.evaluate_guards
+  relation: Must be false when type is UNBACKED; when true and type is BACKED, shape guards are filtered
+- name: compilation.mode
+  relation: Guard filtering behavior differs between STOCK_TORCH_COMPILE and other modes
+constraints:
+- UNBACKED type cannot be used with evaluate_guards=true (assertion in wrapper.py:112-114)
+- evaluate_guards=true requires VLLM_USE_BYTECODE_HOOK=0 (assertion in wrapper.py:108-111)
+tuning_advice:
+  summary: Use BACKED for stable shapes to maximize cache hits; consider UNBACKED only if shapes vary unpredictably and recompilation
+    overhead is severe.
+  suggested_values:
+  - scenario: Stable batch sizes and sequence lengths (most production deployments)
+    value: BACKED
+    reason: Maximizes compilation cache reuse and avoids data-dependent errors; guards are filtered to SHAPE_ENV only when
+      evaluate_guards is enabled
+  - scenario: Highly variable input shapes causing frequent recompilation
+    value: UNBACKED
+    reason: Eliminates guard failures entirely, avoiding recompilation overhead at the cost of potential data-dependent errors
+  - scenario: Experimental evaluation of size-oblivious guard semantics
+    value: BACKED_SIZE_OBLIVIOUS
+    reason: Safer alternative that may reduce guard failures without full UNBACKED risks; still experimental
+  caveats:
+  - UNBACKED may throw data-dependent errors at runtime — test thoroughly before production use
+  - BACKED with evaluate_guards=true relaxes counter-0/1 specializations, which may hide real shape issues
+  - Frequent recompilation due to guard failures on Ascend NPU can significantly degrade throughput; monitor compilation cache
+    hit rates
+  - No vllm-ascend override exists, but Ascend NPU compilation behavior with CANN may differ from CUDA — validate with your
+    specific model
+  quick_guide: Stick with BACKED unless recompilation overhead is measured and problematic; then try UNBACKED with thorough
+    testing.
+analysis_date: '2026-07-06'

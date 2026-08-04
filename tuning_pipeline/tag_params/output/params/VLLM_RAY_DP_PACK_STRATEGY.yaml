@@ -1,0 +1,119 @@
+name: VLLM_RAY_DP_PACK_STRATEGY
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1180
+value_type: str
+default: strict
+valid_choices:
+- strict
+- fill
+- span
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'Selects how vLLM creates Ray placement groups for data-parallel ranks. It is
+
+  consulted only when the data-parallel backend is Ray. Both "strict" and
+
+  "fill" create each replica with Ray''s STRICT_PACK strategy, keeping that
+
+  replica''s world-size device bundles on one node. "strict" allocates exactly
+
+  data_parallel_size_local replicas on every selected node and skips a
+
+  non-master node that cannot fit that count; "fill" allocates the configured
+
+  count on the DP master and consumes every whole replica that fits on other
+
+  nodes. "span" instead uses PACK and combines device bundles across
+
+  homogeneous nodes until one multi-node replica reaches world_size.
+
+
+  The strategy can therefore change which cluster capacity is usable, whether
+
+  placement succeeds, and how evenly replicas are distributed across nodes.
+
+  Those effects can change aggregate throughput and, through load imbalance or
+
+  multi-node communication within a replica, request latency. vLLM Ascend has
+
+  no override for this variable in the pinned source and inherits this upstream
+
+  Ray placement behavior when that path is used.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1855
+  context: Defaults data_parallel_size_local to 1 for Ray with the span strategy when the user did not set a local DP size.
+related_parameters:
+- name: data_parallel_backend
+  relation: The environment variable is ignored unless this backend is ray.
+- name: data_parallel_size
+  relation: Sets the number of DP placement groups that must be created.
+- name: data_parallel_size_local
+  relation: Controls per-node allocation for strict and the master-node allocation for fill; span requires the effective value
+    to be 1 and may default it automatically.
+- name: tensor_parallel_size
+  relation: Contributes to world_size, the device-bundle count required by each DP replica.
+- name: pipeline_parallel_size
+  relation: Contributes to world_size and can make a replica too large for one node, requiring span.
+- name: all2all_backend
+  relation: fill is rejected for deepep_high_throughput and deepep_low_latency because it cannot guarantee the required EP-rank
+    colocation.
+constraints:
+- The value must be one of strict, fill, or span; any other value raises ValueError during Ray DP placement-group creation.
+- The DP master node must have enough available devices to fit data_parallel_size_local ranks under strict or fill.
+- fill cannot be used with the deepep_high_throughput or deepep_low_latency all-to-all backend.
+- span requires world_size to exceed the maximum available device count on one node.
+- span requires homogeneous device counts across available device-bearing nodes.
+- For span, world_size must be a multiple of the device count per node, total cluster capacity must cover world_size times
+  data_parallel_size, and data_parallel_size_local must be 1.
+tuning_advice:
+  summary: Keep strict for predictable, balanced Ray DP placement; choose fill to use otherwise stranded whole-replica capacity,
+    and use span only when one replica cannot fit on a node.
+  suggested_values:
+  - scenario: Homogeneous nodes where each selected node can host the intended local DP count
+    value: strict
+    reason: It preserves the configured per-node replica count and skips undersized non-master nodes, yielding predictable
+      placement.
+  - scenario: Mixed-capacity cluster without a DeepEP all-to-all backend
+    value: fill
+    reason: It can place as many whole replicas as fit on each non-master node instead of requiring every selected node to
+      fit data_parallel_size_local.
+  - scenario: Tensor/pipeline world_size is larger than the devices available on any single node
+    value: span
+    reason: It is the supported mode for assembling one DP replica from device bundles on multiple homogeneous nodes.
+  caveats:
+  - fill may allocate different replica counts on different nodes, so load and resource use can be asymmetric.
+  - span introduces a multi-node boundary inside every affected replica and is subject to stricter homogeneity, divisibility,
+    and capacity checks.
+  - Setting span does not override an explicit incompatible data_parallel_size_local; placement asserts that its effective
+    value is 1.
+  - On vLLM Ascend this is inherited upstream behavior; the pinned Ascend repository does not define separate semantics for
+    the variable.
+  quick_guide: Use strict by default, fill only to exploit uneven spare capacity without DeepEP, and span only when a single
+    replica's world_size exceeds one node.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

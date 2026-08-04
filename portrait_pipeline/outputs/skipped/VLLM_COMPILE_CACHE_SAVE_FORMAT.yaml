@@ -1,0 +1,6 @@
+name: VLLM_COMPILE_CACHE_SAVE_FORMAT
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source, this environment variable only supplies the validated binary-or-unpacked default for
+  CompilationConfig, while no runtime code consumes compile_cache_save_format; the pinned vLLM Ascend repository neither references
+  nor overrides it. Therefore it cannot change latency, throughput, or memory usage in these pinned sources.

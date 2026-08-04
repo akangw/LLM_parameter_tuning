@@ -1,0 +1,80 @@
+name: SchedulerConfig.max_num_scheduled_tokens
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:56
+- vllm/config/vllm.py:1426
+- vllm_ascend/core/scheduler_dynamic_batch.py:171
+- vllm_ascend/core/recompute_scheduler.py:234
+- vllm_ascend/core/scheduler_profiling_chunk.py:84
+value_type: int
+default: '<computed: max_num_batched_tokens normally; with speculative decoding, max_num_batched_tokens minus max_num_new_slots_for_drafting
+  times max_num_seqs>'
+valid_choices: A positive integer; with speculative decoding it must leave at least max_num_new_slots_for_drafting * max_num_seqs
+  additional slots below max_num_batched_tokens
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: This is the scheduler's per-iteration issuance budget, distinct from max_num_batched_tokens, which is the worker-side
+  capacity. In ordinary operation the scheduler falls back to max_num_batched_tokens. With speculative decoding, VllmConfig
+  computes a smaller default by subtracting the maximum draft slots per request multiplied by max_num_seqs, preventing draft
+  expansion from overflowing the worker batch. A larger valid budget lets more decode and prefill tokens run in one iteration
+  and can improve aggregate throughput, but creates larger iterations and can increase latency for work sharing the batch.
+  A smaller budget produces more scheduler iterations and can protect iteration latency, but may underfill the NPU and lower
+  throughput. Ascend's dynamic-batch, recompute, balance, and profiling-chunk scheduler paths all enforce this value as their
+  token ceiling; the profiling-chunk path also uses it as the base chunk size.
+usage_locations:
+- file: vllm/config/vllm.py:1426
+  context: Computes the speculative-decoding default, rejects non-positive budgets, warns below 8192, and verifies that the
+    worker batch has enough additional draft slots.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:171
+  context: Starts each Ascend dynamic-batch scheduling pass from this token budget before applying the runtime budget refiner.
+- file: vllm_ascend/core/recompute_scheduler.py:234
+  context: Caps tokens issued by the Ascend recompute scheduler in each scheduling pass.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:84
+  context: Uses the resolved ceiling as the profiling manager's base chunk size and as the scheduling-pass token budget.
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:92
+  context: Applies the same per-iteration ceiling in Ascend balance scheduling.
+related_parameters:
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Defines worker capacity and normally supplies this parameter's effective value; speculative decoding requires
+    enough capacity above the scheduled-token ceiling.
+- name: SchedulerConfig.max_num_seqs
+  relation: Multiplies the per-request draft-slot allowance when deriving and validating the speculative-decoding budget.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Influences max_num_new_slots_for_drafting and therefore how much headroom must be reserved outside the scheduled-token
+    budget.
+constraints:
+- Under speculative decoding, max_num_scheduled_tokens must be greater than zero or VllmConfig raises ValueError.
+- Under speculative decoding, max_num_batched_tokens must be at least max_num_scheduled_tokens plus max_num_new_slots_for_drafting
+  * max_num_seqs.
+- When unset, the effective ceiling is max_num_batched_tokens without speculative decoding, or max_num_batched_tokens minus
+  the required draft-slot headroom with it.
+tuning_advice:
+  summary: Keep the computed default unless measurements justify trading per-step latency against batch fill, and preserve
+    speculative draft-slot headroom.
+  suggested_values:
+  - scenario: General serving, including Ascend
+    value: <computed default>
+    reason: It uses full worker capacity normally and automatically reserves the extra slots that speculative drafting can
+      append.
+  - scenario: Speculative decoding tuned for throughput
+    value: largest positive value satisfying the draft-slot headroom constraint
+    reason: This maximizes scheduler batch fill without exceeding max_num_batched_tokens after the drafter appends its worst-case
+      slots.
+  - scenario: Latency-sensitive mixed decode and chunked-prefill traffic
+    value: benchmark a smaller positive value
+    reason: Smaller scheduling steps can shorten individual iterations, but the value is workload- and model-dependent and
+      can reduce NPU utilization.
+  caveats:
+  - VllmConfig warns when speculative decoding derives a value below 8192 because that budget may have suboptimal performance.
+  - Raising this field alone is invalid if max_num_batched_tokens does not still contain the required worst-case draft slots.
+  - On Ascend, the same ceiling also bounds specialized scheduler paths, and the profiling-chunk scheduler derives its base
+    chunk from it; re-benchmark those modes after changing the value.
+  quick_guide: Start with the computed default; if tuning, benchmark throughput and iteration latency together and never consume
+    speculative-decoding headroom.
+analysis_date: '2026-07-31'

@@ -1,0 +1,63 @@
+name: additional_config.recompute_scheduler_enable
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:134
+value_type: bool
+default: 'False'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled in PD-disaggregated mode (kv_producer or kv_consumer), this parameter activates a recompute scheduler
+  that handles KV cache insufficiency on decode nodes. When a decode node''s KV cache is full, instead of blocking or evicting,
+  the scheduler sends the affected requests back to the prefill node to recompute the KV cache. This improves overall system
+  throughput and latency under memory pressure by avoiding request stalls, but it adds communication overhead between prefill
+  and decode nodes and increases prefill node load. The parameter is read at vllm_ascend/ascend_config.py:134 and stored as
+  self.recompute_scheduler_enable. It is only valid in PD-disaggregated mode; enabling it in PD-mixed mode (kv_both or no
+  kv_transfer_config) will cause a startup failure.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:134
+  context: Read from additional_config dict and stored as self.recompute_scheduler_enable
+related_parameters:
+- name: kv_transfer_config
+  relation: Must be configured with kv_role set to kv_producer or kv_consumer (PD-disaggregated mode). Cannot be used in PD-mixed
+    mode (kv_both or no kv_transfer_config).
+- name: enable_prefix_caching
+  relation: Documentation notes a known issue with prefix-caching on decode nodes in PD-disaggregated mode; recommend disabling
+    with --no-enable-prefix-caching when using recompute_scheduler_enable.
+constraints:
+- recompute_scheduler_enable is only valid in PD-disaggregated mode (kv_role is kv_producer or kv_consumer). Enabling it in
+  PD-mixed mode (kv_both or no kv_transfer_config) will cause a startup failure with a clear error.
+- Must be used with a valid kv_transfer_config that defines prefill and decode node roles.
+tuning_advice:
+  summary: Enable recompute_scheduler_enable on both prefill and decode nodes in PD-disaggregated deployments to handle KV
+    cache overflow gracefully, improving throughput under memory pressure.
+  suggested_values:
+  - scenario: PD-disaggregated deployment with limited KV cache on decode nodes
+    value: 'true'
+    reason: Allows decode nodes to offload KV cache recomputation to prefill nodes when cache is full, preventing request
+      stalls and improving overall throughput.
+  - scenario: PD-mixed mode or single-node deployment
+    value: 'false'
+    reason: Parameter is invalid in PD-mixed mode and will cause startup failure. In single-node deployments, there is no
+      separate prefill node to handle recomputation.
+  caveats:
+  - Enabling recompute_scheduler_enable increases prefill node load because recomputed requests consume additional prefill
+    computation resources.
+  - Adds communication overhead between prefill and decode nodes for KV cache transfer during recomputation.
+  - 'Known issue with prefix-caching on decode nodes in PD-disaggregated mode (vllm-ascend issue #7944). Consider disabling
+    prefix-caching with --no-enable-prefix-caching.'
+  - Recommended to enable on both prefill and decode nodes simultaneously for consistent behavior.
+  quick_guide: 'Set recompute_scheduler_enable: true in additional_config on both prefill and decode nodes for PD-disaggregated
+    deployments; keep false for all other modes.'
+analysis_date: '2026-07-06'

@@ -1,0 +1,91 @@
+name: attention.flash_attn_max_num_splits_for_cuda_graph
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/v1/attention/backends/flash_attn.py:376
+- vllm/v1/attention/backends/mla/flashattn_mla.py:154
+value_type: int
+default: <computed>
+valid_choices: positive integer
+cli_example: --attention-config.flash_attn_max_num_splits_for_cuda_graph 16
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter sets the upper bound on the number of dynamic splits Flash Attention can use during CUDA graph
+  decode. It is only read when both `use_full_cuda_graph` and `aot_schedule` (or `fa_aot_schedule` for MLA) are enabled. The
+  value is assigned to `self.max_num_splits`, which controls the size of intermediate buffers pre-allocated during CUDA graph
+  capture. A larger value allows more splits for long sequences but increases the pre-allocated buffer memory. On Ascend NPU,
+  this parameter is only relevant if the vllm-ascend backend uses the upstream Flash Attention CUDA graph path — which is
+  unlikely since Ascend uses its own attention backends (e.g., `ascend_attn`). No vllm-ascend override or usage was found,
+  meaning this parameter has no effect on standard Ascend deployments. It may only apply if someone explicitly forces the
+  upstream Flash Attention backend on Ascend hardware, which is not a supported configuration.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/backends/flash_attn.py:376
+  context: 'Assigned to self.max_num_splits when use_full_cuda_graph and aot_schedule are both enabled, controlling buffer
+    pre-allocation for CUDA graph capture.
+
+    '
+- file: vllm/v1/attention/backends/mla/flashattn_mla.py:154
+  context: 'Same usage in the MLA (Multi-head Latent Attention) variant of the Flash Attention backend, read from vllm_config.attention_config.
+
+    '
+related_parameters:
+- name: attention_config.use_full_cuda_graph
+  relation: 'This parameter is only effective when use_full_cuda_graph is enabled. Without full CUDA graph capture, max_num_splits
+    is not pre-allocated.
+
+    '
+- name: attention_config.aot_schedule
+  relation: 'Must be enabled alongside use_full_cuda_graph for this parameter to take effect in the standard Flash Attention
+    backend.
+
+    '
+- name: attention_config.fa_aot_schedule
+  relation: 'The MLA equivalent of aot_schedule; must be enabled for this parameter to take effect in the MLA Flash Attention
+    backend.
+
+    '
+- name: VLLM_BATCH_INVARIANT
+  relation: 'When this environment variable is set, max_num_splits is forced to 1, overriding this parameter entirely in the
+    MLA backend.
+
+    '
+constraints:
+- Must be a positive integer.
+- Only takes effect when both CUDA graph capture and AOT scheduling are enabled.
+- Has no effect on vllm-ascend's native attention backends.
+tuning_advice:
+  summary: 'This parameter is irrelevant for standard Ascend NPU deployments. It only affects upstream Flash Attention CUDA
+    graph paths that are not used by vllm-ascend''s native attention backends.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend NPU deployment with vllm-ascend
+    value: default
+    reason: 'The parameter is not read by vllm-ascend''s native attention backends. Any value set will be ignored.
+
+      '
+  - scenario: Experimental use of upstream Flash Attention on Ascend with CUDA graphs
+    value: '8'
+    reason: 'A moderate value that balances buffer memory overhead with split flexibility. Increase only if encountering split-related
+      errors with very long sequences.
+
+      '
+  caveats:
+  - 'This parameter is specific to the upstream Flash Attention CUDA graph implementation. vllm-ascend uses its own attention
+    backends (ascend_attn) that do not read this parameter.
+
+    '
+  - 'Setting this value too high wastes GPU/NPU memory on pre-allocated buffers that may never be used. Setting it too low
+    may cause runtime errors if Flash Attention needs more splits than allocated.
+
+    '
+  quick_guide: 'Leave at default for Ascend NPU; this parameter only affects upstream CUDA graph paths not used by vllm-ascend.
+
+    '
+analysis_date: '2026-07-06'

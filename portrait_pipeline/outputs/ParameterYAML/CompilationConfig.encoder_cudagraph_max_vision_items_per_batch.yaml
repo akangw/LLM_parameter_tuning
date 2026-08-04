@@ -1,0 +1,82 @@
+name: CompilationConfig.encoder_cudagraph_max_vision_items_per_batch
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/compilation.py:531
+- vllm/model_executor/models/interfaces.py:1534
+- vllm/model_executor/models/qwen2_5_vl.py:1612
+- vllm/model_executor/models/qwen3_vl.py:1814
+- docs/design/cuda_graphs_multimodal.md:22
+value_type: int
+default: 0
+valid_choices: Non-negative integer; 0 selects automatic inference.
+cli_example: --compilation-config '{"cudagraph_mm_encoder":true,"encoder_cudagraph_max_vision_items_per_batch":8}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When CompilationConfig.cudagraph_mm_encoder is enabled for a supported vision model, this value sets the common
+  maximum number of images or videos in an encoder CUDA-graph replay sub-batch. Runtime packing stops when either this item
+  limit or the largest token budget would be exceeded, so a value that is too small can split a many-small-image workload
+  into more graph replays and add launch and packing overhead. It also fixes capture-time batch-shaped metadata and, when
+  encoder_cudagraph_max_frames_per_batch is left at None, scales the automatically inferred video-frame capacity, so larger
+  values can increase capture-time and persistent graph-buffer memory. The default 0 is replaced by max_budget // min_budget
+  from the model-provided budget range. The pinned vllm-ascend repository has no implementation, documentation, or override
+  for this CUDA encoder-graph parameter.
+usage_locations:
+- file: vllm/config/compilation.py:531
+  context: Declares the default 0 value and documents positive overrides and max_budget // min_budget automatic inference.
+- file: vllm/config/compilation.py:992
+  context: Rejects negative values when multimodal encoder CUDA graphs are enabled.
+- file: vllm/model_executor/models/interfaces.py:1534
+  context: Defines the model hook that supplies the minimum and maximum token budgets used when this item limit is not explicitly
+    configured.
+- file: vllm/model_executor/models/qwen3_vl.py:1814
+  context: Qwen3-VL supplies a minimum budget of 64 tokens and caps the maximum by max_num_batched_tokens and max_model_len
+    for automatic inference.
+- file: docs/design/cuda_graphs_multimodal.md:40
+  context: Describes greedy runtime packing constrained by both the maximum token budget and this common maximum batch size.
+related_parameters:
+- name: CompilationConfig.cudagraph_mm_encoder
+  relation: Must be true for this limit to affect encoder CUDA-graph capture and replay.
+- name: CompilationConfig.encoder_cudagraph_token_budgets
+  relation: The largest budget is the other greedy-packing limit, and its inferred minimum and maximum determine the automatic
+    item count.
+- name: CompilationConfig.encoder_cudagraph_max_frames_per_batch
+  relation: When left at None, its capacity is inferred from this item count multiplied by the model-specific maximum frames
+    per video.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Qwen2.5-VL and Qwen3-VL cap their inferred maximum encoder token budget with this scheduler limit.
+constraints:
+- The value must be non-negative when cudagraph_mm_encoder is true; 0 means auto-infer and a negative value raises ValueError.
+- It has no runtime effect while cudagraph_mm_encoder is false, which is the default.
+- Encoder CUDA graphs require a model implementing SupportsEncoderCudaGraph; the pinned design documentation lists Qwen2.5-VL
+  and Qwen3-VL.
+- The pinned documentation reports testing on CUDA GPUs with FLASH_ATTN or FLASHINFER and provides no evidence that this feature
+  is supported by vllm-ascend.
+tuning_advice:
+  summary: Keep 0 for general use so the item limit follows the model's token-budget range. Override it only for an enabled,
+    supported encoder CUDA-graph workload after measuring replay count, tail latency, throughput, and graph memory.
+  suggested_values:
+  - scenario: General supported image or video serving with encoder CUDA graphs enabled
+    value: 0
+    reason: Uses the model-derived max_budget // min_budget capacity and adapts when scheduler or model-length limits change.
+  - scenario: Many small vision items where profiling shows repeated graph sub-batches
+    value: 8
+    reason: This is the explicit value used by the pinned upstream examples and benchmarks; treat it as a benchmark starting
+      point, not a universal optimum.
+  caveats:
+  - Raising the item count cannot make a sub-batch exceed the largest token budget; large items can still force multiple replays
+    or eager fallback.
+  - If encoder_cudagraph_max_frames_per_batch is None, increasing this value also increases the inferred video-frame capacity
+    and associated metadata buffer sizing.
+  - The documented performance measurements evaluate encoder CUDA graphs as a feature, not an isolated sweep of this parameter,
+    so they do not prove that 8 is optimal.
+  - Do not infer Ascend support from the shared CompilationConfig field; the pinned vllm-ascend source contains no consumer
+    for it.
+  quick_guide: Enable cudagraph_mm_encoder on a documented model, begin with 0, inspect graph hit/miss behavior and replay
+    splitting, and test 8 only when batches commonly contain many small vision items.
+analysis_date: '2026-07-30'

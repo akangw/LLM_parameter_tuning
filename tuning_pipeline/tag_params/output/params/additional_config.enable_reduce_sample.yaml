@@ -1,0 +1,122 @@
+name: additional_config.enable_reduce_sample
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:257
+- vllm_ascend/ops/vocab_parallel_embedding.py:269
+- vllm_ascend/sample/sampler.py:96
+- vllm_ascend/sample/sampler.py:138
+- vllm_ascend/sample/rejection_sampler.py:264
+- vllm_ascend/worker/model_runner_v1.py:2391
+- vllm_ascend/spec_decode/llm_base_proposer.py:1004
+- docs/source/user_guide/release_notes.md:35
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: '--additional-config ''{"enable_reduce_sample": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When enabled, Ascend keeps tensor-parallel LM-head logits vocabulary-sharded instead of gathering or all-to-all
+  redistributing the complete vocabulary before sampling. Greedy sampling exchanges only each rank's local maximum; top-k/top-p
+  sampling first selects local candidates and all-gathers those candidates and their global token IDs; rejection sampling
+  uses the same reduced paths. This lowers tensor-parallel communication volume and can reduce sampling latency and temporary
+  candidate/logit storage, with the largest benefit at tensor-parallel sizes above one and large vocabularies. It does not
+  change model compute or KV-cache capacity, and at TP=1 the extra reduced-sampling machinery is unlikely to help. The pinned
+  release notes mark the feature experimental, so gains and output behavior should be validated on the actual sampling mix.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:257
+  context: Reads the nested additional_config boolean and defaults it to false.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:269
+  context: Skips tensor-parallel all-to-all/gather of full LM-head logits and retains each rank's vocabulary partition when
+    enabled.
+- file: vllm_ascend/sample/sampler.py:96
+  context: Implements distributed greedy argmax by all-gathering per-rank maxima and their global token IDs.
+- file: vllm_ascend/sample/sampler.py:138
+  context: Samples from gathered reduced candidates rather than the normal full-logit top-k/top-p path.
+- file: vllm_ascend/sample/sampler.py:173
+  context: Selects local top-k candidates, exchanges candidates across the tensor-parallel group, and reconstructs global
+    token IDs in the PyTorch path.
+- file: vllm_ascend/sample/sampler.py:248
+  context: Uses local top-k plus candidate all-gather before the AscendC top-k/top-p operator on A2/A3 devices.
+- file: vllm_ascend/sample/rejection_sampler.py:264
+  context: Routes speculative rejection sampling through reduced top-k/top-p preprocessing.
+- file: vllm_ascend/sample/rejection_sampler.py:352
+  context: Uses distributed reduced greedy selection for non-random target tokens during rejection sampling.
+- file: vllm_ascend/worker/model_runner_v1.py:2391
+  context: Derives the maximum active top-k and prepares normal or rejection samplers for the reduced candidate width.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:1004
+  context: Selects reduced-sampling-aware draft-token computation branches for EAGLE3, DFlash, and MTP speculative methods.
+- file: docs/source/user_guide/release_notes.md:35
+  context: Documents the feature as experimental and intended to lower tensor-parallel communication overhead for greedy,
+    top-k/top-p, and rejection sampling.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Determines the number of vocabulary shards and therefore the communication avoided; benefit is primarily for TP
+    greater than one.
+- name: top_k
+  relation: The model runner derives the reduced candidate width from active request top-k values before sampling.
+- name: top_p
+  relation: Top-p filtering is applied after local top-k candidates are gathered across tensor-parallel ranks.
+- name: --speculative-config
+  relation: Rejection sampling and supported EAGLE3, DFlash, and MTP draft paths contain explicit reduced-sampling branches.
+- name: VLLM_BATCH_INVARIANT
+  relation: Batch-invariant random sampling delegates to the upstream native sampler rather than Ascend's reduced forward_native
+    branch.
+constraints:
+- This is an Ascend-only nested key supplied through additional_config; it has no upstream vLLM definition at the pinned commit.
+- The feature is experimental in the pinned Ascend release notes and defaults to disabled.
+- The communication optimization applies to vocabulary-sharded tensor-parallel logits; TP=1 offers no multi-rank communication
+  to reduce.
+- Reduced top-k/top-p sampling depends on the model runner preparing a candidate width from active top-k metadata.
+- Validate requested logprobs and deterministic or batch-invariant behavior, because the reduced path changes which intermediate
+  logits are returned and batch-invariant mode bypasses Ascend's reduced random-sampling branch.
+tuning_advice:
+  summary: Enable experimentally for communication-bound, tensor-parallel Ascend decoding after correctness and end-to-end
+    benchmarking; otherwise retain the false default.
+  suggested_values:
+  - scenario: Multi-NPU tensor-parallel decode with large vocabulary and greedy or bounded top-k/top-p sampling
+    value: true
+    reason: Avoiding full-vocabulary logit exchange can lower inter-rank traffic and sampling overhead.
+  - scenario: Single-rank inference, unvalidated sampling modes, or production workloads prioritizing conservative behavior
+    value: false
+    reason: There is no tensor-parallel communication benefit at TP=1, and the feature is documented as experimental.
+  - scenario: Speculative decoding with rejection sampling on a supported Ascend setup
+    value: true
+    reason: The rejection sampler and EAGLE3, DFlash, and MTP proposer code contain reduced-sampling-aware paths; benchmark
+      acceptance rate and latency end to end.
+  caveats:
+  - Communication savings grow with vocabulary size, tensor-parallel degree, batch shape, and how small the gathered candidate
+    set is relative to the vocabulary.
+  - End-to-end speedup may be small when transformer compute, KV-cache access, or another collective dominates decode time.
+  - Memory savings concern temporary sampling/logit tensors, not model weights or KV-cache allocation.
+  - Compare output tokens and requested logprobs against the default path before production rollout.
+  quick_guide: Start with false; on TP>1 Ascend runs, test true with the real greedy, top-k/top-p, or speculative workload
+    and keep it only when output checks pass and latency or throughput improves.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

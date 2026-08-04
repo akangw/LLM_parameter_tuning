@@ -1,0 +1,95 @@
+name: --performance-mode
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:83
+- vllm/config/vllm.py:346
+- vllm/config/vllm.py:1476
+- vllm/config/vllm.py:1561
+- vllm/engine/arg_utils.py:685
+- vllm/engine/arg_utils.py:2182
+- vllm/engine/arg_utils.py:2410
+- vllm_ascend/platform.py:177
+- vllm_ascend/platform.py:229
+- vllm_ascend/platform.py:453
+- docs/source/developer_guide/Design_Documents/ACL_Graph.md:31
+value_type: str
+default: balanced
+valid_choices:
+- balanced
+- interactivity
+- throughput
+cli_example: --performance-mode interactivity
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This top-level mode has two confirmed effects in the pinned vLLM source. When throughput is selected, vLLM
+  doubles max_num_batched_tokens and max_num_seqs if those limits were not explicitly supplied, increasing batching capacity
+  and potential throughput at the cost of latency and memory headroom. When interactivity is selected and graph capture sizes
+  were not explicitly supplied, vLLM generates every capture size from 1 through 32 before continuing with the normal larger
+  buckets, reducing small-batch padding at the cost of more graph captures. Ascend does not inspect performance_mode directly,
+  but its platform injects an Ascend-specific graph-size ceiling and then calls the upstream _set_cudagraph_sizes method;
+  those sizes drive ACLGraph bucketing. Thus the scheduler effect applies unchanged on Ascend and the graph-size effect applies
+  to ACLGraph rather than selecting an Ascend-specific kernel.
+usage_locations:
+- file: vllm/config/vllm.py:346
+  context: Defines the balanced default and documents the latency-versus-throughput intent.
+- file: vllm/engine/arg_utils.py:2182
+  context: Passes the CLI value into VllmConfig during engine configuration.
+- file: vllm/engine/arg_utils.py:2410
+  context: Doubles each unset scheduler batch limit when throughput mode is selected.
+- file: vllm/config/vllm.py:1561
+  context: Generates dense capture buckets from 1 through 32 for interactivity mode when capture sizes are not user-specified.
+- file: vllm_ascend/platform.py:177
+  context: Defines the Ascend-specific default maximum graph-capture size while preserving upstream size-list generation.
+- file: vllm_ascend/platform.py:453
+  context: Re-runs upstream graph-size generation after Ascend graph compatibility adjustments.
+- file: docs/source/developer_guide/Design_Documents/ACL_Graph.md:31
+  context: Explains that Ascend ACLGraph pads runtime batches to configured capture-size buckets and falls back to eager execution
+    above the largest bucket.
+related_parameters:
+- name: --max-num-batched-tokens
+  relation: An explicit value prevents throughput mode from doubling this scheduler limit.
+- name: --max-num-seqs
+  relation: An explicit value prevents throughput mode from doubling this scheduler limit and also bounds Ascend's default
+    maximum graph-capture size.
+- name: --compilation-config
+  relation: Explicit cudagraph_capture_sizes override the interactivity bucket-generation branch, while graph mode determines
+    whether capture sizes are used.
+- name: --enforce-eager
+  relation: Eager execution disables graph capture, removing the interactivity graph-bucketing effect but not the throughput
+    scheduler-limit effect.
+constraints:
+- Throughput mode doubles max_num_batched_tokens only when --max-num-batched-tokens is unset, and doubles max_num_seqs only
+  when --max-num-seqs is unset.
+- Interactivity mode changes capture buckets only when graph execution is enabled and compilation_config.cudagraph_capture_sizes
+  is not explicitly set.
+- Ascend may filter or recompute the generated capture sizes for platform, graph-mode, and sequence-parallel constraints.
+tuning_advice:
+  summary: Keep balanced as the baseline on Ascend; use interactivity for latency-sensitive small batches or throughput for
+    sustained concurrency, and benchmark latency, throughput, startup, and memory together.
+  suggested_values:
+  - scenario: General-purpose Ascend serving or an unbenchmarked workload
+    value: balanced
+    reason: It preserves normal scheduler defaults and the standard sparse small-batch ACLGraph buckets.
+  - scenario: Latency-sensitive requests at small batch sizes with ACLGraph enabled
+    value: interactivity
+    reason: Dense capture sizes through 32 reduce padding to the next graph bucket, which can lower small-batch latency.
+  - scenario: High-concurrency serving with scheduler limits left automatic
+    value: throughput
+    reason: It doubles the automatically selected token and sequence batch limits, allowing more work per scheduler step when
+      capacity permits.
+  caveats:
+  - Interactivity captures more small graph shapes, which can increase graph warmup/startup work and graph memory use.
+  - Throughput mode can increase queueing latency and runtime memory pressure because both automatic batching limits may double.
+  - Explicit scheduler limits or capture sizes partially override the mode, so the selected label alone does not determine
+    the effective configuration.
+  - The pinned Ascend source has no direct performance_mode check and no evidence for the legacy claim that it selects Ascend-specific
+    kernels.
+  quick_guide: Start with balanced, compare interactivity for low-concurrency latency and throughput for saturated serving,
+    and inspect the effective scheduler limits and ACLGraph capture sizes before interpreting benchmark results.
+analysis_date: '2026-07-27'

@@ -1,0 +1,92 @@
+name: --load-format
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:29
+- vllm/engine/arg_utils.py:848
+- vllm_ascend/model_loader/netloader/netloader.py:39
+- vllm_ascend/model_loader/rfork/rfork_loader.py:38
+value_type: str
+default: auto
+valid_choices:
+- auto
+- pt
+- safetensors
+- instanttensor
+- npcache
+- dummy
+- tensorizer
+- runai_streamer
+- runai_streamer_sharded
+- bitsandbytes
+- sharded_state
+- gguf
+- mistral
+- netloader
+- rfork
+cli_example: --load-format safetensors
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: This option selects the model-weight loader and therefore primarily affects cold-start latency and host-memory
+  behavior during initialization, rather than steady-state request execution. Upstream LoadConfig documents auto as safetensors
+  with a PyTorch-bin fallback, and provides loaders including safetensors, npcache, dummy, sharded_state, and streamers. On
+  Ascend, netloader is registered as a custom loader; after its transfer path it delegates with a copied LoadConfig whose
+  load_format is auto. RFork is also registered on Ascend and, when transfer cannot be used, resets load_format to auto before
+  loading normally. Sharded-state checkpoints can reduce the amount each tensor-parallel worker must load, while eager safetensors
+  loading trades higher CPU memory for fewer random reads on network storage.
+usage_locations:
+- file: vllm/config/load.py:29
+  context: Defines the default, documents built-in formats, and lowercases the selected value.
+- file: vllm/engine/arg_utils.py:848
+  context: Registers the --load-format CLI argument and passes it into LoadConfig.
+- file: vllm/engine/arg_utils.py:1500
+  context: Forces the loader to gguf when the model path is a GGUF file.
+- file: vllm/config/vllm.py:1788
+  context: Selects runai_streamer for Run:ai object storage when auto is used and rejects other incompatible formats.
+- file: vllm_ascend/model_loader/netloader/netloader.py:345
+  context: Netloader changes its delegated DefaultModelLoader configuration to auto.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:173
+  context: RFork falls back to auto after transfer failure before loading the model.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Ascend speculative decoding loads its draft model through draft_load_config.
+related_parameters:
+- name: --model-loader-extra-config
+  relation: Supplies loader-specific configuration; RFork reads it as a JSON object and netloader reads its extra configuration
+    from it.
+- name: --safetensors-load-strategy
+  relation: Controls loading behavior for safetensors formats, including the CPU-memory versus initialization-I/O tradeoff.
+- name: --tensor-parallel-size
+  relation: Determines the worker topology for which sharded_state checkpoint files must be prepared.
+- name: --quantization
+  relation: Automatically selects bitsandbytes for bitsandbytes-quantized models; netloader performs post-load processing
+    when quantization is set.
+constraints:
+- GGUF model paths force load_format to gguf.
+- Run:ai object-storage model weights require runai_streamer or runai_streamer_sharded; auto is converted to runai_streamer.
+- RFork requires --model-loader-extra-config to be a JSON object and falls back to auto if transfer fails.
+- netloader and rfork are vLLM-Ascend custom loaders registered by the Ascend package.
+tuning_advice:
+  summary: Choose the loader to match checkpoint layout and storage; assess cold-start time and peak host memory on the target
+    deployment.
+  suggested_values:
+  - scenario: Standard checkpoint stored as safetensors, especially on network storage.
+    value: safetensors
+    reason: It selects the safetensors loader; pair it with the safetensors load strategy appropriate to the storage system.
+  - scenario: Tensor-parallel deployment with checkpoints prepared as per-rank shards.
+    value: sharded_state
+    reason: This format is explicitly intended for pre-sharded checkpoint files and efficient tensor-parallel loading.
+  - scenario: Ascend deployment configured with an available RFork seed-transfer service.
+    value: rfork
+    reason: The Ascend RFork loader attempts transfer first and otherwise uses the normal auto loader as its fallback.
+  caveats:
+  - Loader choice chiefly changes initialization behavior; benchmark it separately from serving latency and throughput.
+  - eager safetensors loading can improve network-filesystem initialization but consumes more CPU memory.
+  - Ascend custom loader configuration is required for RFork and may also be required by netloader.
+  - Do not select an arbitrary loader for Run:ai object-storage weights; only the supported Run:ai loaders are accepted.
+  quick_guide: Use auto for normal compatible checkpoints, sharded_state only for prepared sharded checkpoints, and Ascend
+    custom loaders only when their required infrastructure is configured.
+analysis_date: '2026-07-27'

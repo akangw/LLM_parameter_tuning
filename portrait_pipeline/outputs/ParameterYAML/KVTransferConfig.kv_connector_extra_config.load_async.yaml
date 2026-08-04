@@ -1,0 +1,123 @@
+name: KVTransferConfig.kv_connector_extra_config.load_async
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:81
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:293
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:446
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:500
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:799
+- docs/source/user_guide/feature_guide/kv_pool.md:29
+- docs/source/tutorials/features/pd_colocated_mooncake_multi_instance.md:236
+- vllm/config/kv_transfer.py:60
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"consumer_is_to_load":true,"use_layerwise":false,"load_async":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'AscendStore reads this connector-specific boolean on both its scheduler and worker sides with a false default.
+  For a positive external KV-cache hit in non-layerwise mode, true makes the scheduler report an asynchronous load, allocate
+  the destination KV blocks without making the request runnable, and park the request in WAITING_FOR_REMOTE_KVS. The worker
+  submits the backend get to a receive thread and later reports completed request IDs so the scheduler can resume them. This
+  keeps a slow remote read from synchronously blocking the model-execution path and allows other ready requests to use compute
+  while I/O is outstanding, which can improve throughput and queueing latency under concurrent traffic. It does not overlap
+  computation of the waiting request with its own KV load: that request resumes only after receipt completes. False performs
+  the backend get inline in start_load_kv before model execution proceeds. Async loading can retain allocated destination
+  KV blocks for longer while requests wait, reducing effective KV-cache headroom and sometimes limiting concurrency. When
+  use_layerwise is true, the scheduler explicitly returns false for asynchronous loading and the worker uses its separate
+  layerwise receive pipeline, so load_async does not select the load path. Upstream vLLM provides the generic kv_connector_extra_config
+  dictionary and scheduler protocol; the false default and worker behavior here are supplied by vllm-ascend.'
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:81
+  context: Reads load_async from kv_connector_extra_config and defaults it to false.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:293
+  context: Reports an external load as asynchronous only when load_async is true and use_layerwise is false; misses and zero-length
+    loads return false earlier.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99
+  context: Reads the same false-defaulted option on the worker side.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:446
+  context: Creates and starts the non-layerwise KV receive thread only when load_async is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:500
+  context: Enqueues each admitted non-layerwise load on the receive thread when true; when false, builds the buffers and calls
+    the backend get inline.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:799
+  context: Polls and returns completed receive request IDs only for asynchronous loading, allowing the scheduler to release
+    requests waiting on remote KV.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:29
+  context: Documents load_async as the asynchronous-loading switch with false as its default.
+- file: docs/source/tutorials/features/pd_colocated_mooncake_multi_instance.md:236
+  context: Enables load_async in the documented non-layerwise MooncakeConnectorStoreV1 PD-colocated configuration.
+- file: vllm/config/kv_transfer.py:60
+  context: Upstream defines kv_connector_extra_config as the open connector-specific dictionary through which vllm-ascend
+    receives this key.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The analyzed behavior is implemented by vllm-ascend's AscendStoreConnector; another connector may ignore or interpret
+    this extra key differently.
+- name: KVTransferConfig.kv_role
+  relation: Loading is consumer-side work, so the configured role must participate as a KV consumer for an admitted remote
+    load to occur.
+- name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_load
+  relation: For a decode-only kv_consumer, this separate option must permit external lookup and loading; load_async changes
+    synchronization only after a hit is admitted.
+- name: KVTransferConfig.kv_connector_extra_config.use_layerwise
+  relation: 'When true, it overrides this selection: the scheduler does not report an async whole-cache load and the worker
+    uses the layerwise receive path.'
+- name: KVTransferConfig.kv_connector_extra_config.backend
+  relation: Selects the remote store whose get latency and concurrency determine the benefit and cost of moving reads to the
+    receive thread.
+- name: KVTransferConfig.kv_load_failure_policy
+  relation: Determines how failures discovered during either synchronous or asynchronous loading are handled.
+constraints:
+- This option is effective only for an external hit admitted by a connector implementation that consumes the key; the pinned
+  behavior is AscendStore.
+- AscendStore applies asynchronous scheduling only when use_layerwise is false. Layerwise loading has a separate pipeline
+  regardless of load_async.
+- A consumer must be configured to load, and the backend, lookup service, hashes, model, and parallel layout must be compatible
+  across participants.
+- Async requests reserve destination KV-cache blocks while in WAITING_FOR_REMOTE_KVS, so many slow concurrent loads can reduce
+  available cache capacity and admission headroom.
+tuning_advice:
+  summary: Enable asynchronous loading for non-layerwise AscendStore deployments when remote KV reads would otherwise stall
+    useful concurrent work; keep the default for simple, low-concurrency, or memory-constrained operation, and decide from
+    end-to-end measurements.
+  suggested_values:
+  - scenario: Concurrent PD-disaggregated or shared-pool serving with non-layerwise loads and material remote-read latency
+    value: true
+    reason: Moves backend gets to the receive thread so other ready requests can be scheduled while hit requests wait for
+      remote KV.
+  - scenario: Low-concurrency serving, debugging, or a workload where synchronous transfer does not measurably block useful
+      compute
+    value: false
+    reason: Retains the simpler default inline path and avoids background receive scheduling when it provides no measured
+      overlap benefit.
+  - scenario: Layerwise AscendStore loading
+    value: false
+    reason: The value does not select that path because use_layerwise suppresses the async return flag and uses a separate
+      layer-by-layer receiver.
+  - scenario: KV-cache capacity pressure with many slow outstanding loads
+    value: false
+    reason: Avoids accumulating requests that hold allocated destination blocks while parked for remote KV, if benchmarks
+      show this harms admission or tail latency more than asynchronous progress helps.
+  caveats:
+  - True does not make the same request compute on unloaded KV; it improves overlap across requests by parking that request
+    until its receive completes.
+  - The pinned sources provide no universal throughput or TTFT gain. Results depend on concurrency, hit length and rate, backend
+    and network latency, batch composition, and free KV-cache capacity.
+  - At low load, thread handoff and rescheduling can leave single-request latency unchanged or worse even when throughput
+    improves at concurrency.
+  - Monitor WAITING_FOR_REMOTE_KVS depth, receive duration, KV-block occupancy, request throughput, TTFT, and tail latency
+    when comparing values.
+  quick_guide: Use true with use_layerwise=false when remote reads cause head-of-line blocking under concurrent load; otherwise
+    retain false. Benchmark both at representative hit rates and reject async if waiting requests consume too much KV-cache
+    headroom.
+analysis_date: '2026-07-30'

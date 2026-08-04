@@ -1,0 +1,69 @@
+name: CompilationConfig.static_all_moe_layers
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:732
+- vllm/forward_context.py:154
+- vllm_ascend/ops/fused_moe/fused_moe.py:590
+value_type: list[str]
+default: []
+valid_choices: Internal ordered list of MoE layer-name strings
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: This init=False field holds the ordered names of the model's MoE layers. It is not accepted as a user-supplied
+  CompilationConfig value. When fast_moe_cold_start is effective, create_forward_context passes this list into ForwardContext;
+  MoE custom operators can then obtain layer strings in execution order instead of hard-coding strings into the torch.compile
+  graph. The source describes this mechanism as a workaround for compilation cold-start time, so its effect is limited to
+  compilation/startup latency and is conditional on fast_moe_cold_start. It has no supported independent throughput or memory
+  tuning effect. On Ascend, the fused-MoE implementation observes the propagated list during NPU-graph static-kernel compilation
+  and capture and wraps the per-forward MoE index to the list length, preventing the second pass from indexing beyond the
+  ordered layer set.
+usage_locations:
+- file: vllm/config/compilation.py:732
+  context: Declares the internal init=False list with an empty-list factory and identifies its entries as names of all MoE
+    layers in the model.
+- file: vllm/forward_context.py:154
+  context: Documents the ordered-list workaround for avoiding hard-coded MoE layer strings in compiled graphs; create_forward_context
+    installs the list only when fast_moe_cold_start is effective.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:590
+  context: During Ascend static-kernel compilation and capture, checks the propagated all_moe_layers list and reduces moe_layer_index
+    modulo its length so the second forward pass does not overflow the list.
+related_parameters:
+- name: CompilationConfig.fast_moe_cold_start
+  relation: Gates propagation of static_all_moe_layers into ForwardContext; when false, ForwardContext receives None and layer
+    strings may instead be baked into the graph.
+- name: CompilationConfig.static_forward_context
+  relation: A neighboring internal per-model context structure passed into the same ForwardContext, but it stores layer objects
+    rather than the ordered MoE layer-name sequence.
+- name: AscendCompilationConfig.enable_static_kernel
+  relation: Enables the Ascend static-kernel path whose compile-and-capture double forward requires modulo correction of the
+    MoE layer index.
+constraints:
+- The field is init=False and therefore is internal runtime state, not a supported CompilationConfig constructor, YAML, or
+  CLI tuning input.
+- Correct ordered consumption assumes MoE custom operators execute in the same order as the names in this list and are not
+  reordered by torch.compile.
+- The list is propagated only when fast_moe_cold_start is effective; otherwise changing internal contents has no effect through
+  create_forward_context.
+- Ascend's modulo guard is conditional on both static-kernel enablement and a non-empty all_moe_layers list.
+tuning_advice:
+  summary: Do not set or mutate this field manually. Tune fast_moe_cold_start instead, and treat this list as internal ordered
+    model state required by that compilation workaround.
+  suggested_values: []
+  caveats:
+  - An empty list is the construction default, not a recommended user setting; the field is intended to describe the model's
+    ordered MoE layers.
+  - The benefit is compilation/cold-start latency only; no steady-state throughput or memory improvement is established by
+    the pinned sources.
+  - Incorrect, incomplete, or reordered internal entries can associate a custom MoE operation with the wrong layer name and
+    risk incorrect execution.
+  - On Ascend, the direct plugin behavior is index-safety for a static-kernel double forward; it does not make this field
+    a user-facing NPU tuning knob.
+  quick_guide: Leave this internal list under vLLM's control. If MoE startup time matters, validate the model's fixed MoE
+    execution order and tune CompilationConfig.fast_moe_cold_start, measuring compilation and warm-up latency separately from
+    steady-state serving.
+analysis_date: '2026-07-30'

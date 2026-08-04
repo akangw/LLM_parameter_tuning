@@ -1,0 +1,73 @@
+name: kv_events.enable_kv_cache_events
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/config/vllm.py:1179
+- vllm/v1/core/sched/scheduler.py:110
+- vllm/v1/kv_offload/cpu/spec.py:61
+- vllm/v1/simple_kv_offload/manager.py:81
+- vllm_ascend/kv_offload/npu.py:34
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether KV cache block storage and removal events are tracked and published (e.g.,
+  via ZMQ). On Ascend NPU, it is read in two performance-relevant paths: "(1) the NPU KV offloading manager (vllm_ascend/kv_offload/npu.py:34)
+  passes" enable_events to CPUOffloadingManager, which may add event-tracking overhead during block allocation/eviction; (2)
+  the v1 scheduler (vllm/v1/core/sched/scheduler.py:110) uses it to conditionally enable KV event collection during scheduling.
+  The overhead is primarily CPU-side bookkeeping and optional ZMQ publishing — it does not directly affect NPU kernel execution
+  or memory allocation. The performance impact is low because the event tracking is lightweight and only adds minor CPU overhead
+  per block operation. However, if combined with a non-null publisher and high request throughput, the ZMQ serialization and
+  transmission could introduce measurable latency jitter.
+
+  '
+usage_locations:
+- file: vllm_ascend/kv_offload/npu.py:34
+  context: NPU offloading manager reads enable_kv_cache_events to decide whether to enable event tracking in CPUOffloadingManager
+- file: vllm/v1/core/sched/scheduler.py:110
+  context: v1 scheduler reads enable_kv_cache_events to conditionally enable KV event collection during scheduling
+- file: vllm/v1/kv_offload/cpu/spec.py:61
+  context: CPU offloading spec reads enable_kv_cache_events to pass to CPUOffloadingManager
+- file: vllm/v1/simple_kv_offload/manager.py:81
+  context: Simple CPU offload scheduler reads enable_kv_cache_events for event tracking
+- file: vllm/config/vllm.py:1179
+  context: Config validation warns if KV events are enabled without prefix caching
+related_parameters:
+- name: kv_events.publisher
+  relation: Controls where KV events are published; if publisher is not 'null' but enable_kv_cache_events is false, a warning
+    is emitted
+- name: cache_config.enable_prefix_caching
+  relation: KV cache events are most useful with prefix caching enabled; a warning is emitted if events are enabled without
+    prefix caching
+constraints:
+- If kv_events.publisher is set to a non-null value, enable_kv_cache_events should also be set to true to avoid a configuration
+  warning
+- Enabling KV cache events without also enabling prefix caching (--enable-prefix-caching) will produce a warning log
+tuning_advice:
+  summary: Enable only when you need to observe KV cache block operations for debugging or external monitoring; leave disabled
+    for production throughput
+  suggested_values:
+  - scenario: Production deployment focused on maximum throughput
+    value: 'false'
+    reason: Avoids CPU overhead from event tracking and ZMQ publishing, which can add latency jitter under high load
+  - scenario: Debugging KV cache behavior or integrating with external monitoring systems
+    value: 'true'
+    reason: Enables KV cache event publication for observability; pair with --enable-prefix-caching and a valid publisher
+      config
+  caveats:
+  - On Ascend NPU, the event tracking overhead is primarily in the CPU offloading manager path — if KV offloading is not used,
+    the impact is negligible
+  - When combined with a non-null ZMQ publisher, high-frequency block operations can cause publisher queue buildup and increased
+    latency variance
+  - The vllm-ascend NPU offloading path (vllm_ascend/kv_offload/npu.py) reads this parameter identically to the upstream CPU
+    offloading path — no Ascend-specific override exists
+  quick_guide: Keep disabled (false) for production; enable only for KV cache debugging or external event-driven monitoring
+analysis_date: '2026-07-06'

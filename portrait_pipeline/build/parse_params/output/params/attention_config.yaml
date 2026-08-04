@@ -1,0 +1,84 @@
+name: --attention-config
+type: cli
+category: other
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1430
+- vllm_ascend/platform.py:1025
+value_type: dict
+default: AttentionConfig()
+valid_choices: JSON string or dict mapping to AttentionConfig fields
+cli_example: '--attention-config ''{"flash_attn_version": 2}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: '--attention-config accepts a JSON string that is deserialized into an AttentionConfig object (vllm/config/attention.py).
+  This config controls which attention backend is used (e.g., FLASH_ATTN, FLASHINFER, TORCH_SDPA, etc.), the FlashAttention
+  version, and several GPU-vendor-specific flags. On Ascend NPU, vllm-ascend (platform.py:1025-1043) silently resets six NVIDIA-specific
+  boolean flags to False if they were set to True: use_prefill_decode_attention, use_cudnn_prefill, use_trtllm_ragged_deepseek_prefill,
+  use_trtllm_attention, disable_flashinfer_prefill, and disable_flashinfer_q_quantization. The backend field is the primary
+  performance lever — it determines which attention kernel implementation runs on the NPU. The flash_attn_version field controls
+  the FlashAttention variant (2, 3, or 4) and is read by the v1 attention backend (vllm/v1/attention/backends/flash_attn.py:325,376)
+  to configure CUDA graph capture splits and AOT scheduling. On Ascend, the actual supported backends and FA versions depend
+  on the CANN/PTA attention operator availability, so setting an unsupported backend may cause fallback to a slower path or
+  runtime errors.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:628
+  context: EngineArgs.attention_config field declaration, typed as AttentionConfig
+- file: vllm/engine/arg_utils.py:707-708
+  context: __post_init__ deserializes dict to AttentionConfig object
+- file: vllm/engine/arg_utils.py:2029-2052
+  context: 'Attention config overrides: merges --attention-backend, enforces TurboQuant FA2 requirement'
+- file: vllm/config/vllm.py:292
+  context: VllmConfig.attention_config field with default_factory=AttentionConfig
+- file: vllm/config/vllm.py:415-416
+  context: compute_hash includes attention_config for cache keying
+- file: vllm_ascend/platform.py:1025-1043
+  context: Ascend platform resets 6 GPU-specific attention flags to False
+- file: vllm/v1/attention/backends/flash_attn.py:325
+  context: V1 FlashAttention backend reads attention_config for CUDA graph splits
+- file: vllm/v1/attention/backends/flash_attn.py:376
+  context: flash_attn_max_num_splits_for_cuda_graph used for CUDA graph capture
+- file: vllm/v1/attention/backends/fa_utils.py:94
+  context: flash_attn_version override from attention_config for FA version selection
+related_parameters:
+- name: --attention-backend
+  relation: Mutually exclusive with attention_config.backend; if both set, raises ValueError
+- name: --compilation-config
+  relation: flash_attn_max_num_splits_for_cuda_graph interacts with CUDA graph capture sizes
+- name: --enable-flashinfer-autotune
+  relation: Related to flashinfer attention backend; disable_flashinfer_prefill flag in attention_config
+constraints:
+- attention_backend and attention_config.backend are mutually exclusive — setting both raises a ValueError
+- On Ascend NPU, use_prefill_decode_attention, use_cudnn_prefill, use_trtllm_ragged_deepseek_prefill, use_trtllm_attention,
+  disable_flashinfer_prefill, and disable_flashinfer_q_quantization are silently reset to False
+- TurboQuant cache dtype requires flash_attn_version=2; if version >= 3 is set, it is overridden to 2 with a warning
+tuning_advice:
+  summary: On Ascend NPU, use --attention-config primarily to set the backend and flash_attn_version; GPU-specific flags are
+    silently ignored.
+  suggested_values:
+  - scenario: Ascend NPU with vllm-ascend (default attention backend)
+    value: '{}'
+    reason: Let vllm-ascend auto-select the appropriate Ascend attention backend; all GPU-specific flags are reset anyway
+  - scenario: Ascend NPU requiring specific FlashAttention version
+    value: '''{"flash_attn_version": 2}'''
+    reason: Explicitly set FA2 which is most widely supported; FA3/FA4 are NVIDIA-specific and may not work on Ascend
+  - scenario: Ascend NPU with custom attention backend override
+    value: '''{"backend": "TORCH_SDPA"}'''
+    reason: Fallback to PyTorch SDPA if the default Ascend attention backend has issues; may reduce throughput
+  caveats:
+  - vllm-ascend silently resets 6 NVIDIA-specific attention flags — setting them has no effect and produces a warning log
+  - flash_attn_version values 3 and 4 are designed for NVIDIA Hopper/Blackwell architectures and may not be supported on Ascend
+    NPU
+  - The backend field directly selects the attention kernel — an unsupported backend on Ascend may cause runtime errors or
+    fallback to a slow path
+  - flash_attn_max_num_splits_for_cuda_graph only takes effect when CUDA graphs are enabled and FA3 AOT scheduling is active
+    (NVIDIA-specific)
+  quick_guide: On Ascend NPU, pass --attention-config only to set backend or flash_attn_version; all GPU-specific flags are
+    silently ignored by vllm-ascend.
+analysis_date: '2026-07-06'

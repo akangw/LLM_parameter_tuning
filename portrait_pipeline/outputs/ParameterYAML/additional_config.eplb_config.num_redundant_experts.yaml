@@ -1,0 +1,97 @@
+name: additional_config.eplb_config.num_redundant_experts
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:635
+- vllm_ascend/ascend_config.py:670
+- vllm_ascend/eplb/core/eplb_utils.py:52
+- vllm_ascend/eplb/core/eplb_utils.py:76
+- vllm_ascend/ops/fused_moe/fused_moe.py:407
+- vllm_ascend/eplb/core/policy/policy_swift_balancer.py:199
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:81
+value_type: int
+default: 0
+valid_choices: non-negative integer
+cli_example: --additional-config '{"eplb_config":{"dynamic_eplb":true,"num_redundant_experts":16}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: In Ascend dynamic EPLB, this value adds physical expert slots beyond the model's logical experts. The initial
+  placement generator distributes those slots across the expert-parallel ranks, and the selected balancing policy can assign
+  copies of hot logical experts to them. Extra copies can reduce rank imbalance and straggler time, improving throughput and
+  token latency for skewed MoE routing, but each slot requires another expert's weights on every MoE layer and therefore consumes
+  NPU memory. A larger budget also changes the amount of expert-weight redistribution work. The configured value is ignored
+  when dynamic_eplb is false; when expert_map_path is supplied, the redundant count is derived from that file instead. Benefits
+  depend on routing skew, model expert size, EP topology, policy, and traffic, so the source does not establish a universal
+  speedup.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:670
+  context: Validates the field as an integer greater than or equal to zero.
+- file: vllm_ascend/eplb/core/eplb_utils.py:76
+  context: Uses the configured count only when dynamic_eplb is enabled; otherwise initializes zero redundant experts.
+- file: vllm_ascend/eplb/core/eplb_utils.py:92
+  context: Generates the initial global expert placement from the logical expert count, EP size, and redundant count.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:415
+  context: Adds the effective redundant count to the global physical expert count and derives the per-rank local count.
+- file: vllm_ascend/eplb/core/policy/policy_swift_balancer.py:199
+  context: Swift Balancer assigns the available redundant slots to heavily loaded logical experts while limiting copies per
+    rank topology.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:81
+  context: Recommends matching the redundant count to tensor-parallel size and warns against exceeding available devices.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must be true for this configured count to initialize redundant expert slots; otherwise the runtime uses zero.
+- name: additional_config.eplb_config.expert_map_path
+  relation: When set, the effective redundant count is derived from the recorded map's physical expert count rather than this
+    value.
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: Forces dynamic_eplb on, causing this count to shape the placement that is observed and recorded.
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Selects the balancing algorithm that redistributes logical experts among the configured physical slots.
+- name: parallel_config.enable_expert_parallel
+  relation: Dynamic EPLB requires an expert-parallel group with more than one rank.
+- name: parallel_config.tensor_parallel_size
+  relation: The Ascend guide recommends using this topology size as the redundant-expert count.
+constraints:
+- The value must be an integer greater than or equal to zero; booleans pass Python's integer type check but should not be
+  used as counts.
+- Dynamic EPLB requires expert parallelism with ep_size greater than one.
+- For generated placement, the logical expert count plus this redundant count, after any mixed-placement adjustment, must
+  be divisible by ep_size or initialization raises ValueError.
+- The Ascend guide requires the count to match tensor-parallel size for its documented Swift Balancer setup and warns that
+  a count greater than available devices causes system failure.
+- If expert_map_path is set, the effective redundant count comes from the map and this configured value does not control placement.
+tuning_advice:
+  summary: Keep zero when dynamic EPLB is disabled. For the documented Ascend Swift Balancer setup, start with one redundant
+    slot per tensor-parallel rank, then retain or adjust it only after measuring routing imbalance, end-to-end latency, throughput,
+    and NPU memory headroom.
+  suggested_values:
+  - scenario: Dynamic EPLB disabled or a memory-constrained MoE deployment
+    value: 0
+    reason: Avoids duplicate expert weights and preserves NPU memory; it is also the effective runtime value when dynamic
+      EPLB is off.
+  - scenario: Documented Ascend Swift Balancer deployment with sufficient NPU memory
+    value: tensor_parallel_size
+    reason: The pinned Ascend guide requires this match, for example 16 with tensor_parallel_size 16, to provide sufficient
+      redundancy across ranks.
+  - scenario: Static deployment that loads a previously recorded expert map
+    value: 0
+    reason: The runtime derives physical and redundant expert counts from expert_map_path, so this field does not control
+      that placement.
+  caveats:
+  - Each added physical slot stores another expert's weights across applicable MoE layers, reducing memory available for other
+    serving state such as KV cache.
+  - More slots do not guarantee lower latency; balanced routing may not repay the extra memory and expert-weight migration
+    work.
+  - The useful budget depends on logical expert count, expert size, EP topology, routing skew, traffic, and balancing policy.
+  - Ensure the resulting physical expert count is divisible by ep_size before startup and never exceed the available-device
+    limit stated by the guide.
+  - The similarly named upstream EPLBConfig.num_redundant_experts is a separate configuration field; Ascend fused-MoE placement
+    reads this additional_config value.
+  quick_guide: Use 0 without dynamic EPLB; with the documented Swift Balancer path, use tensor_parallel_size, verify divisibility
+    and memory fit, then benchmark representative traffic.
+analysis_date: '2026-08-01'

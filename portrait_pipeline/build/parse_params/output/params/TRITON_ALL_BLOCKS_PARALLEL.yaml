@@ -1,0 +1,73 @@
+name: TRITON_ALL_BLOCKS_PARALLEL
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ops/rotary_embedding.py:501
+value_type: str
+default: <computed>
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether Triton kernels launch all program blocks in parallel on Ascend
+  NPU. In vllm-ascend''s AscendMRotaryEmbedding.forward_triton(), when the query batch dimension (query_shape[0]) exceeds
+  the empirical safety threshold of 65535, the code automatically sets TRITON_ALL_BLOCKS_PARALLEL=1 to prevent Triton scheduler
+  or runtime failures on Ascend hardware. Without this flag, large Triton grids can cause kernel launch failures or severe
+  performance degradation. The flag affects the triton_mrope kernel used for multi-dimensional rotary position embedding (MRoPE)
+  computation, which is on the critical path for models like Qwen2-VL that use MRoPE. By enabling parallel block execution,
+  it reduces kernel launch overhead and improves throughput for large-batch or long-sequence inference scenarios.
+
+  '
+usage_locations:
+- file: vllm_ascend/ops/rotary_embedding.py:501
+  context: 'Checked before calling triton_mrope; if query_shape[0] > 65535 and env var is not already set to "1", the code
+    sets it to "1" to avoid scheduler/runtime failures.
+
+    '
+related_parameters: []
+constraints:
+- TRITON_ALL_BLOCKS_PARALLEL must be set to "1" (as a string) to take effect; any other value is treated as disabled.
+- This environment variable is only relevant when using the Triton-based MRoPE path on Ascend NPU (i.e., when positions.ndim
+  == 2 and mrope_interleaved is True).
+tuning_advice:
+  summary: 'For large-batch or long-sequence inference with MRoPE models on Ascend NPU, set TRITON_ALL_BLOCKS_PARALLEL=1 to
+    prevent Triton kernel launch failures and improve throughput. The vllm-ascend code auto-enables it when the batch dimension
+    exceeds 65535, but manually setting it can provide stability for borderline cases.
+
+    '
+  suggested_values:
+  - scenario: 'High-throughput serving with large batch sizes or long sequences using MRoPE models (e.g., Qwen2-VL) on Ascend
+      NPU
+
+      '
+    value: '1'
+    reason: 'Prevents Triton scheduler/runtime failures when the query batch dimension is large. Even when below the 65535
+      threshold, enabling this flag can reduce kernel launch overhead and improve throughput stability.
+
+      '
+  - scenario: 'Low-latency serving with small batch sizes and short sequences
+
+      '
+    value: '0'
+    reason: 'For small grids, parallel block execution may introduce unnecessary overhead. The default behavior (disabled)
+      is sufficient and avoids potential resource contention.
+
+      '
+  caveats:
+  - The vllm-ascend code automatically sets this flag when query_shape[0] > 65535, so manual setting is primarily useful for
+    borderline cases or to ensure consistent behavior across deployments.
+  - This flag only affects the Triton-based MRoPE path; it has no effect on the npu_mrope (torch_npu) fallback path used when
+    mrope_section is not [16, 24, 24] or when Triton is unavailable.
+  - Setting this flag may increase memory usage slightly due to parallel block execution, though the impact is typically negligible
+    compared to model weights and KV cache.
+  quick_guide: 'Set TRITON_ALL_BLOCKS_PARALLEL=1 for MRoPE models with large batches on Ascend NPU; leave unset for small-scale
+    inference.
+
+    '
+analysis_date: '2026-07-06'

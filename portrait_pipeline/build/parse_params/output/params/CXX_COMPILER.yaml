@@ -1,0 +1,61 @@
+name: CXX_COMPILER
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:46
+- vllm_ascend/setup.py:276
+value_type: str
+default: null
+valid_choices: any valid path to a C++ compiler executable (e.g., /usr/bin/g++)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'CXX_COMPILER is a build-time environment variable used exclusively during the compilation of vllm-ascend''s
+  custom C++ kernels (via CMake in setup.py:276). It does not affect runtime inference directly. However, the choice of compiler
+  and its optimization capabilities can influence the performance of the compiled custom operators (e.g., MatmulAllReduce
+  fusion, FlashComm kernels) that run on the Ascend NPU. A more modern compiler with better auto-vectorization and architecture-specific
+  tuning (e.g., for the Da Vinci architecture) may produce slightly faster kernel code, indirectly affecting throughput and
+  latency. The impact is low because most performance-critical code is compiled by the CANN toolkit''s own compiler, and the
+  CXX_COMPILER primarily affects the vllm-ascend glue/launcher code.
+
+  '
+usage_locations:
+- file: vllm_ascend/setup.py:276
+  context: Passed to CMake as -DCMAKE_CXX_COMPILER during custom kernel compilation
+- file: vllm_ascend/envs.py:46
+  context: Environment variable definition with default None (system default)
+related_parameters:
+- name: C_COMPILER
+  relation: Analogous environment variable for the C compiler; often set together
+- name: CMAKE_BUILD_TYPE
+  relation: Build type (Release/Debug) interacts with compiler optimization flags
+- name: MAX_JOBS
+  relation: Controls parallel compilation jobs; both affect build performance
+constraints:
+- The compiler must support C++17 or higher as required by vllm-ascend custom operators
+- The specified compiler must be available on the system PATH or given as an absolute path
+tuning_advice:
+  summary: 'Set CXX_COMPILER to a modern GCC (≥9) or Clang compiler for best optimization of custom Ascend kernels; the runtime
+    performance gain is marginal.
+
+    '
+  suggested_values:
+  - scenario: Default system compiler is older than GCC 9
+    value: /usr/bin/g++-11
+    reason: Newer GCC versions generate better-optimized code for the C++17 features used in vllm-ascend kernels
+  - scenario: Using Clang-based toolchain
+    value: /usr/bin/clang++-14
+    reason: Clang may offer different optimization trade-offs; use a version with full C++17 support
+  - scenario: Standard deployment with modern system compiler
+    value: null
+    reason: Leaving it unset uses the system default, which is sufficient if it meets the C++17 requirement
+  caveats:
+  - This is a build-time only setting; changing it requires recompiling vllm-ascend (pip install -e .)
+  - The performance impact on actual inference is low — most heavy computation runs inside CANN libraries
+  - Ensure the specified compiler is compatible with the Ascend CANN toolkit version in use
+  quick_guide: Set to a modern g++ (≥9) if the system default is old; otherwise leave unset.
+analysis_date: '2026-07-06'

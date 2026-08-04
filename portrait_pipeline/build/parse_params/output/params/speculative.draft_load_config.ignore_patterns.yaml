@@ -1,0 +1,49 @@
+name: speculative.draft_load_config.ignore_patterns
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: list[str]
+default: '''["original/**/*"]'''
+valid_choices: list[str]
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter controls which files are excluded when loading a draft model for speculative decoding. By default,
+  it ignores "original/**/*" to avoid loading redundant checkpoint files (e.g., from Llama-format conversions). On Ascend
+  NPU, this primarily affects model loading time and disk I/O rather than runtime inference performance. The memory impact
+  is indirect: loading fewer redundant weight files reduces peak memory during model initialization, but does not affect steady-state
+  inference memory or throughput. The parameter is defined in vLLM upstream and is not overridden by vllm-ascend.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.model
+  relation: The draft model whose loading is controlled by this parameter.
+- name: speculative.draft_load_config
+  relation: Parent configuration object containing this ignore_patterns field.
+constraints: []
+tuning_advice:
+  summary: 'Keep the default value unless you have custom checkpoint structures that cause loading conflicts.
+
+    '
+  suggested_values:
+  - scenario: Standard Llama-format or converted checkpoints with "original/" backup directory
+    value: '''["original/**/*"]'''
+    reason: 'Prevents loading duplicate weights from backup directories, reducing model initialization time and peak memory
+      usage during loading.
+
+      '
+  - scenario: Custom checkpoint structure without "original/" directory
+    value: '[]'
+    reason: 'No files need to be excluded; an empty list avoids unnecessary pattern matching overhead during model loading.
+
+      '
+  caveats:
+  - This parameter only affects model loading time and initialization memory, not runtime throughput or latency on Ascend
+    NPU.
+  - Incorrect patterns may cause the draft model to fail to load or load incomplete weights.
+  quick_guide: Use default "original/**/*" for standard checkpoints; set to empty list if no backup files exist.
+analysis_date: '2026-07-06'

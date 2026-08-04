@@ -1,0 +1,80 @@
+name: --mamba-cache-dtype
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:35
+- vllm/config/cache.py:124
+- vllm/engine/arg_utils.py:658
+- vllm/engine/arg_utils.py:1112
+- vllm/engine/arg_utils.py:1706
+value_type: str
+default: auto
+valid_choices:
+- auto
+- float16
+- float32
+cli_example: --mamba-cache-dtype float16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: This option selects the dtype for Mamba cache state. CacheConfig documents that it controls both convolution
+  and SSM state, and auto resolves from the model configuration. The current MambaDType literal permits auto, float32, and
+  float16. A smaller cache element dtype lowers the memory required by these state tensors; in hybrid models, the FlashAttention
+  backend restricts supported block sizes to 16, 32, and 64 whenever this option or mamba_ssm_cache_dtype is float32, instead
+  of its normal multiple-of-16 selection.
+usage_locations:
+- file: vllm/config/cache.py:35
+  context: Defines MambaDType as auto, float32, or float16.
+- file: vllm/config/cache.py:124
+  context: Declares mamba_cache_dtype with default auto and documents its convolution- and SSM-state scope.
+- file: vllm/engine/arg_utils.py:1706
+  context: Passes the CLI-derived value into CacheConfig.
+- file: vllm/model_executor/models/bamba.py:427
+  context: Passes CacheConfig.mamba_cache_dtype to MambaStateDtypeCalculator for Mamba2 state allocation.
+- file: vllm/v1/attention/backends/flash_attn.py:87
+  context: Tests float32 mamba_cache_dtype when choosing restricted hybrid-model block sizes.
+related_parameters:
+- name: --mamba-ssm-cache-dtype
+  relation: Overrides only the SSM-state dtype when non-auto; this option continues to control convolution-state dtype.
+- name: --mamba-block-size
+  relation: Controls Mamba cache block granularity; hybrid FlashAttention block-size choices are restricted when either Mamba
+    cache dtype is float32.
+constraints:
+- Must be one of auto, float16, or float32.
+- In hybrid models, float32 for this option or --mamba-ssm-cache-dtype restricts FlashAttention supported block sizes to 16,
+  32, or 64.
+tuning_advice:
+  summary: Leave the default auto unless state-cache memory or numerical behavior requires an explicit choice.
+  suggested_values:
+  - scenario: General deployment
+    value: auto
+    reason: Resolves the cache dtype from the model configuration, as documented by CacheConfig.
+  - scenario: Reducing Mamba state-cache memory
+    value: float16
+    reason: Uses 16-bit rather than 32-bit elements for the Mamba cache state, reducing its storage requirement.
+  - scenario: Explicit full-precision state cache
+    value: float32
+    reason: Selects 32-bit Mamba cache state when that precision is required by the workload.
+  caveats:
+  - This setting affects only models that allocate Mamba-related state caches.
+  - float32 restricts FlashAttention hybrid-model block sizes to 16, 32, and 64 when either Mamba cache dtype option is float32.
+  - The current source does not accept bfloat16 for this option.
+  quick_guide: Use auto by default; use float16 to reduce Mamba state-cache storage, and use float32 only when its precision
+    trade-off is warranted.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

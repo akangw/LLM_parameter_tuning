@@ -1,0 +1,53 @@
+name: ec_transfer.ec_rank
+type: nested
+category: communication
+scope: vllm-ascend
+source_file: []
+value_type: int
+default: <computed>
+valid_choices: 0 or 1
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter determines the role of the current vLLM instance in the EC (Encoder-Decoder) cache transfer
+  pipeline between an encoder instance and a PD (Prefill-Decode) instance. In the 1P1D (one Prefill, one Decode) disaggregated
+  architecture, setting ec_rank=0 designates the encoder instance, while ec_rank=1 designates the PD instance. The value controls
+  which communication path is used for KV cache transfer: "the encoder sends" computed KV caches to the PD instance, and the
+  PD instance receives them. Incorrect assignment would break the cache transfer pipeline, causing the PD instance to lack
+  necessary KV cache data, leading to incorrect inference results or hangs. The parameter directly affects end-to-end latency
+  because KV cache transfer over HCCL/NPU links is on the critical path of the decode phase — the PD instance cannot begin
+  decoding until it receives the encoder''s KV cache. Throughput is also affected because the transfer bandwidth utilization
+  depends on proper role assignment enabling optimized HCCL communication patterns.
+
+  '
+usage_locations: []
+related_parameters:
+- name: ec_transfer.ec_transfer_enabled
+  relation: Must be enabled for ec_rank to take effect
+- name: ec_transfer.ec_transfer_type
+  relation: Specifies the transfer mechanism (e.g., HCCL-based) used between encoder and PD instances
+constraints:
+- Only 1P1D (one encoder, one decoder) disaggregated architecture is currently supported
+- ec_rank must be 0 for the encoder instance and 1 for the PD instance
+- ec_transfer.ec_transfer_enabled must be set to true for this parameter to have any effect
+tuning_advice:
+  summary: 'Assign ec_rank=0 to the encoder instance and ec_rank=1 to the PD instance in 1P1D disaggregated deployments to
+    enable KV cache transfer.
+
+    '
+  suggested_values:
+  - scenario: Encoder instance in 1P1D disaggregated deployment
+    value: 0
+    reason: Designates this instance as the KV cache sender, enabling HCCL-based transfer to the PD instance
+  - scenario: PD (Prefill-Decode) instance in 1P1D disaggregated deployment
+    value: 1
+    reason: Designates this instance as the KV cache receiver, enabling it to accept encoder KV caches for decode
+  caveats:
+  - Only 1P1D topology is supported; multi-node encoder or decoder setups are not yet available
+  - Incorrect ec_rank assignment will cause the KV cache transfer to fail silently or produce incorrect results
+  - The KV cache transfer latency directly adds to the time-to-first-token (TTFT) on the PD instance
+  quick_guide: Set ec_rank=0 on the encoder node and ec_rank=1 on the PD node for 1P1D deployments
+analysis_date: '2026-07-06'

@@ -1,0 +1,65 @@
+name: VLLM_COMPILE_CACHE_SAVE_FORMAT
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:1707
+- vllm/config/compilation.py:442
+value_type: str
+default: binary
+valid_choices:
+- binary
+- unpacked
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls the on-disk format of the torch.compile cache artifacts. When set to "binary"
+  (default), compiled graphs are saved as a single binary file, which is multiprocess-safe — critical when multiple vllm serve
+  processes share the same cache directory. When set to "unpacked", the cache is saved as a directory structure, enabling
+  inspection and debugging of Inductor''s generated code but introducing race conditions under concurrent access. The parameter
+  does not affect the compilation process itself or the runtime execution of compiled graphs; it only changes how cache artifacts
+  are serialized to disk. On Ascend NPU, torch.compile is used via the vLLM Inductor backend (compilation mode 3), and cache
+  reuse accelerates cold-start latency. The save format has no direct impact on steady-state throughput or memory usage, but
+  "unpacked" mode can cause cache corruption in multi-process deployments, leading to cache misses and recompilation overhead
+  that degrades cold-start performance.
+
+  '
+usage_locations:
+- file: vllm/envs.py:1707
+  context: Environment variable definition with choices "binary" and "unpacked"
+- file: vllm/config/compilation.py:442
+  context: CompilationConfig field compile_cache_save_format reads this env var as default
+related_parameters:
+- name: compilation_config.cache_dir
+  relation: Specifies the directory where compile cache artifacts are stored; this parameter controls the format of files
+    within that directory
+- name: compilation_config.mode
+  relation: torch.compile must be enabled (mode 1, 2, or 3) for any compile cache to be generated; if mode is 0 (NONE), this
+    parameter has no effect
+constraints:
+- Must be one of "binary" or "unpacked"; any other value will cause a validation error.
+- '"unpacked" format is NOT multiprocess safe and may cause race conditions when multiple vllm serve processes access the
+  same cache directory.'
+tuning_advice:
+  summary: Use the default "binary" format in all production deployments; only switch to "unpacked" for one-off debugging
+    sessions with a single process.
+  suggested_values:
+  - scenario: Production deployment with single or multiple vllm serve processes
+    value: binary
+    reason: Multiprocess-safe; avoids cache corruption and unnecessary recompilation overhead on Ascend NPU
+  - scenario: Debugging torch.compile issues or inspecting Inductor-generated code
+    value: unpacked
+    reason: Allows viewing and setting breakpoints in Inductor's output files; must be used with a single process to avoid
+      race conditions
+  caveats:
+  - Using "unpacked" in a multi-process deployment can cause cache corruption, leading to cache misses and recompilation on
+    every cold start, which significantly increases startup latency on Ascend NPU.
+  - This parameter has no effect if torch.compile is disabled (compilation mode 0).
+  - On Ascend NPU, the vLLM Inductor backend is the default compilation path; cache reuse is important for reducing cold-start
+    time but does not affect steady-state inference performance.
+  quick_guide: Keep the default "binary" for all production use; use "unpacked" only for single-process debugging of torch.compile
+    artifacts.
+analysis_date: '2026-07-06'

@@ -1,0 +1,76 @@
+name: --attention-backend
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/config/attention.py:20
+- vllm/engine/arg_utils.py:876
+- vllm/engine/arg_utils.py:2030
+- docs/source/user_guide/feature_guide/flash_attention.md:63
+value_type: str
+default: null
+valid_choices: Platform- and model-dependent attention backend names; null or auto selects automatically.
+cli_example: --attention-backend FLASH_ATTN
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option chooses the attention implementation, which determines the kernel path and KV-cache handling for
+  prefill and decode. The current upstream configuration explicitly treats null or auto as automatic selection. The target
+  Ascend documentation provides FLASH_ATTN as a supported explicit path for FA3 when batch-invariant mode is enabled, so an
+  override can materially change runtime performance and compatibility rather than only alter presentation.
+usage_locations:
+- file: vllm/config/attention.py:20
+  context: Defines backend selection and documents null or auto as automatic selection.
+- file: vllm/engine/arg_utils.py:2030
+  context: Maps the CLI option into attention_config.backend.
+- file: docs/source/user_guide/feature_guide/flash_attention.md:63
+  context: Documents FLASH_ATTN with VLLM_BATCH_INVARIANT=1 for Ascend FA3.
+related_parameters:
+- name: VLLM_BATCH_INVARIANT
+  relation: Required by the documented Ascend FA3 enablement path.
+- name: attention.flash_attn_version
+  relation: Only applies when using the flash-attention backend.
+- name: --enforce-eager
+  relation: Execution/graph mode can affect the benefit and compatibility of an attention backend.
+constraints:
+- FLASH_ATTN on the documented Ascend FA3 path requires VLLM_BATCH_INVARIANT=1 and the flash_attn_npu package.
+- A forced backend must be supported by the selected model and target vllm-ascend runtime; leave the value unset when that
+  support has not been verified.
+tuning_advice:
+  summary: Keep automatic backend selection as the baseline; explicitly select FLASH_ATTN only when the documented Ascend
+    FA3 prerequisites are installed and benchmarked for the workload.
+  suggested_values:
+  - scenario: General target Ascend deployment without a verified backend-specific setup
+    value: <unset>
+    reason: The current config uses null or auto for platform-aware automatic selection.
+  - scenario: Ascend FA3 deployment with flash_attn_npu and VLLM_BATCH_INVARIANT=1
+    value: FLASH_ATTN
+    reason: This is the backend named in the target vllm-ascend FA3 enablement guide.
+  caveats:
+  - A backend that is fast for one model, shape, or CANN stack may be unsupported or slower for another.
+  - Forcing FLASH_ATTN without its NPU package and batch-invariant prerequisite is not a valid target configuration.
+  quick_guide: Start unset; use FLASH_ATTN only for the documented and benchmarked Ascend FA3 path.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,80 @@
+name: VLLM_SPARSE_INDEXER_MAX_LOGITS_MB
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:899
+- vllm/v1/attention/backends/mla/indexer.py:69
+- vllm/v1/attention/backends/mla/indexer.py:523
+value_type: int
+default: 512
+valid_choices: Any integer accepted by int(); use a positive number of MiB for a meaningful logits-memory budget.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: During sparse-MLA prefill, vllm/v1/attention/backends/mla/indexer.py converts this MiB value to bytes and passes
+  it to split_indexer_prefill_chunks. That function budgets the float32 [M, N] logits tensor with M * N * 4 <= the configured
+  bytes. Requests are greedily grouped while the budget holds; an oversized request is split along its query dimension. Lower
+  values therefore reduce peak logits memory and CUDA-OOM exposure but can create more indexer chunks and launches, increasing
+  prefill latency and reducing throughput. Higher values can group more work and reduce chunking overhead, at the cost of
+  proportionally permitting a larger temporary logits tensor. The setting is read only on the upstream CUDA sparse-indexer
+  prefill path; the pinned vllm-ascend source has no read of this environment variable.
+usage_locations:
+- file: vllm/envs.py:902
+  context: Parses the environment variable as an integer, defaulting to 512 MiB.
+- file: vllm/v1/attention/backends/mla/indexer.py:523
+  context: Converts MiB to bytes and supplies the result to sparse-indexer prefill chunking.
+- file: vllm/v1/attention/backends/mla/indexer.py:69
+  context: Enforces the float32 logits budget while grouping requests and sub-chunking oversized query rows.
+related_parameters:
+- name: max_num_batched_tokens
+  relation: Larger prefill token batches can increase M and make this logits budget trigger more chunking.
+- name: max_model_len
+  relation: Longer sequence lengths can increase N and make this logits budget trigger more chunking.
+constraints:
+- The environment value must be parseable by Python int(), otherwise environment loading raises ValueError.
+- The budget is expressed in MiB and converted with value * 1024 * 1024 before chunking.
+- The logits calculation assumes four bytes per element because the bounded temporary tensor is float32.
+- A positive value is required for meaningful budget semantics; the source does not explicitly reject zero or negative integers.
+tuning_advice:
+  summary: Keep 512 MiB unless sparse-indexer prefill OOMs or profiling shows avoidable chunking with ample free CUDA memory.
+  suggested_values:
+  - scenario: General sparse-MLA serving
+    value: 512
+    reason: This source default balances a bounded temporary logits allocation against chunking overhead.
+  - scenario: Memory-constrained GPU or sparse-indexer prefill CUDA OOM
+    value: 256
+    reason: Halving the budget lowers the maximum planned logits allocation, while accepting more prefill chunks and launch
+      overhead.
+  - scenario: Ample free GPU memory and chunking-limited prefill throughput
+    value: 1024
+    reason: A larger budget may combine more requests or query rows per chunk and reduce repeated indexer work, but permits
+      a larger temporary allocation.
+  caveats:
+  - Tune from measured peak GPU memory and prefill traces; the best value depends on query lengths, sequence lengths, batching,
+    and compression ratio.
+  - A single query row whose N dimension alone exceeds the nominal budget cannot be subdivided further; the implementation
+    clamps its sub-chunk height to one.
+  - This variable does not tune the pinned vllm-ascend NPU lightning-indexer implementation because that repository does not
+    read it.
+  quick_guide: Start at 512; lower it after logits-related CUDA OOMs, or raise it only when profiling shows excess chunking
+    and sufficient memory headroom.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - long_input
+  - high_concurrency

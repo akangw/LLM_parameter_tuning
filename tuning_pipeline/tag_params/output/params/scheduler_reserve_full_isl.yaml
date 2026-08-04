@@ -1,0 +1,108 @@
+name: --scheduler-reserve-full-isl
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:140
+- vllm/engine/arg_utils.py:345
+- vllm/engine/arg_utils.py:589
+- vllm/engine/arg_utils.py:1363
+- vllm/engine/arg_utils.py:1980
+- vllm_ascend/core/scheduler_profiling_chunk.py:46
+- vllm_ascend/core/scheduler_profiling_chunk.py:587
+- vllm_ascend/core/single_type_kv_cache_manager.py:249
+- vllm_ascend/core/single_type_kv_cache_manager.py:273
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --no-scheduler-reserve-full-isl
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When true, the scheduler requires the full input sequence to fit in the KV cache before admitting a request
+  instead of testing only the first scheduled chunk. This reduces over-admission and subsequent KV-cache thrashing during
+  chunked prefill, but it can admit fewer requests concurrently when long prompts compete for a constrained cache. When false,
+  the less conservative gate can expose more concurrency, while increasing the risk that later chunks cannot obtain blocks.
+  The Ascend profiling-chunk scheduler forwards this setting as full_sequence_must_fit. Ascend's single-type cache-manager
+  implementation also documents that this admission branch can leave a long-input request waiting when its requested block
+  bound exceeds the pool, and applies per-request admission caps for compressed MLA and recycling attention specifications.
+usage_locations:
+- file: vllm/config/scheduler.py:140
+  context: Defines the option with default true and documents full-input admission as protection against over-admission and
+    cache thrashing with chunked prefill.
+- file: vllm/engine/arg_utils.py:589
+  context: Exposes the SchedulerConfig default through EngineArgs.
+- file: vllm/engine/arg_utils.py:1980
+  context: Copies the command-line value into SchedulerConfig.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:587
+  context: The Ascend profiling-based chunk scheduler passes the value to allocate_slots as full_sequence_must_fit for waiting-request
+    admission.
+- file: vllm_ascend/core/single_type_kv_cache_manager.py:249
+  context: Documents a long-input admission failure in the full-sequence-fit branch when the request demand exceeds the backing
+    pool.
+- file: vllm_ascend/core/single_type_kv_cache_manager.py:273
+  context: Documents why Ascend reapplies an admission-block cap for recycling cache specifications instead of allowing a
+    full max-model-length reservation bound to exhaust the pool.
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: Full-input reservation is intended to prevent over-admission when only part of a prompt is scheduled at a time.
+- name: --max-num-batched-tokens
+  relation: Controls the token budget and participates in Ascend's per-request admission cap for recycling cache specifications.
+- name: --max-model-len
+  relation: Bounds the full-sequence admission requirement and participates in Ascend's cache-manager admission-cap calculation.
+- name: --gpu-memory-utilization
+  relation: Changes the available KV-cache capacity, which determines how restrictive the full-input fit check is.
+constraints:
+- The option is a BooleanOptionalAction, so --scheduler-reserve-full-isl enables it and --no-scheduler-reserve-full-isl disables
+  it.
+- Its principal effect is on chunked-prefill admission; the current field documentation specifically ties its anti-thrashing
+  purpose to chunked prefill.
+- On Ascend compressed-MLA and recycling-cache paths, effective admission demand is also limited by cache-spec-specific max_admission_blocks_per_request
+  logic.
+tuning_advice:
+  summary: Keep the default true for mixed or long-prompt Ascend serving; consider false only after measurements show conservative
+    admission is limiting throughput and KV-cache pressure is predictably low.
+  suggested_values:
+  - scenario: Production serving with mixed prompt lengths or constrained KV cache
+    value: true
+    reason: The documented behavior prevents admitting a chunked request whose full input cannot fit, reducing the risk of
+      cache thrashing and repeated admission stalls.
+  - scenario: Uniform short-prompt workload with substantial free KV-cache capacity
+    value: false
+    reason: A less conservative admission gate may expose more concurrency, but any throughput benefit must be established
+      on the target NPU and workload.
+  caveats:
+  - Disabling the check does not increase KV-cache capacity; it only relaxes admission, so additional concurrency can be offset
+    by later allocation failures or cache thrashing.
+  - Keeping it enabled can be conservative for long inputs, and the Ascend cache-manager source shows that cache-spec-specific
+    admission caps are necessary to keep full-sequence admission consistent with the actual pool.
+  - Static source establishes the control flow but not the best value for a particular model, prompt distribution, block size,
+    cache capacity, or CANN release.
+  quick_guide: Leave it enabled, monitor waiting requests and KV-cache pressure under representative long-prompt load, and
+    benchmark the disabled form only when the cache has clear headroom.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

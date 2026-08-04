@@ -1,0 +1,111 @@
+name: --enable-expert-parallel
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1021
+- vllm/config/parallel.py:151
+- vllm_ascend/ascend_forward_context.py:270
+- vllm_ascend/platform.py:646
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --tensor-parallel-size 4 --enable-expert-parallel
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option changes MoE layers from tensor parallelism to expert parallelism; dense layers remain governed
+  by tensor parallelism (vllm/config/parallel.py:151). On Ascend, an MoE model with this option disabled, or with an EP group
+  of one, uses ALLGATHER communication. With EP enabled on multiple ranks, the runtime can select MC2, FUSED_MC2, or ALLTOALL
+  according to the device generation, token count, group size, and fused-MC2 settings (vllm_ascend/ascend_forward_context.py:270).
+  That changes communication overhead and compute/communication overlap, so latency and throughput must be benchmarked for
+  the deployment topology. It also enables loading MoE weights with a tensor-parallel partition size of one in the Ascend
+  W4A8 path, distributing expert shards instead of using the normal TP size (vllm_ascend/quantization/methods/w4a8.py:363),
+  which can reduce per-device expert-weight memory. In ACL graph capture with HCCL_OP_EXPANSION_MODE=AIV, EP adds to the stream
+  parallel factor and can reduce the calculated maximum supported batch size (vllm_ascend/utils.py:697).
+usage_locations:
+- file: vllm/config/model.py:1149
+  context: Runs expert-parallel model validation when the option is enabled.
+- file: vllm/config/parallel.py:446
+  context: Requires expert parallelism when expert-parallel load balancing is enabled.
+- file: vllm_ascend/ascend_forward_context.py:270
+  context: Selects ALLGATHER without multi-rank EP and otherwise selects the Ascend MoE communication method.
+- file: vllm_ascend/ascend_config.py:106
+  context: Enables shared-expert data parallelism only when EP is enabled and tensor parallel size exceeds one.
+- file: vllm_ascend/platform.py:646
+  context: Requires EP for Flash Comm v1 when the deployed model is MoE.
+- file: vllm_ascend/quantization/methods/w4a8.py:363
+  context: Uses a tensor-parallel partition size of one for MoE weight loading under EP.
+- file: vllm_ascend/utils.py:697
+  context: Adds EP to the AIV ACL-graph stream parallel factor used to derive supported batch sizes.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: EP replaces TP for MoE layers while TP still determines dense-layer parallelism and participates in compatible
+    multi-rank topologies.
+- name: --data-parallel-size
+  relation: The Ascend EP world size is derived from the distributed world size across data parallelism and pipeline parallelism.
+- name: --enable-eplb
+  relation: Upstream validation requires enable_expert_parallel=true when expert-parallel load balancing is enabled.
+- name: --enable-ep-weight-filter
+  relation: This companion option only has an effect when expert parallelism is active and can reduce loading I/O for local
+    expert shards.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Ascend Flash Comm v1 requires EP for MoE models.
+- name: enable_shared_expert_dp
+  relation: Ascend only enables this additional configuration when EP is active and tensor parallel size is greater than one.
+constraints:
+- Expert parallelism is meaningful only for MoE layers; it does not change dense-layer parallelism.
+- --enable-eplb requires --enable-expert-parallel (vllm/config/parallel.py:446).
+- On Ascend, Flash Comm v1 requires expert parallelism for MoE models (vllm_ascend/platform.py:646).
+- MC2 and FUSED_MC2 communication implementations require expert parallelism; with EP disabled or EP world size one, Ascend
+  selects ALLGATHER (vllm_ascend/ascend_forward_context.py:270).
+- Under HCCL_OP_EXPANSION_MODE=AIV, EP consumes an additional ACL graph stream factor and can lower the calculated maximum
+  supported batch size (vllm_ascend/utils.py:697).
+tuning_advice:
+  summary: For multi-rank Ascend MoE deployments, enable EP when its distributed-expert memory and communication path are
+    appropriate for the model and topology; benchmark against the default TP path using representative prompt and decode token
+    counts. Leave it disabled for dense models and usually for a one-rank EP group, where Ascend selects ALLGATHER either
+    way.
+  suggested_values:
+  - scenario: Multi-rank Ascend MoE serving with experts that fit a distributed EP layout.
+    value: true
+    reason: Enables distributed MoE experts and permits the Ascend MC2/FUSED_MC2 or ALLTOALL selection path instead of the
+      disabled-EP ALLGATHER path.
+  - scenario: Ascend MoE serving using Flash Comm v1.
+    value: true
+    reason: The Ascend platform asserts that EP must be enabled for Flash Comm v1 with an MoE model.
+  - scenario: Dense model, or an MoE deployment whose EP group has a single rank.
+    value: false
+    reason: Dense layers do not use expert parallelism, and a one-rank EP group takes the ALLGATHER path regardless.
+  caveats:
+  - EP does not guarantee a latency or throughput improvement; Ascend communication selection also depends on SoC generation,
+    token count, group size, and fused-MC2 configuration.
+  - A2 MC2 selection has expert-per-device, EP-world-size, and token-capacity conditions; otherwise the runtime selects ALLGATHER.
+  - A3 FUSED_MC2 availability additionally depends on fused-MC2 settings, group-size and draft-model guards, and in one mode
+    W8A8 dynamic quantization.
+  - In AIV ACL graph capture, the extra EP stream factor can reduce the supported batch-size calculation.
+  quick_guide: Use --enable-expert-parallel for a benchmarked multi-rank Ascend MoE setup; keep it enabled when using Flash
+    Comm v1 for MoE, and validate the selected communication path and graph-capture batch limit for the target hardware.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - moe
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

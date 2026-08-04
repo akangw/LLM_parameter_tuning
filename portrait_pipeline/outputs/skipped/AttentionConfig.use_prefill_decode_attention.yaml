@@ -1,0 +1,6 @@
+name: AttentionConfig.use_prefill_decode_attention
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source this field is declared but has no runtime consumer, so changing it does not select
+  kernels or affect latency, throughput, or memory. On vLLM Ascend, platform configuration explicitly treats it as a GPU-specific
+  flag and resets any true value to false.

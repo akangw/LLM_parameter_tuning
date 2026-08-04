@@ -1,0 +1,89 @@
+name: --mm-processor-cache-gb
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:123
+- vllm/engine/arg_utils.py:1183
+- vllm/multimodal/cache.py:343
+- vllm/multimodal/cache.py:401
+- vllm/multimodal/registry.py:278
+- vllm/renderers/base.py:653
+value_type: float
+default: '4'
+valid_choices: '''>= 0 (float)'''
+cli_example: --mm-processor-cache-gb 8
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'Controls the size of the LRU cache that stores preprocessed multimodal inputs (images, videos, audio) to avoid
+  redundant processing across requests. The cache is duplicated for each API server process and each engine core process,
+  so total memory consumption is `mm_processor_cache_gb * (api_server_count + data_parallel_size)`. On Ascend NPU, this cache
+  resides in CPU memory (not NPU HBM), but it still competes with other CPU-side allocations and can affect overall system
+  memory pressure. When set to 0, the cache is disabled entirely, forcing every multimodal input to be reprocessed from scratch
+  — this increases latency for repeated inputs but eliminates the CPU memory overhead. The vllm-ascend documentation explicitly
+  notes that `--mm-processor-cache-gb 0` must be set to disable the cache when using cross-process caching in EPD disaggregation
+  scenarios, as the two caching mechanisms conflict.
+
+  '
+usage_locations:
+- file: vllm/config/multimodal.py:123
+  context: Field definition with default=4 and ge=0 constraint
+- file: vllm/multimodal/cache.py:343
+  context: Used to initialize LRU cache size in MultiModalProcessorOnlyCache
+- file: vllm/multimodal/cache.py:401
+  context: Used to initialize LRU cache size in MultiModalProcessorMetadataCache (IPC mode)
+- file: vllm/multimodal/registry.py:278
+  context: Checked to determine if cache is disabled (<=0 returns None cache type)
+- file: vllm/renderers/base.py:653
+  context: Checked alongside prefix caching to decide whether to generate content-based UUIDs
+related_parameters:
+- name: --mm-processor-cache-type
+  relation: Determines the cache eviction strategy (lru or shm); only effective when mm_processor_cache_gb > 0
+- name: --mm-shm-cache-max-object-size-mb
+  relation: Limits individual object size in shared memory cache; only effective when mm_processor_cache_type is shm
+- name: --enable-prefix-caching
+  relation: When both prefix caching and mm_processor_cache_gb are disabled (0), UUIDs are generated per-request rather than
+    by content hash
+constraints:
+- --mm-processor-cache-gb must be >= 0 (non-negative float)
+- Setting --mm-processor-cache-gb to 0 disables the multimodal processor cache entirely
+- When using EPD disaggregation with cross-process caching, --mm-processor-cache-gb must be set to 0 to avoid conflicts
+tuning_advice:
+  summary: 'Increase this value to cache more preprocessed multimodal inputs and reduce redundant processing latency; decrease
+    or set to 0 to free CPU memory when multimodal caching is not beneficial or conflicts with other caching mechanisms.
+
+    '
+  suggested_values:
+  - scenario: High-throughput multimodal serving with many repeated images/videos
+    value: '8'
+    reason: 'Larger cache reduces reprocessing overhead for frequently seen multimodal inputs, lowering per-request latency.
+      8 GiB provides headroom beyond the default 4 GiB for workloads with diverse media.
+
+      '
+  - scenario: Memory-constrained deployment or EPD disaggregation with cross-process caching
+    value: '0'
+    reason: 'Disabling the cache eliminates CPU memory overhead and avoids conflicts with cross-process caching in EPD disaggregation
+      setups. The vllm-ascend docs explicitly require this for cross-process caching to function.
+
+      '
+  - scenario: Single-user or low-concurrency multimodal serving
+    value: '2'
+    reason: 'A smaller cache is sufficient when inputs are rarely repeated, saving CPU memory while still providing some caching
+      benefit for occasional repeated inputs.
+
+      '
+  caveats:
+  - The cache is duplicated per API process and per engine core process — total CPU memory usage scales multiplicatively with
+    parallelism
+  - On Ascend NPU, this cache uses CPU memory, not NPU HBM, so it does not directly compete with KV cache or model weights
+  - Setting this too high on a system with limited CPU RAM can cause OOM kills of the vLLM process
+  - When mm_processor_cache_gb is 0 and prefix caching is also disabled, multimodal UUIDs are generated per-request rather
+    than by content hash, which may affect cache hit behavior in downstream systems
+  quick_guide: 'Start with the default 4 GiB; increase to 8 GiB for high-throughput multimodal workloads with repeated media,
+    or set to 0 when using EPD disaggregation or when CPU memory is critically constrained.
+
+    '
+analysis_date: '2026-07-06'

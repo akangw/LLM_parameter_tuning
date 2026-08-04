@@ -1,0 +1,82 @@
+name: VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
+type: env
+category: communication
+scope: both
+source_file:
+- vllm/envs.py:1490
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:201
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:194
+value_type: int
+default: '480'
+valid_choices: positive integer (seconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This environment variable controls the timeout (in seconds) for the MooncakeConnector in a disaggregated prefill-decode
+  (PD) setup. It is used in two distinct code paths:
+
+  1. **vllm-ascend (Ascend NPU)**: In `mooncake_connector.py` and `mooncake_hybrid_connector.py`, the timeout governs how
+  long a "delayed free request" is held before its resources (KV cache blocks) are forcibly released. When a request''s delay
+  exceeds this timeout, the request is removed from the processing queue and its blocks are freed, preventing memory leaks
+  on the producer side. This directly affects memory pressure: a shorter timeout frees memory faster but risks prematurely
+  aborting requests that are still being processed; a longer timeout preserves requests longer but may cause memory exhaustion
+  under high load.
+
+  2. **vllm upstream (GPU)**: In `vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py`, the timeout
+  is used in `asyncio.wait()` calls when waiting for the producer side to signal readiness for KV transfer. If the timeout
+  expires, all pending transfer requests are cancelled and an error response is sent. This affects throughput by determining
+  how long the system waits before aborting stalled transfers.
+
+  On Ascend NPU, the primary performance impact is on memory management in disaggregated serving scenarios. The parameter
+  does not directly affect compute throughput or latency for individual requests, but improper tuning can lead to memory pressure
+  (too high) or unnecessary request aborts (too low), indirectly affecting overall throughput.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:201
+  context: Checks if a delayed free request has exceeded the timeout; if so, forcibly frees its resources
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:194
+  context: Same delayed free request timeout check in the hybrid Mooncake connector variant
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:1068
+  context: Used as timeout in asyncio.wait() when waiting for producer-side readiness signals
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:1483
+  context: Referenced in log message when a request times out without being sent on the producer side
+related_parameters:
+- name: VLLM_NIXL_ABORT_REQUEST_TIMEOUT
+  relation: Analogous timeout parameter for NixlConnector in disaggregated PD setups; same default value (480s)
+constraints:
+- Must be a positive integer representing seconds
+- Only applicable when using MooncakeConnector in a disaggregated prefill-decode setup
+tuning_advice:
+  summary: 'Adjust this timeout based on your maximum expected request latency and available KV cache memory in disaggregated
+    prefill-decode deployments on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Default / general-purpose disaggregated serving
+    value: '480'
+    reason: The default 480 seconds (8 minutes) provides ample time for most inference requests to complete before resources
+      are forcibly freed
+  - scenario: High-throughput serving with limited KV cache memory
+    value: '120'
+    reason: A shorter timeout (2 minutes) frees stale KV cache blocks faster, reducing memory pressure at the cost of potentially
+      aborting long-running requests
+  - scenario: Serving very long-context or slow-generation models
+    value: '900'
+    reason: A longer timeout (15 minutes) accommodates requests that may take many minutes to generate, preventing premature
+      aborts
+  caveats:
+  - This parameter only takes effect in disaggregated prefill-decode (PD) deployments using MooncakeConnector; it has no effect
+    in monolithic serving or with other KV connectors
+  - On Ascend NPU, the vllm-ascend Mooncake connector uses this timeout for delayed request cleanup, not for transfer timeout
+    — the behavior differs from upstream vLLM's usage
+  - Setting the timeout too low may cause active requests to be forcibly aborted, leading to failed generations and wasted
+    computation
+  - Setting the timeout too high may cause KV cache memory to be exhausted if many requests stall or fail to send completion
+    notifications
+  quick_guide: Use the default 480s unless you observe KV cache memory exhaustion (reduce) or premature request aborts (increase)
+    in your disaggregated PD setup
+analysis_date: '2026-07-06'

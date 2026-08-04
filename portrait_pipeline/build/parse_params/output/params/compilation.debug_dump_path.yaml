@@ -1,0 +1,52 @@
+name: compilation.debug_dump_path
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/vllm.py:1373
+- vllm/config/vllm.py:1810
+value_type: str
+default: null
+valid_choices: any valid filesystem path string
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter specifies a directory path where torch.compile debug artifacts (e.g., inductor output code,
+  FX graphs) are dumped during model compilation. On Ascend NPU, torch.compile is used via torch_npu''s backend. Enabling
+  debug dumps adds filesystem I/O during the compilation phase (which occurs once at engine startup), slightly increasing
+  startup time. It does not affect steady-state inference latency or throughput. The primary performance cost is disk space
+  consumption and a minor one-time compilation slowdown due to serialization overhead. The path is made rank-aware at runtime
+  via `compile_debug_dump_path()` (vllm/config/vllm.py:1806-1816), which appends `rank_{tp_rank}_dp_{dp_rank}` to avoid conflicts
+  in distributed settings. The env var `VLLM_DEBUG_DUMP_PATH` overrides any config-specified path (vllm/config/vllm.py:1377-1385).
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1373
+  context: Resolves and expands the debug dump path to an absolute path during config initialization.
+- file: vllm/config/vllm.py:1810
+  context: Generates a rank-aware subdirectory path for distributed debug dumping.
+related_parameters:
+- name: VLLM_DEBUG_DUMP_PATH
+  relation: Environment variable that overrides compilation.debug_dump_path if set.
+constraints:
+- The specified path must be a valid filesystem path writable by the vLLM process.
+- If VLLM_DEBUG_DUMP_PATH is set, it takes precedence over compilation.debug_dump_path.
+tuning_advice:
+  summary: Leave unset (null) in production to avoid unnecessary disk I/O and disk space usage during compilation.
+  suggested_values:
+  - scenario: Production deployment on Ascend NPU
+    value: null
+    reason: Avoids debug artifact generation, eliminating startup-time disk I/O and disk space consumption.
+  - scenario: Debugging torch.compile issues on Ascend NPU
+    value: /tmp/vllm_compile_debug
+    reason: Provides a writable location for inductor debug output to diagnose compilation failures or performance issues.
+  caveats:
+  - Enabling this will write potentially large amounts of data to disk during model compilation, which occurs once per engine
+    startup.
+  - In multi-node or multi-rank deployments, each rank writes its own debug artifacts, multiplying disk usage.
+  - The env var VLLM_DEBUG_DUMP_PATH silently overrides this config value if both are set.
+  quick_guide: Set only when debugging torch.compile issues; leave empty for production.
+analysis_date: '2026-07-06'

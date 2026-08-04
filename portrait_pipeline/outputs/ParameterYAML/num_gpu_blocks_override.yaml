@@ -1,0 +1,90 @@
+name: --num-gpu-blocks-override
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/cache.py:85
+- vllm/engine/arg_utils.py:1090
+- vllm_ascend/patch/platform/patch_kv_cache_utils.py:232
+value_type: int
+default: null
+valid_choices: Any integer or null at configuration parsing; for an attention model, the effective block count must be positive.
+cli_example: --num-gpu-blocks-override 1024
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: This option replaces the number of KV-cache blocks calculated from the profiled available-memory budget. The
+  current vLLM planner converts the override back into an effective byte capacity so that automatic maximum-model- length
+  fitting, admission checks, and per-worker cache construction all use the overridden capacity. A smaller count reduces device
+  KV-cache allocation and the number of concurrent or long requests that can remain resident, potentially increasing preemption,
+  recomputation, and latency while reducing throughput. A larger count allocates more KV-cache memory and can increase concurrency,
+  but can exceed the NPU/GPU memory actually available and fail during allocation. Ascend's patched DeepSeek-V4 allocator
+  explicitly applies the upstream override after deriving its block count from available memory; other Ascend layouts use
+  the upstream KV-cache planner. The setting is excluded from the compilation-graph hash because it changes runtime cache
+  capacity rather than graph structure.
+usage_locations:
+- file: vllm/config/cache.py:85
+  context: Defines the nullable integer field, default null, and documents it as an override of the profiled block count for
+    preemption testing.
+- file: vllm/engine/arg_utils.py:1090
+  context: Registers --num-gpu-blocks-override from CacheConfig argument metadata; EngineArgs later passes the value into
+    CacheConfig.
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:232
+  context: Ascend's patched DeepSeek-V4 cache layout computes a memory-derived block count and then applies may_override_num_blocks
+    before sizing cache tensors.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Determines the automatically profiled cache budget, but a non-null block override replaces the resulting block
+    count and effective capacity.
+- name: --kv-cache-memory-bytes
+  relation: Fixes the available cache budget in bytes before block planning; this option subsequently replaces the derived
+    number of blocks.
+- name: --block-size
+  relation: Controls tokens per cache block, so the same override represents different token capacity when the physical block
+    size changes.
+- name: --max-model-len
+  relation: The planner checks whether the overridden effective capacity can hold the configured model length and uses it
+    when maximum length is auto-fitted.
+- name: --max-num-seqs
+  relation: KV-cache capacity can prevent the scheduler from sustaining the requested sequence concurrency even when the sequence
+    limit is higher.
+constraints:
+- The field is parsed as an integer or null; the pinned CacheConfig field does not declare a positive-value validator.
+- For models with an attention KV cache, zero or a negative override yields non-positive effective capacity and fails the
+  cache-memory checks or allocation, so use a positive integer.
+- The requested blocks must fit in device memory after model weights, activations, graph pools, runtime overhead, and Ascend
+  workspace allocations.
+- The override is applied to each worker's planned cache; heterogeneous or pipeline-parallel workers are ultimately normalized
+  to a consistent minimum block count.
+tuning_advice:
+  summary: Leave the option unset for normal automatic sizing. Use a fixed positive count only for controlled preemption tests
+    or a reproducible cache-capacity experiment, and validate device memory, cache metrics, throughput, and latency with the
+    deployed model.
+  suggested_values:
+  - scenario: Normal production serving
+    value: <unset>
+    reason: Lets memory profiling and the platform-specific available-memory calculation choose a cache capacity that reflects
+      the current model and device.
+  - scenario: Preemption-path testing
+    value: 32
+    reason: A deliberately small positive cache provides deterministic pressure; current upstream tests use small values such
+      as 16 and 32 to force constrained behavior.
+  - scenario: Reproducible cache-capacity benchmark
+    value: <measured safe block count>
+    reason: Fixes the logical block capacity across repeated runs, provided that the chosen count fits every participating
+      worker.
+  caveats:
+  - A block count is not a portable byte budget; cache dtype, model architecture, cache groups, parallelism, and block size
+    change memory consumed per block.
+  - Increasing the count above the profiled capacity bypasses the sizing result and can cause initialization OOM rather than
+    creating additional memory.
+  - Reducing the count can cause admission failure if one request at max_model_len no longer fits, or can increase preemption
+    when the workload fills the smaller cache.
+  - Ascend's DeepSeek-V4 layout applies this option explicitly, but safe values still depend on NPU HBM and runtime workspace
+    headroom.
+  quick_guide: Keep null by default; for testing, start with a known small positive count and raise it only after measuring
+    allocation headroom and request-level performance.
+analysis_date: '2026-07-27'

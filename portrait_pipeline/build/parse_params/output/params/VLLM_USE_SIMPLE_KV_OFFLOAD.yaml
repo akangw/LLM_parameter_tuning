@@ -1,0 +1,94 @@
+name: VLLM_USE_SIMPLE_KV_OFFLOAD
+type: env
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/envs.py:1784
+- vllm/config/vllm.py:697
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This environment variable selects the KV cache offloading connector when `kv_offloading_backend` is set to
+  "native" and `kv_offloading_size` is configured. When enabled (set to 1), it uses the "SimpleCPUOffloadConnector" instead
+  of the default "OffloadingConnector". The connector choice directly affects how KV cache blocks are transferred between
+  GPU/NPU memory and CPU memory during offloading, impacting memory pressure, transfer latency, and overall throughput. On
+  Ascend NPU, KV offloading can help mitigate the typically smaller HBM capacity compared to high-end GPUs, but the simpler
+  connector may have different performance characteristics (potentially lower overhead but less sophisticated scheduling).
+  The parameter is read in `VllmConfig._update_kv_transfer_config` (vllm/config/vllm.py:697) during configuration initialization.
+  No vllm-ascend override was found for this parameter, so the upstream behavior applies directly on Ascend.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:697
+  context: 'Selects between "SimpleCPUOffloadConnector" and "OffloadingConnector" when kv_offloading_backend is "native" and
+    kv_offloading_size is set.
+
+    '
+related_parameters:
+- name: kv_offloading_size
+  relation: 'Must be set (non-None) for VLLM_USE_SIMPLE_KV_OFFLOAD to have any effect. This parameter in CacheConfig triggers
+    KV offloading activation.
+
+    '
+- name: kv_offloading_backend
+  relation: 'Must be set to "native" for VLLM_USE_SIMPLE_KV_OFFLOAD to take effect. Other backends (e.g., "lmcache") use their
+    own connectors.
+
+    '
+- name: kv_transfer_config
+  relation: 'The KVTransferConfig object that receives the connector selection based on this env var. Its kv_connector field
+    is set to either "SimpleCPUOffloadConnector" or "OffloadingConnector".
+
+    '
+constraints:
+- kv_offloading_size must be set in CacheConfig for this env var to have any effect.
+- kv_offloading_backend must be set to "native" for this env var to take effect.
+tuning_advice:
+  summary: 'Enable simple KV offload on Ascend NPU when CPU offloading is needed and you want a lightweight connector with
+    potentially lower CPU-side overhead.
+
+    '
+  suggested_values:
+  - scenario: 'Ascend NPU with limited HBM, using native KV offloading to CPU, and prioritizing simplicity over advanced scheduling.
+
+      '
+    value: '1'
+    reason: 'Uses SimpleCPUOffloadConnector which may have lower CPU overhead and simpler logic, beneficial when the advanced
+      features of OffloadingConnector are not needed.
+
+      '
+  - scenario: 'Ascend NPU with native KV offloading where advanced scheduling (e.g., prefetching, eviction policies) is desired.
+
+      '
+    value: '0'
+    reason: 'Uses the default OffloadingConnector which provides more sophisticated KV block management, potentially better
+      for complex workloads.
+
+      '
+  caveats:
+  - 'This parameter only takes effect when both kv_offloading_size is set and kv_offloading_backend is "native". It is silently
+    ignored otherwise.
+
+    '
+  - 'On Ascend NPU, KV offloading to CPU adds PCIe/NUMA transfer latency. The simple connector may not optimize transfer scheduling
+    as aggressively as the default connector, potentially impacting throughput under high load.
+
+    '
+  - 'No vllm-ascend specific override exists for this parameter. The upstream behavior applies directly, but Ascend NPU memory
+    characteristics (typically smaller HBM) make KV offloading more critical than on GPUs.
+
+    '
+  quick_guide: 'Set VLLM_USE_SIMPLE_KV_OFFLOAD=1 for lightweight CPU offloading on Ascend when using native backend; leave
+    at 0 for advanced scheduling features.
+
+    '
+analysis_date: '2026-07-06'

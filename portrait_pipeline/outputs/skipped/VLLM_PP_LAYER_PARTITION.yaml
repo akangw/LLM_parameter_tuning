@@ -1,0 +1,6 @@
+name: VLLM_PP_LAYER_PARTITION
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this environment variable is only declared and parsed in vllm/envs.py; there is no
+  current runtime consumer of the value. The pinned vllm-ascend source contains no reference to it. Consequently, setting
+  it cannot change pipeline layer placement, latency, throughput, or memory in these pinned revisions.

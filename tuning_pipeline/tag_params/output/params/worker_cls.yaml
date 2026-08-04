@@ -1,0 +1,105 @@
+name: --worker-cls
+type: cli
+category: hardware
+scope: both
+source_file:
+- vllm/config/parallel.py:244
+- vllm/engine/arg_utils.py:1070
+- vllm_ascend/platform.py:556
+- vllm_ascend/worker/worker.py:81
+- vllm_ascend/_310p/worker_310p.py:48
+- vllm_ascend/xlite/xlite_worker.py:22
+value_type: str
+default: auto
+valid_choices:
+- auto
+- vllm_ascend.worker.worker.NPUWorker
+- vllm_ascend._310p.worker_310p.NPUWorker310
+- vllm_ascend.xlite.xlite_worker.XliteWorker
+- <fully-qualified Python worker class>
+cli_example: --worker-cls auto
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option selects the worker implementation that owns device initialization and model execution. On Ascend,
+  the platform replaces auto with NPUWorker310 on 310P, XliteWorker when Xlite graph support is enabled, and NPUWorker otherwise.
+  Those implementations initialize different model runners; the standard NPU worker also performs device-memory checks and
+  initializes the Ascend execution environment. Consequently, changing the effective worker can change kernel and graph paths,
+  execution latency and throughput, and the memory available to model weights and KV cache. An incompatible custom class can
+  fail during import, construction, or device execution rather than providing a useful tuning benefit.
+usage_locations:
+- file: vllm_ascend/platform.py:556
+  context: Resolves auto to an Ascend-specific worker during platform configuration.
+- file: vllm_ascend/platform.py:560
+  context: Gives 310P detection precedence and selects NPUWorker310.
+- file: vllm_ascend/platform.py:562
+  context: Selects XliteWorker when the Xlite graph configuration is enabled on a non-310P device.
+- file: vllm_ascend/platform.py:566
+  context: Selects the standard NPUWorker for other Ascend devices.
+- file: vllm_ascend/worker/worker.py:317
+  context: The standard Ascend worker initializes the NPU device and chooses its NPU model runner.
+- file: vllm_ascend/_310p/worker_310p.py:49
+  context: The 310P worker disables JIT compilation and installs NPUModelRunner310.
+- file: vllm_ascend/xlite/xlite_worker.py:25
+  context: The Xlite worker overrides device initialization to install XliteModelRunner.
+related_parameters:
+- name: --worker-extension-cls
+  relation: Extends the selected worker class with additional attributes and collective-RPC methods.
+- name: --distributed-executor-backend
+  relation: Determines how instances of the selected worker are launched and coordinated.
+- name: xlite_graph_config.enabled
+  relation: Causes auto to resolve to XliteWorker on supported non-310P Ascend devices.
+constraints:
+- The value is either auto or the fully-qualified name of an importable worker class compatible with the active platform and
+  worker interface.
+- Ascend rewrites only the auto value; an explicit custom class bypasses the platform's NPUWorker, NPUWorker310, and XliteWorker
+  selection.
+- On a 310P device, auto selects NPUWorker310 before considering whether Xlite graph support is enabled.
+tuning_advice:
+  summary: Keep the default auto value for normal Ascend deployments. It follows the pinned platform's device-aware selection
+    and avoids bypassing the worker implementation designed for the active Ascend environment.
+  suggested_values:
+  - scenario: Standard Ascend device
+    value: auto
+    reason: The platform resolves auto to NPUWorker when neither the 310P nor Xlite branch applies.
+  - scenario: Ascend 310P
+    value: auto
+    reason: The platform resolves auto to NPUWorker310, whose initialization uses the 310P model runner and disables JIT compilation.
+  - scenario: Xlite graph configuration enabled on a non-310P device
+    value: auto
+    reason: The platform resolves auto to XliteWorker and its Xlite-specific model runner.
+  - scenario: Developing a deliberately customized and tested worker
+    value: <fully-qualified Python worker class>
+    reason: An explicit class is appropriate only when its importability, worker interface, and Ascend device behavior have
+      been validated.
+  caveats:
+  - Explicit values are not replaced by the Ascend platform, so they bypass its device-aware automatic selection.
+  - The source establishes which worker is selected but does not provide a universal performance ranking; benchmark any custom
+    worker with the target model, topology, and traffic.
+  - Because the selected worker performs device and model-runner initialization, a compatibility error may prevent startup
+    rather than merely reduce performance.
+  quick_guide: Use --worker-cls auto on Ascend; specify a class path only for a custom worker that has been validated on the
+    target device.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

@@ -1,0 +1,61 @@
+name: additional_config.SLO_limits_for_dynamic_batch
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:201
+value_type: int
+default: -1
+valid_choices: integer >= -1; -1 means disabled
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the dynamic batch sizing feature in vllm-ascend''s scheduler. When set to a non-negative
+  integer, it activates a new scheduler that dynamically adjusts the chunk size during each inference iteration within the
+  chunked prefilling strategy. The value acts as an SLO (Service Level Objective) limit: larger values relax the latency constraint,
+  allowing the scheduler to form larger batches, which increases effective throughput at the cost of higher per-token latency.
+  When set to -1 (default), dynamic batching is completely disabled and the standard chunked prefilling behavior is used.
+  The feature is currently only supported on Ascend 910 B3 with decode token counts below 2048. The parameter is read in AscendConfig.__init__
+  at vllm_ascend/ascend_config.py:201 and stored as self.SLO_limits_for_dynamic_batch. It is a vllm-ascend-specific parameter
+  with no upstream vLLM equivalent.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:201
+  context: Read from additional_config dict and stored as AscendConfig attribute
+related_parameters:
+- name: max_num_batched_tokens
+  relation: Dynamic batch adjusts chunk sizes within the limits set by max_num_batched_tokens
+- name: enable_chunked_prefill
+  relation: Dynamic batch operates within the chunked prefilling strategy; chunked prefill must be enabled
+constraints:
+- Only supported on Ascend 910 B3 hardware
+- Decode token count must be below 2048 for the feature to work
+- Value must be an integer; -1 disables the feature
+tuning_advice:
+  summary: Set to a positive integer (e.g., 100-500) to enable dynamic batch sizing on Ascend 910 B3 for improved throughput;
+    larger values trade latency for throughput.
+  suggested_values:
+  - scenario: Disable dynamic batch (default behavior)
+    value: -1
+    reason: Disables the dynamic batch scheduler entirely; use when running on unsupported hardware or when predictable latency
+      is required
+  - scenario: Moderate throughput improvement with controlled latency on 910 B3
+    value: 100
+    reason: A conservative SLO limit that allows some dynamic batching while keeping latency bounded; good starting point
+      for Qwen/Llama models
+  - scenario: Maximum throughput on 910 B3 with relaxed latency requirements
+    value: 500
+    reason: Larger SLO limit allows more aggressive batching, maximizing effective throughput at the cost of higher TBT (Time
+      Between Tokens)
+  caveats:
+  - Only Ascend 910 B3 is supported; using this on other Ascend hardware may have no effect or cause errors
+  - Decode token counts must be below 2048; models with longer sequences will not benefit
+  - Improvements are most noticeable on Qwen and Llama model architectures
+  - Larger values increase throughput but also increase per-token latency (TBT); tune based on your SLO requirements
+  quick_guide: Start with -1 (disabled). On 910 B3 with decode < 2048 tokens, try 100-500 for throughput gains on Qwen/Llama
+    models.
+analysis_date: '2026-07-06'

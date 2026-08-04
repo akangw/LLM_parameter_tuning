@@ -1,0 +1,76 @@
+name: --enable-tower-connector-lora
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/lora.py:62
+- vllm/engine/arg_utils.py:1250
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --enable-tower-connector-lora
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: "When enabled, this parameter allows LoRA adapters to be applied to the vision encoder (tower) and connector\
+  \ modules of multimodal models, in addition to the language model. On Ascend NPU, this has two main performance implications:\n\
+  1. **Memory overhead**: Additional LoRA weights are loaded for tower/connector modules,\n   increasing GPU memory consumption.\
+  \ The punica wrapper is created for tower modules\n   (vllm/lora/model_manager.py:220-221), which allocates additional buffers\
+  \ for LoRA\n   computation on these modules.\n\n2. **Throughput impact via cache keying**: When enabled, the multimodal\
+  \ embedding cache\n   key includes the LoRA request name (vllm/v1/engine/input_processor.py:163-173).\n   This means different\
+  \ LoRA adapters produce different cache entries for the same image,\n   potentially reducing cache hit rates and increasing\
+  \ redundant computation.\n   Without this flag, all LoRA requests share the same cached multimodal embeddings.\n\nThe parameter\
+  \ is experimental and only supports certain models (e.g., Qwen VL series). If the model does not support tower connector\
+  \ LoRA, the feature is silently disabled with a log message (vllm/lora/model_manager.py:187-194). It is also disabled when\
+  \ `language_model_only` is set in the multimodal config (vllm/lora/model_manager.py:197-206).\nNo vllm-ascend specific overrides\
+  \ were found for this parameter; it follows upstream behavior.\n"
+usage_locations:
+- file: vllm/config/lora.py:62
+  context: Field definition in LoRAConfig dataclass with default False
+- file: vllm/config/lora.py:92
+  context: Included in compute_hash factors, affecting computation graph identity
+- file: vllm/lora/model_manager.py:175
+  context: Checked to determine if tower connector LoRA wrappers should be initialized
+- file: vllm/v1/engine/input_processor.py:163-173
+  context: Used to decide whether mm_hash includes LoRA request name for cache keying
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for this parameter to have any effect; LoRA must be active
+- name: --language-model-only
+  relation: If set, tower connector LoRA is automatically disabled even if this flag is True
+- name: --default-mm-loras
+  relation: Related multimodal LoRA configuration; specifies default LoRA adapters per modality
+constraints:
+- --enable-lora must be True for this parameter to take effect.
+- The model must support tower connector LoRA (must have `get_num_mm_encoder_tokens` method); otherwise the feature is silently
+  disabled.
+- --language-model-only must not be set; if it is, tower connector LoRA is automatically disabled.
+- Currently only supports some multimodal models such as the Qwen VL series.
+tuning_advice:
+  summary: 'Enable only when you need to fine-tune vision encoder or connector modules with LoRA on supported multimodal models;
+    otherwise leave disabled to avoid memory overhead and preserve multimodal embedding cache efficiency.
+
+    '
+  suggested_values:
+  - scenario: Standard multimodal inference without vision tower LoRA fine-tuning
+    value: 'False'
+    reason: 'Avoids additional memory allocation for tower punica wrappers and maintains optimal multimodal embedding cache
+      hit rates across different LoRA requests.
+
+      '
+  - scenario: Deploying Qwen VL series models with vision tower LoRA adapters
+    value: 'True'
+    reason: 'Required for vision tower LoRA to function. Be aware of increased memory usage and potentially reduced cache
+      efficiency when multiple LoRA adapters are active.
+
+      '
+  caveats:
+  - This is an experimental feature and may contain bugs (vllm/lora/model_manager.py:208-212).
+  - When enabled, multimodal embedding cache keys include the LoRA name, so different LoRA adapters will not share cached
+    embeddings for the same image input.
+  - Additional GPU memory is consumed for tower/connector LoRA weights and punica wrapper buffers.
+  - On Ascend NPU, no specific optimizations or overrides exist for this feature; it follows the upstream CPU/GPU code path.
+  quick_guide: Keep False unless deploying vision-tower LoRA adapters on supported models like Qwen VL.
+analysis_date: '2026-07-06'

@@ -1,0 +1,81 @@
+name: HCCL_INTRA_PCIE_ENABLE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:1218
+- vllm_ascend/ops/fused_moe/token_dispatcher.py:114
+- docs/source/tutorials/models/DeepSeek-R1.md:152
+value_type: str
+default: ''
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: Setting this variable to the exact string "1", together with HCCL_INTRA_ROCE_ENABLE set to the exact string
+  "0", makes is_hierarchical_communication_enabled() true. TokenDispatcherWithMC2 records that result and supplies per-token
+  expert_scales to the MC2 dispatch operator. The Ascend source identifies this paired setting as an A2 optimization that
+  reduces cross-machine traffic and significantly improves MC2 dispatch/combine communication performance, so it can materially
+  improve latency and throughput for multi-node MoE workloads using the MC2 token dispatcher. Unset is the implementation
+  default, and the pinned upstream vLLM repository has no use of this variable.
+usage_locations:
+- file: vllm_ascend/utils.py:1213
+  context: Documents the A2 performance intent and reads both HCCL variables; only PCIE="1" together with ROCE="0" enables
+    this environment-variable branch.
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:118
+  context: TokenDispatcherWithMC2 snapshots the hierarchical-communication predicate as need_expert_scale during initialization.
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:214
+  context: When need_expert_scale is true, the MC2 dispatch kwargs include top-k weights converted to float32 as expert_scales.
+- file: docs/source/tutorials/models/DeepSeek-R1.md:152
+  context: The pinned multi-node DeepSeek-R1 deployment examples export value 1 immediately before exporting HCCL_INTRA_ROCE_ENABLE=0.
+related_parameters:
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: Must equal the exact string "0" at the same time as this variable equals "1" for the environment-variable branch
+    to become active.
+- name: additional_config.enable_mc2_hierarchy_comm
+  relation: Independently makes is_hierarchical_communication_enabled() true. Unlike the HCCL environment-variable pair, this
+    additional config also makes TokenDispatcherWithMC2 pass comm_alg="hierarchy" to MC2 dispatch and combine.
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: Controls whether the fused MC2 path is enabled; this HCCL setting is consumed in TokenDispatcherWithMC2 and therefore
+    matters only when that path is in use.
+constraints:
+- Both comparisons are exact and case-sensitive; this variable must be "1" and HCCL_INTRA_ROCE_ENABLE must be "0".
+- The source documents the optimization specifically for A2 hardware and the TokenDispatcherWithMC2 MoE path; it does not
+  establish a benefit for other device families or non-MC2 workloads.
+- The environment-variable pair sets need_expert_scale but does not by itself set need_comm_alg or pass comm_alg="hierarchy";
+  that behavior belongs to additional_config.enable_mc2_hierarchy_comm.
+tuning_advice:
+  summary: For a multi-node A2 MoE workload using MC2, benchmark the documented pair HCCL_INTRA_PCIE_ENABLE=1 and HCCL_INTRA_ROCE_ENABLE=0;
+    otherwise leave this variable unset.
+  suggested_values:
+  - scenario: Multi-node MoE inference on A2 using TokenDispatcherWithMC2, with cross-machine dispatch/combine communication
+      as a bottleneck
+    value: '1'
+    reason: With HCCL_INTRA_ROCE_ENABLE=0, activates the source-documented A2 branch that passes expert_scales to MC2 dispatch
+      and is intended to reduce cross-machine traffic and improve communication performance.
+  - scenario: Non-MoE, non-MC2, single-node, or non-A2 workloads
+    value: ''
+    reason: Retains the implementation default because the pinned source gives no performance benefit for these cases.
+  caveats:
+  - Setting value 1 alone has no effect on the vLLM-Ascend predicate unless HCCL_INTRA_ROCE_ENABLE is exactly 0.
+  - The source makes a qualitative performance claim but supplies no benchmark magnitude; measure end-to-end latency and throughput
+    on the target topology.
+  - Do not treat this environment pair as identical to additional_config.enable_mc2_hierarchy_comm, which also selects the
+    MC2 comm_alg="hierarchy" arguments.
+  quick_guide: On multi-node A2 MC2 MoE, test PCIE=1 together with ROCE=0; leave unset elsewhere.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  deploy_scenario: []

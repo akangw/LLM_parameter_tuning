@@ -1,0 +1,6 @@
+name: --enable-mamba-cache-stochastic-rounding
+type: cli
+performance_impact: none
+skip_reason: 'Unsupported on Ascend: upstream MambaConfig rejects stochastic rounding unless current_platform.is_cuda(), and
+  the pinned vllm-ascend repository provides no override for this flag. It therefore cannot affect latency, throughput, or
+  memory for an Ascend run.'

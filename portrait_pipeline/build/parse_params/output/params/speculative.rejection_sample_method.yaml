@@ -1,0 +1,73 @@
+name: speculative.rejection_sample_method
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: standard
+valid_choices:
+- standard
+- synthetic
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the rejection sampling algorithm used in speculative decoding. ''standard'' uses probabilistic
+  rejection sampling based on the target model''s logits, which is the mathematically correct method and guarantees output
+  distribution identical to non-speculative decoding. ''synthetic'' accepts draft tokens with a decaying probability calibrated
+  to a fixed synthetic_acceptance_rate, bypassing the target model''s logits for acceptance decisions. The synthetic method
+  can reduce the computational cost of rejection sampling (fewer target model forward passes for verification) but may produce
+  outputs that deviate from the target model''s distribution. On Ascend NPU, the performance impact is low because the rejection
+  sampling step itself is a lightweight CPU-side operation compared to the model forward passes; the primary performance drivers
+  in speculative decoding are the draft model''s proposal speed and the target model''s verification throughput, not the rejection
+  sampling algorithm choice.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.draft_sample_method
+  relation: 'When rejection_sample_method is ''standard'', draft_sample_method controls whether cached draft logits are used
+    during rejection sampling.
+
+    '
+- name: speculative.synthetic_acceptance_rate
+  relation: 'When rejection_sample_method is ''synthetic'', this parameter sets the base acceptance rate used for the decaying
+    probability schedule.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Use ''standard'' for production deployments where output quality matters; only consider ''synthetic'' for throughput
+    benchmarking or scenarios where exact output distribution is not critical.
+
+    '
+  suggested_values:
+  - scenario: Production inference requiring correct output distribution
+    value: standard
+    reason: 'Guarantees the output distribution matches the target model exactly, which is essential for most use cases. The
+      computational overhead of standard rejection sampling is negligible compared to model forward passes.
+
+      '
+  - scenario: Throughput benchmarking or non-critical generation where slight distribution drift is acceptable
+    value: synthetic
+    reason: 'Can marginally increase throughput by reducing the cost of rejection sampling, but the gain is typically small
+      and comes at the cost of output quality.
+
+      '
+  caveats:
+  - '''synthetic'' rejection sampling may cause the generated text to diverge from the target model''s intended distribution,
+    potentially producing lower-quality or less coherent outputs.
+
+    '
+  - 'The performance difference between ''standard'' and ''synthetic'' is typically small because rejection sampling is a
+    lightweight operation; the bottleneck in speculative decoding is almost always the model forward passes, not the sampling
+    logic.
+
+    '
+  quick_guide: 'Stick with ''standard'' unless you have a specific reason to trade output quality for marginal throughput
+    gains.
+
+    '
+analysis_date: '2026-07-06'

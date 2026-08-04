@@ -1,0 +1,90 @@
+name: EPLBConfig.use_async
+type: nested
+category: parallelism
+scope: vllm
+source_file:
+- vllm/config/parallel.py:80
+- vllm/config/parallel.py:100
+- vllm/config/parallel.py:893
+- docs/serving/expert_parallel_deployment.md:154
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: --eplb-config '{"use_async":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Setting use_async to true requests non-blocking Expert Parallel Load Balancing, which the upstream deployment
+  guide describes as reducing EPLB latency overhead. In the pinned implementation, when EPLB is enabled and communicator is
+  left unset, true auto-selects the torch_gloo communicator with CPU staging, while false auto-selects torch_nccl. The code
+  explains that Gloo avoids hangs caused by NCCL multi-thread conflicts during asynchronous EPLB. Thus this option can change
+  the communication path used for periodic expert-weight redistribution and the amount of request-serving interference during
+  a rebalance, affecting latency and throughput. The pinned vllm-ascend repository contains no direct reference or override
+  for EPLBConfig.use_async, so no Ascend-specific performance behavior is established.
+usage_locations:
+- file: vllm/config/parallel.py:80
+  context: Defines the nested boolean with default false and documents it as the non-blocking EPLB switch.
+- file: vllm/config/parallel.py:100
+  context: Rejects asynchronous EPLB when the selected EPLB policy is not default.
+- file: vllm/config/parallel.py:893
+  context: When EPLB is enabled and communicator is unset, selects torch_gloo for use_async=true and torch_nccl otherwise.
+- file: docs/serving/expert_parallel_deployment.md:154
+  context: Documents use_async in the --eplb-config JSON object as non-blocking EPLB intended to reduce latency overhead.
+related_parameters:
+- name: --enable-eplb
+  relation: The communicator auto-selection controlled by use_async runs only when EPLB is enabled.
+- name: EPLBConfig.policy
+  relation: use_async=true is valid only with the default EPLB policy.
+- name: EPLBConfig.communicator
+  relation: An explicit communicator bypasses the Gloo-versus-NCCL auto-selection made from use_async.
+- name: --enable-elastic-ep
+  relation: Elastic EP takes precedence in automatic communicator selection and chooses pynccl even when use_async is true.
+- name: EPLBConfig.step_interval
+  relation: Controls how often the expert redistribution whose serving overhead use_async is intended to reduce occurs.
+constraints:
+- use_async=true requires EPLBConfig.policy=default or EPLBConfig validation raises ValueError.
+- The option affects EPLB execution only when --enable-eplb is active.
+- Automatic selection of torch_gloo occurs only when EPLBConfig.communicator is null and elastic EP is disabled.
+- If elastic EP is enabled and communicator is null, pynccl is selected before the use_async branch.
+- The pinned vllm-ascend source does not directly consume or override EPLBConfig.use_async; support and performance on Ascend
+  cannot be inferred from the upstream behavior alone.
+tuning_advice:
+  summary: For upstream vLLM EPLB with the default policy, test use_async=true when periodic rebalancing causes visible latency
+    or throughput disruption; otherwise keep the conservative false default.
+  suggested_values:
+  - scenario: Upstream vLLM with EPLB enabled, default policy, communicator left on automatic selection, and rebalance-related
+      latency spikes
+    value: true
+    reason: Requests the documented non-blocking mode and makes automatic communicator selection choose torch_gloo to avoid
+      NCCL multi-thread conflicts.
+  - scenario: EPLB disabled, a non-default EPLB policy, or no evidence of rebalance interference
+    value: false
+    reason: It is the default, has no benefit when EPLB is disabled, and is the only valid setting with a non-default policy.
+  caveats:
+  - Setting true changes the automatic communication backend from device-side torch_nccl to CPU-staged torch_gloo, so the
+    net benefit depends on topology, model size, rebalance frequency, and host-network performance.
+  - An explicitly configured communicator or elastic EP prevents use_async from selecting torch_gloo.
+  - The pinned sources provide no benchmark figures; validate p50 and tail latency plus sustained throughput while rebalancing
+    on the target deployment.
+  - The pinned vllm-ascend repository has separate dynamic-EPLB machinery but no direct use_async reference, so do not assume
+    this upstream tuning recommendation applies to Ascend.
+  quick_guide: Enable EPLB with the default policy, leave communicator unset, compare false and true under a workload long
+    enough to trigger several rebalances, and retain true only if latency or throughput improves.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,68 @@
+name: --dcp-kv-cache-interleave-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:466
+- vllm/config/parallel.py:315
+- vllm/config/vllm.py:1953
+- vllm_ascend/attention/context_parallel/sfa_cp.py:46
+- vllm_ascend/worker/block_table.py:158
+value_type: int
+default: 1
+valid_choices: Integer interleave size; for an effective DCP setting above 1, --block-size must be at least that size and
+  divisible by it.
+cli_example: --dcp-kv-cache-interleave-size 128
+deprecated: true
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This legacy DCP-only option controls the KV-cache interleave size only when decode context parallelism is enabled.
+  In current upstream validation, a value greater than 1 replaces the effective cp_kv_cache_interleave_size when it differs.
+  The target Ascend context-parallel implementation consumes that effective CP value to select local block size, assign token
+  ranges to CP ranks, and construct slot mappings, so the override can change KV-cache layout, communication work, and access
+  locality. It is superseded by --cp-kv-cache-interleave-size, which covers both DCP and PCP.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1936
+  context: Forwards the CLI field into ParallelConfig.
+- file: vllm/config/vllm.py:1953
+  context: With DCP enabled, a legacy value above 1 overrides a differing cp_kv_cache_interleave_size and then participates
+    in block-size validation.
+- file: vllm_ascend/attention/context_parallel/sfa_cp.py:46
+  context: The Ascend context-parallel backend reads the effective cp_kv_cache_interleave_size as its local block size.
+- file: vllm_ascend/worker/block_table.py:158
+  context: Passes the effective CP interleave size into slot-mapping computation for combined DCP and PCP ranks.
+related_parameters:
+- name: --cp-kv-cache-interleave-size
+  relation: Replacement option; when DCP is active and this legacy value is greater than 1 and differs, it overrides the effective
+    CP value.
+- name: --decode-context-parallel-size
+  relation: The upstream override and block-size validation occur only when this is greater than 1.
+- name: --block-size
+  relation: Must be at least the effective CP interleave size and divisible by it when DCP is active.
+constraints:
+- The legacy override is considered only when --decode-context-parallel-size is greater than 1.
+- A legacy value greater than 1 replaces a differing --cp-kv-cache-interleave-size for the DCP configuration path.
+- With DCP enabled, --block-size must be greater than or equal to and divisible by the effective CP interleave size.
+tuning_advice:
+  summary: Do not use this legacy option for new configurations; set --cp-kv-cache-interleave-size directly and benchmark
+    the resulting CP layout on the target Ascend topology.
+  suggested_values:
+  - scenario: New DCP or PCP deployment
+    value: 1
+    reason: Leave this deprecated option at its default and configure --cp-kv-cache-interleave-size explicitly if a different
+      layout is needed.
+  - scenario: Legacy DCP configuration that must preserve non-default interleaving
+    value: 128
+    reason: Use only a value compatible with --block-size; a value above 1 overrides the replacement setting during DCP validation.
+  caveats:
+  - This option is documented in source as replaced by --cp-kv-cache-interleave-size and is slated for deprecation when PCP
+    is fully supported.
+  - Its non-default effect is conditional on DCP being enabled and its value being greater than 1.
+  - The source establishes layout and communication-path changes but not a universally faster value; benchmark latency, throughput,
+    and memory on the deployed model and NPU topology.
+  quick_guide: Prefer --cp-kv-cache-interleave-size; retain this option only to preserve a legacy DCP configuration, and ensure
+    the effective value divides --block-size.
+analysis_date: '2026-07-27'

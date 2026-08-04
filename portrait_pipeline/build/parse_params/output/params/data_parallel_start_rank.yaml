@@ -1,0 +1,73 @@
+name: --data-parallel-start-rank
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:980
+- vllm/engine/arg_utils.py:470
+- vllm/engine/arg_utils.py:1822
+- vllm/entrypoints/cli/serve.py:71
+value_type: int
+default: None
+valid_choices: any positive integer
+cli_example: --data-parallel-start-rank 4
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+impact_detail: 'This parameter sets the starting data parallel rank for secondary nodes in a multi-node data-parallel deployment.
+  It is used to infer hybrid load balancing mode when `--data-parallel-size-local` is set and the instance is not headless.
+  The parameter itself does not directly control computation or memory allocation; it only influences the assignment of data
+  parallel ranks across nodes, which affects how requests are distributed among replicas. On Ascend NPU, the performance impact
+  is indirect — it determines which DP ranks run on which nodes, but the actual throughput depends on the underlying DP parallelism
+  configuration (`--data-parallel-size`, `--data-parallel-size-local`) and the load balancing mode. The parameter has no Ascend-specific
+  override or behavior in vllm-ascend.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1822
+  context: Used to infer hybrid load balancing mode when data_parallel_size_local is set and not headless
+- file: vllm/entrypoints/cli/serve.py:71
+  context: Used to detect hybrid load balancing mode for defaulting api_server_count
+related_parameters:
+- name: --data-parallel-size
+  relation: Defines the total number of data parallel replicas; start_rank must be less than this value
+- name: --data-parallel-size-local
+  relation: Number of DP replicas on this node; start_rank is used with this to infer hybrid LB mode
+- name: --data-parallel-rank
+  relation: Explicit DP rank for external LB mode; mutually exclusive with start_rank (external vs hybrid LB)
+- name: --data-parallel-hybrid-lb
+  relation: Explicitly enables hybrid LB; start_rank implicitly enables it when data_parallel_size_local is set
+- name: --data-parallel-external-lb
+  relation: External LB mode; cannot be used simultaneously with hybrid LB (which start_rank implies)
+- name: --node-rank
+  relation: Node rank in distributed setup; used as fallback for DP rank inference when start_rank is not set
+constraints:
+- --data-parallel-start-rank cannot be used simultaneously with --data-parallel-external-lb or --data-parallel-rank (external
+  and hybrid LB modes are mutually exclusive)
+- --data-parallel-start-rank must be a non-negative integer
+- --data-parallel-start-rank is only meaningful when --data-parallel-size-local is also set
+tuning_advice:
+  summary: Set --data-parallel-start-rank on secondary nodes to assign non-overlapping DP rank ranges in multi-node hybrid
+    LB deployments; has minimal direct performance impact on Ascend NPU.
+  suggested_values:
+  - scenario: Single-node deployment
+    value: None (omit the flag)
+    reason: The parameter is only relevant for multi-node deployments with hybrid load balancing; omitting it avoids unnecessary
+      configuration
+  - scenario: Multi-node hybrid LB with 2 nodes, 4 DP replicas per node
+    value: '4'
+    reason: Node 0 handles ranks 0-3, node 1 handles ranks 4-7; setting start_rank=4 on node 1 ensures non-overlapping rank
+      assignment
+  - scenario: Multi-node hybrid LB with N nodes, K DP replicas per node
+    value: <node_index * K>
+    reason: Each node gets a contiguous block of K ranks starting at node_index * K, ensuring even distribution without overlap
+  caveats:
+  - Setting --data-parallel-start-rank implicitly enables hybrid load balancing mode, which cannot be combined with external
+    LB mode (--data-parallel-external-lb or --data-parallel-rank)
+  - When --data-parallel-size-local is 1, hybrid LB is automatically switched to external LB regardless of start_rank setting
+  - On Ascend NPU, this parameter has no hardware-specific effect; the performance characteristics depend on the underlying
+    DP parallelism and HCCL communication, not on rank assignment
+  quick_guide: Use --data-parallel-start-rank only on secondary nodes in multi-node hybrid LB deployments to assign non-overlapping
+    DP rank ranges; omit for single-node or external LB setups.
+analysis_date: '2026-07-06'

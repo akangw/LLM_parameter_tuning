@@ -1,0 +1,69 @@
+name: VLLM_MORIIO_NUM_WORKERS
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:209
+- vllm/envs.py:1488
+value_type: int
+default: 1
+valid_choices: Any base-10 integer accepted by Python int(); the pinned vLLM source does not impose a range check.
+cli_example: VLLM_MORIIO_NUM_WORKERS=1 vllm serve <model> --kv-transfer-config '<Mori-IO connector configuration>'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: Upstream vLLM reads VLLM_MORIIO_NUM_WORKERS when MoRIIOConnectorWorker initializes its Mori-IO engine. MoRIIOWrapper.set_backend_type
+  assigns the value to num_worker_threads and passes it to mori.io.RdmaBackendConfig before create_backend(BackendType.RDMA).
+  It can therefore change the worker parallelism and CPU overhead of RDMA KV-cache transfers, which may affect transfer latency
+  and throughput. It has no effect unless the Mori-IO KV connector and its RDMA backend are instantiated. The pinned vllm-ascend
+  repository contains no definition, override, or consumer for this variable, so there is no Ascend-specific behavior to report.
+usage_locations:
+- file: vllm/envs.py:1488
+  context: Parses the environment value as an integer with a default of 1; the parsed value is consumed by the upstream Mori-IO
+    RDMA backend initialization path.
+related_parameters:
+- name: VLLM_MORIIO_QP_PER_TRANSFER
+  relation: Passed to the same RdmaBackendConfig and controls queue pairs per transfer.
+- name: VLLM_MORIIO_POST_BATCH_SIZE
+  relation: Passed to the same RdmaBackendConfig and controls the post-processing batch size.
+constraints:
+- The value must be parseable by Python int(), or environment loading raises ValueError.
+- The pinned vLLM source performs no range validation; acceptable operational values depend on the installed mori.io backend.
+- The setting is relevant only when the Mori-IO KV connector initializes its RDMA backend.
+tuning_advice:
+  summary: Keep the default unless measurements show that Mori-IO transfer processing is limiting a disaggregated deployment;
+    tune against end-to-end transfer latency, throughput, and host CPU use.
+  suggested_values:
+  - scenario: Baseline or unmeasured deployment
+    value: 1
+    reason: This is the upstream default and provides a stable baseline without adding worker-thread overhead.
+  - scenario: Measured Mori-IO transfer bottleneck
+    value: A higher backend-supported integer
+    reason: Additional workers may increase concurrent Mori operations, but the pinned source supplies no universal optimum;
+      benchmark incremental changes on the target CPU, RDMA fabric, and concurrency level.
+  caveats:
+  - More workers can increase host CPU consumption and scheduling overhead, so higher values may not improve performance.
+  - The pinned source does not validate the range or document a maximum; confirm constraints in the installed mori.io version.
+  - This variable does not enable Mori-IO or select the connector.
+  - The pinned vllm-ascend repository has no Ascend-specific handling for this setting.
+  quick_guide: Start at 1 and increase only while measured KV-transfer performance improves without unacceptable CPU overhead.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

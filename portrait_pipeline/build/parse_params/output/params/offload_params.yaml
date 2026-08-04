@@ -1,0 +1,82 @@
+name: --offload-params
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:70
+- vllm/engine/arg_utils.py:1158
+- vllm/model_executor/offloader/prefetch.py:146
+value_type: set[str]
+default: set()
+valid_choices: any set of parameter name segments (strings)
+cli_example: --offload-params gate_up_proj down_proj
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls which model parameters are offloaded to CPU memory when using the prefetch-based offloading
+  backend (--offload-group-size > 0). It acts as a whitelist filter: "only parameters whose names contain one of" the specified
+  segments are offloaded. When empty (default), ALL parameters of each offloaded layer are offloaded. When non-empty, only
+  matching parameters are offloaded, reducing CPU-GPU transfer volume and GPU memory usage for offload buffers. The matching
+  logic in vllm/model_executor/offloader/prefetch.py:181-186 uses segment matching: `f".{p}." in f".{name}."` — so "w13_weight"
+  matches "mlp.experts.w13_weight" but not "mlp.experts.w13_weight_scale". This allows fine-grained control over which weight
+  tensors (e.g., only MLP weights, only MoE expert weights) are offloaded, directly affecting: (1) GPU memory saved by offloading,
+  (2) CPU-GPU transfer bandwidth consumption, and (3) inference latency due to H2D transfer overhead. On Ascend NPU, the same
+  mechanism applies — the offloader uses PyTorch streams for async H2D, which maps to HCCL/CANN memory operations. Selective
+  offloading is particularly important for Ascend NPUs with limited HBM capacity (e.g., 64GB on Atlas 800T A2) where offloading
+  only the largest parameter groups (like MoE expert weights) can make large models fit while minimizing the performance penalty.
+
+  '
+usage_locations:
+- file: vllm/model_executor/offloader/prefetch.py:181
+  context: 'Whitelist filter: only parameters matching offload_params segments are offloaded per layer'
+- file: vllm/model_executor/offloader/base.py:153
+  context: Passed to PrefetchOffloader constructor when backend is 'prefetch'
+- file: vllm/config/offload.py:70
+  context: Field definition in PrefetchOffloadConfig with segment matching documentation
+related_parameters:
+- name: --offload-group-size
+  relation: Must be > 0 for --offload-params to take effect; defines which layers are candidates for offloading
+- name: --offload-num-in-group
+  relation: Determines how many layers per group are offloaded; --offload-params filters which parameters within those layers
+- name: --offload-prefetch-step
+  relation: Controls prefetch depth; larger values increase GPU memory usage for offload buffers, which --offload-params can
+    reduce
+- name: --cpu-offload-params
+  relation: Analogous parameter for UVA offloading backend (--cpu-offload-gb > 0); uses same segment matching logic
+- name: --offload-backend
+  relation: Must resolve to 'prefetch' (either explicitly or via auto when --offload-group-size > 0) for --offload-params
+    to be used
+constraints:
+- --offload-group-size must be greater than 0 for --offload-params to have any effect
+- Parameter name segments must match exactly — partial segment matching is not supported (e.g., 'expert' will NOT match 'experts')
+- If --offload-params is non-empty and no parameters in a layer match, that layer is skipped entirely (no offloading occurs
+  for it)
+tuning_advice:
+  summary: Use --offload-params to selectively offload only the largest parameter groups (e.g., MoE expert weights), reducing
+    transfer overhead while still fitting large models on Ascend NPUs with limited HBM.
+  suggested_values:
+  - scenario: MoE model (e.g., DeepSeek-V2, Mixtral) on Ascend NPU with limited HBM — offload only expert weights
+    value: set(['w13_weight', 'w2_weight'])
+    reason: MoE expert weights dominate model size; offloading only these reduces CPU-GPU transfer volume by 60-80% compared
+      to offloading all parameters, minimizing latency impact while freeing enough HBM for KV cache
+  - scenario: Dense model (e.g., Llama-3) — offload only MLP weights
+    value: set(['gate_up_proj', 'down_proj'])
+    reason: MLP blocks are the largest parameter groups in dense transformers; offloading only these reduces transfer overhead
+      while keeping attention weights on-device for fast prefill
+  - scenario: Maximum memory savings — offload all parameters (default behavior)
+    value: set()
+    reason: Empty set offloads all parameters of each selected layer, maximizing GPU memory savings at the cost of higher
+      transfer latency; suitable when model barely fits even with selective offloading
+  caveats:
+  - On Ascend NPU, CPU-GPU bandwidth via HCCL/CANN may be lower than NVIDIA NVLink — selective offloading is more critical
+    to avoid bandwidth saturation
+  - 'Segment matching is exact: ''w2'' will NOT match ''w2_weight''. Always use full segment names from the model''s state_dict
+    keys'
+  - If --offload-params filters out all parameters in a layer, that layer is NOT offloaded at all — this may cause unexpected
+    memory pressure if you intended to offload that layer
+  - The offload parameter filter is applied per-layer; you cannot offload different parameter sets for different layers
+  quick_guide: For MoE models on Ascend, set --offload-params to expert weight segments (e.g., 'w13_weight w2_weight') to
+    maximize memory savings with minimal latency penalty.
+analysis_date: '2026-07-06'

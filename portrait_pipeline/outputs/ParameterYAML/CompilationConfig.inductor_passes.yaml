@@ -1,0 +1,77 @@
+name: CompilationConfig.inductor_passes
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:573
+- vllm/config/compilation.py:916
+- vllm_ascend/platform.py:129
+- vllm_ascend/compilation/compiler_interface.py:55
+value_type: dict
+default: {}
+valid_choices: A mapping from an Inductor configuration pass key to either a qualified function name string, or, when constructing
+  CompilationConfig directly in Python, a callable or InductorPass object.
+cli_example: --compilation-config '{"inductor_passes":{"post_grad_custom_post_pass":"my_package.my_pass"}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: During CompilationConfig initialization, each entry is copied into inductor_compile_config under the supplied
+  key. Callable values that are not already InductorPass instances are wrapped as CallableInductorPass objects; string values
+  are imported and likewise wrapped when necessary. The chosen hook therefore runs inside the compiler at the stage named
+  by its key and can rewrite the FX graph, changing fusion, generated kernels, compilation cost, steady-state latency and
+  throughput, and the memory used by generated intermediates or code. The empty default installs no user pass. On Ascend the
+  platform's pass key is graph_fusion_manager, and its custom compiler invokes the object stored at that key before compiling
+  the graph, so replacing that key can also replace the platform graph-fusion manager and its built-in fusion pipeline.
+usage_locations:
+- file: vllm/config/compilation.py:573
+  context: Defines the mapping with an empty default and documents qualified-name and direct-Python callable forms.
+- file: vllm/config/compilation.py:916
+  context: Resolves or wraps every configured pass and inserts it into inductor_compile_config under the user-supplied key.
+- file: vllm_ascend/platform.py:129
+  context: Declares graph_fusion_manager as the Ascend Inductor pass key and identifies the platform pass-manager class registered
+    there.
+- file: vllm_ascend/compilation/compiler_interface.py:55
+  context: The Ascend compiler reads graph_fusion_manager from the compiler configuration and calls it on the FX graph.
+related_parameters:
+- name: CompilationConfig.inductor_compile_config
+  relation: Receives the resolved pass objects, keyed by each inductor_passes entry, before compilation.
+- name: CompilationConfig.pass_config
+  relation: Controls vLLM and Ascend built-in compiler passes; use it instead of this low-level hook when it exposes the desired
+    optimization.
+- name: CompilationConfig.mode
+  relation: Compilation must be active for an Inductor pass hook to affect generated execution.
+constraints:
+- Each mapping value must be a qualified-name string, a callable, or an InductorPass instance; a non-callable direct Python
+  value fails an assertion.
+- A string value must resolve to an importable pass function in every worker process or configuration initialization fails.
+- Each key must be a valid configuration hook understood by the selected compiler backend; arbitrary or misspelled keys are
+  not useful and may be rejected downstream.
+- Custom graph rewrites must preserve model semantics, supported shapes, dtypes, and device placement; the configuration layer
+  does not validate those properties.
+- On Ascend, using graph_fusion_manager as a user key can replace the platform manager consumed by AscendCompiler and bypass
+  its configured built-in fusion passes.
+tuning_advice:
+  summary: Keep the mapping empty unless developing and benchmarking a compiler pass for a precisely identified graph pattern.
+  suggested_values:
+  - scenario: Normal production serving, including Ascend deployments
+    value: {}
+    reason: The empty default avoids unvalidated graph rewrites and preserves the platform's normal compiler-pass registration.
+  - scenario: Controlled upstream compiler-pass experiment
+    value:
+      post_grad_custom_post_pass: my_package.my_pass
+    reason: Install a tested pass at a known Inductor hook only after correctness and performance validation on the target
+      model and shapes.
+  caveats:
+  - A pass may improve one graph while increasing compile time or degrading latency, throughput, or memory on another graph.
+  - An invalid import or non-callable object prevents initialization rather than silently falling back.
+  - Incorrect graph rewrites can produce wrong results or compilation failures, so performance measurements alone are insufficient.
+  - Avoid overriding graph_fusion_manager on Ascend unless intentionally replacing and reproducing the platform manager's
+    required behavior.
+  - Changes alter the effective Inductor configuration and should be benchmarked with cold-start compilation separated from
+    steady-state serving.
+  quick_guide: Leave it as {}; for expert experiments, add one known hook and one tested pass at a time, verify numerical
+    correctness, then compare compile time, peak memory, latency, and throughput against the empty baseline.
+analysis_date: '2026-07-30'

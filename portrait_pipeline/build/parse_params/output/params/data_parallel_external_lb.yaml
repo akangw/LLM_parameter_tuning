@@ -1,0 +1,73 @@
+name: --data-parallel-external-lb
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1016
+- vllm/config/parallel.py:135
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --data-parallel-external-lb
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This flag controls the load balancing mode for MoE data-parallel deployments. When enabled, vLLM creates a
+  separate AsyncMPClient per DP rank (DPAsyncMPClient) instead of a single DPLBAsyncMPClient that balances across all ranks
+  internally. This means the external load balancer (e.g., Kubernetes Service) is responsible for routing requests to individual
+  DP ranks. The internal DP coordinator is still used for wave coordination in MoE models, but the frontend stats publishing
+  (publish_dp_lb_stats) is disabled, reducing per-step overhead. For non-MoE models, this flag eliminates the need for a DP
+  coordinator entirely, saving one process and associated communication. On Ascend NPU, where HCCL communication bandwidth
+  is a critical resource, reducing unnecessary coordination traffic can improve tail latency and overall throughput in wide-EP
+  setups.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/core_client.py:125
+  context: Selects DPAsyncMPClient (external LB) vs DPLBAsyncMPClient (internal LB) based on this flag.
+- file: vllm/v1/engine/core.py:865
+  context: Disables publish_dp_lb_stats when external LB is used, skipping frontend stats collection.
+- file: vllm/v1/engine/utils.py:1160
+  context: Determines whether remote engines should be headless (no local API server) during startup.
+- file: vllm/config/vllm.py:499
+  context: Controls whether DPCoordinator process is needed for non-MoE models.
+- file: vllm/config/parallel.py:434
+  context: 'Validation: raises ValueError if set when data_parallel_size <= 1.'
+related_parameters:
+- name: --data-parallel-size
+  relation: Must be > 1 for this flag to take effect; raises ValueError otherwise.
+- name: --data-parallel-rank
+  relation: Setting --data-parallel-rank implicitly enables external LB mode.
+- name: --data-parallel-hybrid-lb
+  relation: Mutually exclusive in practice; hybrid LB runs API server per node, external LB runs one per rank.
+- name: --data-parallel-backend
+  relation: External LB mode works with both 'mp' and 'ray' backends.
+constraints:
+- --data-parallel-external-lb can only be set when --data-parallel-size is greater than 1.
+- Only supported for MoE model deployments; non-MoE models should use independent vLLM instances without --data-parallel-*
+  arguments.
+tuning_advice:
+  summary: Enable for 'one-pod-per-rank' wide-EP MoE deployments on Kubernetes with an external load balancer; disable for
+    single-node or internal-LB setups.
+  suggested_values:
+  - scenario: Kubernetes wide-EP MoE deployment with external Service load balancer
+    value: true
+    reason: Eliminates internal load balancing overhead and lets K8s Service route requests directly to each DP rank pod,
+      reducing HCCL coordination traffic on Ascend NPU.
+  - scenario: Single-node multi-DP MoE deployment or non-K8s cluster
+    value: false
+    reason: Internal load balancing (default) handles request distribution without requiring external infrastructure, and
+      the overhead is negligible on single-node setups.
+  caveats:
+  - On Ascend NPU, disabling internal LB stats publishing reduces CPU-NPU synchronization points, which can improve tail latency
+    in high-throughput scenarios.
+  - External LB mode requires the external load balancer to be aware of all DP rank endpoints; misconfiguration can cause
+    uneven load distribution and underutilized NPUs.
+  - For non-MoE models, this flag is unsupported — use separate vLLM instances instead of data-parallel arguments.
+  quick_guide: Set --data-parallel-external-lb when deploying MoE models in a 'one-pod-per-rank' pattern behind a K8s Service;
+    omit it for single-node or internal load balancing.
+analysis_date: '2026-07-06'

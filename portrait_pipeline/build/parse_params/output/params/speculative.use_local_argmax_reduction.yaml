@@ -1,0 +1,96 @@
+name: speculative.use_local_argmax_reduction
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/v1/spec_decode/llm_base_proposer.py:115
+value_type: bool
+default: 'false'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter replaces the all-gather of full vocabulary logits with a local argmax followed
+  by an all-gather of only the argmax indices during greedy draft token generation. The communication volume per draft token
+  drops from O(vocab_size) to O(2 * tp_size), which can significantly reduce the latency of the draft proposal step when tensor
+  parallelism is used. The parameter only takes effect for greedy draft selection in non-tree speculation (i.e., when speculative_token_tree
+  is not set). In tree-based speculation or when sampling (non-greedy) draft selection is used, the full logits must be gathered
+  regardless, so the parameter has no effect. On Ascend NPU, where HCCL all-gather bandwidth is a critical resource, reducing
+  communication volume directly translates to lower draft proposal latency and higher overall throughput.
+
+  '
+usage_locations:
+- file: vllm/v1/spec_decode/llm_base_proposer.py:115
+  context: 'Read from speculative_config and stored as self.use_local_argmax_reduction in the LLMBaseProposer constructor.
+    Used later in the draft token selection logic to decide whether to perform local argmax or full logit all-gather.
+
+    '
+- file: vllm_ascend/tests/ut/spec_decode/a2/test_eagle_proposer.py:2250
+  context: 'Set to False in Ascend EAGLE proposer unit tests, confirming the parameter is recognized and configurable in vllm-ascend''s
+    speculative decoding path.
+
+    '
+related_parameters:
+- name: speculative.speculative_token_tree
+  relation: 'When speculative_token_tree is set (tree-based speculation), the local argmax reduction is not applicable and
+    this parameter is ignored.
+
+    '
+- name: speculative.method
+  relation: 'The draft selection method (greedy vs sampling) determines whether local argmax reduction can be used. Only greedy
+    draft selection benefits from this optimization.
+
+    '
+- name: parallel_config.tensor_parallel_size
+  relation: 'The communication savings scale with tensor_parallel_size. With tp_size=1, there is no all-gather to optimize,
+    so the parameter has no effect.
+
+    '
+constraints:
+- Only applies to greedy draft selection; has no effect when sampling is used for draft tokens.
+- Not compatible with tree-based speculation (speculative_token_tree must not be set).
+- Requires tensor_parallel_size > 1 to have any communication reduction benefit.
+tuning_advice:
+  summary: 'Enable this parameter when using greedy speculative decoding with tensor parallelism > 1 and non-tree draft token
+    generation to reduce HCCL communication overhead on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: 'Greedy draft selection with tensor_parallel_size > 1 and no speculative token tree
+
+      '
+    value: true
+    reason: 'Reduces per-token communication from O(vocab_size) to O(2 * tp_size), lowering draft proposal latency and improving
+      throughput on Ascend NPU.
+
+      '
+  - scenario: 'Sampling-based draft selection, tree speculation, or tensor_parallel_size = 1
+
+      '
+    value: false
+    reason: 'The optimization is not applicable in these scenarios; enabling it has no effect and may cause confusion.
+
+      '
+  caveats:
+  - 'On Ascend NPU, HCCL all-gather bandwidth is often the bottleneck in tensor-parallel speculative decoding. The communication
+    savings from this parameter can be substantial for large vocabulary models (e.g., vocab_size > 100k).
+
+    '
+  - 'This parameter is silently ignored when speculative_token_tree is set or when non-greedy draft selection is used. Verify
+    your speculative configuration before relying on this optimization.
+
+    '
+  - 'The parameter is defined in upstream vLLM and is read by vllm-ascend without override. However, vllm-ascend''s EAGLE
+    proposer implementation may have its own communication optimizations that interact with this setting.
+
+    '
+  quick_guide: 'Set to true for greedy non-tree speculative decoding with TP > 1 on Ascend NPU to reduce HCCL communication;
+    leave false otherwise.
+
+    '
+analysis_date: '2026-07-06'

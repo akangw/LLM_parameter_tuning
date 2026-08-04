@@ -1,0 +1,63 @@
+name: eplb.log_balancedness
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/v1/worker/gpu/eplb_utils.py:121
+- vllm/v1/worker/gpu_model_runner.py:3175
+- vllm/v1/engine/utils.py:1259
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls whether expert load balancedness statistics are logged during each EPLB (Expert Parallelism
+  Load Balancing) step. When enabled, it passes `log_stats=True` to `EplbState.step()`, which triggers collection and logging
+  of per-expert load distribution metrics. The code comment explicitly states this is "turned off by default since it will
+  cause communication overhead" — the logging requires all-gather or similar collective operations across expert-parallel
+  ranks to compute global load statistics. On Ascend NPU, this communication overhead translates to HCCL collective calls
+  that can introduce non-trivial latency on each EPLB step, directly impacting step-to-step throughput. The parameter is also
+  included in the DP worker configuration hash validation, meaning all data-parallel workers must have identical settings
+  for this parameter.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu/eplb_utils.py:121
+  context: Passed as log_stats argument to EplbState.step() to control balancedness logging
+- file: vllm/v1/worker/gpu_model_runner.py:3175
+  context: Passed as log_stats argument to EplbState.step() in GPU model runner's eplb_step method
+- file: vllm/v1/engine/utils.py:1259
+  context: Included in DP worker configuration hash validation to ensure consistency across workers
+related_parameters:
+- name: enable_eplb
+  relation: Must be enabled for log_balancedness to have any effect; EPLB step is skipped entirely when enable_eplb is false
+- name: eplb_config
+  relation: Parent configuration object containing log_balancedness and other EPLB settings
+constraints:
+- All data-parallel workers must have identical eplb.log_balancedness settings, otherwise a RuntimeError is raised during
+  engine initialization
+- enable_eplb must be true for this parameter to take effect
+tuning_advice:
+  summary: Keep disabled (default) in production to avoid HCCL communication overhead on each EPLB step; enable only for debugging
+    expert load distribution issues
+  suggested_values:
+  - scenario: Production inference on Ascend NPU
+    value: false
+    reason: Avoids HCCL collective communication overhead on every EPLB step, preserving throughput
+  - scenario: Debugging expert load imbalance or tuning EPLB parameters
+    value: true
+    reason: Provides per-step load distribution statistics needed to diagnose expert utilization problems
+  caveats:
+  - When enabled, each EPLB step incurs additional HCCL communication (all-gather or similar) to compute global load statistics,
+    which can measurably reduce step throughput
+  - The communication overhead scales with the number of expert-parallel ranks — larger EP groups experience higher overhead
+  - On Ascend NPU, HCCL collective calls may have different latency characteristics compared to NCCL on GPU; test the overhead
+    in your specific deployment before enabling in production
+  quick_guide: Leave at default (false) for production; temporarily enable only when debugging expert load distribution
+analysis_date: '2026-07-06'

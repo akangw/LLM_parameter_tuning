@@ -1,0 +1,88 @@
+name: kv_transfer.kv_port
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1394
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1613
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1092
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1443
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:799
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1092
+value_type: int
+default: <computed>
+valid_choices: integer port number, typically >= 20000; must avoid AscendDirectTransport reserved range
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter serves as the base port for Mooncake KV transfer handshake channels in vllm-ascend''s P/D (prefill/decode)
+  disaggregation. It is used to compute `side_channel_port` by adding an offset based on data_parallel_rank, tp_size, pp_size,
+  and pcp_size. Each device then derives its `handshake_port` as `side_channel_port + device_index`. If kv_port conflicts
+  with AscendDirectTransport''s randomly allocated RDMA ports (range [20000, 20000 + npu_per_node × 1000)), startup fails
+  with "Address already in use" errors, preventing KV cache transfer between prefill and decode nodes. This directly blocks
+  P/D disaggregation, causing deployment failure and zero throughput. Even without conflicts, incorrect port assignment can
+  cause connection delays during handshake, increasing end-to-end latency for KV cache transfer operations.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1394
+  context: 'MooncakeConnectorV1 Scheduler init: computes side_channel_port as kv_port + dp_rank * tp_size * pp_size * pcp_size'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1613
+  context: 'MooncakeConnectorV1 Worker init: computes side_channel_port and handshake_port for per-device socket listeners'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1092
+  context: 'MooncakeHybridConnector Scheduler init: computes side_channel_port for hybrid attention models'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1443
+  context: 'MooncakeHybridConnector Worker init: computes side_channel_port and handshake_port for hybrid attention models'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:799
+  context: 'MooncakeLayerwiseConnector Scheduler init: computes side_channel_port for layerwise KV transfer'
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1092
+  context: 'MooncakeLayerwiseConnector Worker init: computes side_channel_port and handshake_port for layerwise KV transfer'
+related_parameters:
+- name: kv_transfer.kv_connector
+  relation: Must be set to a Mooncake connector type (MooncakeConnectorV1, MooncakeHybridConnector, MooncakeLayerwiseConnector)
+    for kv_port to take effect
+- name: kv_transfer.kv_role
+  relation: Both kv_producer and kv_consumer nodes need kv_port configured; each node's kv_port + offset must be unique across
+    the cluster
+- name: kv_transfer.kv_parallel_size
+  relation: Affects the number of ports consumed per node (kv_port through kv_port + num_chips)
+- name: parallel_config.data_parallel_rank
+  relation: Used as an offset added to kv_port to compute side_channel_port; different dp_ranks get different port ranges
+- name: parallel_config.tensor_parallel_size
+  relation: Multiplied with dp_rank to compute the port offset; larger tp_size increases port consumption per node
+- name: parallel_config.pipeline_parallel_size
+  relation: Multiplied into the port offset calculation; affects total ports consumed
+- name: parallel_config.prefill_context_parallel_size
+  relation: Multiplied into the port offset calculation in MooncakeConnectorV1 and MooncakeHybridConnector
+constraints:
+- kv_port must be configured as part of the --kv-transfer-config JSON string when using Mooncake-based KV connectors
+- Each P/D node occupies ports from kv_port to kv_port + num_chips; port conflicts between nodes must be prevented
+- kv_port must not overlap with AscendDirectTransport's reserved RDMA port range [20000, 20000 + npu_per_node × 1000)
+- Each node's engine_id must be uniquely assigned to avoid conflicts
+tuning_advice:
+  summary: Set kv_port above the AscendDirectTransport reserved range to avoid port conflicts; use distinct base ports for
+    each node in P/D disaggregation
+  suggested_values:
+  - scenario: 8 NPUs per node
+    value: '>= 28000'
+    reason: AscendDirectTransport reserves ports 20000-27999 for 8-NPU nodes; setting kv_port >= 28000 avoids conflicts
+  - scenario: 16 NPUs per node
+    value: '>= 36000'
+    reason: AscendDirectTransport reserves ports 20000-35999 for 16-NPU nodes; setting kv_port >= 36000 avoids conflicts
+  - scenario: Multi-node P/D deployment with 8 NPUs per node
+    value: 28000 for prefiller, 29000 for decoder
+    reason: Each node needs a distinct base port range; spacing by at least 1000 ensures no overlap even with multiple chips
+      per node
+  caveats:
+  - 'If you see ''zmq.error.ZMQError: Address already in use'' during startup, kv_port likely conflicts with AscendDirectTransport
+    ports — increase kv_port'
+  - Port conflicts may be intermittent because AscendDirectTransport allocates ports randomly within its reserved range
+  - The actual ports used are kv_port + offset, where offset depends on dp_rank, tp_size, pp_size, and pcp_size — ensure the
+    entire range is free
+  - kv_port is passed as a string in the JSON config (e.g., '"kv_port":"20001"') but is used as an integer in port calculations
+  quick_guide: For 8-NPU nodes, set kv_port >= 28000; for 16-NPU nodes, set kv_port >= 36000; use distinct base ports for
+    each node
+analysis_date: '2026-07-06'

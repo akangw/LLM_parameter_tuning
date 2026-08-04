@@ -1,0 +1,7 @@
+name: ECTransferConfig.ec_buffer_device
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, this field is declared with the default "cuda" and documented as supporting
+  only CUDA, but no executable code reads it; the EC transfer configuration hash also has no factors. The pinned vLLM Ascend
+  source contains no occurrence or override of the field. Therefore changing it has no current latency, throughput, or memory
+  effect.

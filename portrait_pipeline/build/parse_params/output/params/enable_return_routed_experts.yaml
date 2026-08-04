@@ -1,0 +1,76 @@
+name: --enable-return-routed-experts
+type: cli
+category: observability
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:794
+- vllm/config/model.py:220
+- vllm_ascend/worker/model_runner_v1.py:1724
+- vllm_ascend/worker/model_runner_v1.py:2302
+- vllm_ascend/core/recompute_scheduler.py:849
+- vllm_ascend/ops/fused_moe/fused_moe.py:181
+value_type: bool
+default: 'False'
+valid_choices: '[True, False]'
+cli_example: --enable-return-routed-experts
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this flag causes the MoE (Mixture of Experts) layers to capture the routing decisions (which
+  experts were selected for each token) during the forward pass. On Ascend NPU, vllm-ascend hooks into the fused MoE kernel
+  at vllm_ascend/ops/fused_moe/fused_moe.py:181 to capture topk_ids per layer into a capturer buffer. After model execution,
+  the model runner (vllm_ascend/worker/model_runner_v1.py:2302) extracts these routing records and transfers them from device
+  to host via D2H copy, then the recompute scheduler (vllm_ascend/core/recompute_scheduler.py:849) persists them into a scheduler-side
+  slot buffer and associates them with individual requests. The performance cost comes from: "(1) the per-layer capture operation
+  inside the MoE forward pass," (2) the device-to-host copy of routing data after each step, and (3) the additional memory
+  for the capturer buffer and CPU-side routing arrays. This is primarily an observability/debugging feature for MoE routing
+  replay and analysis, not a throughput optimization. The overhead is proportional to (num_layers × num_tokens × top_k) and
+  is generally small relative to the MoE computation itself, but measurable on high-throughput deployments.
+
+  '
+usage_locations:
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:181
+  context: Per-layer capture of topk_ids into routed experts capturer during MoE forward pass
+- file: vllm_ascend/worker/model_runner_v1.py:1724
+  context: 'Before execute_model: finalize pending D2H copy or clear capturer buffer'
+- file: vllm_ascend/worker/model_runner_v1.py:2302
+  context: 'After execute_model: extract routed experts for current batch and perform D2H copy'
+- file: vllm_ascend/core/recompute_scheduler.py:849
+  context: Persist per-step routed experts into scheduler-side slot buffer for request-level retrieval
+- file: vllm_ascend/core/recompute_scheduler.py:934
+  context: Associate routing data with individual requests for output
+- file: vllm/v1/worker/gpu_model_runner.py:6156
+  context: Initialize routed experts capturer when CUDA graph mode is NONE (upstream v1)
+- file: vllm/v1/worker/gpu_model_runner.py:6196
+  context: Initialize routed experts capturer before CUDA graph capture (upstream v1)
+- file: vllm/v1/worker/gpu_worker.py:562
+  context: Initialize routed experts capturer during worker initialization (upstream v1)
+related_parameters:
+- name: --enable-expert-parallel
+  relation: MoE expert parallelism must be enabled for routed experts capture to be meaningful on Ascend
+- name: --async-scheduling
+  relation: Tests use async_scheduling=False with this flag; interaction with async scheduling may affect correctness of routing
+    data association
+constraints:
+- Only meaningful for MoE models; has no effect on dense models
+- On vllm-ascend v0.21.0+, uses a process-wide singleton capturer; earlier versions use per-layer capturer
+tuning_advice:
+  summary: Enable only when you need to inspect or replay MoE routing decisions; disable in production for minimal overhead
+    reduction
+  suggested_values:
+  - scenario: Production deployment with MoE models
+    value: 'False'
+    reason: Avoids per-step routing data capture and D2H copy overhead; routing data is not needed for normal inference
+  - scenario: Debugging MoE routing behavior or testing routing replay
+    value: 'True'
+    reason: Enables capture of expert routing decisions per token, which can be returned in outputs for analysis
+  caveats:
+  - Adds a small per-step overhead from capturing topk_ids in every MoE layer and performing device-to-host copies
+  - Allocates additional device memory for the capturer buffer proportional to (max_tokens × max_layers)
+  - On vllm-ascend, the routing data path differs between v0.21.0 (process-wide singleton capturer) and earlier versions (per-layer
+    capturer with explicit D2H copy)
+  quick_guide: Keep disabled (False) for production; enable (True) only for MoE routing debugging or testing
+analysis_date: '2026-07-06'

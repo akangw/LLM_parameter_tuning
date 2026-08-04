@@ -1,0 +1,95 @@
+name: OnlineQuantizationConfigArgs.global_scheme
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/quantization.py:12
+- vllm/config/quantization.py:39
+- vllm/config/quantization.py:65
+- vllm/config/model.py:209
+- vllm/engine/arg_utils.py:724
+- docs/features/quantization/online.md:1
+value_type: str
+default: null
+valid_choices:
+- fp8_per_tensor
+- fp8_per_block
+- int8_per_channel_weight_only
+- mxfp8
+cli_example: 'quantization_config={"global_scheme": "fp8_per_tensor"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: global_scheme is the fallback online-quantization recipe for every supported layer. The pinned implementation
+  accepts four enum values and converts string input to that enum. When quantization itself is one of those scheme names,
+  resolution creates this field automatically if it is absent and rejects a conflicting explicit value. Online quantization
+  converts BF16/FP16 weights at model load and dynamically scales activations during forward execution, so the selected recipe
+  changes stored weight precision and scaling metadata, load-time conversion cost, runtime kernels, memory consumption, latency,
+  and throughput. Per-tensor FP8 uses one weight scale per tensor; per-block FP8 uses 128x128 weight blocks and 1x128 activation
+  blocks; INT8 is weight-only per-channel for MoE experts while linear layers remain unquantized; and MXFP8 uses 1x32 blocks.
+usage_locations:
+- file: vllm/config/quantization.py:12
+  context: Defines the four accepted OnlineQuantScheme string values and their scaling granularity.
+- file: vllm/config/quantization.py:39
+  context: Declares the nullable global fallback scheme and documents that it applies to every supported layer.
+- file: vllm/config/quantization.py:53
+  context: Coerces a supplied string into OnlineQuantScheme, rejecting strings outside the enum.
+- file: vllm/config/quantization.py:65
+  context: Resolves quantization shorthand, fills a missing global_scheme, and rejects conflicts between the two settings.
+- file: vllm/config/model.py:209
+  context: Exposes the containing online-quantization configuration on ModelConfig.
+- file: vllm/engine/arg_utils.py:724
+  context: Resolves quantization and quantization_config before constructing ModelConfig.
+- file: docs/features/quantization/online.md:1
+  context: Documents load-time weight conversion, dynamic activation scaling, recipes, and hardware behavior.
+related_parameters:
+- name: quantization
+  relation: Must be online or an OnlineQuantScheme value; a scheme shorthand fills global_scheme and must match an explicit
+    value.
+- name: OnlineQuantizationConfigArgs.linear_scheme_override
+  relation: Overrides global_scheme for LinearBase layers.
+- name: OnlineQuantizationConfigArgs.moe_scheme_override
+  relation: Overrides global_scheme for FusedMoE layers.
+- name: OnlineQuantizationConfigArgs.ignore
+  relation: Excludes matching layers from online quantization even when global_scheme is set.
+constraints:
+- At least one of global_scheme, linear_scheme_override, or moe_scheme_override must be set for an online quantization configuration.
+- String values must be one of fp8_per_tensor, fp8_per_block, int8_per_channel_weight_only, or mxfp8.
+- quantization_config is accepted only when quantization is online or one of the four online scheme values.
+- If quantization names a specific online scheme, global_scheme is filled with that scheme when absent and must equal it when
+  present.
+- MXFP8 W8A8 requires SM 100 or newer; the documented upstream fallback on other GPUs is W8A16.
+- INT8 per-channel weight-only quantizes MoE expert weights and leaves linear layers unquantized.
+tuning_advice:
+  summary: Select a scheme only after benchmarking model quality, device support, load time, memory use, and serving throughput;
+    use overrides when dense and MoE layers need different recipes.
+  suggested_values:
+  - scenario: Broad upstream GPU starting point for online FP8
+    value: fp8_per_tensor
+    reason: It uses the simplest one-scale-per-weight-tensor recipe and is the first documented quick-start option.
+  - scenario: Workloads that benefit from finer-grained FP8 scaling
+    value: fp8_per_block
+    reason: Its 128x128 weight blocks and 1x128 activation blocks provide finer scaling granularity; benchmark the extra scaling
+      behavior on the target GPU.
+  - scenario: Blackwell-class SM 100 or newer hardware
+    value: mxfp8
+    reason: The documented W8A8 MXFP8 path requires this capability and uses compact 1x32 microscaling blocks.
+  - scenario: MoE expert weight-only compression
+    value: int8_per_channel_weight_only
+    reason: This recipe quantizes MoE expert weights per channel while deliberately leaving linear layers unquantized.
+  caveats:
+  - Quantization can change numerical accuracy as well as performance, so validate output quality with the production model
+    and prompts.
+  - The best latency or throughput result is hardware-, kernel-, model-, and batch-shape-dependent; scaling granularity alone
+    does not establish a winner.
+  - Online conversion adds work during model loading even when the resulting lower-precision representation reduces steady-state
+    memory use.
+  - The pinned vllm-ascend repository contains no use or documentation of OnlineQuantScheme or global_scheme, so these upstream
+    recipes should not be assumed supported on Ascend NPU.
+  - A linear or MoE override supersedes this global setting for its layer class, and ignore patterns can bypass it entirely.
+  quick_guide: Start with fp8_per_tensor on a supported upstream GPU, compare fp8_per_block for quality and performance, use
+    mxfp8 only with its hardware behavior understood, and use the INT8 recipe specifically for MoE expert weight-only compression.
+analysis_date: '2026-07-31'

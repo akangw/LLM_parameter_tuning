@@ -1,0 +1,108 @@
+name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:420
+- vllm_ascend/distributed/parallel_state.py:137
+- vllm_ascend/ops/vocab_parallel_embedding.py:65
+- vllm_ascend/utils.py:966
+- docs/source/user_guide/feature_guide/Fine_grained_TP.md:60
+- docs/source/user_guide/configuration/additional_config.md:125
+value_type: int
+default: 0
+valid_choices: 0 (disabled) or a positive integer that evenly divides data_parallel_size
+cli_example: --additional-config '{"finegrained_tp_config":{"embedding_tensor_parallel_size":8}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: On Ascend, a value greater than zero selects a dedicated embedding tensor-parallel group drawn from the data-parallel
+  dimension instead of the global model tensor-parallel group for modules whose prefix contains embed_tokens. The embedding
+  vocabulary weight is divided across that group's ranks, reducing each rank's embedding-weight allocation in proportion to
+  the selected group size (apart from vocabulary padding). The specialized forward path first all-gathers token IDs across
+  the embedding group, performs masked lookups against each rank's vocabulary shard, and then reduce-scatters the embedding
+  outputs. This changes both communication volume and local lookup work, so it can improve or worsen latency and throughput
+  depending on vocabulary size, token volume, interconnect, and group size. The pinned Ascend guide reports an embedding TP
+  size of 8 saving 1.51 GB and improving TPOT by about 1.0 ms in its specific DeepSeek-R1-W8A8 DP32/EP32 decode experiment;
+  that result is workload-specific. The pinned upstream vLLM repository has no embedding_tensor_parallel_size setting, so
+  this behavior is Ascend-only.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:420
+  context: Reads the nested integer from finegrained_tp_config with a default of 0.
+- file: vllm_ascend/ascend_config.py:447
+  context: Records the embedding setting among enabled fine-grained TP options when it is greater than zero.
+- file: vllm_ascend/ascend_config.py:451
+  context: Applies the shared fine-grained TP checks for model type and divisibility by data_parallel_size.
+- file: vllm_ascend/distributed/parallel_state.py:117
+  context: Builds module-specific groups by chunking the data-parallel dimension while retaining each pipeline and global-TP
+    coordinate.
+- file: vllm_ascend/distributed/parallel_state.py:137
+  context: Reads the configured size and initializes the dedicated emtp group when the value is greater than zero.
+- file: vllm_ascend/utils.py:966
+  context: Enables the embedding-specific path exactly when the configured value is greater than zero.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:65
+  context: Selects the dedicated embedding group for a VocabParallelEmbedding whose prefix contains embed_tokens.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:101
+  context: Divides the padded vocabulary across the selected communication group's ranks, which determines per-rank weight
+    size.
+- file: vllm_ascend/ops/vocab_parallel_embedding.py:164
+  context: Implements the specialized all-gather, masked embedding lookup, and reduce-scatter forward path.
+- file: docs/source/user_guide/feature_guide/Fine_grained_TP.md:92
+  context: Reports memory and TPOT measurements for embedding TP size 8 as one component of a specific DP32/EP32 experiment.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: The embedding group is formed within the DP dimension, and the configured size must evenly divide data_parallel_size.
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: A sibling option with its own module-specific group; groups of equal size are reused by the group cache.
+- name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+  relation: A sibling fine-grained TP size covered by the same shared MoE and DP-divisibility validation loop.
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: A sibling fine-grained TP size with additional graph-mode and PD decode-node restrictions.
+- name: tensor_parallel_size
+  relation: When embedding fine-grained TP is disabled, the Ascend embedding implementation uses the ordinary global TP group
+    instead.
+constraints:
+- The effective supported values are 0 to disable or a positive integer that evenly divides data_parallel_size; positive non-divisors
+  raise AssertionError during Ascend configuration.
+- The pinned implementation rejects every positive fine-grained TP size when model_config.is_moe is false, despite the pinned
+  feature guide describing dense-model support.
+- The special communication group and forward path are used only when the value is greater than zero and the embedding module
+  prefix contains embed_tokens.
+- Negative integers are not explicitly rejected, but all greater-than-zero gates treat them as disabled; use 0 rather than
+  relying on this accidental behavior.
+- The embedding group's vocabulary partition still must satisfy the embedding implementation's padded-vocabulary divisibility
+  assumptions.
+tuning_advice:
+  summary: Leave this at 0 unless embedding weights are a meaningful per-device memory cost; for a large-vocabulary MoE deployment,
+    benchmark positive divisors of data_parallel_size and select the smallest group that meets memory capacity while preserving
+    end-to-end latency and throughput.
+  suggested_values:
+  - scenario: Dense model, single data-parallel rank, or embedding memory is not a capacity bottleneck
+    value: 0
+    reason: Disables the special path, avoids the current dense-model assertion, and avoids adding embedding-group collectives
+      where sharding offers little benefit.
+  - scenario: Large-vocabulary MoE model with multiple data-parallel ranks and moderate embedding-memory pressure
+    value: 2
+    reason: When 2 divides data_parallel_size, it halves the padded embedding vocabulary allocation per group rank while adding
+      a relatively small communication group to benchmark.
+  - scenario: Memory-constrained large-vocabulary MoE deployment with data_parallel_size divisible by 8
+    value: 8
+    reason: Provides stronger embedding-weight sharding and matches the size used in the documented DP32/EP32 experiment,
+      but should be retained only if measurements reproduce a useful tradeoff.
+  caveats:
+  - Larger values reduce per-rank embedding-weight memory but increase the number of ranks participating in the all-gather
+    and reduce-scatter; they are not inherently faster.
+  - The documented 1.51 GB saving and roughly 1.0 ms TPOT improvement come from one combined fine-grained-TP DeepSeek-R1-W8A8
+    decode setup and do not isolate every workload variable.
+  - Current source error messages refer to lmhead parallel even when the failing value is the embedding setting; diagnose
+    the shared validation loop rather than the wording alone.
+  - The feature guide's dense-model compatibility claim conflicts with the pinned configuration code, whose positive-value
+    validation rejects non-MoE models; the code is the operational ground truth for this portrait.
+  - Use a divisor of data_parallel_size and test representative prefill and decode token distributions, including the added
+    collective traffic.
+  quick_guide: Use 0 by default; on a large-vocabulary MoE model, try 2 and then larger DP divisors only as needed for memory,
+    keeping the best value established by end-to-end benchmarks.
+analysis_date: '2026-08-01'

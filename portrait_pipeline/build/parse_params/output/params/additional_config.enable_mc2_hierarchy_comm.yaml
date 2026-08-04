@@ -1,0 +1,60 @@
+name: additional_config.enable_mc2_hierarchy_comm
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:254
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls whether dispatch and combine operations in MoE (Mixture of Experts) models use ROCE
+  (RDMA over Converged Ethernet) for inter-node communication instead of the default HCCL intra-node communication path. When
+  enabled, the all-to-all communication for expert dispatch/combine is split into two levels: intra-node via HCCL and inter-node
+  via ROCE. This hierarchical communication can significantly reduce cross-node bandwidth bottlenecks in multi-node MoE deployments,
+  improving token throughput and reducing per-token latency. The parameter is read in vllm_ascend/ascend_config.py:254 and
+  stored as `self.enable_mc2_hierarchy_comm`. It is a vllm-ascend specific parameter with no upstream vLLM equivalent.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:254
+  context: Parameter definition and initialization from additional_config dict with default False
+related_parameters:
+- name: additional_config.enable_fused_mc2
+  relation: enable_fused_mc2 is a related MC2 (Multi-Communication) optimization; enable_mc2_hierarchy_comm specifically controls
+    the hierarchical ROCE path for dispatch/combine
+constraints:
+- This parameter only takes effect in multi-node deployments with MoE models that use dispatch/combine operations.
+- ROCE-capable network hardware and driver configuration must be available on all nodes.
+tuning_advice:
+  summary: 'Enable this parameter when deploying MoE models across multiple nodes with ROCE-capable interconnects to reduce
+    cross-node communication overhead in expert dispatch/combine.
+
+    '
+  suggested_values:
+  - scenario: Single-node MoE deployment
+    value: false
+    reason: No inter-node communication occurs; enabling has no effect and may add unnecessary configuration complexity.
+  - scenario: Multi-node MoE deployment with ROCE-capable network (e.g., InfiniBand or ROCE-configured Ethernet)
+    value: true
+    reason: Enables hierarchical dispatch/combine communication, reducing cross-node bandwidth pressure and improving throughput
+      by offloading inter-node traffic to ROCE.
+  - scenario: Multi-node MoE deployment without ROCE support
+    value: false
+    reason: ROCE is required for the hierarchical communication path; enabling without ROCE hardware will cause communication
+      failures.
+  caveats:
+  - This parameter is only meaningful for MoE models; non-MoE models do not use dispatch/combine operations.
+  - ROCE network configuration (e.g., NCCL/HCCL RDMA settings, GID index, device binding) must be correctly set up on all
+    nodes before enabling.
+  - The performance benefit depends on the expert parallelism configuration and the ratio of intra-node to inter-node communication
+    volume.
+  quick_guide: Set to true for multi-node MoE inference with ROCE interconnects; keep false for single-node or non-ROCE deployments.
+analysis_date: '2026-07-06'

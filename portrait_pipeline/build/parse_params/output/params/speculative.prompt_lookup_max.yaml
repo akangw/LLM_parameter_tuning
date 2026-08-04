@@ -1,0 +1,73 @@
+name: speculative.prompt_lookup_max
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/v1/spec_decode/ngram_proposer.py:16
+- vllm/v1/spec_decode/ngram_proposer_gpu.py:37
+value_type: int
+default: <computed>
+valid_choices: integer >= speculative.prompt_lookup_min
+cli_example: '--speculative-config ''{"method": "ngram", "prompt_lookup_max": 5}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the maximum n-gram size used by the NgramProposer (both CPU and GPU variants) during
+  speculative decoding. When the engine searches for matching token sequences in the prompt history, it tries n-gram sizes
+  from prompt_lookup_min up to prompt_lookup_max. A larger max window increases the probability of finding longer matches,
+  which can produce more accurate draft tokens and improve the acceptance rate of speculative decoding. However, searching
+  across larger n-gram sizes increases the computational cost of the matching algorithm (O(n) per sequence per n-gram size).
+  On Ascend NPU, the v1 worker path uses the upstream NgramProposer (CPU-based) or NgramGPUKernel (GPU-based, CUDA-only).
+  The v2 worker path does not support ngram speculation — only eagle is supported. Therefore, this parameter only affects
+  performance when using the v1 worker with method=ngram. The tradeoff is between draft quality (higher acceptance rate →
+  higher throughput) and proposal overhead (longer matching time → higher latency per step).
+
+  '
+usage_locations:
+- file: vllm/v1/spec_decode/ngram_proposer.py:21
+  context: Assigned to self.max_n and used as the upper bound for n-gram matching in CPU-based proposal
+- file: vllm/v1/spec_decode/ngram_proposer_gpu.py:40
+  context: Assigned to self.max_n and passed to _find_first_and_extract_all_n_parallel as max_ngram_len for GPU-based matching
+related_parameters:
+- name: speculative.prompt_lookup_min
+  relation: Defines the lower bound of the n-gram search window; prompt_lookup_max must be >= prompt_lookup_min
+- name: speculative.num_speculative_tokens
+  relation: Determines how many tokens are drafted after an n-gram match is found; together they control the total speculative
+    decoding overhead
+- name: speculative.method
+  relation: Must be set to 'ngram' for this parameter to take effect; other methods ignore it
+constraints:
+- speculative.prompt_lookup_max must not be None when speculative.method is 'ngram'
+- speculative.prompt_lookup_max must be greater than or equal to speculative.prompt_lookup_min
+- Only effective with v1 worker; v2 worker does not support ngram speculative decoding on Ascend NPU
+tuning_advice:
+  summary: 'Set prompt_lookup_max to 3–5 for general text generation; use larger values (up to 10) only for highly repetitive
+    content where longer n-gram matches are expected, balancing draft quality against proposal latency.
+
+    '
+  suggested_values:
+  - scenario: General conversational or instructional text generation on Ascend NPU
+    value: 3
+    reason: Provides a good balance between match probability and search overhead; most natural language n-gram repetitions
+      are within 3 tokens
+  - scenario: Code generation or highly structured/boilerplate text with repetitive patterns
+    value: 5
+    reason: Increases the chance of finding longer matches in structured content, improving draft acceptance rate without
+      excessive overhead
+  - scenario: Extremely repetitive content (e.g., log parsing, template filling) where throughput is critical
+    value: 10
+    reason: Maximizes match length for highly predictable sequences; only beneficial when the acceptance rate gain outweighs
+      the increased per-step matching cost
+  caveats:
+  - On Ascend NPU, the GPU-accelerated NgramGPUKernel is CUDA-specific and will not run on NPU; the CPU-based NgramProposer
+    is used instead, which may have higher latency for large prompt_lookup_max values
+  - Larger prompt_lookup_max values increase CPU matching time linearly with the search range (max - min), which can become
+    a bottleneck at high request rates
+  - The v2 worker path on Ascend does not support ngram speculation at all; this parameter is silently ignored in v2
+  - The numba-based CPU proposer caps threads at 1 per TP rank (see ngram_proposer.py:48), so matching is effectively single-threaded
+    per rank regardless of prompt_lookup_max
+  quick_guide: Start with prompt_lookup_max=3; increase to 5 if draft acceptance rate is low and content has repetitive patterns;
+    avoid values above 10 on Ascend NPU due to CPU matching overhead
+analysis_date: '2026-07-06'

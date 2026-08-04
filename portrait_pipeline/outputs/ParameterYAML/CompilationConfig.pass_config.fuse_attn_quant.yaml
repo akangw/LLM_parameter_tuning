@@ -1,0 +1,114 @@
+name: CompilationConfig.pass_config.fuse_attn_quant
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/compilation.py:125
+- vllm/config/compilation.py:249
+- vllm/config/compilation.py:1092
+- vllm/config/compilation.py:1189
+- vllm/config/vllm.py:85
+- vllm/config/vllm.py:175
+- docs/design/fusions.md:134
+- vllm/v1/attention/backend.py:805
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: -cc.pass_config.fuse_attn_quant=True
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Controls a post-gradient Inductor fusion of supported Attention or MLAAttention output with the immediately
+  following FP8 or NVFP4 quantization. For supported standard-attention backends, fusion lets the attention kernel write quantized
+  output directly, avoiding a separate quantization launch and a full-precision output memory round trip; the pinned design
+  guide reports an indicative 3-7% end-to-end speedup. The MLA graph rewrite supports FP8 static, FP8 per-group, and NVFP4
+  patterns, but currently uses an intermediate buffer and a separate quantization step, so the guide expects no measurable
+  MLA speedup yet. The declared null value is delayed: the pinned O0-O3 optimization-level tables all currently resolve it
+  to false because IS_QUANTIZED is hard-coded false, so true is an explicit opt-in. Enabling it requires the full attention
+  graph to remain visible and can replace piecewise graph/cudagraph behavior with full-graph behavior. The pinned vllm-ascend
+  repository contains no reference, override, matching pass, or NPU backend support declaration for this field, so no Ascend
+  performance effect is established.'
+usage_locations:
+- file: vllm/config/compilation.py:125
+  context: Declares the delayed-default boolean in PassConfig; the field participates in the compilation configuration hash.
+- file: vllm/config/vllm.py:175
+  context: The O0-O3 optimization-level tables resolve an unset field; O0/O1 use false and O2/O3 use IS_QUANTIZED, which is
+    currently hard-coded false at line 85.
+- file: vllm/config/compilation.py:1092
+  context: When enabled without Inductor graph partitioning, changes splitting setup so attention remains inside a full graph
+    visible to the fusion pass.
+- file: vllm/config/compilation.py:1189
+  context: Converts an implicit splitting configuration to an empty list, converts piecewise cudagraph mode to full mode,
+    and rejects explicit splitting configurations containing all attention ops.
+- file: docs/design/fusions.md:134
+  context: Documents the matched quantization patterns, supported backends and hardware, indicative standard-attention speedup,
+    full-graph requirement, and current lack of an expected MLA speedup.
+- file: vllm/v1/attention/backend.py:805
+  context: Defines the backend capability hook consulted by the attention fusion; unsupported implementations return false,
+    while MLA declares a limited set of supported quantization keys.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: Supplies the effective value when this field is null; in the pinned source every level currently resolves it to
+    false.
+- name: CompilationConfig.pass_config.eliminate_noops
+  relation: Disabling no-op elimination emits a warning because the Attention plus FP8 quantization pattern may then fail
+    to match.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: When true, can provide the full graph required by the fusion without forcing attention out of splitting_ops.
+- name: CompilationConfig.splitting_ops
+  relation: Without Inductor graph partitioning, attention ops must not be graph split points when this fusion is enabled.
+- name: CompilationConfig.cudagraph_mode
+  relation: Enabling the fusion with implicit splitting and piecewise cudagraphs changes the mode to FULL when Inductor graph
+    partitioning is off.
+- name: AttentionConfig.backend
+  relation: The selected attention implementation must report support for the requested fused output quantization scheme.
+constraints:
+- This is a compiled-graph optimization and provides no eager-mode benefit.
+- The entire attention-to-quantization pattern must be visible through Inductor graph partitioning or a splitting_ops configuration
+  that does not split out attention; explicit attention split points are rejected.
+- 'Standard Attention supports only backend-specific combinations: the pinned guide lists FP8 static for Triton Attention
+  on CUDA/ROCm, ROCm Attention, and ROCm AITER unified attention; FlashInfer supports FP8 static or NVFP4 only on applicable
+  CUDA SM100+ configurations.'
+- MLA accepts FP8 static, FP8 dynamic per-group 128 or 64, and NVFP4 graph patterns, but its current implementation does not
+  eliminate the intermediate buffer and separate quantization step.
+- An explicit true does not guarantee a rewrite; the graph must contain a supported quantization pattern, the selected backend
+  must report fused-output support, and no-op elimination may be needed for matching.
+- The pinned vllm-ascend source has no consumer or NPU implementation for this upstream flag; do not treat explicit true as
+  an Ascend tuning control.
+tuning_advice:
+  summary: Leave the field unset for normal deployments because the pinned defaults disable this experimental fusion. On a
+    supported upstream quantized standard-attention workload, test true against false with full-graph compilation and retain
+    it only after correctness and end-to-end performance validation.
+  suggested_values:
+  - scenario: Normal deployment, unsupported backend, eager execution, or Ascend NPU
+    value: leave unset
+    reason: The pinned optimization defaults resolve null to false, and these paths have no established usable fusion benefit.
+  - scenario: Supported FP8 or NVFP4 standard-attention backend with full-graph compilation
+    value: true
+    reason: A successful match can eliminate the full-precision attention-output round trip and separate quantization launch;
+      the pinned guide reports a possible 3-7% end-to-end gain.
+  - scenario: Compiler or correctness diagnosis, or an explicit baseline for benchmarking
+    value: false
+    reason: Disables the fusion and avoids its full-graph splitting/cudagraph adjustments.
+  - scenario: MLA attention on DeepSeek-family models
+    value: false
+    reason: Although the graph pattern is supported, the pinned implementation still uses an intermediate buffer and separate
+      quantization, so no measurable speedup is currently expected.
+  caveats:
+  - Enabling the flag may change cudagraph mode from piecewise to full when Inductor graph partitioning is disabled; benchmark
+    total serving behavior rather than attributing every difference solely to the fused kernel.
+  - The documented 3-7% gain is indicative and applies to supported standard-attention cases; model, backend, quantization
+    format, hardware, batch shape, and token mix determine the result.
+  - The memory effect is reduced attention-output traffic and temporary full-precision tensor lifetime, not a guaranteed increase
+    in model-weight or KV-cache capacity.
+  - Keep eliminate_noops enabled during performance testing, because disabling it can silently prevent the fusion pattern
+    from matching.
+  quick_guide: Use null normally. For a supported upstream FP8/NVFP4 standard-attention workload, enable full-graph compilation,
+    compare true with false after warmup, and keep true only if correctness holds and production latency or throughput improves.
+analysis_date: '2026-07-30'

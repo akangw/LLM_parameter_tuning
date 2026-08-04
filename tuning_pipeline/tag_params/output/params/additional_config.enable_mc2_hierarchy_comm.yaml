@@ -1,0 +1,94 @@
+name: additional_config.enable_mc2_hierarchy_comm
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:254
+- vllm_ascend/ops/fused_moe/token_dispatcher.py:143
+- vllm_ascend/platform.py:670
+- vllm_ascend/utils.py:1214
+- docs/source/user_guide/configuration/additional_config.md:89
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: 'vllm serve MODEL --additional-config=''{"enable_mc2_hierarchy_comm": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: On the Ascend MC2 MoE token-dispatch path, enabling this option adds comm_alg="hierarchy" to both npu_moe_distribute_dispatch[_v2]
+  and npu_moe_distribute_combine[_v2], selecting hierarchical inter-node ROCE communication for expert dispatch/combine. The
+  same flag also makes the dispatcher provide expert scales and prevents skipping the data-parallel all-reduce, retaining
+  uniform-token mode (global_bs=0). It can therefore materially change communication cost and synchronization behavior, primarily
+  affecting decode/prefill latency and token throughput in multi-node expert- parallel MoE workloads. It has no upstream vLLM
+  consumer in the pinned source.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:254
+  context: Reads the boolean from additional_config and defaults it to false.
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:143
+  context: Enables hierarchy-specific MC2 arguments, requires the v2 dispatch API, and passes comm_alg="hierarchy" to dispatch
+    and combine operators.
+- file: vllm_ascend/utils.py:1214
+  context: Treats this flag (or the equivalent A2 HCCL environment combination) as hierarchical communication and disables
+    the DP all-reduce skip optimization.
+- file: vllm_ascend/platform.py:670
+  context: Rejects simultaneous use with enable_fused_mc2 during platform validation.
+- file: docs/source/user_guide/configuration/additional_config.md:89
+  context: Documents the false default and the inter-node ROCE dispatch/combine purpose.
+related_parameters:
+- name: additional_config.enable_fused_mc2
+  relation: Mutually exclusive; startup raises ValueError when both settings are enabled.
+- name: parallel_config.enable_expert_parallel
+  relation: MC2 dispatch/combine is an expert-parallel MoE communication path, so this option is useful only when that path
+    is selected.
+- name: HCCL_INTRA_PCIE_ENABLE and HCCL_INTRA_ROCE_ENABLE
+  relation: On A2, values 1 and 0 respectively also make the runtime treat MC2 communication as hierarchical, although only
+    this parameter adds comm_alg="hierarchy".
+constraints:
+- Only affects MoE execution that uses the Ascend MC2 token dispatcher; it does not tune dense models or upstream vLLM.
+- Cannot be enabled together with additional_config.enable_fused_mc2; platform validation fails at startup.
+- Requires torch_npu.npu_moe_distribute_dispatch_v2 support; older PTA/CANN versions raise a runtime error.
+- The intended multi-node path requires correctly configured inter-node ROCE connectivity.
+- Hierarchical mode forces uniform-token MC2 operation by preventing the optimization that skips the DP-group all-reduce.
+tuning_advice:
+  summary: Benchmark true only for multi-node, expert-parallel MoE deployments whose MC2 dispatch/combine traffic can use
+    configured ROCE; otherwise retain false.
+  suggested_values:
+  - scenario: Multi-node expert-parallel MoE using MC2 with validated ROCE and current PTA/CANN
+    value: true
+    reason: Selects the hierarchy communication algorithm for dispatch and combine; this can reduce the expensive cross-node
+      portion of MoE token exchange.
+  - scenario: Single-node, dense, non-MC2, or unvalidated network/software environment
+    value: false
+    reason: The hierarchy path provides no applicable benefit, while enabling it can introduce compatibility checks and different
+      synchronization behavior.
+  - scenario: Any deployment using additional_config.enable_fused_mc2
+    value: false
+    reason: The two modes are explicitly incompatible and enabling both prevents startup.
+  caveats:
+  - Measure end-to-end latency and throughput with the actual node count, expert-parallel topology, batch shape, and network
+    configuration.
+  - Hierarchical mode disables the DP all-reduce skip path, so its net benefit depends on ROCE savings outweighing the retained
+    synchronization.
+  - Verify the v2 torch-npu dispatch operator before rollout; the runtime rejects hierarchy communication when only the older
+    operator is available.
+  - The source provides no universal speedup figure, and the default remains false.
+  quick_guide: Keep false by default. Set true only for tested multi-node MC2 MoE runs with working ROCE, enable_fused_mc2
+    disabled, and a PTA/CANN stack exposing the v2 dispatch operator.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

@@ -1,0 +1,107 @@
+name: additional_config.enable_fused_mc2
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:146
+- vllm_ascend/envs.py:95
+- vllm_ascend/ascend_forward_context.py:283
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:259
+- vllm_ascend/platform.py:670
+- docs/source/user_guide/configuration/additional_config.md:99
+value_type: int
+default: 0
+valid_choices: 0, 1, 2
+cli_example: 'vllm serve MODEL --additional-config=''{"enable_fused_mc2": 1}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On supported Atlas A3 expert-parallel MoE paths, a nonzero mode can select FUSED_MC2 instead of separate MC2
+  or ALLTOALL communication. Mode 1 invokes dispatch_ffn_combine, while mode 2 invokes dispatch_gmm_combine_decode. These
+  fused operators combine MoE communication and computation, and the pinned Qwen3-235B guide says mode 1 reduces MoE time
+  in both prefill and decode; reducing this per-layer communication work can lower token latency and raise serving throughput.
+  The selection is conditional: unsupported devices, batches, expert-parallel layouts, draft models, or quantization combinations
+  fall back to MC2, ALLTOALL, or ALLGATHER, so enabling the setting does not guarantee a speedup.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:146
+  context: Loads additional_config.enable_fused_mc2 first and otherwise falls back to the deprecated VLLM_ASCEND_ENABLE_FUSED_MC2
+    environment variable.
+- file: vllm_ascend/envs.py:95
+  context: Defines the integer default and documents modes 0, 1, and 2 plus their W8A8, expert-parallel, MTP, and dynamic-EPLB
+    restrictions.
+- file: vllm_ascend/ascend_forward_context.py:283
+  context: Selects FUSED_MC2 on A3 only when the active mode and runtime guards match; otherwise selects MC2 or ALLTOALL for
+    the batch.
+- file: vllm_ascend/ops/fused_moe/moe_comm_method.py:307
+  context: Dispatches mode 1 to dispatch_ffn_combine and mode 2 to dispatch_gmm_combine_decode; any other value reaching this
+    implementation raises ValueError.
+- file: vllm_ascend/platform.py:670
+  context: Rejects startup when fused MC2 and MC2 hierarchy communication are both enabled.
+- file: docs/source/tutorials/models/Qwen3-235B-A22B.md:379
+  context: Describes mode 1 as an experimental A3 W8A8 optimization that reduces MoE time in prefill and decode, and recommends
+    disabling it if problems occur.
+related_parameters:
+- name: additional_config.enable_mc2_hierarchy_comm
+  relation: Mutually exclusive; enabling both causes startup validation to raise a ValueError because fused MC2 cannot use
+    hierarchy communication.
+- name: parallel_config.enable_expert_parallel
+  relation: Fused MC2 is selected only for expert-parallel MoE execution with more than one expert-parallel rank; otherwise
+    the communication selector uses ALLGATHER.
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Mode 1 is documented as unsupported with dynamic EPLB, so leave dynamic EPLB disabled when choosing mode 1.
+constraints:
+- Use integer 0, 1, or 2. Zero keeps the normal ALLTOALL/MC2 path; mode 1 selects dispatch_ffn_combine; mode 2 selects dispatch_gmm_combine_decode.
+- Current fused selection is in the Atlas A3 expert-parallel MoE branch. It does not activate for dense models, expert-parallel
+  size 1, A2, 310P, or A5.
+- Mode 1 is documented for W8A8 MoE layers with EP size at most 32, a non-draft/non-MTP model, and no dynamic EPLB.
+- Mode 2 is decode-only; current selection requires w8a8_dynamic and a speculative/MTP configuration accepted by speculative_enable_dispatch_gmm_combine_decode.
+  Prefill falls back to ALLTOALL for mode 2.
+- Fused MC2 cannot be combined with enable_mc2_hierarchy_comm; startup raises ValueError when both are nonzero/true.
+- additional_config.enable_fused_mc2 takes precedence over the deprecated VLLM_ASCEND_ENABLE_FUSED_MC2 environment variable
+  when both are present.
+tuning_advice:
+  summary: Keep mode 0 unless serving a supported A3 expert-parallel quantized MoE; benchmark modes 1 and 2 against 0 on the
+    actual prefill/decode mix.
+  suggested_values:
+  - scenario: General A3 W8A8 expert-parallel MoE serving, EP at most 32, without MTP or dynamic EPLB
+    value: 1
+    reason: Enables dispatch_ffn_combine when the runtime guards match, covering both prefill and decode and targeting lower
+      MoE communication time.
+  - scenario: A3 decode-heavy W8A8 dynamic MoE serving whose MTP/speculative setup is supported, such as the documented Qwen3-235B
+      EP32 scenario
+    value: 2
+    reason: Selects dispatch_gmm_combine_decode for qualifying decode batches; the pinned Qwen3 guide specifically recommends
+      mode 2 for that EP32 setup.
+  - scenario: Unsupported hardware/model/quantization, hierarchy communication, dynamic EPLB with mode 1, or stability-first
+      deployment
+    value: 0
+    reason: Preserves the normal MC2/ALLTOALL selection and avoids unsupported fused operator combinations.
+  caveats:
+  - This is an experimental optimization, and actual gains depend on batch token count, MoE communication share, EP size,
+    and prefill/decode mix; compare end-to-end latency and throughput rather than assuming a gain.
+  - Mode 2 does not fuse prefill; it falls back to ALLTOALL there. Mode 1 is the broader option when both prefill and decode
+    need acceleration.
+  - The deprecated environment variable remains a fallback during migration, but the nested additional_config value wins and
+    should be used for new deployments.
+  - Do not enable fused MC2 together with hierarchy communication; this is a hard startup error rather than a silent fallback.
+  quick_guide: Start with 0. On a compatible A3 W8A8 EP MoE, test 1 for prefill plus decode or 2 for a supported decode-heavy/MTP
+    path, then retain it only if measured latency or throughput improves without correctness or stability regressions.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - moe
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

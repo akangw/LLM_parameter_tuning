@@ -1,0 +1,88 @@
+name: VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:1725
+- vllm/envs.py:254
+- vllm/model_executor/model_loader/utils.py:155
+- vllm/model_executor/offloader/base.py:28
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This env var controls whether PyTorch''s pin_memory() is used when offloading model weights back to CPU after
+  GPU computation. When enabled (set to 1/true), it disables pin_memory for CPU-offloaded tensors. On unified-memory systems
+  (e.g., NVIDIA GH200), pinned memory consumes GPU memory, so disabling it saves GPU memory. On Ascend NPU, the effect depends
+  on whether the Ascend platform''s is_pin_memory_available() returns true and whether CPU offloading (--cpu-offload-gb) is
+  active. The parameter is checked in two code paths: (1) vllm/model_executor/model_loader/utils.py:155 — during the finally
+  block of device_loading_context, when restoring parameters to CPU after temporary GPU placement; (2) vllm/model_executor/offloader/base.py:28
+  — in the should_pin_memory() helper used by the offloader subsystem. If CPU offloading is not active, this parameter has
+  no effect. When active, disabling pin memory may reduce CPU→NPU transfer throughput (pinned memory enables faster DMA transfers)
+  but saves NPU memory that would otherwise be reserved for pinned buffers. The performance impact is low because it only
+  affects the offloading path, not the primary inference hot path.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/utils.py:155
+  context: 'Checked in finally block of device_loading_context to decide whether to call pin_memory() when restoring UVA-offloaded
+    parameters to CPU.
+
+    '
+- file: vllm/model_executor/offloader/base.py:28
+  context: 'should_pin_memory() helper combines is_pin_memory_available() check with this env var to determine if pinned memory
+    should be used.
+
+    '
+related_parameters:
+- name: VLLM_WEIGHT_OFFLOADING_DISABLE_UVA
+  relation: 'Companion env var that disables UVA (Unified Virtual Addressing) for CPU offloading. Both affect the CPU offloading
+    memory management path.
+
+    '
+- name: --cpu-offload-gb
+  relation: 'CLI flag that activates CPU weight offloading. This env var has no effect unless --cpu-offload-gb is set to a
+    non-zero value.
+
+    '
+constraints:
+- This env var has no effect if CPU offloading is not enabled via --cpu-offload-gb.
+- On Ascend NPU, the actual behavior depends on whether is_pin_memory_available() returns true for the Ascend platform.
+tuning_advice:
+  summary: 'Only relevant when using --cpu-offload-gb. On Ascend NPU, test with both settings to determine if pin memory provides
+    measurable throughput benefit for your specific model and workload.
+
+    '
+  suggested_values:
+  - scenario: CPU offloading is not active (--cpu-offload-gb not set)
+    value: false
+    reason: Parameter has no effect; default value is fine.
+  - scenario: CPU offloading active, NPU memory is the bottleneck
+    value: true
+    reason: 'Disabling pin memory frees NPU memory that would be used for pinned buffers, allowing larger models or batch
+      sizes to fit.
+
+      '
+  - scenario: CPU offloading active, throughput is the priority
+    value: false
+    reason: 'Pinned memory enables faster CPU↔NPU DMA transfers, improving offloading throughput at the cost of some NPU memory.
+
+      '
+  caveats:
+  - On Ascend NPU, the is_pin_memory_available() function may behave differently than on CUDA. Verify that pin memory is actually
+    supported before relying on it.
+  - The performance difference between enabled and disabled is typically small and only affects the offloading path, not the
+    main inference computation.
+  - This parameter is upstream vLLM and has no known vllm-ascend override.
+  quick_guide: 'Leave at default (false) unless you are using --cpu-offload-gb and observe NPU memory pressure; then try setting
+    to 1 to disable pin memory.
+
+    '
+analysis_date: '2026-07-06'

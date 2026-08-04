@@ -1,0 +1,79 @@
+name: --mm-tensor-ipc
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:63
+- vllm/config/multimodal.py:195
+- vllm/config/vllm.py:916
+- vllm/config/model.py:1186
+- vllm/engine/arg_utils.py:1228
+value_type: str
+default: direct_rpc
+valid_choices:
+- direct_rpc
+- torch_shm
+cli_example: --mm-tensor-ipc torch_shm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: The setting selects how multimodal tensors move between processes. In vllm/config/multimodal.py, direct_rpc
+  uses msgspec serialization over RPC, whereas torch_shm uses torch.multiprocessing shared memory for zero-copy IPC. Avoiding
+  serialization and copies can reduce the CPU-side transfer work on requests with multimodal tensors, improving their end-to-end
+  latency and the rate at which such requests can be delivered to the engine. It does not change text-only tensor transfer
+  behavior. Current validation restricts torch_shm to a single data-, tensor-, and pipeline-parallel rank.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1228
+  context: Registers --mm-tensor-ipc in the multimodal CLI argument group and passes the selected value into EngineArgs.
+- file: vllm/config/multimodal.py:195
+  context: Defines the default and documents direct_rpc serialization versus torch_shm zero-copy shared-memory IPC.
+- file: vllm/config/vllm.py:916
+  context: Rejects torch_shm unless VLLM_WORKER_MULTIPROC_METHOD is explicitly set to spawn.
+- file: vllm/config/model.py:1186
+  context: Rejects torch_shm when data, tensor, or pipeline parallelism makes the world size exceed one.
+related_parameters:
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: torch_shm requires this environment variable to be set to spawn at startup.
+- name: --tensor-parallel-size
+  relation: torch_shm is rejected when tensor parallel size contributes to a world size above one.
+- name: --data-parallel-size
+  relation: torch_shm is rejected when data parallel size contributes to a world size above one.
+- name: --pipeline-parallel-size
+  relation: torch_shm is rejected when pipeline parallel size contributes to a world size above one.
+constraints:
+- torch_shm requires VLLM_WORKER_MULTIPROC_METHOD=spawn; otherwise configuration validation raises ValueError.
+- torch_shm is unsupported when data_parallel_size, tensor_parallel_size, or pipeline_parallel_size makes the world size greater
+  than one.
+tuning_advice:
+  summary: Keep direct_rpc for the default-compatible path. For a single-rank multimodal deployment with substantial tensor
+    transfers, evaluate torch_shm with the required spawn worker method to avoid RPC serialization and copies.
+  suggested_values:
+  - scenario: Single-rank multimodal serving where image, video, or other multimodal tensors make inter-process transfer material.
+    value: torch_shm
+    reason: Uses the documented zero-copy torch.multiprocessing shared-memory IPC path, avoiding the direct_rpc serialization
+      path.
+  - scenario: Text-only serving, small multimodal transfers, or deployments that cannot use the spawn worker method or single-rank
+      parallelism.
+    value: direct_rpc
+    reason: This is the documented default and avoids torch_shm startup and parallelism constraints.
+  caveats:
+  - torch_shm will fail validation unless VLLM_WORKER_MULTIPROC_METHOD is set to spawn.
+  - torch_shm is not supported with a data-, tensor-, or pipeline-parallel world size above one.
+  - The transport choice is relevant to multimodal tensors; it does not provide a text-only serving optimization.
+  quick_guide: For eligible single-rank multimodal serving, benchmark --mm-tensor-ipc torch_shm with VLLM_WORKER_MULTIPROC_METHOD=spawn;
+    otherwise use direct_rpc.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

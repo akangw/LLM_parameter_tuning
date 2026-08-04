@@ -1,0 +1,80 @@
+schema_version: 1
+rules:
+  - id: non_chunked_prefill_requires_full_model_token_budget
+    status: active
+    severity: hard
+    kind: conditional_comparison
+    if: {parameter: enable_chunked_prefill, op: eq, value: false}
+    left: max_num_batched_tokens
+    op: gte
+    right: max_model_len
+    source:
+      type: runtime_validation_error
+      image_digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+      vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+      observed_run: a0_20260731_132813
+
+  - id: long_prefill_within_batch_budget
+    status: active
+    severity: hard
+    kind: lte_or_disabled
+    left: long_prefill_token_threshold
+    right: max_num_batched_tokens
+    disabled_value: 0
+    source: {type: existing_controller_contract}
+
+  - id: mtp_scheduler_budget
+    status: active
+    severity: hard
+    kind: product_lte
+    factors:
+      - max_num_seqs
+      - {add: [num_speculative_tokens, 1]}
+    right: max_num_batched_tokens
+    source: {type: existing_controller_contract}
+
+  - id: mtp_factor_divides_tensor_parallel
+    status: active
+    severity: hard
+    kind: divides_or_disabled
+    divisor: {add: [num_speculative_tokens, 1]}
+    dividend_scenario: topology.tensor_parallel_size
+    disabled_parameter: num_speculative_tokens
+    disabled_value: 0
+    source: {type: existing_controller_contract}
+
+  - id: mtp_requires_async_scheduling
+    status: active
+    severity: hard
+    kind: implies
+    if: {parameter: num_speculative_tokens, op: gt, value: 0}
+    then: {parameter: async_scheduling, op: eq, value: true}
+    source: {type: existing_controller_contract}
+
+  - id: eplb_redundant_experts_requires_eplb
+    status: active
+    severity: hard
+    kind: implies
+    if: {parameter: eplb_num_redundant_experts, op: gt, value: 0}
+    then: {parameter: enable_eplb, op: eq, value: true}
+    source: {type: existing_controller_contract}
+
+  - id: cudagraph_sizes_within_maximum
+    status: active
+    severity: hard
+    kind: list_max_lte
+    values: cudagraph_capture_sizes
+    right: max_cudagraph_capture_size
+    source: {type: existing_controller_contract}
+
+  - id: cudagraph_sizes_match_speculation_factor
+    status: active
+    severity: hard
+    kind: all_multiples
+    values: cudagraph_capture_sizes
+    factor: {add: [num_speculative_tokens, 1]}
+    source: {type: existing_compiler_contract}
+
+quarantines: []
+proposals: []
+processed_history: []

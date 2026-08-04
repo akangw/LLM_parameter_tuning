@@ -1,0 +1,82 @@
+name: VLLM_KV_CACHE_LAYOUT
+type: env
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/envs.py:1446
+- vllm/v1/attention/backends/utils.py:53
+- vllm/v1/attention/selector.py:125
+- vllm/v1/attention/backends/flash_attn.py:150
+- vllm/v1/attention/backends/flashinfer.py:370
+- vllm/v1/attention/backends/triton_attn.py:328
+- vllm_ascend/attention/attention_v1.py:101
+value_type: str
+default: null
+valid_choices:
+- NHD
+- HND
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'In upstream vLLM this environment variable selects whether paged KV-cache storage is laid out with token/block
+  positions before heads (NHD) or heads before token/block positions (HND). FlashAttention, FlashInfer, and Triton translate
+  the selection into different tensor stride orders, so it changes the locality presented to attention kernels and can affect
+  decode and prefill latency and throughput. It does not change the logical tensor shape or KV capacity. A backend-required
+  layout takes precedence over the environment value: the selector installs that requirement as an internal override. In the
+  pinned vllm-ascend source, the Ascend attention backends return fixed (num_blocks, block_size, num_kv_heads, head_size)-style
+  shapes and do not read VLLM_KV_CACHE_LAYOUT or the upstream stride-order helper, so this variable is not an Ascend tuning
+  control.'
+usage_locations:
+- file: vllm/envs.py:1446
+  context: Parses the environment variable, defaults it to null, and restricts explicit values to NHD or HND.
+- file: vllm/v1/attention/backends/utils.py:53
+  context: Resolves the effective layout, giving an internal backend override priority over this environment variable.
+- file: vllm/v1/attention/selector.py:125
+  context: Installs a layout required by the selected attention backend, overriding a user-selected layout.
+- file: vllm/v1/attention/backends/flash_attn.py:150
+  context: Maps NHD and HND to different KV-cache stride orders for FlashAttention.
+- file: vllm/v1/attention/backends/flashinfer.py:370
+  context: Maps NHD and HND to different KV-cache stride orders for FlashInfer.
+- file: vllm/v1/attention/backends/triton_attn.py:328
+  context: Maps NHD and HND to different KV-cache stride orders for Triton attention.
+- file: vllm/v1/attention/backends/flashinfer.py:431
+  context: Requires HND on devices with compute capability major version 10.
+- file: vllm/v1/attention/backends/mla/flashinfer_mla.py:95
+  context: Declares HND as mandatory for the FlashInfer MLA backend.
+- file: vllm_ascend/attention/attention_v1.py:101
+  context: Returns the Ascend backend's fixed KV-cache shape without consulting the upstream layout setting.
+related_parameters:
+- name: VLLM_ATTENTION_BACKEND
+  relation: The selected backend determines whether a layout is supported or mandatory and may override this value.
+- name: block_size
+  relation: Supplies the token/block dimension whose stride position changes between NHD and HND.
+constraints:
+- Explicit values are limited to NHD and HND; leaving the variable unset delegates layout resolution to backend and connector
+  logic.
+- A layout required by the selected backend overrides the environment value.
+- FlashInfer MLA requires HND, and FlashInfer requires HND on devices with compute capability major version 10.
+- The pinned Ascend attention implementations use fixed cache shapes and expose no VLLM_KV_CACHE_LAYOUT-dependent path.
+tuning_advice:
+  summary: Leave the variable unset so upstream backend and connector requirements choose the compatible layout; do not use
+    it to tune vllm-ascend.
+  suggested_values:
+  - scenario: General upstream vLLM deployment
+    value: leave unset
+    reason: Automatic resolution avoids conflicting with a backend-required layout and is the safest baseline for performance
+      measurements.
+  - scenario: Upstream FlashInfer MLA when explicitly configuring the environment
+    value: HND
+    reason: That backend declares HND as required, although its internal requirement normally takes precedence automatically.
+  caveats:
+  - A forced layout can change memory locality without changing allocated KV-cache capacity, so benchmark latency and throughput
+    with the exact backend and model.
+  - Backend-required overrides can make the environment value ineffective, and logs should be checked to confirm the effective
+    layout.
+  - The pinned Ascend plugin does not consume this upstream layout setting; changing it is not evidence of an Ascend performance
+    change.
+  quick_guide: Keep it unset by default; use HND only for a confirmed upstream backend requirement, and leave it unset on
+    Ascend.
+analysis_date: '2026-07-28'

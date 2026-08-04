@@ -1,0 +1,6 @@
+name: VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM
+type: env
+performance_impact: none
+skip_reason: The pinned upstream only declares and parses this legacy environment variable; no executor, Ray compiled-graph
+  path, documentation, or other runtime code consumes it. The pinned vllm-ascend repository has no reference or override,
+  so changing it cannot affect latency, throughput, or memory on Ascend.

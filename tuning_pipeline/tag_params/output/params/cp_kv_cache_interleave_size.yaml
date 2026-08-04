@@ -1,0 +1,80 @@
+name: --cp-kv-cache-interleave-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/parallel.py:330
+- vllm/config/parallel.py:341
+- vllm_ascend/platform.py:618
+- vllm_ascend/platform.py:639
+- docs/source/user_guide/feature_guide/context_parallel.md:69
+value_type: int
+default: 1
+valid_choices: Positive integer that divides --block-size and is no greater than --block-size.
+cli_example: --cp-kv-cache-interleave-size 128
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This setting chooses the token granularity used to shard KV-cache storage across context-parallel ranks. It
+  changes local block indexing, device assignment, KV-cache transfer layout, and attention access patterns. Current upstream
+  defaults to token interleave (1). The target vllm-ascend context parallel implementation uses this value as its local block
+  size; for KV-cache transfer scenarios such as PD disaggregation, target documentation requires it to equal cache block_size,
+  and the platform can override it to block_size for sparse context-parallel operation.
+usage_locations:
+- file: vllm/config/parallel.py:330
+  context: Defines token versus block interleave behavior for DCP or PCP KV-cache storage.
+- file: vllm_ascend/attention/context_parallel/sfa_cp.py:46
+  context: Reads the configured value as the Ascend context-parallel local block size.
+- file: vllm_ascend/platform.py:618
+  context: Checks interleave size against cache block size for Ascend context-parallel paths.
+- file: vllm_ascend/platform.py:639
+  context: Overrides the value to cache block size for the sparse context-parallel path.
+related_parameters:
+- name: --block-size
+  relation: Must bound and divide the interleave size; it must match for target KV-transfer CP scenarios.
+- name: --prefill-context-parallel-size
+  relation: Context parallelism determines whether this KV-cache layout is active.
+- name: --decode-context-parallel-size
+  relation: Combined DCP/PCP ranks consume the interleaved KV-cache layout.
+constraints:
+- --block-size must be greater than or equal to --cp-kv-cache-interleave-size.
+- --block-size must be divisible by --cp-kv-cache-interleave-size.
+- In target Ascend context parallelism with KV-cache transfer needs, set this value equal to --block-size; the documentation
+  gives block_size 128 as the default example.
+tuning_advice:
+  summary: Use 1 as the generic default; use the full cache block size for the documented target CP KV-transfer path.
+  suggested_values:
+  - scenario: No context parallelism or ordinary token-interleaved CP
+    value: 1
+    reason: This is the current upstream default and provides token-level interleave.
+  - scenario: Target Ascend CP with KV pooling or PD disaggregation transfer
+    value: 128
+    reason: The target guide requires equality with block_size; 128 is the target Ascend block-size baseline.
+  caveats:
+  - The value is constrained by block size and may be overridden by the target Ascend sparse CP platform path.
+  - Changing layout changes communication and cache behavior; validate throughput and memory on the intended CP topology.
+  quick_guide: For target CP KV transfer, set this exactly equal to --block-size; otherwise retain 1 unless measured otherwise.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input

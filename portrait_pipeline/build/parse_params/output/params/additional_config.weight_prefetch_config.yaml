@@ -1,0 +1,76 @@
+name: additional_config.weight_prefetch_config
+type: nested
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:51
+value_type: dict
+default: '{}'
+valid_choices: 'dict with keys: enabled (bool), prefetch_ratio (dict)'
+cli_example: '--additional-config ''{"weight_prefetch_config": {"enabled": true}}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'Weight prefetching on Ascend NPU creates a separate pipeline that preloads MLP weights (gate_up_proj and down_proj)
+  into L2 cache ahead of time, running in parallel with vector computations like RMSNorm and SiLU. This reduces MTE (Memory
+  Transfer Engine) utilization during MLP computations, indirectly improving Cube (matrix multiply) efficiency by minimizing
+  resource contention and optimizing data flow. The feature is configured via `additional_config.weight_prefetch_config` which
+  is parsed into a `WeightPrefetchConfig` object in `vllm_ascend/ascend_config.py:52`. When enabled, it directly affects per-token
+  latency and overall throughput by overlapping weight loads with computation. The documentation at `user_guide/feature_guide/weight_prefetch.md:9`
+  and `tutorials/models/Qwen3-Dense.md:347` confirms this is a performance optimization for dense models, with the latter
+  noting that previously separate env vars (VLLM_ASCEND_ENABLE_PREFETCH_MLP, VLLM_ASCEND_MLP_GATE_UP_PREFETCH_SIZE, VLLM_ASCEND_MLP_DOWN_PREFETCH_SIZE)
+  have been deprecated in favor of this config.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:51-52
+  context: Parsed from additional_config dict and stored as WeightPrefetchConfig instance
+- file: tests/e2e/pull_request/two_card/test_flashcomm_distributed.py:112
+  context: Enabled in test for Qwen3 dense model with TP=2
+related_parameters:
+- name: additional_config.xlite_graph_config
+  relation: Both are Ascend-specific graph/execution optimizations configured via additional_config
+- name: additional_config.ascend_compilation_config
+  relation: Compilation config may interact with prefetch scheduling on Ascend NPU
+constraints:
+- weight_prefetch_config must be a dict with optional 'enabled' (bool) and 'prefetch_ratio' (dict) keys
+- Weight prefetching is designed for dense models; effectiveness on MoE models is not documented
+tuning_advice:
+  summary: 'Enable weight prefetching for dense models (e.g., Qwen3-Dense, Llama) to overlap weight loads with computation
+    and improve throughput on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Dense model inference (Qwen3-Dense, Llama, etc.) on Ascend NPU
+    value: '{"enabled": true}'
+    reason: 'Enables the separate weight prefetch pipeline that preloads MLP weights to L2 cache, reducing MTE contention
+      and improving Cube utilization. This is the primary use case documented in vllm-ascend.
+
+      '
+  - scenario: Dense model with fine-tuned prefetch ratios
+    value: '{"enabled": true, "prefetch_ratio": {"mlp": {"gate_up": 1.0, "down": 1.0}}}'
+    reason: 'Allows precise control over how much of each MLP weight matrix is prefetched. Setting both to 1.0 prefetches
+      the entire weight, maximizing overlap at the cost of additional memory bandwidth for the prefetch stream.
+
+      '
+  - scenario: MoE models or models where prefetch causes resource contention
+    value: '{"enabled": false}'
+    reason: 'Disables weight prefetching. The feature is designed for dense models; enabling it on MoE models may not provide
+      benefits and could waste memory bandwidth.
+
+      '
+  caveats:
+  - Weight prefetching consumes additional memory bandwidth for the prefetch stream; if the model is already memory-bandwidth-bound,
+    enabling prefetch may not improve performance and could degrade it.
+  - The feature is primarily tested and documented for dense models (Qwen3-Dense, Llama). Effectiveness on other architectures
+    is not guaranteed.
+  - Previously separate environment variables (VLLM_ASCEND_ENABLE_PREFETCH_MLP, VLLM_ASCEND_MLP_GATE_UP_PREFETCH_SIZE, VLLM_ASCEND_MLP_DOWN_PREFETCH_SIZE)
+    are deprecated; use this config instead.
+  - Prefetch ratios greater than 1.0 or less than 0.0 are likely invalid; stick to values between 0.0 and 1.0.
+  quick_guide: 'For dense models on Ascend NPU, enable with `--additional-config ''{"weight_prefetch_config": {"enabled":
+    true}}''`. For MoE models, leave disabled (default).
+
+    '
+analysis_date: '2026-07-06'

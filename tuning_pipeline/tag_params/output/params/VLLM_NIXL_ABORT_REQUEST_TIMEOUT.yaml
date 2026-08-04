@@ -1,0 +1,89 @@
+name: VLLM_NIXL_ABORT_REQUEST_TIMEOUT
+type: env
+category: kv_cache
+scope: both
+source_file:
+- vllm/envs.py:1472
+- docs/features/nixl_connector_usage.md:129
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:185
+value_type: int
+default: 480
+valid_choices: Any value accepted by Python int(), interpreted as seconds; a positive integer is operationally meaningful.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: This timeout is a delayed-release safety bound for producer-side KV blocks in disaggregated prefill/decode
+  serving, not a transfer timeout on the normal request path. Upstream documents that an aborted request whose decoder has
+  not sent the NIXL READ notification keeps its prefiller KV blocks until this interval expires, preventing indefinite retention.
+  In the pinned Ascend implementation, MooncakeHybridConnector also compares the age of each delayed-free request against
+  this NIXL variable and then returns expired request IDs for forced resource release. Reducing the value can reclaim stranded
+  KV capacity earlier, but a value below legitimate decoder-read delays can release blocks prematurely and turn a slow transfer
+  into a failed request. Increasing it tolerates longer delays but retains abandoned KV blocks longer, which can reduce usable
+  cache capacity and indirectly raise queuing or allocation latency under pressure. It has no steady-state effect when there
+  are no aborted or delayed-free requests.
+usage_locations:
+- file: docs/features/nixl_connector_usage.md:129
+  context: Documents the default and the producer-side cleanup behavior when an aborted request has not received a decoder
+    READ notification.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:166
+  context: Adds expired delayed-free request IDs to the finished set returned for resource release.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:185
+  context: Compares each delayed-free request's age with this environment value and force-finishes entries that exceed it.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1731
+  context: Registers producer requests and their delay-start timestamps with the hybrid connector's delayed-free tracker.
+related_parameters:
+- name: VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
+  relation: Controls delayed cleanup in the standard Ascend MooncakeConnector; in the pinned hybrid connector it is printed
+    in the expiration log, while the actual comparison uses VLLM_NIXL_ABORT_REQUEST_TIMEOUT.
+constraints:
+- The environment text must be accepted by Python int() or reading the setting raises ValueError.
+- The unit is seconds and the default is 480 seconds.
+- Upstream documents the setting for NixlConnector in disaggregated prefill/decode serving.
+- The pinned Ascend use is limited to delayed-free tracking in MooncakeHybridConnector; the standard MooncakeConnector uses
+  VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT instead.
+- Zero and negative integers are syntactically accepted but make any nonnegative request age exceed the threshold on the next
+  expiration check.
+tuning_advice:
+  summary: Keep 480 seconds unless delayed-free KV blocks cause measured producer cache pressure or valid decoder reads routinely
+    need a different grace period.
+  suggested_values:
+  - scenario: General disaggregated serving
+    value: 480
+    reason: This is the pinned default and provides an eight-minute grace period before abandoned producer KV blocks are reclaimed.
+  - scenario: Deployment-specific tighter cleanup
+    value: measured worst-case decoder READ delay plus safety margin
+    reason: Deriving the timeout from observed tail behavior reclaims abandoned blocks sooner without choosing an ungrounded
+      fixed value that may be shorter than a valid transfer.
+  caveats:
+  - A shorter timeout can improve recovery from stranded requests but can prematurely release KV blocks during slow decoder
+    reads.
+  - A longer timeout does not accelerate successful transfers and can retain producer cache blocks long enough to worsen memory
+    pressure.
+  - The pinned Ascend hybrid connector's expiration condition uses this NIXL variable but its log message reports VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT;
+    do not infer the active threshold from that logged value alone.
+  - Changes matter only for connectors and request states that enter delayed cleanup.
+  quick_guide: Start at 480; lower only above measured worst-case READ delay with margin, or raise it when valid slow reads
+    are being expired.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

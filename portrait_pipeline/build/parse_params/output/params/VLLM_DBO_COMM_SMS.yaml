@@ -1,0 +1,48 @@
+name: VLLM_DBO_COMM_SMS
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1642
+- vllm/v1/worker/gpu_ubatch_wrapper.py:139
+value_type: int
+default: '20'
+valid_choices: positive integer (typically 0 to total SMs/CUs on the GPU)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls the number of Streaming Multiprocessors (SMs) on CUDA GPUs or Compute Units
+  (CUs) on ROCm GPUs that are reserved for communication kernels when using DBO (Dual Batch Overlap) with expert parallelism.
+  The remaining SMs/CUs are allocated to computation. On Ascend NPU, this parameter has no effect because: (1) Ascend NPUs
+  use a fundamentally different hardware architecture (Da Vinci) without CUDA SMs or ROCm CUs; (2) the code path that reads
+  this variable (vllm/v1/worker/gpu_ubatch_wrapper.py:139) is only triggered when `enable_expert_parallel` is True AND a DeepEP
+  device communicator with SM control support is available — DeepEP is an NVIDIA-specific communication library that does
+  not exist on Ascend; (3) vllm-ascend does not override or reference this variable anywhere in its codebase. The parameter
+  is exclusively relevant for NVIDIA/AMD GPU deployments using expert parallelism with DeepEP.
+
+  '
+usage_locations:
+- file: vllm/envs.py:1642
+  context: Environment variable definition with platform-specific defaults (20 for CUDA, 64 for ROCm)
+- file: vllm/v1/worker/gpu_ubatch_wrapper.py:139
+  context: Read in _create_sm_control_context to set communication SM allocation for DeepEP all2all manager
+related_parameters:
+- name: enable_expert_parallel
+  relation: VLLM_DBO_COMM_SMS only takes effect when expert parallelism is enabled
+- name: VLLM_DEEPEP_BUFFER_SIZE_MB
+  relation: Both are DeepEP-related configuration parameters for expert parallelism communication
+constraints: []
+tuning_advice:
+  summary: This parameter has no effect on Ascend NPU and can be safely ignored.
+  suggested_values:
+  - scenario: Any Ascend NPU deployment
+    value: default (20)
+    reason: The parameter is not read or used by vllm-ascend; DeepEP and CUDA SM control are not applicable to Ascend hardware
+  caveats:
+  - This parameter only affects CUDA/ROCm GPU deployments using DeepEP with expert parallelism
+  - Setting this on Ascend NPU has zero impact on performance or behavior
+  quick_guide: Ignore this parameter on Ascend NPU — it is NVIDIA/AMD-specific and has no effect
+analysis_date: '2026-07-06'

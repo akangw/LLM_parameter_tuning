@@ -1,0 +1,74 @@
+name: pooler.task
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/model.py:1471
+- vllm/entrypoints/pooling/pooling/serving.py:89
+- vllm/model_executor/layers/pooler/special.py:26
+- vllm/model_executor/layers/pooler/special.py:60
+value_type: str
+default: <computed>
+valid_choices:
+- embed
+- classify
+- token_classify
+- token_embed
+- embed&token_classify
+- plugin
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'pooler.task determines which pooling sub-pooler is dispatched at runtime (DispatchPooler in vllm/model_executor/layers/pooler/special.py:26).
+  The task value selects a specific pooling strategy (e.g., mean pooling for "embed", CLS token for "classify", per-token
+  for "token_classify") which affects the computational cost of the pooling forward pass. Different pooling methods have different
+  FLOPs and memory access patterns, leading to minor latency differences per request. However, the pooling computation itself
+  is typically a small fraction of total inference time compared to the transformer forward pass, so the overall throughput
+  impact is low. No vllm-ascend specific override or Ascend-specific behavior was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:1471
+  context: get_pooling_task() reads self.pooler_config.task to determine the pooling task for the model
+- file: vllm/v1/worker/gpu_model_runner.py:1173
+  context: V1 worker calls model.pooler.get_pooling_updates(task) using the task from pooling_params
+- file: vllm/entrypoints/pooling/pooling/serving.py:89
+  context: Serving layer validates request.task against supported tasks and suggests --pooler-config.task override
+- file: vllm/model_executor/layers/pooler/special.py:60
+  context: DispatchPooler.__init__ validates that each sub-pooler supports its assigned task
+related_parameters:
+- name: pooler_config
+  relation: pooler.task is a nested field within pooler_config; pooler_config must be set for pooler.task to take effect
+- name: runner
+  relation: pooler.task is only meaningful when runner='pooling' (pooling model mode)
+constraints:
+- pooler.task must be one of the supported pooling tasks for the loaded model, otherwise a RuntimeError is raised
+- pooler.task is only effective when pooler_config is not None; if pooler_config is None, the pooling task is auto-detected
+  from model architecture
+tuning_advice:
+  summary: 'Set pooler.task explicitly to match your intended pooling operation to avoid auto-detection overhead and ensure
+    correct pooling behavior. The performance difference between tasks is negligible for most deployments.
+
+    '
+  suggested_values:
+  - scenario: Embedding models (e.g., BGE, Jina embeddings)
+    value: embed
+    reason: Standard embedding pooling; most embedding models use mean pooling which is the default for 'embed' task
+  - scenario: Sequence classification models
+    value: classify
+    reason: Uses CLS token or configured pooling for classification output
+  - scenario: Token-level classification (e.g., NER)
+    value: token_classify
+    reason: Returns per-token representations without sequence-level pooling
+  - scenario: Multi-vector retrieval (e.g., ColBERT-style)
+    value: token_embed
+    reason: Returns token-level embeddings for late interaction retrieval
+  caveats:
+  - If pooler.task is not set and pooler_config is None, vLLM auto-detects the task from model architecture which may select
+    a suboptimal pooling method
+  - The 'plugin' task requires a registered IOProcessor plugin and is not available for standard pooling models
+  quick_guide: Set --pooler-config.task to match your model's intended pooling operation (embed/classify/token_classify/token_embed)
+analysis_date: '2026-07-06'

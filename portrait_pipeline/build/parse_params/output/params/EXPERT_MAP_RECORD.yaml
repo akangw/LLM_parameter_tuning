@@ -1,0 +1,107 @@
+name: EXPERT_MAP_RECORD
+type: env
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:680
+- vllm_ascend/patch/platform/__init__.py:42
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: "Setting EXPERT_MAP_RECORD=\"true\" activates the Dynamic Expert Load Balancing (EPLB) record mode on Ascend\
+  \ NPUs. When enabled, it forces `dynamic_eplb` to True in the EplbConfig (ascend_config.py:665), which triggers two runtime\
+  \ effects:\n1. **Expert map recording**: The system collects per-expert heat statistics during\n   inference and writes\
+  \ them to the JSON file specified by `expert_map_record_path`.\n   This recording overhead adds a small runtime cost to\
+  \ every MoE layer forward pass.\n\n2. **Multiprocess executor patch**: The condition at patch/platform/__init__.py:42\n\
+  \   imports `patch_multiproc_executor` when EXPERT_MAP_RECORD is true. This patch\n   modifies the multiprocess executor\
+  \ behavior specifically for EPLB data collection,\n   which can affect scheduling and inter-process communication patterns.\n\
+  \nThe primary performance impact is the expert heat collection overhead during the recording phase. This is a temporary\
+  \ cost incurred only during the data collection run, not during normal production serving. The recorded expert map is then\
+  \ used offline to generate an optimized expert placement that improves load balance and throughput in subsequent production\
+  \ runs.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:680
+  context: 'Validation check — if dynamic_eplb is True, asserts that either DYNAMIC_EPLB or EXPERT_MAP_RECORD env var is set
+    to "true". This gate ensures the user has explicitly opted into dynamic EPLB behavior.
+
+    '
+- file: vllm_ascend/patch/platform/__init__.py:42
+  context: 'Conditional import of patch_multiproc_executor — when EXPERT_MAP_RECORD is "true", the multiprocess executor patch
+    is loaded to support EPLB data collection across worker processes.
+
+    '
+related_parameters:
+- name: DYNAMIC_EPLB
+  relation: 'Alternative env var that also activates dynamic EPLB. Either DYNAMIC_EPLB or EXPERT_MAP_RECORD must be "true"
+    when dynamic_eplb is enabled in config.
+
+    '
+- name: expert_map_record_path
+  relation: 'Required companion config field in EplbConfig. Specifies the output JSON file path where the recorded expert
+    heat map is written. Setting this field automatically sets dynamic_eplb=True and requires EXPERT_MAP_RECORD="true".
+
+    '
+- name: dynamic_eplb
+  relation: 'The EplbConfig boolean that EXPERT_MAP_RECORD indirectly controls. When expert_map_record_path is set, dynamic_eplb
+    is forced to True.
+
+    '
+- name: expert_heat_collection_interval
+  relation: 'Controls how frequently (in steps) expert heat statistics are collected during the recording phase. Affects the
+    granularity and overhead of recording.
+
+    '
+constraints:
+- EXPERT_MAP_RECORD must be set to "true" (exact string match) to activate recording mode; any other value is treated as false.
+- When dynamic_eplb is enabled in EplbConfig, either DYNAMIC_EPLB or EXPERT_MAP_RECORD must be "true", otherwise an assertion
+  error is raised.
+- expert_map_record_path must be set to a valid JSON file path (ending in .json) when using EXPERT_MAP_RECORD; the parent
+  directory must exist or be creatable.
+tuning_advice:
+  summary: 'Enable EXPERT_MAP_RECORD="true" only during a dedicated data-collection run to generate the expert heat map; disable
+    it for production serving to avoid recording overhead.
+
+    '
+  suggested_values:
+  - scenario: 'Initial data collection run to generate the expert distribution map for subsequent EPLB-optimized deployments.
+
+      '
+    value: 'true'
+    reason: 'Required to activate expert heat recording. The collected data enables offline EPLB algorithm to compute an optimized
+      expert-to-device mapping that improves load balance and throughput in production.
+
+      '
+  - scenario: 'Production serving with a pre-computed expert map loaded via expert_map_path.
+
+      '
+    value: 'false'
+    reason: 'Recording overhead is unnecessary during production. The expert map is already computed and loaded from file;
+      heat collection would only add runtime cost without benefit.
+
+      '
+  caveats:
+  - 'EXPERT_MAP_RECORD="true" adds per-step expert heat collection overhead to every MoE layer. Expect a measurable throughput
+    drop during the recording run compared to normal serving.
+
+    '
+  - 'The recorded expert map is only useful if the workload during recording is representative of production traffic. Run
+    the recording phase with realistic request patterns and sufficient duration.
+
+    '
+  - 'This env var triggers a multiprocess executor patch import that may alter inter-process communication behavior. Test
+    in a staging environment before deploying to production.
+
+    '
+  quick_guide: 'Set EXPERT_MAP_RECORD="true" only for the initial data-collection run; use "false" (default) for all production
+    serving.
+
+    '
+analysis_date: '2026-07-06'

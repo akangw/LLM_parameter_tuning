@@ -1,0 +1,97 @@
+name: CompilationConfig.pass_config.fuse_mla_dual_rms_norm
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:145
+- vllm/config/vllm.py:168
+- vllm/_aiter_ops.py:416
+- docs/design/fusions.md:386
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+cli_example: -cc.pass_config.fuse_mla_dual_rms_norm=True
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On supported ROCm/AITER deployments, enabling this flag adds a post-gradient pattern-matcher pass that replaces
+  the paired Q and compressed-KV RMSNorm operations in an MLA attention projection with one fused_mla_dual_rms_norm operation
+  backed by AITER''s fused_qk_rmsnorm HIP kernel. Combining the two normalizations avoids a separate kernel launch and reduces
+  intermediate memory traffic; the pinned fusion guide reports about a 2% performance improvement for the targeted DeepSeek-V3/Kimi-K2
+  pattern. The declared value is null because VllmConfig resolves it from the optimization level: O0 supplies false, while
+  O1 through O3 enable it only when ROCm AITER ops are active and the installed AITER exposes fused_qk_rmsnorm. O2 is the
+  overall default optimization level. An explicit value is retained rather than replaced by those defaults, but true is forcibly
+  reset to false on a non-ROCm platform, including Ascend, and the pass manager also requires AITER to be enabled before registering
+  the fusion pass.'
+usage_locations:
+- file: vllm/config/compilation.py:145
+  context: Declares the delayed boolean and, during PassConfig initialization, forcibly disables a true value when the active
+    platform is not ROCm.
+- file: vllm/config/vllm.py:168
+  context: Computes the automatic O1-O3 value by requiring both enabled ROCm AITER ops and an installed AITER implementation
+    of fused_qk_rmsnorm; O0 sets the value false.
+- file: vllm/_aiter_ops.py:416
+  context: Probes for AITER fused_qk_rmsnorm support used by automatic enablement; the fused custom-op implementation delegates
+    the paired Q/K RMSNorm calculation to that kernel.
+- file: docs/design/fusions.md:386
+  context: Documents the ROCm/AITER-only MLA rewrite, BF16 support, targeted DeepSeek-V3 and Kimi-K2 attention pattern, O1-or-higher
+    enablement, and an approximately 2% reported gain.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: O0 resolves an unspecified value to false; O1, O2, and O3 use the AITER availability predicate. The overall default
+    is O2.
+- name: CompilationConfig.mode
+  relation: The rewrite is a post-gradient compilation pass and provides no optimization when execution does not enter the
+    compiled pass pipeline.
+constraints:
+- Effective only on ROCm with ROCm AITER ops enabled; PassConfig resets true to false on every non-ROCm platform, including
+  Ascend.
+- AITER must provide fused_qk_rmsnorm (the source identifies support added by AITER PR 2442); the automatic default remains
+  false when the import probe fails.
+- The documented supported data type is BF16.
+- The FX graph must match the targeted MLA projection split followed by paired Q and compressed-KV RMSNorm operations, with
+  RMSNorm epsilon 1e-5 or 1e-6; otherwise the pass has nothing to replace.
+tuning_advice:
+  summary: Leave the delayed default in place on supported ROCm/AITER MLA workloads; use an explicit value mainly for a controlled
+    benchmark or compiler diagnosis, and keep it false on Ascend and other non-ROCm platforms.
+  suggested_values:
+  - scenario: DeepSeek-V3 or Kimi-K2 MLA inference in BF16 on ROCm with a recent AITER
+    value: true
+    reason: This is the documented target pattern, where one fused kernel can replace the paired Q/KV RMSNorm kernels and
+      yield the reported approximately 2% gain.
+  - scenario: Ascend, CUDA, CPU, or another non-ROCm platform
+    value: false
+    reason: Current source forcibly disables the setting off ROCm, so false avoids a warning and accurately represents the
+      effective behavior.
+  - scenario: ROCm compiler debugging or an AITER version without fused_qk_rmsnorm
+    value: false
+    reason: Preserving separate RMSNorm operations avoids relying on the fused kernel and isolates this graph rewrite during
+      troubleshooting.
+  caveats:
+  - The source-level default is null rather than universally true or false; its effective default depends on optimization
+    level and runtime AITER capability detection.
+  - Explicit true bypasses the conservative fused_qk_rmsnorm availability default, but it does not bypass the non-ROCm disable
+    or the pass manager's AITER-enabled check; using it with an incompatible AITER can fail when the fused operation is invoked.
+  - The pinned vllm-ascend repository contains no implementation or override for this setting, and upstream PassConfig disables
+    it on Ascend because Ascend is not ROCm.
+  - The reported gain is model, graph-shape, and software-version dependent; enabling an unmatched pass may add compilation
+    work without changing steady-state execution.
+  quick_guide: On matching BF16 MLA models with ROCm and current AITER, keep the O1-or-higher automatic default or benchmark
+    true against false; on all non-ROCm systems use false.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

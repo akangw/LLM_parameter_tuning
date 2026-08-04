@@ -1,0 +1,102 @@
+name: --data-parallel-hybrid-lb
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:474
+- vllm/engine/arg_utils.py:1752
+- vllm/engine/arg_utils.py:1812
+- vllm/config/parallel.py:142
+- vllm/config/parallel.py:501
+- vllm/config/parallel.py:780
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --data-parallel-hybrid-lb
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This option changes online data-parallel request routing from an API server that manages local and remote EngineCores
+  to one that manages local EngineCores only. In hybrid mode, each node runs its own API server and balances requests among
+  its local data-parallel ranks, while an upstream load balancer distributes requests between nodes. That topology can reduce
+  cross-node request traffic and remove a single API-server bottleneck at larger data-parallel sizes, but its latency and
+  throughput effect depends on the external load balancer, node topology, and traffic distribution. The pinned vllm-ascend
+  source has no consumer or override for this flag, so the current upstream behavior applies unchanged to Ascend deployments.
+usage_locations:
+- file: vllm/config/parallel.py:142
+  context: Defines hybrid DP load balancing for online serving with data_parallel_size greater than zero; the API server and
+    AsyncLLM run per node, with an external load balancer between nodes.
+- file: vllm/config/parallel.py:501
+  context: local_engines_only returns true for hybrid mode, limiting the client to local EngineCores rather than local and
+    remote cores.
+- file: vllm/engine/arg_utils.py:1752
+  context: Rejects hybrid mode in headless operation and rejects combining it with external DP load balancing.
+- file: vllm/engine/arg_utils.py:1812
+  context: Resolves local DP topology, infers hybrid mode from data_parallel_start_rank, disables it for a single node, and
+    converts local size one to full external load balancing.
+- file: vllm/config/parallel.py:780
+  context: Rejects hybrid load balancing when elastic expert parallelism is enabled because elastic EP requires one API server
+    and core client.
+related_parameters:
+- name: --data-parallel-size
+  relation: Hybrid mode applies to online data-parallel serving and is meaningful only when the data-parallel topology spans
+    more than the local ranks.
+- name: --data-parallel-size-local
+  relation: Must be set for hybrid mode; a value of one switches to full external load balancing, while a value equal to total
+    data-parallel size disables hybrid mode.
+- name: --data-parallel-start-rank
+  relation: Identifies the first local DP rank on a node and, outside headless mode, implicitly enables hybrid mode when local
+    DP size is supplied.
+- name: --data-parallel-external-lb
+  relation: Cannot be true with hybrid mode because it selects the full external load-balancing topology instead.
+- name: --enable-elastic-ep
+  relation: Elastic expert parallelism is incompatible with hybrid mode.
+- name: --api-server-count
+  relation: API servers are per node in hybrid mode, so their count should be sized for the local ranks and node request rate.
+constraints:
+- Hybrid mode is for online serving with data parallelism; it requires --data-parallel-size-local when explicitly enabled.
+- Do not use --headless or --data-parallel-external-lb with --data-parallel-hybrid-lb.
+- A local DP size of one automatically becomes full external load balancing; a local size equal to the total DP size disables
+  hybrid mode as a single-node topology.
+- Do not combine hybrid load balancing with elastic expert parallelism.
+tuning_advice:
+  summary: Use hybrid mode only for a multi-node online data-parallel deployment that has a capable upstream load balancer.
+    Leave it disabled for a single-node deployment or when internal load balancing is sufficient.
+  suggested_values:
+  - scenario: Multi-node online DP serving with several local ranks per node and an upstream load balancer
+    value: true
+    reason: Each node then routes locally while the upstream layer distributes traffic across node endpoints, avoiding a single
+      API-server routing point.
+  - scenario: Single-node DP serving or a deployment without an external node-level load balancer
+    value: false
+    reason: Internal load balancing retains one client managing the configured DP engines and avoids the additional external
+      routing requirement.
+  caveats:
+  - Hybrid mode is not full external DP load balancing; every node still needs local DP ranks and an API endpoint.
+  - The code can infer hybrid mode when data_parallel_start_rank and data_parallel_size_local are provided, so check the resolved
+    configuration rather than relying only on the flag spelling.
+  - Source inspection establishes the routing topology but cannot predict the best tail latency or throughput for a particular
+    Ascend cluster; benchmark with the production load balancer and request mix.
+  quick_guide: For multi-node DP, set a local DP size and start rank on each node, enable this flag, and place a load balancer
+    in front of the per-node API endpoints; otherwise leave the flag disabled.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

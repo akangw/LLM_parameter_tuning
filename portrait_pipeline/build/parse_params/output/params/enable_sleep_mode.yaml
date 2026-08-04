@@ -1,0 +1,89 @@
+name: --enable-sleep-mode
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/model.py:290
+- vllm/engine/arg_utils.py:825
+- vllm_ascend/platform.py:654
+- vllm_ascend/worker/worker.py:134
+- vllm_ascend/worker/worker.py:488
+- vllm_ascend/patch/__init__.py:351
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --enable-sleep-mode
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: 'Enables a memory pool-based sleep/wake mechanism that dramatically reduces NPU memory footprint during idle
+  periods. On Ascend, vllm-ascend implements this via the CaMem allocator (not upstream''s CuMem). When enabled, model weights
+  and KV cache are allocated within tagged memory pools ("weights", "kv_cache"), allowing the engine to release GPU memory
+  via `llm.sleep(level=1)` (release KV cache) or `llm.sleep(level=2)` (release weights + KV cache, keeping only CUDA graph
+  buffers). This directly impacts peak memory usage — after sleep, memory consumption drops to near-baseline levels. The tradeoff
+  is that wake_up reallocates memory, adding latency to the first request after wake. Also affects PYTORCH_NPU_ALLOC_CONF:
+  "when sleep mode is enabled, expandable_segments is NOT" automatically set (vllm_ascend/platform.py:654), which may impact
+  memory fragmentation behavior. vllm-ascend patches upstream''s CuMem-only availability check to accept Ascend''s CaMem allocator
+  (vllm_ascend/patch/__init__.py:351).
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:654
+  context: Skips setting PYTORCH_NPU_ALLOC_CONF=expandable_segments:True when sleep mode is enabled (RL scenarios)
+- file: vllm_ascend/worker/worker.py:134
+  context: Initializes _sleep_saved_buffers dict for level 2 sleep buffer restoration
+- file: vllm_ascend/worker/worker.py:488
+  context: Wraps model loading in CaMemAllocator.use_memory_pool(tag='weights') context
+- file: vllm_ascend/patch/__init__.py:351
+  context: Patches upstream is_cumem_allocator_available to accept Ascend's CaMem allocator
+- file: vllm/config/model.py:507
+  context: Validates platform supports sleep mode via current_platform.is_sleep_mode_available()
+- file: vllm/config/vllm.py:743
+  context: Bypasses KV connector + expandable_segments incompatibility check when sleep mode is on
+related_parameters:
+- name: --model-weight-gib
+  relation: Required in some Ascend examples when sleep mode is enabled; specifies model weight size for memory planning
+- name: --temperature
+  relation: Must be 0 in Ascend offline examples when sleep mode is enabled (deterministic output requirement)
+- name: PYTORCH_NPU_ALLOC_CONF
+  relation: expandable_segments:True is NOT auto-set when sleep mode is enabled; user must manage this manually
+- name: --sleep-mode-level
+  relation: Controls sleep depth (1=release KV cache only, 2=release weights+KV cache) when calling llm.sleep()
+constraints:
+- Sleep mode is only supported on platforms where is_sleep_mode_available() returns True (Ascend NPU supported via CaMem allocator
+  patch)
+- Sleep mode can only be used for one LLM instance per process (assertion in worker.py:490)
+- When sleep mode is enabled, PYTORCH_NPU_ALLOC_CONF=expandable_segments:True is NOT automatically set by vllm-ascend
+- In Ascend offline examples, --model-weight-gib must be provided and --temperature must be 0 when --enable-sleep-mode is
+  set
+tuning_advice:
+  summary: Enable sleep mode to dramatically reduce NPU memory usage during idle periods at the cost of wake-up latency; ideal
+    for multi-tenant or intermittent inference scenarios on Ascend
+  suggested_values:
+  - scenario: Multi-tenant serving with idle gaps between requests
+    value: 'True'
+    reason: Releases KV cache (level 1) or weights+KV cache (level 2) during idle, freeing NPU memory for other processes
+      or workloads
+  - scenario: Continuous high-throughput serving with no idle periods
+    value: 'False'
+    reason: Sleep/wake overhead adds latency to first request after wake; no benefit if engine is always active
+  - scenario: Reinforcement learning (RL) scenarios
+    value: 'False'
+    reason: vllm-ascend explicitly notes sleep mode should NOT be used in RL scenarios (platform.py:652); expandable_segments
+      is skipped in sleep mode which may cause OOM
+  caveats:
+  - 'Wake-up reallocates memory: llm.wake_up(tags=[''weights'']) or llm.wake_up(tags=[''kv_cache'']) triggers NPU memory allocation,
+    adding latency to the next request'
+  - Level 2 sleep saves CPU memory by offloading weights, but requires reload_weights() collective RPC before wake_up
+  - Only one LLM instance per process can use sleep mode — assertion fails if allocator already has memory in use
+  - PYTORCH_NPU_ALLOC_CONF=expandable_segments:True is NOT auto-configured with sleep mode; user must set it manually if needed
+    for memory fragmentation control
+  - vLLM V1 has a known bug where logits buffer memory cannot be released after sleep, causing higher-than-expected memory
+    usage
+  quick_guide: Set --enable-sleep-mode for Ascend deployments with intermittent inference to free NPU memory during idle;
+    avoid in continuous serving or RL scenarios
+analysis_date: '2026-07-06'

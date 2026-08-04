@@ -1,0 +1,119 @@
+name: VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:71
+- vllm_ascend/ascend_config.py:140
+- vllm_ascend/utils.py:982
+- vllm_ascend/ops/linear_op.py:385
+- vllm_ascend/ops/linear_op.py:672
+- vllm_ascend/batch_invariant.py:78
+- docs/source/user_guide/configuration/additional_config.md:21
+- docs/source/user_guide/release_notes.md:1341
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This deprecated Ascend environment switch enables the MatmulAllReduce fused row-parallel linear implementation.
+  When a selected row-parallel layer both reduces its result and has a tensor-parallel group larger than one, the implementation
+  calls torch_npu.npu_mm_all_reduce_base so matrix multiplication and HCCL all-reduce are executed through one fused path
+  instead of separate compute and communication operations. The release notes describe the intended performance effect as
+  reduced prefill cost when tensor parallelism is enabled, and the environment definition says A2 is supported and eager mode
+  performs better. If reduction is unnecessary or TP size is one, the implementation falls back to the layer's ordinary quantization
+  method, so the fused benefit does not apply. The pinned upstream vLLM repository has no implementation of this Ascend-specific
+  variable.
+usage_locations:
+- file: vllm_ascend/envs.py:71
+  context: Parses the environment value with bool(int(...)); the unset default is "0".
+- file: vllm_ascend/ascend_config.py:140
+  context: Resolves enable_matmul_allreduce, preferring the additional-config key when it is present and otherwise falling
+    back to this environment value.
+- file: vllm_ascend/utils.py:982
+  context: Exposes the resolved Ascend configuration value to the parallel-linear operator selector.
+- file: vllm_ascend/ops/linear_op.py:672
+  context: Selects MatmulAllreduceRowParallelOp for row-parallel layers when enabled; this check precedes the FlashComm2 and
+    sequence-parallel alternatives.
+- file: vllm_ascend/ops/linear_op.py:385
+  context: Executes npu_mm_all_reduce_base when reduce_results is true and TP size is greater than one, otherwise retaining
+    the ordinary linear method.
+- file: vllm_ascend/batch_invariant.py:78
+  context: Batch-invariant mode forcibly clears enable_matmul_allreduce to preserve deterministic behavior.
+- file: docs/source/user_guide/configuration/additional_config.md:93
+  context: Documents the preferred enable_matmul_allreduce boolean additional-config key and marks this environment variable
+    as deprecated.
+- file: docs/source/user_guide/release_notes.md:1341
+  context: Describes the fusion as a tensor-parallel prefill performance optimization.
+related_parameters:
+- name: additional_config.enable_matmul_allreduce
+  relation: Preferred replacement; when present it overrides this environment variable, including an explicit false value.
+- name: tensor_parallel_size
+  relation: A TP group larger than one is required for the fused all-reduce branch; TP=1 takes the ordinary linear path.
+- name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+  relation: Controls a separate tensor-parallel communication optimization; the row-parallel selector gives MatmulAllReduce
+    precedence when both are enabled.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Controls the separate sequence-parallel communication path, which is considered only after MatmulAllReduce in
+    the row-parallel operator selector.
+- name: VLLM_BATCH_INVARIANT
+  relation: Enabling batch-invariant execution causes Ascend to disable MatmulAllReduce fusion for determinism.
+constraints:
+- The environment value is parsed by int(), so use a numeric string; "0" is false and any nonzero integer is true, while a
+  nonnumeric value fails during parsing.
+- additional_config.enable_matmul_allreduce takes precedence and is the supported migration target because the environment
+  variable is deprecated.
+- The fused branch requires a row-parallel layer with reduce_results enabled and tensor_parallel_size greater than one.
+- Current source documentation identifies Ascend A2 as the supported hardware and says eager mode gets better performance.
+- Batch-invariant mode disables this optimization.
+tuning_advice:
+  summary: Migrate to additional_config.enable_matmul_allreduce and benchmark the fused path for A2 eager-mode tensor-parallel
+    prefill workloads.
+  suggested_values:
+  - scenario: Ascend A2 tensor-parallel eager-mode workload with substantial prefill cost
+    value: '1'
+    reason: The fused NPU operator combines row-parallel matrix multiplication and all-reduce, targeting lower prefill latency
+      and higher throughput.
+  - scenario: TP=1, batch-invariant execution, unsupported hardware, or graph-focused deployment
+    value: '0'
+    reason: TP=1 cannot enter the fused collective branch, batch-invariant mode clears the setting, and the pinned documentation
+      only claims support and better performance for A2 eager mode.
+  - scenario: New or migrated deployment that needs the optimization
+    value: '0'
+    reason: Leave the deprecated variable unset or disabled and configure the preferred additional_config.enable_matmul_allreduce=true
+      key instead.
+  caveats:
+  - This environment variable is deprecated and logs a migration warning when used; the documentation says environment-variable
+    support will be removed in a future release.
+  - The source provides qualitative performance guidance but no portable benchmark gain, so measure prefill latency, TTFT,
+    and throughput on the target model, quantization, TP size, and topology.
+  - Enabling this switch takes precedence over FlashComm2 and sequence-parallel row operators in the current selector, so
+    benchmark combinations rather than assuming their effects compose.
+  - The current selector can install the custom row-parallel operator broadly, but fusion occurs only when the layer requests
+    result reduction and TP is larger than one.
+  quick_guide: Prefer additional_config.enable_matmul_allreduce=true on verified A2 eager-mode TP prefill workloads; otherwise
+    keep the disabled default.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  deploy_scenario:
+  - long_input

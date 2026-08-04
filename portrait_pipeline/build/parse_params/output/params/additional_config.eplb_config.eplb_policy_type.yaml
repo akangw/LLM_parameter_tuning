@@ -1,0 +1,71 @@
+name: additional_config.eplb_config.eplb_policy_type
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:636
+value_type: int
+default: 1
+valid_choices:
+- 0
+- 1
+- 2
+- 3
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: "This parameter selects the expert placement algorithm used by the Expert Parallel Load Balancing (EPLB) subsystem\
+  \ on Ascend NPUs. It is read in two critical runtime paths:\n1. **Dynamic EPLB process** (vllm_ascend/worker/model_runner_v1.py:470):\n\
+  \   The value is passed to `EplbProcess(policy_type=...)` which runs a background\n   process that periodically collects\
+  \ expert load statistics and computes new\n   expert-to-device mappings. Different policy types use different algorithms\n\
+  \   (e.g., greedy, balanced, multi-stage) that trade off mapping quality against\n   computation overhead.\n\n2. **Fused\
+  \ MoE layer** (vllm_ascend/ops/fused_moe/fused_moe.py:435):\n   When `eplb_policy_type == 3`, the MoE layer enables a multi-stage\
+  \ load\n   collection mode that allocates a 2D tensor `moe_load` of shape\n   `(num_iter, local_num_experts)` instead of\
+  \ a 1D vector. This increases memory\n   usage slightly but provides finer-grained load statistics for the multi-stage\n\
+  \   balancing algorithm.\n\nThe policy type directly affects how evenly expert workloads are distributed across EP ranks,\
+  \ which in turn impacts token throughput and tail latency for MoE models. A suboptimal policy can cause expert load imbalance,\
+  \ leaving some NPUs idle while others are overloaded.\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:470
+  context: Passed to EplbProcess constructor to select the load balancing algorithm for dynamic EPLB.
+- file: vllm_ascend/eplb/eplb_updator.py:34
+  context: Checked to determine if multi-stage mode is active (policy_type == 3).
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:435
+  context: Controls multi-stage load collection buffer allocation in the fused MoE layer.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: eplb_policy_type is only effective when dynamic_eplb is enabled or an expert_map_path is provided.
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: For policy_type 3, this interval determines the number of iterations stored in the multi-stage load buffer.
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Controls how frequently the selected policy algorithm is executed to recompute expert mappings.
+constraints:
+- eplb_policy_type must be one of 0, 1, 2, or 3; any other value raises a ValueError.
+tuning_advice:
+  summary: 'Start with the default policy_type 1. Switch to policy_type 3 only if you observe persistent expert load imbalance
+    and can tolerate the additional memory and computation overhead of multi-stage load collection.
+
+    '
+  suggested_values:
+  - scenario: General MoE inference with moderate load imbalance
+    value: 1
+    reason: Default policy; provides a good balance between mapping quality and algorithm overhead.
+  - scenario: Severe or fluctuating expert load imbalance requiring finer-grained statistics
+    value: 3
+    reason: Multi-stage policy collects load data over multiple iterations for more accurate redistribution, at the cost of
+      extra memory for the 2D load buffer.
+  - scenario: Static expert placement with a pre-computed expert map
+    value: 0
+    reason: When using a fixed expert_map_path without dynamic EPLB, the policy type has no runtime effect; 0 is a safe minimal
+      value.
+  caveats:
+  - 'Policy type 3 allocates additional NPU memory for the multi-stage load buffer (shape: num_iter × local_num_experts).
+    Monitor memory usage when enabling this on memory-constrained deployments.'
+  - The EPLB background process consumes CPU cycles to compute new expert mappings. More complex policies (higher type values)
+    may increase this CPU overhead.
+  - This parameter has no effect unless dynamic_eplb is enabled or an expert_map_path is set.
+  quick_guide: Use default 1 for most cases; try 3 only if expert load imbalance persists and memory headroom exists.
+analysis_date: '2026-07-06'

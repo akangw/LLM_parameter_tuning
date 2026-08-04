@@ -1,0 +1,102 @@
+name: --kv-cache-dtype
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1088
+- vllm/config/cache.py:74
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:21
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:59
+- vllm_ascend/patch/platform/patch_mamba_config.py:34
+- vllm_ascend/patch/platform/patch_mamba_config_310.py:35
+- vllm_ascend/platform.py:408
+- vllm_ascend/worker/model_runner_v1.py:364
+value_type: str
+default: auto
+valid_choices:
+- auto
+- float16
+- bfloat16
+- fp8
+- fp8_e4m3
+- fp8_e5m2
+- fp8_inc
+cli_example: --kv-cache-dtype fp8
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: 'Controls the data type used to store the KV cache tensors on device memory. On Ascend NPU, this directly determines
+  the per-token KV cache memory footprint (e.g., fp8 halves memory vs bfloat16), which in turn dictates the maximum number
+  of concurrent sequences and the achievable batch size. vllm-ascend overrides the "auto" resolution logic: for models with
+  index_topk (DeepSeek sparse attention), cache_dtype is forced to the model dtype (vllm_ascend/platform.py:408). For hybrid
+  Mamba/attention models, the resolved dtype is used to compute page size alignment between attention and Mamba cache blocks
+  (patch_mamba_config.py:34, patch_mamba_config_310.py:35). On A5 devices with sparse C8 indexer enabled, the C8 key cache
+  dtype is independently set to float8_e4m3fn (A5) or int8 (A3) regardless of this parameter (patch_kv_cache_interface.py:21,
+  model_runner_v1.py:364). The parameter also gates whether KV cache quantization scales are loaded from checkpoints or default
+  to 1.0 (vllm/config/cache.py:112).
+
+  '
+usage_locations:
+- file: vllm/config/cache.py:74
+  context: Field definition with default 'auto' and docstring describing supported dtypes per platform
+- file: vllm_ascend/platform.py:408
+  context: Forces cache_dtype to model dtype when model has index_topk attribute (DeepSeek sparse models)
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:34-38
+  context: Resolves cache_dtype string to torch dtype for computing attention page size in hybrid Mamba models
+- file: vllm_ascend/patch/platform/patch_mamba_config_310.py:35-38
+  context: Same resolution logic for 310P hybrid Mamba models
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:21
+  context: Determines C8 k_cache dtype based on Ascend device type (A5 vs A3), independent of user setting
+- file: vllm_ascend/worker/model_runner_v1.py:364
+  context: Sets c8_k_cache_dtype for sparse C8 indexer on A5 (float8_e4m3fn) vs A3 (int8)
+- file: vllm/v1/attention/backend.py:59
+  context: Base attention backend declares supported_kv_cache_dtypes as auto, float16, bfloat16
+related_parameters:
+- name: --dtype
+  relation: When --kv-cache-dtype is 'auto', the KV cache dtype inherits from the model dtype
+- name: --calculate-kv-scales
+  relation: When --kv-cache-dtype is fp8, this controls whether k_scale/v_scale are computed dynamically or loaded from checkpoint
+- name: --kv-cache-dtype-skip-layers
+  relation: Specifies layer patterns to skip KV cache quantization when --kv-cache-dtype is fp8
+- name: --block-size
+  relation: KV cache dtype affects per-block memory size, which interacts with block_size for page alignment in hybrid Mamba
+    models
+- name: --mamba-cache-dtype
+  relation: Separate dtype control for Mamba cache; page alignment between attention and Mamba blocks depends on resolved
+    kv_cache_dtype
+constraints:
+- On Ascend NPU, for models with index_topk (DeepSeek sparse attention), --kv-cache-dtype is silently overridden to match
+  the model dtype
+- fp8 KV cache dtype requires the model checkpoint to provide k_scale/v_scale, or --calculate-kv-scales must be enabled
+- Not all attention backends support all KV cache dtypes; the base backend only supports auto, float16, and bfloat16
+tuning_advice:
+  summary: Use fp8 KV cache dtype on Ascend NPU to halve KV cache memory and increase batch size, but verify model compatibility
+    and accuracy first
+  suggested_values:
+  - scenario: Standard dense models on Ascend NPU with memory pressure
+    value: fp8
+    reason: Reduces KV cache memory by ~50% vs bfloat16, enabling larger batch sizes and higher throughput; Ascend NPU supports
+      fp8_e4m3 natively
+  - scenario: DeepSeek sparse attention models (index_topk) on Ascend NPU
+    value: auto
+    reason: vllm-ascend forces cache_dtype to model dtype for these models; explicit setting is ignored
+  - scenario: Accuracy-sensitive deployment or models without fp8 KV scales
+    value: auto
+    reason: Falls back to model dtype (typically bfloat16), avoiding potential accuracy loss from fp8 quantization without
+      proper scales
+  - scenario: Hybrid Mamba/attention models on Ascend NPU
+    value: auto
+    reason: The resolved dtype is used for page size alignment between attention and Mamba blocks; manual fp8 may cause alignment
+      issues if Mamba cache dtype differs
+  caveats:
+  - On Ascend NPU, vllm-ascend silently overrides --kv-cache-dtype to model dtype for DeepSeek sparse models (those with index_topk
+    attribute)
+  - fp8 KV cache requires k_scale/v_scale either in the model checkpoint or computed via --calculate-kv-scales; otherwise
+    scales default to 1.0, potentially degrading accuracy
+  - The sparse C8 indexer on Ascend uses its own internal dtype (float8_e4m3fn on A5, int8 on A3) independent of --kv-cache-dtype
+  - Not all Ascend attention backends may support fp8 KV cache; verify backend compatibility before enabling
+  quick_guide: Set --kv-cache-dtype fp8 to reduce KV cache memory by half on Ascend NPU, but use 'auto' for DeepSeek sparse
+    models or if accuracy is critical
+analysis_date: '2026-07-06'

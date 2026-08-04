@@ -1,0 +1,128 @@
+name: --kv-transfer-config
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1420
+- vllm/config/vllm.py:323
+- vllm_ascend/ascend_config.py:133
+- vllm_ascend/ascend_config.py:180
+- vllm_ascend/platform.py:278
+- vllm_ascend/platform.py:306
+- vllm_ascend/worker/model_runner_v1.py:454
+- vllm_ascend/worker/model_runner_v1.py:3705
+- vllm_ascend/worker/v2/attn_utils.py:270
+- vllm_ascend/worker/v2/attn_utils.py:401
+value_type: dict
+default: None
+valid_choices: A JSON dictionary string conforming to KVTransferConfig schema
+cli_example: '--kv-transfer-config ''{"kv_connector": "MooncakeConnectorV1", "kv_buffer_device": "npu", "kv_role": "kv_producer",
+  "kv_parallel_size": "1", "kv_port": "20001"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter enables and configures distributed KV cache transfer, which is the foundation for Prefill-Decode\
+  \ (PD) disaggregation. When set, it activates the KVConnector subsystem that pushes KV cache from prefill nodes (kv_producer)\
+  \ to decode nodes (kv_consumer) over the network. On Ascend NPU, this triggers several hardware-specific behaviors:\n1.\
+  \ **PD disaggregation TP ratio calculation** (vllm_ascend/ascend_config.py:180-197):\n   vllm-ascend reads `prefill.tp_size`\
+  \ and `decode.tp_size` from the config's\n   extra_config to compute `pd_tp_ratio`, `pd_head_ratio`, and `num_head_replica`.\n\
+  \   These ratios directly control how KV heads are distributed between prefill and\n   decode nodes, affecting both memory\
+  \ usage and communication volume.\n\n2. **KV cache memory alignment** (vllm_ascend/worker/model_runner_v1.py:3705-3710,\n\
+  \   vllm_ascend/worker/v2/attn_utils.py:270-277): When kv_transfer_config is set,\n   KV cache tensors are allocated with\
+  \ extra alignment padding to support efficient\n   NPU DMA transfers. This increases memory usage but is required for PD\
+  \ transfer\n   correctness on Ascend hardware.\n\n3. **KV connector activation** (vllm/v1/core/sched/scheduler.py:119-133):\
+  \ The\n   scheduler creates a KVConnector that manages remote KV cache push/pull operations.\n   The `kv_load_failure_policy`\
+  \ field controls whether failed KV loads trigger\n   recomputation, directly impacting latency under network contention.\n\
+  \n4. **Block hash computation** (vllm/v1/core/kv_cache_utils.py:608-610): When\n   kv_transfer_config is set, the hash block\
+  \ size is computed differently to\n   support KV connector operations, affecting prefix caching efficiency.\n\n5. **Ascend-specific\
+  \ constraints**: The `recompute_scheduler_enable` additional\n   config is only valid when kv_transfer_config is set with\
+  \ kv_role as kv_producer\n   or kv_consumer (vllm_ascend/ascend_config.py:133). `layer_sharding` is only\n   valid on P\
+  \ nodes (vllm_ascend/platform.py:306-308).\n\nWithout this parameter (None), PD disaggregation is disabled entirely, and\
+  \ the system runs in PD-mixed mode where each node handles both prefill and decode.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:180
+  context: Reads prefill/decode TP sizes from kv_transfer_config extra_config to compute pd_tp_ratio, pd_head_ratio, and num_head_replica
+    for PD disaggregation
+- file: vllm_ascend/ascend_config.py:133
+  context: Checks kv_transfer_config to validate recompute_scheduler_enable is only used in PD-disaggregated mode
+- file: vllm_ascend/platform.py:278
+  context: Checks kv_transfer_config to determine if hybrid KV cache manager with KV transfer is active for block size updates
+- file: vllm_ascend/platform.py:306
+  context: Validates that layer_sharding is only enabled on kv_producer nodes
+- file: vllm_ascend/worker/model_runner_v1.py:454
+  context: Sets is_kv_producer and is_kv_consumer flags from kv_transfer_config for v1 worker
+- file: vllm_ascend/worker/model_runner_v1.py:3705
+  context: Allocates aligned KV cache tensors when kv_transfer_config is set for v1 worker
+- file: vllm_ascend/worker/v2/attn_utils.py:270
+  context: Allocates aligned KV cache tensors when kv_transfer_config is set for v2 worker
+- file: vllm_ascend/worker/v2/attn_utils.py:401
+  context: Checks is_kv_consumer from kv_transfer_config for v2 KV cache reshaping
+- file: vllm/v1/core/sched/scheduler.py:119
+  context: Creates KVConnector for scheduler when kv_transfer_config is set
+- file: vllm/v1/core/kv_cache_utils.py:608
+  context: Adjusts hash block size computation when KV connector is enabled
+- file: vllm/v1/engine/core.py:1091
+  context: Appends DP rank suffix to engine_id for uniqueness in data-parallel PD setups
+related_parameters:
+- name: --additional-config
+  relation: Contains Ascend-specific PD settings like recompute_scheduler_enable, layer_sharding that only work when kv_transfer_config
+    is set
+- name: --tensor-parallel-size
+  relation: prefill.tp_size and decode.tp_size in kv_transfer_config extra_config determine pd_tp_ratio, which must be compatible
+    with the global TP size
+- name: --speculative-config
+  relation: Speculative decoding with draft models interacts with PD disaggregation; kv_transfer_config affects how draft
+    model KV cache is managed
+- name: --disable-hybrid-kv-cache-manager
+  relation: When hybrid KV cache manager is disabled, KV transfer behavior for mamba/attention hybrid models changes
+constraints:
+- Encoder-decoder models are not supported when kv_transfer_config is set
+- prefill.tp_size must be divisible by decode.tp_size when both are specified in extra_config
+- recompute_scheduler_enable in additional_config is only valid when kv_role is kv_producer or kv_consumer (PD-disaggregated
+  mode), not in PD-mixed mode
+- layer_sharding in additional_config can only be enabled on kv_producer nodes (P nodes in PD-disaggregated mode)
+- When using PD disaggregation with hybrid KV cache (mamba + attention), mamba_block_size must be a multiple of block_size
+  if mamba_cache_mode is 'align'
+- For DeepSeek MLA models, the pd_tp_ratio and pd_head_ratio calculations are skipped; PD disaggregation uses a different
+  path
+tuning_advice:
+  summary: Enable PD disaggregation on Ascend NPU by setting kv_transfer_config with appropriate kv_role, kv_connector, and
+    prefill/decode TP sizes; this fundamentally changes the deployment architecture and requires careful node configuration.
+  suggested_values:
+  - scenario: PD-disaggregated prefill node (kv_producer)
+    value: '{"kv_connector": "MooncakeConnectorV1", "kv_buffer_device": "npu", "kv_role": "kv_producer", "kv_parallel_size":
+      "1", "kv_port": "20001"}'
+    reason: Documented in vllm-ascend large_scale_ep guide; uses MooncakeConnectorV1 with NPU buffer device for optimal Ascend
+      transfer performance. Set HCCL_BUFFSIZE=256 on prefill nodes.
+  - scenario: PD-disaggregated decode node (kv_consumer)
+    value: '{"kv_connector": "MooncakeConnectorV1", "kv_buffer_device": "npu", "kv_role": "kv_consumer", "kv_parallel_size":
+      "1", "kv_port": "20001"}'
+    reason: Documented in vllm-ascend large_scale_ep guide; decode nodes should use HCCL_BUFFSIZE=1024 for larger communication
+      buffers.
+  - scenario: PD-disaggregated with asymmetric TP (prefill TP > decode TP)
+    value: '{"kv_connector": "MooncakeConnectorV1", "kv_buffer_device": "npu", "kv_role": "kv_producer", "kv_parallel_size":
+      "1", "extra_config": {"prefill": {"tp_size": 8}, "decode": {"tp_size": 4}}}'
+    reason: Enables asymmetric TP between prefill and decode nodes; prefill TP must be divisible by decode TP. vllm-ascend
+      computes pd_tp_ratio=2 and adjusts head distribution accordingly.
+  - scenario: PD-mixed mode (no disaggregation)
+    value: null (do not set --kv-transfer-config)
+    reason: When PD disaggregation is not needed, omit this parameter entirely. The system runs in PD-mixed mode where each
+      node handles both prefill and decode.
+  caveats:
+  - Setting kv_transfer_config increases KV cache memory usage due to alignment padding required for NPU DMA transfers (v1
+    and v2 workers both add alignment bytes)
+  - PD disaggregation requires network connectivity between prefill and decode nodes; MooncakeConnectorV1 uses TCP with configurable
+    ports
+  - When using data parallelism with PD disaggregation, engine_id is automatically suffixed with _dp{N} to avoid connector
+    registration collisions
+  - The recompute_scheduler_enable additional config can be used on P nodes to reduce memory pressure by recomputing activations
+    instead of caching them
+  - For DeepSeek MLA models, the pd_tp_ratio and pd_head_ratio calculations are bypassed; PD disaggregation uses a different
+    internal path
+  - v1 and v2 workers both support kv_transfer_config but may have different internal dispatch logic for KV cache management
+  quick_guide: For PD disaggregation on Ascend, set kv_role to kv_producer on prefill nodes and kv_consumer on decode nodes
+    with MooncakeConnectorV1 and npu buffer device; omit the parameter entirely for PD-mixed mode.
+analysis_date: '2026-07-06'

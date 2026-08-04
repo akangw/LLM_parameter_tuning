@@ -1,0 +1,5 @@
+name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+type: env
+performance_impact: none
+skip_reason: In the pinned sources this variable is only declared and parsed in upstream vllm/envs.py; neither vLLM nor vLLM
+  Ascend reads it to select an executor or alter runtime behavior, so it has no latency, throughput, or memory effect.

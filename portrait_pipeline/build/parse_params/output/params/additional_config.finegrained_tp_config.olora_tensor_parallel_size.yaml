@@ -1,0 +1,80 @@
+name: additional_config.finegrained_tp_config.olora_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:422
+- vllm_ascend/ascend_config.py:435
+- vllm_ascend/utils.py:975
+value_type: int
+default: '0'
+valid_choices: positive integer, must divide data_parallel_size
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls the tensor parallel size specifically for the O-LoRA (output LoRA) module in MoE models
+  on Ascend NPU. When set to a value > 1, it enables fine-grained tensor parallelism on the O-LoRA projection layer, splitting
+  it across multiple NPUs within the data parallel group. This reduces per-NPU memory pressure for the O-LoRA weights and
+  can improve throughput by enabling larger batch sizes or longer sequences that would otherwise exceed device memory. The
+  parameter is only active in graph mode (not eager) and only in Prefill-Decode (PD) disaggregation scenarios on the D (decode)
+  node. It is gated by the `olora_tp_enable()` utility function in vllm_ascend/utils.py, which checks if the value is > 1.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:422
+  context: Parsed from finegrained_tp_config dict with default 0 (disabled)
+- file: vllm_ascend/ascend_config.py:435-444
+  context: 'Validation: requires graph mode and PD D-node scenario'
+- file: vllm_ascend/utils.py:975
+  context: Runtime check via olora_tp_enable() to determine if O-LoRA TP is active
+related_parameters:
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for output projection; shares same constraints
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter; all module TP sizes must divide data_parallel_size
+- name: parallel_config.data_parallel_size
+  relation: olora_tensor_parallel_size must divide data_parallel_size evenly
+- name: model_config.enforce_eager
+  relation: Must be False (graph mode required); setting to True raises AssertionError
+- name: kv_transfer_config.is_kv_consumer
+  relation: Must be True (PD D-node required); otherwise raises AssertionError
+- name: model_config.is_moe
+  relation: Must be True; fine-grained TP only supported for MoE models
+constraints:
+- olora_tensor_parallel_size must be 0 (disabled) or a positive integer
+- olora_tensor_parallel_size must divide data_parallel_size evenly
+- olora_tensor_parallel_size > 0 requires enforce_eager to be False (graph mode only)
+- olora_tensor_parallel_size > 0 requires the model to be an MoE model
+- olora_tensor_parallel_size > 0 requires PD disaggregation scenario with is_kv_consumer=True (D node only)
+tuning_advice:
+  summary: 'Enable O-LoRA tensor parallelism on Ascend NPU D-nodes for MoE models in PD scenarios to reduce per-device memory
+    usage and improve throughput, but only in graph mode.
+
+    '
+  suggested_values:
+  - scenario: MoE model with O-LoRA on PD D-node, memory-constrained
+    value: 2 or 4
+    reason: 'Splitting O-LoRA across 2-4 NPUs reduces per-device weight memory, allowing larger batch sizes or longer context
+      lengths. Must divide data_parallel_size.
+
+      '
+  - scenario: Non-MoE model or non-PD deployment
+    value: '0'
+    reason: 'The parameter is only valid for MoE models in PD D-node scenarios. Setting it > 0 in other scenarios will raise
+      an AssertionError.
+
+      '
+  caveats:
+  - Only effective on Ascend NPU D-nodes in Prefill-Decode disaggregation; has no effect on P-nodes or non-PD deployments
+  - Requires graph mode (enforce_eager=False); eager mode will raise an assertion error
+  - Only applicable to MoE models; dense models will raise an assertion error if any fine-grained TP size > 0
+  - The value must evenly divide data_parallel_size, otherwise an assertion error is raised
+  - Increasing this value reduces per-device memory but adds communication overhead for the O-LoRA all-reduce
+  quick_guide: 'Set to 2 or 4 for MoE models on Ascend PD D-nodes in graph mode when O-LoRA memory is a bottleneck; leave
+    at 0 otherwise.
+
+    '
+analysis_date: '2026-07-06'

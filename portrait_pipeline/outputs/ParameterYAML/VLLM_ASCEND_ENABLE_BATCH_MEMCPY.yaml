@@ -1,0 +1,87 @@
+name: VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:112
+- setup.py:342
+- CMakeLists.txt:113
+- vllm_ascend/kv_offload/cpu_npu.py:217
+- vllm_ascend/simple_kv_offload/npu_mem_ops.py:99
+value_type: str
+default: null
+valid_choices:
+- '0'
+- '1'
+- null
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This build-time environment variable selects the implementation compiled into the Ascend extension for batched
+  KV-cache transfers between host and NPU memory. When set to "1", CMake defines CANN_MEMCPY_BATCH_ASYNC and the extension
+  uses one aclrtMemcpyBatchAsync call for a group of H2D or D2H copies; when set to "0", it compiles the fallback loop of
+  individual aclrtMemcpyAsync calls. When unset, CMake probes the installed CANN headers and enables the batch path only when
+  the complete API pattern compiles. Consequently, this setting can reduce copy-submission overhead and improve latency or
+  throughput when KV-cache CPU offloading performs many transfers, but it has no runtime effect for workloads that do not
+  use these offload paths. The pinned upstream vLLM repository does not define this environment variable; the behavior is
+  Ascend-specific.
+usage_locations:
+- file: vllm_ascend/envs.py:110
+  context: Registers the raw string environment value, with null as the default that requests CMake auto-detection.
+- file: setup.py:342
+  context: Forwards an explicitly set value to CMake as VLLM_ASCEND_ENABLE_BATCH_MEMCPY and omits the argument when unset.
+- file: CMakeLists.txt:113
+  context: Selects forced enable, forced disable, or a compile-time CANN API probe and defines CANN_MEMCPY_BATCH_ASYNC for
+    the batch path.
+- file: vllm_ascend/kv_offload/cpu_npu.py:217
+  context: The Ascend OffloadingConnector path groups KV-cache block addresses and invokes the extension batch-copy operator
+    on an NPU stream.
+- file: vllm_ascend/simple_kv_offload/npu_mem_ops.py:99
+  context: The Ascend SimpleCPUOffloadConnector path invokes the same extension operator for grouped H2D and D2H KV-cache
+    copies.
+- file: docs/source/user_guide/feature_guide/kv_cache_cpu_offload.md:5
+  context: Documents CPU KV-cache offloading and its asynchronous transfers between NPU and CPU memory.
+related_parameters:
+- name: --kv-offloading-size
+  relation: Activates native KV-cache CPU offloading in current upstream configuration; this build flag affects the Ascend
+    transfer implementation used by that offload path.
+- name: --kv-offloading-backend
+  relation: Selects the offloading backend; the batch-copy implementation is relevant to the native Ascend CPU-offload paths
+    rather than unrelated backends.
+- name: VLLM_USE_SIMPLE_KV_OFFLOAD
+  relation: Selects SimpleCPUOffloadConnector for the native backend, whose Ascend adaptation calls the batch-copy extension
+    operator.
+constraints:
+- This is a build-time selection; changing it requires rebuilding the vllm-ascend extension before behavior changes.
+- Forcing "1" bypasses the CMake compatibility probe, so the installed CANN headers and library must provide the aclrtMemcpyBatchAsync
+  API and associated types.
+- Any defined value other than exactly "1" follows CMake's force-disabled branch; use only the documented values "0" and "1".
+- The batch API is used for host-to-device and device-to-host copies; device-to-device copies retain the individual aclrtMemcpyAsync
+  path.
+tuning_advice:
+  summary: Leave the variable unset for capability-based auto-detection, and only force a value to diagnose compatibility
+    or compare the two transfer implementations on an offloading-heavy workload.
+  suggested_values:
+  - scenario: Normal builds on an unknown or mixed CANN software stack
+    value: unset
+    reason: CMake verifies the complete API pattern and automatically selects the compatible implementation.
+  - scenario: Supported CANN 8.5-or-newer environment with measured KV-cache offload transfer overhead
+    value: '1'
+    reason: Forces the single-call batch path, which can lower host submission overhead for groups of H2D or D2H copies.
+  - scenario: Compatibility diagnosis or a known problem in the installed batch-copy API
+    value: '0'
+    reason: Compiles the conservative loop of aclrtMemcpyAsync calls without requiring the batch API.
+  caveats:
+  - Rebuild and redeploy the extension after changing this environment variable; setting it only when launching an already-built
+    server does nothing.
+  - Forced enable can make compilation or linking fail when the installed CANN SDK lacks the batch-copy declarations or symbol.
+  - Performance benefit depends on KV-cache CPU offload activity and transfer granularity; HBM-resident workloads should not
+    improve.
+  - Benchmark end-to-end request latency and throughput because asynchronous stream overlap can reduce the visible benefit
+    of lower submission overhead.
+  quick_guide: Leave unset by default; benchmark "1" versus "0" only on a compatible CANN stack while exercising Ascend KV-cache
+    CPU offloading.
+analysis_date: '2026-07-28'

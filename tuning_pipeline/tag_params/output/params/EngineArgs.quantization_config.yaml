@@ -1,0 +1,134 @@
+name: EngineArgs.quantization_config
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:530
+- vllm/engine/arg_utils.py:724
+- vllm/config/quantization.py:12
+- vllm/config/quantization.py:31
+- vllm/config/quantization.py:65
+- vllm/config/model.py:204
+- docs/features/quantization/online.md:1
+value_type: dict
+default: null
+valid_choices:
+  global_scheme:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  linear_scheme_override:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  - null
+  moe_scheme_override:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  - null
+  ignore: list[str]
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This nested configuration controls fine-grained online quantization of supported LinearBase and FusedMoE layers
+  when EngineArgs.quantization selects "online" or one of the OnlineQuantScheme values. global_scheme establishes the general
+  low-precision recipe, the linear and MoE overrides can choose different recipes for those layer families, and ignore keeps
+  named or regex-matched layers unquantized. Online quantization converts BF16/FP16 weights during model loading and dynamically
+  scales activations during forward execution, so the selected recipe and exclusions change resident weight memory, memory
+  bandwidth, arithmetic kernels, startup cost, latency, and throughput. EngineArgs.__post_init__ validates and converts a
+  dictionary to OnlineQuantizationConfigArgs, then passes it into ModelConfig. The pinned vllm-ascend repository contains
+  no direct use or backend-specific validation of EngineArgs.quantization_config, so these upstream recipes must not be assumed
+  to be supported or beneficial on NPU merely because the shared argument can be constructed.
+usage_locations:
+- file: vllm/engine/arg_utils.py:724
+  context: Resolves shorthand from EngineArgs.quantization, validates compatibility, fills a matching global scheme when needed,
+    and converts dictionary input to OnlineQuantizationConfigArgs during EngineArgs initialization.
+- file: vllm/engine/arg_utils.py:1531
+  context: Passes the resolved nested object into ModelConfig.
+- file: vllm/config/quantization.py:31
+  context: Defines global_scheme, per-Linear and per-MoE overrides, and the exact-name or re:-prefixed ignore list that determines
+    which supported layers are quantized.
+- file: vllm/config/quantization.py:65
+  context: Rejects this configuration unless quantization is "online" or an online scheme, enforces matching shorthand and
+    global schemes, and parses scheme strings into OnlineQuantScheme values.
+- file: docs/features/quantization/online.md:43
+  context: Documents fine-grained dictionaries, different dense and MoE recipes, and layer exclusions for load-time quantization.
+related_parameters:
+- name: EngineArgs.quantization
+  relation: Must be "online" or one of the online scheme names. A scheme-name shorthand creates or constrains quantization_config.global_scheme.
+- name: EngineArgs.dtype
+  relation: Supplies the original model/activation dtype and is later checked against the supported activation dtypes of the
+    resolved quantization method.
+- name: OnlineQuantizationConfigArgs.ignore
+  relation: Preserving selected layers at their original precision reduces the memory savings and can change accuracy and
+    runtime performance.
+constraints:
+- quantization_config is accepted only when quantization is "online", "fp8_per_tensor", "fp8_per_block", "int8_per_channel_weight_only",
+  or "mxfp8"; any other quantization value with a non-null configuration raises ValueError.
+- At least one of global_scheme, linear_scheme_override, or moe_scheme_override must be set for an explicit "online" configuration.
+- If quantization itself is a scheme name, quantization_config.global_scheme is filled with that scheme when absent and must
+  match it when supplied.
+- Each scheme field must be one of the OnlineQuantScheme values; invalid strings fail configuration parsing.
+- Ignore entries match exact layer names or regex patterns prefixed by "re:". For fused layers the pattern must match the
+  unfused shard names rather than only the fused layer name.
+- Hardware and kernel support is scheme-dependent. The upstream documentation specifically requires SM 100 or newer for MXFP8
+  W8A8 and otherwise describes a W8A16 fallback; no equivalent support statement exists in the pinned vllm-ascend source for
+  this EngineArgs field.
+tuning_advice:
+  summary: Start with the quantization scheme shorthand alone, then add this dictionary only when a model needs different
+    dense/MoE recipes or selected layers must remain unquantized. Benchmark accuracy, startup time, steady-state latency,
+    throughput, and peak memory on the actual backend.
+  suggested_values:
+  - scenario: Uniform per-tensor FP8 online quantization on supported upstream GPU hardware
+    value:
+      global_scheme: fp8_per_tensor
+    reason: Applies one documented recipe to every supported layer and is the simplest baseline for measuring memory savings
+      and runtime effects.
+  - scenario: Use per-tensor FP8 generally but per-block FP8 for MoE experts
+    value:
+      global_scheme: fp8_per_tensor
+      moe_scheme_override: fp8_per_block
+    reason: Exercises the explicit per-layer-family control without changing dense linear layers from the baseline scheme.
+  - scenario: Quantize broadly while retaining accuracy-sensitive projections
+    value:
+      global_scheme: fp8_per_tensor
+      ignore:
+      - re:.*[qkv]_proj
+    reason: Leaves matching projection shards at their original precision, trading some memory and bandwidth savings for a
+      targeted accuracy safeguard.
+  caveats:
+  - 'A more compressed recipe does not guarantee lower end-to-end latency: dynamic activation scaling, conversion work, kernel
+    availability, batch shape, and hardware generation can dominate.'
+  - Online conversion adds model-load work; measure startup separately from steady-state serving.
+  - Ignored layers and mixed schemes reduce or redistribute memory savings, so compare peak device memory rather than inferring
+    it from nominal bit widths.
+  - The pinned vllm-ascend tree implements several checkpoint quantization paths but does not reference OnlineQuantizationConfigArgs
+    or these online scheme names. Verify NPU support independently and do not transfer GPU recommendations to Ascend.
+  quick_guide: Use quantization=<scheme> for a uniform baseline; add quantization_config only for overrides or exclusions,
+    keep the global scheme consistent, and validate both accuracy and performance on the target device.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

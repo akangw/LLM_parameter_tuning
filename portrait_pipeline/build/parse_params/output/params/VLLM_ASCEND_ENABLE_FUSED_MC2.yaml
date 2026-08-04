@@ -1,0 +1,81 @@
+name: VLLM_ASCEND_ENABLE_FUSED_MC2
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:102
+- vllm_ascend/ascend_config.py:149
+- vllm_ascend/platform.py:673
+value_type: int
+default: '0'
+valid_choices: 0, 1, 2
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: "Controls whether fused MC2 (Model Communication Combine) operators replace standard ALLTOALL + MC2 communication\
+  \ in MoE layers on Ascend NPU. Three modes: - \"0 (default): standard ALLTOALL + MC2 path, no fusion.\" - 1: \"enables `dispatch_ffn_combine`\
+  \ operator, which fuses ALLTOALL and MC2\"\n  for MoE layers with W8A8 quantization, EP<=32, non-MTP, non-dynamic-EPLB.\n\
+  - 2: \"enables `dispatch_gmm_combine_decode` operator, which fuses MC2 for\"\n  decode-phase MoE layers with W8A8 (MTP layers\
+  \ must also be W8A8).\n\nThe fusion eliminates separate communication and computation kernels, reducing kernel launch overhead\
+  \ and improving data locality on the NPU. This directly reduces per-token latency and increases throughput for MoE models\
+  \ (e.g., DeepSeek, GLM-5) by overlapping or combining communication with computation. The effect is most pronounced at high\
+  \ concurrency where communication overhead dominates.\nThe parameter is read in `vllm_ascend/ascend_config.py:146-151` via\
+  \ `_get_config_value`, which checks both the `additional_config` dict key `enable_fused_mc2` and the env var `VLLM_ASCEND_ENABLE_FUSED_MC2`,\
+  \ with `additional_config` taking precedence. It is validated in `vllm_ascend/platform.py:670-674`: if both `enable_mc2_hierarchy_comm`\
+  \ and `enable_fused_mc2` are enabled, a ValueError is raised because fused MC2 operators are incompatible with hierarchy\
+  \ communication (ROCE-based inter-node dispatch/combine).\n"
+usage_locations:
+- file: vllm_ascend/envs.py:95-102
+  context: Environment variable definition with docstring describing three modes and their constraints.
+- file: vllm_ascend/ascend_config.py:146-151
+  context: 'Config loading: reads from additional_config dict or env var, stores as AscendConfig.enable_fused_mc2.'
+- file: vllm_ascend/platform.py:670-674
+  context: 'Runtime validation: raises ValueError if fused MC2 is enabled together with hierarchy communication.'
+related_parameters:
+- name: enable_mc2_hierarchy_comm
+  relation: Mutually exclusive. Fused MC2 operators cannot be used with hierarchy communication (ROCE-based inter-node dispatch/combine).
+    Enabling both raises ValueError.
+- name: VLLM_ASCEND_ENABLE_MLAPO
+  relation: Both are Ascend-specific MoE optimizations. MLAPO targets DeepSeek W8A8 MLA layers; fused MC2 targets MoE ALLTOALL+MC2
+    fusion. Can be used together.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Both are Ascend communication optimizations. FlashComm1 optimizes tensor-parallel communication; fused MC2 optimizes
+    expert-parallel communication in MoE.
+constraints:
+- Mode 1 (`dispatch_ffn_combine`) requires W8A8 quantization, expert-parallel size <= 32, non-MTP architecture, and non-dynamic-EPLB.
+- Mode 2 (`dispatch_gmm_combine_decode`) requires W8A8 quantization for both the MoE layer and any MTP layer, and only applies
+  to decode-phase nodes.
+- Fused MC2 (any non-zero mode) cannot be used together with `enable_mc2_hierarchy_comm`; enabling both raises a ValueError
+  at startup.
+tuning_advice:
+  summary: Enable fused MC2 (mode 1 or 2) for MoE models with W8A8 quantization to reduce communication overhead and improve
+    throughput on Ascend NPU.
+  suggested_values:
+  - scenario: MoE model with W8A8 quantization, EP<=32, non-MTP, non-dynamic-EPLB (e.g., DeepSeek-V2 W8A8)
+    value: '1'
+    reason: Mode 1 fuses ALLTOALL and MC2 via `dispatch_ffn_combine`, reducing kernel launch overhead and improving data locality
+      for both prefill and decode phases.
+  - scenario: MoE model with W8A8 quantization, decode-heavy workload, MTP layers also W8A8 (e.g., DeepSeek-V3 W8A8 decode
+      serving)
+    value: '2'
+    reason: Mode 2 uses `dispatch_gmm_combine_decode` specifically optimized for decode nodes, providing additional fusion
+      benefits for decode-dominated serving scenarios.
+  - scenario: MoE model without W8A8 quantization, or with dynamic EPLB, or with hierarchy communication enabled
+    value: '0'
+    reason: Fused MC2 operators have strict W8A8 and architecture requirements. Disabling avoids startup errors and falls
+      back to the standard ALLTOALL+MC2 path.
+  caveats:
+  - Mode 1 and mode 2 are mutually exclusive in practice — the code path selects one operator based on the value. Choose the
+    mode that matches your model architecture and workload phase.
+  - Fused MC2 is incompatible with `enable_mc2_hierarchy_comm`. If you use ROCE-based inter-node expert dispatch, you must
+    keep fused MC2 disabled (value 0).
+  - Mode 2 only accelerates decode nodes; prefill nodes still use the standard path. For mixed prefill/decode workloads, mode
+    1 may provide more balanced benefits.
+  - The `additional_config` dict key `enable_fused_mc2` takes precedence over the environment variable. If both are set, the
+    dict value wins.
+  quick_guide: For W8A8 MoE models without hierarchy communication, set VLLM_ASCEND_ENABLE_FUSED_MC2=1 for general use or
+    =2 for decode-heavy serving; otherwise keep default 0.
+analysis_date: '2026-07-06'

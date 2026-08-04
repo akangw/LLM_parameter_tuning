@@ -1,0 +1,84 @@
+name: additional_config.ascend_fusion_config.fusion_ops_gmmswigluquant
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:529
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:65
+- vllm_ascend/ops/fused_moe/moe_runtime_args.py:208
+- vllm_ascend/ops/fused_moe/moe_mlp.py:87
+- docs/source/tutorials/models/GLM4.x.md:157
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Each MoE communication-method instance reads this option and carries it into the MLP input builder. For eligible
+  quantized MoE inputs, the builder combines it with the quantization type to set the MLP fusion flag. The quantized MLP then
+  uses that flag to choose a grouped-matmul/SwiGLU/quant fused first-projection path instead of separate grouped matmul, SwiGLU,
+  and dynamic-quant operations. This changes kernel dispatch and intermediate processing in the expert MLP and can therefore
+  affect token latency and throughput. The Ascend GLM4.x guide documents a concrete counter-case: GmmSwigluQuant fusion tends
+  to degrade when the deployment has 16 or fewer NPUs, and its example disables the option. The switch does not affect the
+  unquantized MLP path, and other specialized quantization branches can override or bypass the ordinary flag-controlled selection.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:42
+  context: Reads the ascend_fusion_config mapping from additional_config and constructs AscendFusionConfig; omission therefore
+    reaches the nested option's default.
+- file: vllm_ascend/ascend_config.py:529
+  context: Declares fusion_ops_gmmswigluquant as a boolean with the default true and stores the supplied value.
+- file: vllm_ascend/ops/fused_moe/moe_comm_method.py:65
+  context: Returns the configured value, caches it on each MoECommMethod instance, and forwards it while building the expert
+    MLP input.
+- file: vllm_ascend/ops/fused_moe/moe_runtime_args.py:208
+  context: Uses the switch together with the quantization type to derive the MLP fusion flag for W8A8, MXFP8, MXFP4, and W4A8MXFP
+    inputs.
+- file: vllm_ascend/ops/fused_moe/moe_mlp.py:87
+  context: Dispatches eligible quantized expert MLP work between fused grouped-matmul/SwiGLU/quant kernels and a sequence
+    of separate operations; specialized MXFP, dynamic-EPLB, and custom-op branches also participate in final path selection.
+- file: docs/source/tutorials/models/GLM4.x.md:157
+  context: Shows the nested additional-config syntax with the option false and warns that the fusion operator tends to degrade
+    at a total NPU count of 16 or less.
+related_parameters:
+- name: additional_config.ascend_fusion_config
+  relation: This mapping is the immediate container through which the boolean is supplied.
+- name: quantization
+  relation: The switch reaches the fused quantized MLP selection only for supported expert quantization modes; the unquantized
+    MLP path ignores it.
+- name: additional_config.enable_shared_expert_dp
+  relation: The GLM4.x deployment examples configure shared-expert data parallelism alongside this fusion switch, so their
+    combined end-to-end performance should be benchmarked in the intended topology.
+constraints: []
+tuning_advice:
+  summary: Disable the fusion for deployments with 16 or fewer NPUs as documented for GLM4.x; otherwise start with the true
+    default and retain it only after an end-to-end benchmark on the target model, quantization, and topology.
+  suggested_values:
+  - scenario: GLM4.x deployment using 16 or fewer NPUs in total
+    value: false
+    reason: The pinned Ascend guide states that GmmSwigluQuant fusion tends to degrade at this scale and uses false in its
+      deployment example.
+  - scenario: Eligible quantized MoE deployment with more than 16 NPUs
+    value: true
+    reason: This preserves the source default and permits the fused expert-MLP path; keep it only if measured latency or throughput
+      beats the unfused path.
+  - scenario: Dense, unquantized, or otherwise ineligible model path
+    value: true
+    reason: Leave the default unchanged because the ordinary unquantized MLP branch does not consult the fusion flag and specialized
+      branches may bypass it.
+  caveats:
+  - The 16-NPU threshold is documented in the GLM4.x model guide; do not assume it transfers unchanged to every MoE model,
+    NPU generation, or software stack.
+  - 'Enabling the option does not guarantee the ordinary fused kernel is used: quantization type, MXFP handling, dynamic EPLB,
+    and custom-op availability alter the downstream branch selection.'
+  - This setting is read when the MoE communication-method object is created, so change it in startup configuration and restart
+    the serving process.
+  - Compare end-to-end latency and throughput with identical batching, parallelism, quantization, and workload; a kernel-level
+    fusion can regress at small scale despite reducing the number of separate operations.
+  quick_guide: Use false for the documented GLM4.x case at 16 or fewer total NPUs; elsewhere benchmark true versus false and
+    keep the faster setting.
+analysis_date: '2026-07-31'

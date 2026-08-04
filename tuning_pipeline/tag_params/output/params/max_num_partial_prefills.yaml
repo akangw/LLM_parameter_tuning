@@ -1,0 +1,93 @@
+name: --max-num-partial-prefills
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:70
+- vllm/engine/arg_utils.py:1334
+- vllm/engine/arg_utils.py:1977
+- vllm/engine/arg_utils.py:2193
+- vllm/v1/attention/backends/rocm_aiter_fa.py:478
+- vllm_ascend/platform.py:985
+value_type: int
+default: 1
+valid_choices: Integer greater than or equal to 1.
+cli_example: --max-num-partial-prefills 4
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This option sets the maximum number of sequences that upstream may partially prefill concurrently when chunked
+  prefill is enabled. Values above one enable concurrent partial-prefill policy and, if the long-prefill threshold is zero,
+  derive that threshold as 4% of max_model_len; this can improve scheduling fairness for mixed prompt lengths but changes
+  batching behavior. In the pinned Ascend integration, any value other than one is warned about and reset to one because partial
+  prefills are treated as a ROCm-specific optimization. It therefore has no tunable runtime effect on Ascend deployments.
+usage_locations:
+- file: vllm/config/scheduler.py:70
+  context: Defines the integer field, default of 1, and minimum value of 1.
+- file: vllm/config/scheduler.py:244
+  context: Enables concurrent partial-prefill handling and derives a zero long-prefill threshold when the value exceeds 1.
+- file: vllm/config/scheduler.py:288
+  context: Rejects values above 1 when chunked prefill is disabled and validates the related threshold.
+- file: vllm/engine/arg_utils.py:1977
+  context: Passes the CLI value into SchedulerConfig during engine configuration.
+- file: vllm/engine/arg_utils.py:2193
+  context: Rejects non-default concurrent partial-prefill settings for this unsupported engine path.
+- file: vllm/v1/attention/backends/rocm_aiter_fa.py:478
+  context: Uses the value to size ROCm AITER FlashAttention CUDA-graph capture token metadata.
+- file: vllm_ascend/platform.py:985
+  context: Warns and resets every non-default value to 1 on Ascend.
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: Must be enabled when max_num_partial_prefills is greater than 1.
+- name: --max-long-partial-prefills
+  relation: Limits how many concurrently partial-prefilled prompts may be classified as long and cannot exceed this value.
+- name: --long-prefill-token-threshold
+  relation: Classifies long prompts; upstream derives it as 4% of max_model_len when this option is greater than 1 and the
+    threshold is zero.
+- name: --max-num-batched-tokens
+  relation: Sets the token budget within which chunked partial prefills are scheduled.
+constraints:
+- The value must be an integer greater than or equal to 1.
+- Values greater than 1 require chunked prefill to be enabled.
+- When the value is greater than 1, long_prefill_token_threshold cannot exceed max_model_len.
+- max_long_partial_prefills cannot exceed max_num_partial_prefills.
+- On Ascend, any value other than 1 is reset to 1 with a warning.
+tuning_advice:
+  summary: Keep the default value of 1 on Ascend because the platform resets all other values; assess values above 1 only
+    on an upstream configuration that supports concurrent partial prefills.
+  suggested_values:
+  - scenario: Ascend NPU deployments
+    value: 1
+    reason: The Ascend platform hook enforces this value, so another setting only produces a warning before being reset.
+  - scenario: Upstream ROCm AITER workloads with mixed prompt lengths
+    value: 2
+    reason: Enables a small degree of concurrent partial prefill; benchmark against the workload because it changes scheduling
+      and capture sizing.
+  caveats:
+  - Concurrent partial prefills are unavailable in the upstream engine path that explicitly rejects non-default settings.
+  - Higher values are not a universal throughput optimization and can trade batch efficiency for prompt fairness.
+  - Coordinate changes with the long-prefill limit and threshold rather than tuning this option in isolation.
+  quick_guide: Use 1 on Ascend; only test a value above 1 where the selected upstream engine and backend support concurrent
+    partial prefills.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

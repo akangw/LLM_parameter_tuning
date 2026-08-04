@@ -1,0 +1,78 @@
+name: VLLM_USE_MODELSCOPE
+type: env
+category: model
+scope: both
+source_file:
+- vllm/envs.py:595
+- vllm/envs.py:18
+- vllm_ascend/quantization/utils.py:60
+- vllm/model_executor/model_loader/weight_utils.py:184
+- vllm/tokenizers/registry.py:106
+- vllm/transformers_utils/__init__.py:6
+- vllm/transformers_utils/config.py:60
+- vllm/transformers_utils/config.py:1075
+- vllm/lora/utils.py:333
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls the model download source: "when set to True," vLLM downloads models and
+  tokenizers from ModelScope (modelscope.cn) instead of Hugging Face Hub. It affects cold-start latency (first-run model download
+  time) but has NO impact on runtime inference throughput, token generation speed, or memory usage on Ascend NPU. The variable
+  is explicitly excluded from the torch.compile cache key (vllm/envs.py:1878), confirming it does not affect compiled kernel
+  performance. On Ascend NPU, vllm-ascend examples consistently set this to True because ModelScope provides faster download
+  speeds within China. The variable is checked at multiple code paths: model weight loading (weight_utils.py:184), tokenizer
+  resolution (registry.py:106), LoRA adapter download (lora/utils.py:333), config loading (config.py:60), and quantization
+  utility file retrieval (vllm_ascend/quantization/utils.py:60). All these paths are exercised during model initialization
+  only, not during inference.
+
+  '
+usage_locations:
+- file: vllm/envs.py:595
+  context: Environment variable definition with default False
+- file: vllm/model_executor/model_loader/weight_utils.py:184
+  context: maybe_download_from_modelscope() - downloads model weights from ModelScope if True
+- file: vllm/tokenizers/registry.py:106
+  context: resolve_tokenizer_args() - downloads tokenizer from ModelScope if True
+- file: vllm/transformers_utils/__init__.py:6
+  context: Patches HuggingFace hub to redirect downloads to ModelScope
+- file: vllm/transformers_utils/config.py:60
+  context: Imports AutoConfig from modelscope instead of transformers when True
+- file: vllm/transformers_utils/config.py:1075
+  context: get_hf_image_processor_config() - returns empty dict for ModelScope (no image processor support)
+- file: vllm/lora/utils.py:333
+  context: LoRA adapter download from ModelScope when True
+- file: vllm_ascend/quantization/utils.py:60
+  context: Quantization config file download from ModelScope when True
+related_parameters:
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Often set together in vllm-ascend examples; both are initialization-time settings
+constraints:
+- When VLLM_USE_MODELSCOPE is True, modelscope>=1.18.1 must be installed or vLLM will raise an ImportError at startup.
+- ModelScope does not provide an interface for image_processor configuration; get_hf_image_processor_config returns an empty
+  dict when VLLM_USE_MODELSCOPE is True.
+tuning_advice:
+  summary: Set to True when deploying in China to accelerate model downloads from ModelScope; has no effect on inference performance.
+  suggested_values:
+  - scenario: Deploying vLLM on Ascend NPU within China (default vllm-ascend use case)
+    value: 'True'
+    reason: ModelScope provides significantly faster download speeds than Hugging Face Hub from within China, reducing cold-start
+      latency for model initialization.
+  - scenario: Deploying outside China or using models not available on ModelScope
+    value: 'False'
+    reason: Hugging Face Hub is the default and more universally accessible source; ModelScope may not host all models.
+  caveats:
+  - This variable only affects model download during initialization; it has zero impact on runtime inference throughput or
+    latency on Ascend NPU.
+  - When set to True, the modelscope Python package (>=1.18.1) must be pre-installed.
+  - ModelScope does not support image processor configuration retrieval; multimodal models relying on image processors may
+    need Hugging Face Hub.
+  - The variable is excluded from the torch.compile cache key, so changing it does not trigger recompilation.
+  quick_guide: Set VLLM_USE_MODELSCOPE=True for faster model downloads in China; leave as False otherwise.
+analysis_date: '2026-07-06'

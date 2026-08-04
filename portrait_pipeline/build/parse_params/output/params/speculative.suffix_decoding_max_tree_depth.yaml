@@ -1,0 +1,61 @@
+name: speculative.suffix_decoding_max_tree_depth
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/config/speculative.py:776
+value_type: int
+default: <computed>
+valid_choices: '>= 1'
+cli_example: '--speculative-config ''{"method": "suffix_decoding", "suffix_decoding_max_tree_depth": 10}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the maximum depth of the suffix decoding tree, which directly limits the number of
+  tokens that can be speculatively generated in a single step. In vllm/config/speculative.py:776, when num_speculative_tokens
+  is not explicitly set, suffix_decoding_max_tree_depth is used as the value for num_speculative_tokens. A larger tree depth
+  allows more aggressive speculation, potentially increasing throughput if the draft model has high acceptance rates, but
+  also increases the computational cost per step and may increase latency if many tokens are rejected. On Ascend NPU, the
+  trade-off is particularly important because the NPU''s batch-processing efficiency means that speculative decoding overhead
+  can be amortized differently than on GPU. The optimal value depends on the model''s acceptance rate and the NPU''s ability
+  to process larger speculative batches.
+
+  '
+usage_locations:
+- file: vllm/config/speculative.py:776
+  context: Sets num_speculative_tokens to suffix_decoding_max_tree_depth when num_speculative_tokens is None
+- file: vllm/config/speculative.py:782
+  context: Validates that suffix_decoding_max_tree_depth >= 1
+related_parameters:
+- name: speculative.num_speculative_tokens
+  relation: suffix_decoding_max_tree_depth is used as the default value for num_speculative_tokens when not explicitly set
+- name: speculative.suffix_decoding_max_cached_requests
+  relation: Both control suffix decoding behavior; max_cached_requests limits the number of cached prefix trees
+- name: speculative.suffix_decoding_max_spec_factor
+  relation: Both control suffix decoding behavior; max_spec_factor limits the speculation factor
+constraints:
+- suffix_decoding_max_tree_depth must be >= 1
+- Arctic Inference package (arctic-inference==0.1.1) must be installed to use suffix decoding
+tuning_advice:
+  summary: 'Set suffix_decoding_max_tree_depth based on the model''s acceptance rate and desired throughput-latency trade-off.
+    Start with a moderate value (5-10) and adjust based on observed acceptance rates on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Conservative speculation (low acceptance rate models)
+    value: 3
+    reason: Limits wasted computation when the draft model has low accuracy, reducing NPU overhead
+  - scenario: Balanced throughput and latency
+    value: 5
+    reason: Provides a good balance between speculation depth and computational cost on Ascend NPU
+  - scenario: Aggressive speculation (high acceptance rate models)
+    value: 10
+    reason: Maximizes throughput when the draft model accurately predicts tokens, leveraging NPU batch efficiency
+  caveats:
+  - On Ascend NPU, larger tree depths may not linearly improve throughput due to the NPU's batch processing characteristics
+  - If num_speculative_tokens is explicitly set, it takes precedence over suffix_decoding_max_tree_depth
+  - Suffix decoding requires the Arctic Inference package; without it, the parameter has no effect
+  quick_guide: Start with suffix_decoding_max_tree_depth=5 and adjust based on observed acceptance rates on Ascend NPU
+analysis_date: '2026-07-06'

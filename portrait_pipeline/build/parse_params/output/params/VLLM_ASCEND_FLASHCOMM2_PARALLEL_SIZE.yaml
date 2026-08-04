@@ -1,0 +1,73 @@
+name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:80
+- vllm_ascend/ascend_config.py:161
+value_type: int
+default: '0'
+valid_choices: non-negative integer; 0 disables, >=1 enables and sets O-matrix TP group size
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the FLASHCOMM2 optimization, an Ascend-specific communication fusion technique for
+  tensor-parallel (TP) scenarios. When set to a value >= 1, it enables FLASHCOMM2 and uses the specified value as the O-matrix
+  TP group size. FLASHCOMM2 fuses the output projection (O-matrix) computation with the all-reduce communication step, overlapping
+  computation and communication to hide all-reduce latency. This directly reduces the critical path latency of each transformer
+  layer''s attention output, improving both per-token latency and overall throughput, especially under high concurrency where
+  communication overhead dominates. The parameter is read in vllm_ascend/ascend_config.py:158-163 via the _get_config_value
+  method, which checks additional_config first, then falls back to this environment variable. The value is stored as AscendConfig.enable_flashcomm2_parallel_size.
+  Note: "this env var is deprecated in favor of additional_config.flashcomm2_parallel_size."
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:80
+  context: Environment variable definition with default value 0
+- file: vllm_ascend/ascend_config.py:158-163
+  context: Read into AscendConfig.enable_flashcomm2_parallel_size via _get_config_value
+- file: tests/e2e/nightly/multi_node/internal_dp/scripts/test_multi_node.py:113
+  context: 'Test feature detection: value > 0 adds ''flashcomm2'' feature tag'
+- file: tests/e2e/nightly/single_node/models/scripts/test_single_node.py:268
+  context: 'Test feature detection: value > 0 adds ''flashcomm2'' feature tag'
+- file: tests/e2e/pull_request/two_card/test_flashcomm_distributed.py:40
+  context: Test with FLASHCOMM2 enabled (value=1) for Qwen3 MoE model with TP=2
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Alternative communication optimization; FLASHCOMM1 and FLASHCOMM2 are different features with different applicable
+    scenarios as noted in the envs.py docstring
+- name: tensor_parallel_size
+  relation: FLASHCOMM2 only takes effect when tensor parallelism is enabled; the parallel_size value relates to TP group configuration
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: Preferred configuration method (via --additional-config JSON); supersedes this env var
+constraints:
+- FLASHCOMM2 only takes effect when tensor parallelism is enabled (tensor_parallel_size > 1)
+- The value must be a non-negative integer; 0 disables the feature
+tuning_advice:
+  summary: Enable FLASHCOMM2 (set to 1 or appropriate TP group size) when using tensor parallelism under high concurrency
+    to overlap O-projection computation with all-reduce communication
+  suggested_values:
+  - scenario: High-concurrency serving with tensor parallelism enabled
+    value: '1'
+    reason: Enables FLASHCOMM2 with default O-matrix TP group size, overlapping communication and computation to reduce per-layer
+      latency
+  - scenario: Single-card or TP=1 deployment
+    value: '0'
+    reason: FLASHCOMM2 has no effect without tensor parallelism; keeping it disabled avoids unnecessary configuration
+  - scenario: Custom TP group size for O-matrix sharding
+    value: <tp_size or a divisor of tp_size>
+    reason: The value is used as the O-matrix TP group size; consult the FLASHCOMM2 feature guide for optimal group size based
+      on model architecture and cluster topology
+  caveats:
+  - 'This environment variable is deprecated; prefer using --additional-config ''{"flashcomm2_parallel_size": <value>}'' instead'
+  - FLASHCOMM1 and FLASHCOMM2 are different optimizations with different applicable scenarios; refer to the feature guide
+    in vllm-ascend documentation for guidance on which to use
+  - FLASHCOMM2 may increase memory usage slightly due to workspace buffers for fused operations
+  - The optimal parallel_size value depends on the model's attention head configuration and the TP group layout; incorrect
+    values may cause correctness issues or suboptimal performance
+  quick_guide: 'For TP > 1 deployments, set to 1 via --additional-config ''{"flashcomm2_parallel_size": 1}'' to enable FLASHCOMM2;
+    consult the feature guide for advanced tuning of the O-matrix group size'
+analysis_date: '2026-07-06'

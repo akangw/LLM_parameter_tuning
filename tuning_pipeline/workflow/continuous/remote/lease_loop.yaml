@@ -1,0 +1,26 @@
+name: vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+job_type: acjob
+purpose: personal
+host_network: true
+enable_ssh: true
+min_available: 2
+max_runtime_minutes: 4320
+image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend
+image_tag: glm5.2-a3
+tasks:
+  - name: master
+    replicas: 1
+    command: bash /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/run_master_loop.sh
+    port: 2222
+    min_member: 1
+    cpu: "80"
+    memory: 800Gi
+    npu: 16
+  - name: worker
+    replicas: 1
+    command: bash /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/run_worker_loop.sh
+    port: 2222
+    min_member: 1
+    cpu: "80"
+    memory: 800Gi
+    npu: 16

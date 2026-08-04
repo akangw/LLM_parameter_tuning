@@ -1,0 +1,53 @@
+name: additional_config.pa_shape_list
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:209
+value_type: list[list[int]]
+default: '[]'
+valid_choices: A list of integer lists, each representing a shape for the PagedAttention kernel fallback
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter provides a custom shape list for the PagedAttention kernel fallback path. When the primary
+  fused attention kernel (npu_fused_infer_attention_score) does not support certain input shapes, vllm-ascend falls back to
+  the _npu_paged_attention kernel. The pa_shape_list allows users to pre-define shapes that should use this fallback path.
+  The code comment at ascend_config.py:205-208 explicitly states that _npu_paged_attention still performs better than npu_fused_infer_attention_score
+  in some cases, and this parameter allows forcing the fallback for those shapes. Performance impact is low because it only
+  affects edge-case shapes where the fused kernel underperforms, and the default empty list means no forced fallback occurs.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:209
+  context: Stored as self.pa_shape_list from additional_config dict, defaulting to empty list
+related_parameters:
+- name: additional_config.enable_npugraph_ex
+  relation: Both affect attention kernel selection; npugraph_ex enables graph mode which may interact with kernel dispatch
+constraints:
+- pa_shape_list must be a list of integer lists; each inner list represents a valid shape for the PagedAttention fallback
+  kernel
+tuning_advice:
+  summary: Leave as default empty list unless you have profiled and identified specific shapes where _npu_paged_attention
+    outperforms npu_fused_infer_attention_score
+  suggested_values:
+  - scenario: Default / general usage
+    value: '[]'
+    reason: The fused attention kernel is the recommended path; only force fallback when profiling shows a clear benefit for
+      specific shapes
+  - scenario: Specific shapes where fused kernel underperforms
+    value: '[[batch_size, num_heads, head_dim], ...]'
+    reason: After profiling, add shapes that show better performance with the fallback _npu_paged_attention kernel
+  caveats:
+  - This is a temporary workaround; the code comment indicates it should be removed once npu_fused_infer_attention_score performs
+    better on all scenarios
+  - Forcing fallback for too many shapes may degrade overall throughput since the fallback kernel is not the optimized path
+    for most cases
+  - No usage sites were found in the provided context, suggesting this parameter may have limited or experimental effect in
+    the current codebase
+  quick_guide: Keep pa_shape_list empty unless profiling reveals specific shapes where the fallback PagedAttention kernel
+    outperforms the fused kernel
+analysis_date: '2026-07-06'

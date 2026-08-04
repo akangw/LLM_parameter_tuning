@@ -1,0 +1,112 @@
+name: additional_config.profiling_chunk_config.need_timing
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:614
+- vllm_ascend/worker/model_runner_v1.py:1732
+- vllm_ascend/worker/model_runner_v1.py:2341
+- vllm_ascend/patch/platform/patch_profiling_chunk.py:45
+- vllm_ascend/core/profiling_chunk_predictor.py:365
+- docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:47
+value_type: bool
+default: 'Computed from profiling_chunk_config.enabled: false when disabled and true when enabled.'
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"profiling_chunk_config":{"enabled":true,"need_timing":false}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This flag controls online, history-aware calibration for Ascend dynamic chunked pipeline parallelism. When
+  true, the model runner synchronizes the NPU immediately before and after each model step, measures wall-clock execution
+  time, and returns that sample so the scheduler can incrementally fit a chunk-latency model that includes previously computed
+  tokens. The improved model can choose better runtime chunk sizes, but the forced device synchronizations create pipeline
+  stalls and temporarily reduce throughput and increase per-step latency. Timing is automatically disabled after the scheduler
+  has established its target latency and collected enough history data. Setting false from startup avoids the synchronization
+  overhead and uses only the startup profiling model, at the possible cost of less accurate chunk-size decisions for workload
+  histories not represented by startup profiling. The pinned upstream vLLM repository only supplies the opaque additional_config
+  container; this nested option is implemented by Ascend.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:614
+  context: Reads the boolean from profiling_chunk_config and defaults it to the value of that feature's enabled flag.
+- file: vllm_ascend/worker/model_runner_v1.py:1732
+  context: When timing is enabled, honors the scheduler's completion signal or synchronizes the device and records the step
+    start time.
+- file: vllm_ascend/worker/model_runner_v1.py:2341
+  context: Synchronizes the device after the step and attaches elapsed milliseconds to ModelRunnerOutput while timing remains
+    enabled.
+- file: vllm_ascend/patch/platform/patch_profiling_chunk.py:45
+  context: Consumes execution_time_ms, derives request chunk/history features, and feeds valid samples into the online predictor;
+    after calibration it disables timing in scheduler and worker processes.
+- file: vllm_ascend/core/profiling_chunk_predictor.py:365
+  context: Accumulates timed batch features and refits the history-aware latency model used for dynamic chunk prediction.
+- file: docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:54
+  context: Documents need_timing as the boolean switch for online calibration.
+related_parameters:
+- name: additional_config.profiling_chunk_config.enabled
+  relation: Enables dynamic chunked pipeline parallelism and supplies need_timing's computed default; need_timing normally
+    matters only when this is true.
+- name: additional_config.profiling_chunk_config.smooth_factor
+  relation: Controls how strongly runtime chunk selection trusts the dynamic prediction that online timing helps refine.
+- name: additional_config.profiling_chunk_config.min_chunk
+  relation: Sets the lower bound for chunk sizes produced by the predictor.
+- name: --pipeline-parallel-size
+  relation: Dynamic chunk profiling requires pipeline parallelism greater than one.
+- name: --max-num-batched-tokens
+  relation: Provides the base token budget used by startup profiling and is also the upper context for dynamic chunk sizing.
+constraints:
+- The value is interpreted as a boolean; the implementation performs no explicit type coercion or validation for this field.
+- When omitted, it equals profiling_chunk_config.enabled rather than having one unconditional literal default.
+- Dynamic profiling_chunk_config requires pipeline_parallel_size greater than 1 when enabled.
+- Online samples are used only after startup profiling has made ProfilingChunkManager ready.
+- Timing turns itself off only after target-latency calibration and history fitting complete; explicitly enabling it without
+  the profiling scheduler can leave per-step synchronization active without useful refinement.
+tuning_advice:
+  summary: Keep the computed default for adaptive calibration, or set false when the startup model is already adequate and
+    steady latency matters more than history-aware refinement.
+  suggested_values:
+  - scenario: First deployment or workload with varied prompt histories
+    value: true
+    reason: Collects real request timings so the predictor can learn the history term and adapt chunk sizes beyond the startup-only
+      model.
+  - scenario: Stable workload after validating startup-only predictions
+    value: false
+    reason: Avoids per-step NPU synchronizations and their latency and throughput cost while retaining startup profiling-based
+      dynamic chunk sizing.
+  - scenario: Dynamic chunked pipeline parallelism disabled
+    value: false
+    reason: Matches the computed default and avoids useless synchronization work when no ProfilingChunkManager will consume
+      the timing samples.
+  caveats:
+  - True has a temporary but workload- and hardware-dependent synchronization cost until automatic calibration completes.
+  - False does not disable startup profiling or dynamic chunking; it disables only online timing and history-aware refinement.
+  - A startup-only predictor may choose less effective chunks when runtime sequence histories differ substantially from its
+    profiling samples.
+  - Do not force true while profiling_chunk_config.enabled is false, because timing can remain active without a calibration
+    manager to switch it off.
+  quick_guide: Use the default with enabled=true initially; compare end-to-end latency and throughput against need_timing=false,
+    then keep false only if avoiding the calibration stalls outweighs the measured benefit of history-aware chunks.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

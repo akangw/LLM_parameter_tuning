@@ -1,0 +1,90 @@
+name: --mamba-ssm-cache-dtype
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1115
+- vllm/config/cache.py:128
+value_type: str
+default: auto
+valid_choices:
+- auto
+- float16
+- float32
+- bfloat16
+cli_example: --mamba-ssm-cache-dtype float16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter controls the data type of the SSM (State Space Model) state cache in Mamba-family models (Mamba1,
+  Mamba2, GatedDeltaNet). It is consumed by `MambaStateDtypeCalculator._mamba_state_dtype()` in `vllm/model_executor/layers/mamba/mamba_utils.py:84-90`,
+  which resolves the SSM state dtype separately from the convolution state dtype. When set to "auto", the SSM state dtype
+  falls back to the value of `--mamba-cache-dtype` (which itself defaults to "auto", ultimately resolving to the model''s
+  native dtype). Setting a lower-precision dtype (e.g., float16 instead of float32) reduces the memory footprint of the SSM
+  state cache, which can be significant for large-batch or long-sequence Mamba inference. This directly affects GPU/NPU memory
+  usage and can improve throughput by allowing larger batch sizes. On Ascend NPU, float16 operations are natively accelerated
+  by the Da Vinci architecture, making float16 the recommended choice for production deployments. The parameter also interacts
+  with FlashAttention backend block size selection: "when `mamba_ssm_cache_dtype`" or `mamba_cache_dtype` is float32, the
+  FlashAttention backend restricts supported block sizes to [16, 32, 64] instead of the default MultipleOf(16) to avoid NaN
+  propagation issues (see `vllm/v1/attention/backends/flash_attn.py:86-94`). This block size restriction can reduce KV cache
+  efficiency in hybrid Mamba/Attention models. Additionally, stochastic rounding for Mamba cache requires the SSM cache to
+  be float16; setting any other value with stochastic rounding enabled raises a ValueError (see `vllm/config/vllm.py:778-788`).
+
+  '
+usage_locations:
+- file: vllm/config/cache.py:128
+  context: Field definition with default 'auto' and docstring explaining SSM-only scope
+- file: vllm/engine/arg_utils.py:659
+  context: EngineArgs attribute declaration typed as MambaDType
+- file: vllm/engine/arg_utils.py:1707
+  context: Passed to CacheConfig constructor during config creation
+- file: vllm/model_executor/layers/mamba/mamba_utils.py:66
+  context: Used in MambaStateDtypeCalculator.mamba1_state_dtype() to resolve SSM state dtype
+- file: vllm/model_executor/layers/mamba/mamba_mixer2.py:923
+  context: Used in Mamba2 get_state_dtype() to determine SSM state precision
+- file: vllm/model_executor/layers/mamba/mamba_mixer.py:468
+  context: Used in Mamba1 get_state_dtype() to determine SSM state precision
+- file: vllm/model_executor/layers/mamba/gdn_linear_attn.py:248
+  context: Used in GatedDeltaNet get_state_dtype() to determine SSM state precision
+- file: vllm/v1/attention/backends/flash_attn.py:86
+  context: Checked alongside mamba_cache_dtype to restrict FA block sizes when float32
+- file: vllm/config/vllm.py:780
+  context: Validated against stochastic rounding requirement (must be float16)
+related_parameters:
+- name: --mamba-cache-dtype
+  relation: Controls the convolution state dtype; mamba_ssm_cache_dtype overrides only the SSM state portion when set to a
+    non-auto value
+- name: --enable-mamba-cache-stochastic-rounding
+  relation: Requires mamba_ssm_cache_dtype to be float16; raises ValueError otherwise
+- name: --block-size
+  relation: FlashAttention block size selection is restricted when mamba_ssm_cache_dtype is float32 in hybrid models
+constraints:
+- Must be one of 'auto', 'float16', 'float32', or 'bfloat16'.
+- If --enable-mamba-cache-stochastic-rounding is set, --mamba-ssm-cache-dtype must be float16.
+tuning_advice:
+  summary: Use float16 for SSM state cache on Ascend NPU to reduce memory footprint and leverage native float16 acceleration,
+    unless numerical precision requirements demand float32.
+  suggested_values:
+  - scenario: Production deployment on Ascend NPU with Mamba models
+    value: float16
+    reason: Reduces SSM state cache memory by ~50% compared to float32; Da Vinci architecture natively accelerates float16
+      operations; avoids FlashAttention block size restrictions triggered by float32 in hybrid models.
+  - scenario: Debugging numerical issues or when maximum precision is required
+    value: float32
+    reason: Provides full precision for SSM state computations at the cost of higher memory usage and potential block size
+      restrictions in hybrid Attention/Mamba models.
+  - scenario: Default behavior when no explicit tuning is needed
+    value: auto
+    reason: Falls back to --mamba-cache-dtype value, which itself defaults to the model's native dtype; suitable for initial
+      testing before optimization.
+  caveats:
+  - Setting float32 triggers FlashAttention block size restrictions (only 16, 32, 64) in hybrid Mamba/Attention models, which
+    may reduce KV cache efficiency.
+  - Stochastic rounding for Mamba cache is incompatible with non-float16 SSM cache dtypes and will cause a startup error.
+  - On Ascend NPU, float16 is the recommended precision for production inference due to hardware acceleration; float32 may
+    significantly increase memory pressure.
+  quick_guide: Set --mamba-ssm-cache-dtype float16 for Ascend NPU production deployments to halve SSM state memory and avoid
+    block size restrictions in hybrid models.
+analysis_date: '2026-07-06'

@@ -1,0 +1,94 @@
+name: --model-impl
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:827
+- vllm/config/model.py:293
+value_type: str
+default: auto
+valid_choices:
+- auto
+- vllm
+- transformers
+- terratorch
+cli_example: --model-impl vllm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter controls which model implementation backend is used for inference. On Ascend NPU, the choice\
+  \ directly affects performance because:\n1. \"vllm\" uses vLLM's optimized model implementations, which include Ascend-specific\n\
+  \   kernel optimizations, custom attention backends, and NPU-aware memory management.\n   These implementations are designed\
+  \ for high throughput and low latency on Ascend hardware.\n\n2. \"transformers\" falls back to HuggingFace Transformers\
+  \ implementations, which lack\n   Ascend-specific optimizations and may use generic PyTorch operations that are not\n  \
+  \ optimized for the Da Vinci architecture. This typically results in significantly\n   lower throughput and higher memory\
+  \ usage.\n\n3. \"auto\" (default) attempts to use vLLM implementation first, falling back to\n   Transformers only when\
+  \ no vLLM implementation exists. This is the safest choice\n   but may silently degrade performance if a model lacks vLLM\
+  \ support.\n\n4. \"terratorch\" is a specialized backend for geospatial models and is not relevant\n   for most Ascend deployments.\n\
+  \nThe model resolution logic in vllm/model_executor/models/registry.py shows that when model_impl=\"vllm\", the system strictly\
+  \ requires a vLLM implementation and will raise an error if none exists. When model_impl=\"auto\", it gracefully falls back\
+  \ to Transformers with a warning about suboptimal performance.\nOn Ascend NPU, using \"vllm\" is strongly recommended because\
+  \ vllm-ascend provides Ascend-optimized implementations for many popular model architectures. Using \"transformers\" bypasses\
+  \ these optimizations entirely.\n"
+usage_locations:
+- file: vllm/config/model.py:293
+  context: Field definition with docstring explaining the four implementation choices
+- file: vllm/config/model.py:572
+  context: Used to determine tokenizer mode when model_impl is "terratorch"
+- file: vllm/model_executor/model_loader/utils.py:190
+  context: Checked during model architecture resolution; triggers warning when falling back to Transformers
+- file: vllm/model_executor/model_loader/utils.py:221
+  context: Included in cache key for model architecture lookup
+- file: vllm/model_executor/models/registry.py:1076
+  context: Controls whether missing Transformers module raises error or returns None
+- file: vllm/model_executor/models/registry.py:1088
+  context: Controls whether incompatible Transformers backend raises error or returns None
+related_parameters:
+- name: --model
+  relation: The model architecture determines which implementations are available for model_impl
+- name: --trust-remote-code
+  relation: Required for custom model architectures that may need Transformers fallback
+- name: --enforce-eager
+  relation: Using vllm implementation enables CUDA graph optimization; Transformers fallback may require enforce_eager
+constraints:
+- When model_impl is set to "vllm", the model must have a registered vLLM implementation or an error will be raised.
+- When model_impl is set to "transformers", the model must be compatible with the Transformers library backend.
+- The "terratorch" option is only valid for geospatial models using the terratorch plugin.
+tuning_advice:
+  summary: 'On Ascend NPU, always use --model-impl vllm for maximum performance; only use --model-impl auto if you are unsure
+    whether your model has vLLM support, and avoid --model-impl transformers in production.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with a model that has vLLM support (most common case on Ascend)
+    value: vllm
+    reason: 'Uses Ascend-optimized model implementations from vllm-ascend, providing the best throughput, lowest latency,
+      and most efficient memory usage on NPU.
+
+      '
+  - scenario: Testing or evaluating a new model where vLLM support status is unknown
+    value: auto
+    reason: 'Automatically selects vLLM implementation if available, with graceful fallback to Transformers. Allows you to
+      discover whether vLLM support exists without causing startup failures.
+
+      '
+  - scenario: Debugging or comparing implementations
+    value: transformers
+    reason: 'Useful for isolating whether a performance issue is specific to the vLLM implementation. Not recommended for
+      production due to significantly lower performance on Ascend NPU.
+
+      '
+  caveats:
+  - Using --model-impl transformers on Ascend NPU typically results in 2-5x lower throughput compared to vllm due to lack
+    of Ascend-specific kernel optimizations.
+  - When --model-impl auto silently falls back to Transformers, a warning is logged but the server starts successfully — always
+    check startup logs for fallback warnings.
+  - Some advanced vLLM features (speculative decoding, chunked prefill, prefix caching) may not work with Transformers backend,
+    further reducing performance.
+  - The vllm-ascend plugin does not override this parameter, but it provides Ascend-optimized implementations that are only
+    used when model_impl is "vllm" or "auto" (with vLLM support).
+  quick_guide: Set --model-impl vllm for best Ascend NPU performance; check startup logs for fallback warnings if using auto.
+analysis_date: '2026-07-06'

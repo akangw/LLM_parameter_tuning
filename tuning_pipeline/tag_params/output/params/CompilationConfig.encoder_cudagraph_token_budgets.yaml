@@ -1,0 +1,108 @@
+name: CompilationConfig.encoder_cudagraph_token_budgets
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/compilation.py:522
+- vllm/model_executor/models/interfaces.py:1534
+- vllm/model_executor/models/qwen2_5_vl.py:1612
+- vllm/model_executor/models/qwen3_vl.py:1814
+- docs/design/cuda_graphs_multimodal.md:22
+value_type: list[int]
+default: []
+valid_choices: List of integer token capacities; an empty list selects model-specific automatic inference.
+cli_example: vllm serve Qwen/Qwen3-VL-32B --compilation-config '{"cudagraph_mm_encoder":true,"encoder_cudagraph_token_budgets":[2048,4096,8192,13824]}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When multimodal encoder CUDA graphs are enabled for a supported model, each value requests a separately captured
+  full-encoder graph with that fixed token capacity. At runtime vLLM greedily packs vision items, chooses the smallest captured
+  budget that fits each sub-batch, and uses eager execution for an item that exceeds every budget. More closely spaced budgets
+  can reduce unused capacity in replay and keep common input sizes on the graph path, improving steady-state encoder latency
+  and throughput, but every additional or larger budget adds initialization capture work and preallocated graph-buffer/device
+  memory. An empty list generates power-of-two levels over the model-provided range and always includes the maximum even when
+  it is not a power of two.
+usage_locations:
+- file: vllm/config/compilation.py:522
+  context: Declares the empty-list default and documents explicit values as an override of model-derived power-of-two budget
+    levels.
+- file: vllm/model_executor/models/interfaces.py:1534
+  context: Defines the model hook that returns the minimum and maximum token budgets used when this list is not explicitly
+    supplied.
+- file: vllm/model_executor/models/qwen2_5_vl.py:1612
+  context: Qwen2.5-VL supplies a minimum of 64 tokens and caps the automatically inferred maximum by max_num_batched_tokens
+    and max_model_len.
+- file: vllm/model_executor/models/qwen3_vl.py:1814
+  context: Qwen3-VL supplies the same model-specific range for automatic budget inference.
+- file: docs/design/cuda_graphs_multimodal.md:40
+  context: Describes greedy packing, smallest-fitting-budget replay, and eager fallback when an input exceeds all captured
+    budgets.
+related_parameters:
+- name: CompilationConfig.cudagraph_mm_encoder
+  relation: Must be true for these encoder token budgets to drive CUDA graph capture and replay.
+- name: CompilationConfig.encoder_cudagraph_max_vision_items_per_batch
+  relation: Bounds item count in addition to the largest token budget; its automatic value is derived from the model budget
+    range.
+- name: CompilationConfig.encoder_cudagraph_max_frames_per_batch
+  relation: Sets the video-frame metadata capacity shared by every captured token budget.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Qwen2.5-VL and Qwen3-VL cap their model-provided automatic maximum budget with this scheduler setting.
+constraints:
+- The field has an effect only when cudagraph_mm_encoder is true and the loaded model implements SupportsEncoderCudaGraph.
+- The pinned design documentation lists Qwen2.5-VL and Qwen3-VL as supported and reports testing with FLASH_ATTN or FLASHINFER
+  on Blackwell GPUs.
+- Explicit values replace automatic inference rather than extending it; the largest explicit capacity therefore determines
+  which oversized inputs fall back to eager encoder execution.
+- Each configured level represents a fixed token capacity and causes another full encoder graph and its buffers to be captured
+  during initialization.
+- The pinned vllm-ascend repository contains no reference to this field or Ascend encoder graph consumer, so no Ascend performance
+  effect is established.
+tuning_advice:
+  summary: Keep the empty default first. Supply explicit budgets only after measuring actual encoder token counts, graph hit
+    rate, replay padding, startup cost, and device-memory headroom on a supported CUDA model.
+  suggested_values:
+  - scenario: General supported image or video serving
+    value: []
+    reason: Uses the model-derived power-of-two sequence and includes its maximum, avoiding a workload-specific list that
+      can become stale when scheduler or model limits change.
+  - scenario: Profiled workload concentrated at known encoder token sizes
+    value:
+    - 2048
+    - 4096
+    - 8192
+    - 13824
+    reason: This is the explicit example in the pinned documentation and illustrates covering common levels plus a non-power-of-two
+      maximum; it is a benchmark starting point, not a universal optimum.
+  - scenario: Memory- or startup-constrained deployment with narrow input sizes
+    value: workload_specific_minimal_budget_list
+    reason: Capturing only the few capacities needed by measured traffic can reduce the number of graphs and buffers, while
+      the largest level must still cover inputs intended for graph replay.
+  caveats:
+  - A sparse list can make more work run in a larger-than-needed fixed graph; a low maximum causes more eager fallbacks, while
+    a dense list consumes more capture time and memory.
+  - Inputs that exceed all levels still execute correctly through eager fallback, but they receive no CUDA graph launch-overhead
+    benefit.
+  - The optimization affects only multimodal encoder execution, so end-to-end gains may be small when decoder work dominates.
+  - The source declaration does not itself validate ordering, uniqueness, or positivity of explicit list entries; use distinct
+    positive capacities in increasing order to reflect the documented budget-level semantics.
+  quick_guide: Enable cudagraph_mm_encoder on a documented model, start with [], profile encoder token totals and graph misses,
+    then retain the few increasing positive capacities that cover common sub-batches without exceeding the available startup-time
+    and device-memory budget.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - long_input
+  - high_concurrency

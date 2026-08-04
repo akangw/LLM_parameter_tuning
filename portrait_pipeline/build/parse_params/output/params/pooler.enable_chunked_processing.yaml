@@ -1,0 +1,76 @@
+name: pooler.enable_chunked_processing
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/entrypoints/pooling/embed/io_processor.py:54
+- vllm/entrypoints/pooling/embed/protocol.py:45
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this parameter activates chunked processing for embedding requests whose input length exceeds
+  the model''s maximum position embeddings. The EmbedIOProcessor splits long inputs into chunks, processes each chunk separately
+  through the model, and then aggregates the resulting embeddings using weighted averaging. This directly affects performance
+  in several ways: (1) Latency increases because a single request is broken into multiple sequential forward passes, each
+  requiring its own encode step. (2) Throughput may decrease due to the additional computation overhead of processing multiple
+  chunks and the aggregation step. (3) Memory usage patterns change because each chunk is processed independently, potentially
+  reducing peak memory for very long inputs but increasing total computation. The parameter also interacts with max_model_len
+  enforcement: "when chunked processing is enabled, the max_total_output_tokens" limit is set to None (unlimited), bypassing
+  the normal output token constraint that would otherwise be computed as max_model_len - max_embed_len. This means chunked
+  processing can handle arbitrarily long inputs at the cost of increased processing time proportional to the number of chunks
+  required.
+
+  '
+usage_locations:
+- file: vllm/entrypoints/pooling/embed/io_processor.py:54
+  context: Reads pooler_config.enable_chunked_processing and stores it as self.enable_chunked_processing
+- file: vllm/entrypoints/pooling/embed/io_processor.py:72
+  context: In pre_process_online, conditionally calls _pre_process_chunked(ctx) when enabled
+- file: vllm/entrypoints/pooling/embed/io_processor.py:82
+  context: In post_process_online, skips chunked aggregation logic when disabled, falling through to normal post-processing
+- file: vllm/entrypoints/pooling/embed/protocol.py:45
+  context: In _get_max_total_output_tokens, when enabled, returns None for max_total_tokens (unlimited) instead of computing
+    a bounded value
+related_parameters:
+- name: pooler_config.max_embed_len
+  relation: When chunked processing is disabled, max_embed_len is used to compute max_output_tokens; when enabled, this constraint
+    is bypassed
+- name: model_config.max_model_len
+  relation: The model's maximum position embeddings determine the chunk size; inputs longer than this trigger chunking when
+    enabled
+constraints:
+- pooler_config must not be None when EmbedIOProcessor is initialized (asserted at construction)
+- final_res_batch must not be None when post_process_online is called with chunked processing enabled (raises ValueError)
+tuning_advice:
+  summary: Enable only when serving embedding requests that routinely exceed the model's max position embeddings; otherwise
+    keep disabled to avoid unnecessary chunking overhead.
+  suggested_values:
+  - scenario: All embedding requests fit within the model's max position embeddings
+    value: 'false'
+    reason: Avoids the overhead of chunk splitting and weighted averaging, providing lower latency and higher throughput for
+      normal-length inputs.
+  - scenario: A significant portion of embedding requests exceed the model's max position embeddings
+    value: 'true'
+    reason: Allows processing of long inputs that would otherwise be rejected or truncated, at the cost of increased latency
+      proportional to the number of chunks.
+  caveats:
+  - 'Chunked processing increases per-request latency linearly with the number of chunks: an input 3x the max position embeddings
+    requires 3 forward passes plus aggregation.'
+  - When enabled, max_total_output_tokens is set to None, meaning there is no upper bound on input length — extremely long
+    inputs could cause excessive processing time.
+  - The weighted averaging aggregation may produce slightly different embedding quality compared to processing the full input
+    in a single pass, depending on the model architecture.
+  - On Ascend NPU, the repeated forward passes for chunked inputs may interact with NPU memory allocation patterns; monitor
+    memory usage for very long chunked requests.
+  quick_guide: Keep disabled (false) unless you specifically need to handle embedding inputs longer than the model's context
+    window.
+analysis_date: '2026-07-06'

@@ -1,0 +1,77 @@
+name: VLLM_PP_LAYER_PARTITION
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:732
+- vllm/envs.py:49
+- vllm/distributed/utils.py:111
+value_type: str
+default: null
+valid_choices: comma-separated list of integers, e.g. '5,5,5,5'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This environment variable controls how transformer layers are distributed across pipeline-parallel (PP) stages.
+  When set, it overrides the default even-distribution algorithm in get_pp_indices() (vllm/distributed/utils.py:111-140).
+  The value is a comma-separated string of integers, where each integer specifies the number of hidden layers assigned to
+  the corresponding PP rank. The number of entries must equal pp_size, and the sum must equal num_hidden_layers. On Ascend
+  NPU, pipeline parallelism is commonly used to split large models across multiple devices when tensor parallelism alone is
+  insufficient. An imbalanced partition can cause one PP stage to become a bottleneck (reducing throughput) or to exceed NPU
+  memory limits (causing OOM). The default algorithm places extra layers on middle partitions to balance compute while accounting
+  for embedding layers on the first/last stages. Manual tuning via this env var allows Ascend users to optimize for specific
+  model architectures where the default heuristic may not be optimal, such as models with unusually large embedding layers
+  or non-uniform layer costs. The partition also affects the AOT compilation cache key (vllm/compilation/caching.py:568),
+  meaning different partition strings will trigger recompilation.
+
+  '
+usage_locations:
+- file: vllm/distributed/utils.py:111
+  context: Read in get_pp_indices() to override default layer-to-PP-rank assignment
+- file: vllm/compilation/caching.py:568
+  context: Included in AOT compilation hash factors; different values trigger recompilation
+- file: vllm/usage/usage_lib.py:40
+  context: Collected in anonymous usage statistics
+related_parameters:
+- name: --pipeline-parallel-size / VLLM_PIPELINE_PARALLEL_SIZE
+  relation: pp_size determines the expected number of entries in VLLM_PP_LAYER_PARTITION
+- name: --tensor-parallel-size / VLLM_TENSOR_PARALLEL_SIZE
+  relation: Combined with PP to form the full parallelism strategy; layer partition affects per-stage memory which interacts
+    with TP sharding
+constraints:
+- The number of comma-separated integers must exactly equal the pipeline-parallel size (pp_size)
+- The sum of all integers must exactly equal the model's total number of hidden layers (num_hidden_layers)
+- Each integer must be a valid non-negative integer; non-numeric characters will raise a ValueError
+tuning_advice:
+  summary: 'Only set VLLM_PP_LAYER_PARTITION when the default even-distribution algorithm produces suboptimal load balance
+    or memory distribution on Ascend NPU. Use it to manually shift layers away from memory-constrained stages or to balance
+    compute across heterogeneous NPU configurations.
+
+    '
+  suggested_values:
+  - scenario: Default behavior (recommended for most Ascend deployments)
+    value: unset (None)
+    reason: The built-in algorithm in get_pp_indices() already accounts for embedding layers on first/last stages and distributes
+      remainder layers to middle stages for balanced memory and compute. Manual tuning is rarely needed.
+  - scenario: Model with very large vocabulary embedding causing OOM on first PP stage
+    value: Shift layers away from rank 0, e.g. '2,6,6,6' for a 20-layer model with pp_size=4
+    reason: Reducing layers on the first stage frees NPU memory for the large embedding table, preventing OOM while keeping
+      other stages balanced.
+  - scenario: Model with tied embedding/head weights causing last stage memory pressure
+    value: Reduce layers on the last stage, e.g. '6,6,6,2' for a 20-layer model with pp_size=4
+    reason: The last stage often holds both the final layers and the output projection; reducing its layer count can prevent
+      memory imbalance on Ascend NPU.
+  caveats:
+  - Changing VLLM_PP_LAYER_PARTITION invalidates the AOT compilation cache, causing recompilation on next startup. This is
+    a one-time cost but can be significant for large models on Ascend.
+  - Extremely imbalanced partitions (e.g., one stage with 1 layer and another with 20) will cause severe pipeline bubbles
+    and reduce throughput, even if memory is balanced.
+  - This variable has no effect when pipeline-parallel size is 1 (single stage).
+  - On Ascend NPU, pipeline parallelism communication overhead (via HCCL) is non-negligible; more balanced partitions generally
+    yield better throughput.
+  quick_guide: Leave unset unless you observe OOM or severe load imbalance on specific PP stages; then manually redistribute
+    layers away from the bottleneck stage.
+analysis_date: '2026-07-06'

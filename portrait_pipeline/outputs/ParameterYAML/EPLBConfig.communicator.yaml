@@ -1,0 +1,96 @@
+name: EPLBConfig.communicator
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/config/parallel.py:39
+- vllm/config/parallel.py:88
+- vllm/config/parallel.py:893
+- docs/serving/expert_parallel_deployment.md:146
+- vllm_ascend/eplb/core/eplb_device_transfer_loader.py:32
+value_type: str
+default: null
+valid_choices:
+- torch_nccl
+- torch_gloo
+- nixl
+- pynccl
+- null
+cli_example: vllm serve <model> --enable-expert-parallel --enable-eplb --eplb-config='{"communicator":"nixl"}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field selects the transport used when EPLB moves expert weights between expert-parallel ranks during a
+  rebalance. torch_nccl uses torch.distributed device-group point-to-point operations, pynccl groups direct PyNccl sends and
+  receives, torch_gloo stages weights through CPU tensors, and nixl packs device weights into registered send and receive
+  buffers and performs receiver-initiated NIXL reads. The choice can therefore change rebalance latency, interference with
+  serving work, and temporary or persistent buffer memory, but it does not change the normal MoE token all-to-all backend.
+  When left null, configuration selects pynccl for elastic EP, torch_gloo for asynchronous EPLB, and torch_nccl otherwise.
+  The pinned Ascend EPLB path does not consume this field; it constructs torch.distributed P2P operations on its HCCL-backed
+  device group.
+usage_locations:
+- file: vllm/config/parallel.py:893
+  context: Resolves a null value to pynccl for elastic EP, torch_gloo for asynchronous EPLB, or torch_nccl for synchronous
+    non-elastic EPLB.
+- file: vllm_ascend/eplb/core/eplb_device_transfer_loader.py:46
+  context: Ascend's separate dynamic-EPLB loader builds device-group isend and irecv operations directly and exposes no selection
+    based on this field.
+related_parameters:
+- name: ParallelConfig.enable_eplb
+  relation: The communicator is created for upstream expert weight movement only when EPLB is enabled.
+- name: EPLBConfig.use_async
+  relation: With communicator left null, asynchronous EPLB selects torch_gloo to avoid NCCL multi-thread conflicts.
+- name: ParallelConfig.enable_elastic_ep
+  relation: With communicator left null, elastic EP selects pynccl; stateless elastic groups ultimately require the PyNccl
+    implementation.
+- name: ParallelConfig.all2all_backend
+  relation: Separately selects the MoE token dispatch/combine transport; using deepep_low_latency with asynchronous NCCL-based
+    EPLB triggers an NCCL occupancy mitigation.
+- name: EPLBConfig.step_interval
+  relation: Controls how often expert rearrangement can incur the selected communicator's transfer cost.
+constraints:
+- The value must be one of torch_nccl, torch_gloo, nixl, pynccl, or null.
+- The field has no expert-transfer effect unless EPLB is enabled.
+- Stateless elastic EP accepts only torch_nccl or pynccl, and the factory forces torch_nccl to pynccl because stateless operation
+  requires PyNccl.
+- pynccl requires non-CPU cuda-like expert tensors, supported NCCL dtypes, and an available, enabled PyNccl communicator.
+- nixl requires the optional NIXL or RIXL package, a CUDA-like platform, and non-CPU expert tensors.
+- The NIXL communicator sizes its buffers from the first MoE layer, so other MoE layers must have the same expert-tensor count,
+  shapes, and dtypes.
+- The pinned vllm-ascend dynamic-EPLB implementation does not use this selector and instead transfers weights through its
+  HCCL device group.
+tuning_advice:
+  summary: Keep null unless a measured EPLB rebalance bottleneck or a required execution mode justifies pinning a backend;
+    automatic selection follows the synchronous, asynchronous, and elastic execution constraints.
+  suggested_values:
+  - scenario: Standard synchronous EPLB
+    value: 'null'
+    reason: Auto-selection chooses torch_nccl, avoiding extra configuration while keeping expert weights on the device communication
+      path.
+  - scenario: Asynchronous EPLB
+    value: 'null'
+    reason: Auto-selection chooses torch_gloo specifically to avoid hangs caused by NCCL multi-thread conflicts, at the cost
+      of CPU staging.
+  - scenario: Elastic expert parallelism
+    value: 'null'
+    reason: Auto-selection chooses the required pynccl path for stateless expert weight transfers.
+  - scenario: NIXL-equipped CUDA-like deployment with costly rebalances
+    value: nixl
+    reason: Uses registered device buffers and batched receiver-initiated reads; benchmark transfer time and account for the
+      two full-layer buffers.
+  caveats:
+  - Gloo introduces device-to-host and host-to-device copies plus CPU staging allocations, so its safer asynchronous behavior
+    can cost transfer time and host-memory bandwidth.
+  - NIXL permanently allocates a send buffer and a receive buffer, each equal to all local expert tensors in one MoE layer,
+    for the lifetime of the communicator.
+  - Explicitly choosing an NCCL-based backend for asynchronous EPLB can reintroduce communication scheduling conflicts; the
+    DeepEP low-latency combination requires the NCCL_MAX_CTAS mitigation in pinned source.
+  - Backend gains affect periodic expert rearrangement rather than every forward pass, so end-to-end impact depends on rebalance
+    frequency and the quantity of weights moved.
+  - This profile does not claim an Ascend tuning effect because the pinned Ascend dynamic-EPLB transfer path ignores EPLBConfig.communicator.
+  quick_guide: Start with null, benchmark rebalance stalls and serving interference, use explicit nixl only when its dependencies
+    and buffer cost are acceptable, and do not tune this field for the pinned Ascend dynamic-EPLB path.
+analysis_date: '2026-07-30'

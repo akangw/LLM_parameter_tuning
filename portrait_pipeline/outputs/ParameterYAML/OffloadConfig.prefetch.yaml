@@ -1,0 +1,113 @@
+name: OffloadConfig.prefetch
+type: nested
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:48
+- vllm/config/offload.py:94
+- vllm_ascend/worker/model_runner_v1.py:252
+- vllm_ascend/worker/model_runner_v1.py:4570
+value_type: dict
+default:
+  offload_group_size: 0
+  offload_num_in_group: 1
+  offload_prefetch_step: 1
+  offload_params: []
+valid_choices: A PrefetchOffloadConfig object with offload_group_size >= 0, offload_num_in_group >= 1, offload_prefetch_step
+  >= 0, and offload_params as a set of exact dot-delimited parameter-name segments. When prefetch is active, offload_num_in_group
+  must not exceed offload_group_size and offload_prefetch_step must be at least 1.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: This nested object configures vLLM's group-based prefetch weight-offloading backend. Its default instance has
+  group size 0, so auto backend selection leaves prefetch disabled. With a positive group size, the last configured number
+  of layers in each group have all or selected weights stored in CPU memory. The backend copies those weights asynchronously
+  into reusable accelerator buffers before their layers execute. Offloading more or larger weights can reduce resident accelerator
+  weight memory, but increases host memory use and host-to-accelerator traffic; exposed copy or synchronization stalls can
+  increase latency and reduce throughput. A larger prefetch step can hide more transfer latency but allocates more accelerator
+  buffer slots, so net memory savings depend on the complete child configuration. The Ascend NPU runner subclasses the upstream
+  GPU runner and initializes it inside a wrapper that maps CUDA streams and events to torch.npu, so this upstream object reaches
+  the inherited Ascend offloader path without an Ascend-specific definition.
+usage_locations:
+- file: vllm/config/offload.py:94
+  context: Declares the nested object with a default-constructed PrefetchOffloadConfig and validates its cross-field constraints
+    and interaction with the selected backend.
+- file: vllm/model_executor/models/utils.py:646
+  context: Routes construction of the model's transformer-layer sequence through the configured global offloader, allowing
+    the prefetch object to control which layers receive weight-transfer hooks.
+- file: vllm_ascend/worker/model_runner_v1.py:252
+  context: Defines the Ascend runner as an upstream GPUModelRunner subclass and invokes inherited initialization inside the
+    NPU compatibility wrapper.
+- file: vllm_ascend/worker/model_runner_v1.py:4570
+  context: Maps CUDA stream and event APIs used by the inherited prefetch offloader to torch.npu during wrapped execution.
+related_parameters:
+- name: OffloadConfig.offload_backend
+  relation: Auto selects prefetch when this object's group size is positive; explicit prefetch selects it directly, while
+    explicit uva ignores these fields.
+- name: PrefetchOffloadConfig.offload_group_size
+  relation: Enables prefetch under auto when positive and defines the layer-group pattern.
+- name: PrefetchOffloadConfig.offload_num_in_group
+  relation: Selects how many layers at the end of each group are offloaded.
+- name: PrefetchOffloadConfig.offload_prefetch_step
+  relation: Controls transfer lookahead and the accelerator-side static-buffer slot count.
+- name: PrefetchOffloadConfig.offload_params
+  relation: Restricts offloading to matching parameter-name segment sequences; an empty set selects every parameter in each
+    chosen layer.
+- name: OffloadConfig.uva
+  relation: Configures the alternative UVA backend; when both sub-configurations are active under auto, prefetch takes precedence.
+constraints:
+- offload_group_size must be an integer greater than or equal to 0; 0 disables prefetch selection under the auto backend.
+- offload_num_in_group must be at least 1 and, whenever prefetch is active, must be less than or equal to offload_group_size.
+- offload_prefetch_step accepts nonnegative integers at the child-model level, but must be at least 1 whenever prefetch is
+  active.
+- Explicit offload_backend=prefetch with the default group size 0 is invalid, because the default offload count 1 exceeds
+  the group size.
+- Explicit offload_backend=uva ignores active prefetch fields with a warning; under auto, an active prefetch object takes
+  precedence over an active UVA object.
+- A nonempty offload_params value uses exact dot-delimited segment matching; selected layers with no matching parameter are
+  skipped.
+tuning_advice:
+  summary: Keep the default disabled object when the model fits in accelerator memory. If weight capacity is the limiter,
+    activate prefetch with the least aggressive layer and parameter selection that makes the model fit, then tune lookahead
+    while measuring peak memory, latency, and throughput on the target host-to-accelerator topology.
+  suggested_values:
+  - scenario: Model fits in accelerator memory
+    value:
+      offload_group_size: 0
+      offload_num_in_group: 1
+      offload_prefetch_step: 1
+      offload_params: []
+    reason: This is the default object and leaves auto backend selection on the no-prefetch path, avoiding host transfers
+      and static-buffer overhead.
+  - scenario: Initial selective prefetch-offloading experiment
+    value:
+      offload_group_size: 8
+      offload_num_in_group: 2
+      offload_prefetch_step: 1
+      offload_params:
+      - gate_up_proj
+      - down_proj
+    reason: This valid baseline offloads a limited layer fraction and common large MLP projections with the minimum buffer
+      depth; it is a measurement starting point, not a universal optimum.
+  - scenario: More accelerator-memory relief is required
+    value: Increase offload_num_in_group or broaden offload_params within the validation bounds, then benchmark
+    reason: Selecting more weight bytes can reduce resident weight memory, but also increases CPU storage and transfer work.
+  caveats:
+  - Gross CPU-offloaded bytes are not net accelerator-memory savings because the backend allocates static device buffers according
+    to selected parameter shapes and offload_prefetch_step.
+  - Host bandwidth, pinned-memory availability, NUMA placement, interconnect bandwidth, model compute time, layer distribution,
+    and graph mode determine whether asynchronous copies are hidden.
+  - Increasing lookahead can reduce exposed transfer stalls but consumes more accelerator memory and may provide no gain after
+    transfers are already hidden.
+  - Parameter names vary by model and quantization method; a plausible but nonmatching filter can silently leave selected
+    layers resident.
+  - Ascend uses the inherited upstream implementation through CUDA-to-NPU API mapping; validate correctness and performance
+    on the exact CANN, torch-npu, vLLM, and hardware combination.
+  quick_guide: Start with the default object. If the model does not fit, test a positive group size with count 1, lookahead
+    1, and a narrow filter for the largest repeated weights; expand the selected weight set only as needed, and raise lookahead
+    only when profiling shows copy waits and measured device-memory headroom remains.
+analysis_date: '2026-07-31'

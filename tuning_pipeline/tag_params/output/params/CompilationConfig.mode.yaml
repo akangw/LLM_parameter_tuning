@@ -1,0 +1,126 @@
+name: CompilationConfig.mode
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:37
+- vllm/config/compilation.py:421
+- vllm/config/compilation.py:738
+- vllm/config/compilation.py:1027
+- vllm/config/vllm.py:946
+- vllm/config/vllm.py:985
+- vllm_ascend/platform.py:436
+- vllm_ascend/platform.py:444
+- vllm_ascend/platform.py:500
+- vllm_ascend/worker/model_runner_v1.py:593
+value_type: int
+default: null
+valid_choices:
+- 0
+- 1
+- 2
+- 3
+- NONE
+- STOCK_TORCH_COMPILE
+- DYNAMO_TRACE_ONCE
+- VLLM_COMPILE
+cli_example: --compilation-config '{"mode":"VLLM_COMPILE"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This field selects the model execution and torch.compile strategy. NONE (0) runs eager PyTorch; STOCK_TORCH_COMPILE
+  (1) invokes the standard torch.compile pipeline; DYNAMO_TRACE_ONCE (2) traces once while removing guards; and VLLM_COMPILE
+  (3) uses vLLM''s cached, shape-specialized backend with custom passes and optional piecewise graph capture. Consequently
+  the choice changes compilation startup cost, steady-state kernel efficiency, graph reuse, and memory retained for compiled
+  artifacts and captured graphs. An omitted value is resolved by VllmConfig: VLLM_COMPILE when optimization_level is above
+  O0, otherwise NONE. On the pinned Ascend plugin only NONE and VLLM_COMPILE are supported. The plugin disables CUDAGraphs
+  for modes 1 and 2 and then normalizes the effective mode to NONE; it also forces NONE for eager execution or whenever the
+  effective NPU cudagraph mode is NONE. With a supported graph mode and VLLM_COMPILE, the NPU runner enables its ACL-graph
+  execution path.'
+usage_locations:
+- file: vllm/config/compilation.py:738
+  context: Accepts integer enum values or case-insensitive enum names and rejects unknown string names.
+- file: vllm/config/compilation.py:1027
+  context: Chooses the standard torch backend for modes 1 and 2 or vLLM's custom backend for mode 3; mode 0 cannot initialize
+    a compile backend.
+- file: vllm/config/vllm.py:946
+  context: enforce_eager and TORCH_COMPILE_DISABLE override the requested mode to NONE.
+- file: vllm/config/vllm.py:985
+  context: Resolves an omitted mode to VLLM_COMPILE above optimization level O0 and to NONE at O0.
+- file: vllm_ascend/platform.py:444
+  context: Declares modes other than NONE and VLLM_COMPILE unsupported on NPU and disables cudagraphs for them.
+- file: vllm_ascend/platform.py:500
+  context: Normalizes the mode to NONE when NPU cudagraph execution is disabled and validates VLLM_COMPILE for piecewise graphs.
+- file: vllm_ascend/worker/model_runner_v1.py:593
+  context: Enables the Ascend ACL-graph runner only for VLLM_COMPILE with a non-NONE cudagraph mode and without enforce_eager.
+related_parameters:
+- name: CompilationConfig.cudagraph_mode
+  relation: On Ascend, graph mode determines whether VLLM_COMPILE remains active; NONE forces the compilation mode to NONE,
+    and piecewise capture requires VLLM_COMPILE.
+- name: optimization_level
+  relation: Resolves an omitted mode to NONE at O0 or VLLM_COMPILE above O0.
+- name: CompilationConfig.backend
+  relation: Modes 1 and 2 use the selected torch.compile backend directly, while mode 3 initializes the vLLM backend; backend
+    eager disables Inductor optimizations.
+- name: enforce_eager
+  relation: Overrides both compilation mode and cudagraph mode to NONE.
+- name: TORCH_COMPILE_DISABLE
+  relation: Environment value 1 overrides compilation mode to NONE.
+constraints:
+- Integer inputs must be valid CompilationMode values 0 through 3; string inputs must case-insensitively match NONE, STOCK_TORCH_COMPILE,
+  DYNAMO_TRACE_ONCE, or VLLM_COMPILE.
+- DYNAMO_TRACE_ONCE requires model execution without dynamic-shape-dependent control flow.
+- Piecewise cudagraph modes require VLLM_COMPILE; upstream replaces an incompatible cudagraph mode with NONE.
+- The pinned Ascend plugin supports only NONE and VLLM_COMPILE; STOCK_TORCH_COMPILE and DYNAMO_TRACE_ONCE disable NPU cudagraphs
+  and are subsequently normalized to NONE.
+- On Ascend, a NONE or unsupported effective cudagraph mode forces compilation mode to NONE regardless of the originally requested
+  mode.
+- enforce_eager or TORCH_COMPILE_DISABLE=1 overrides this setting to NONE.
+tuning_advice:
+  summary: Leave mode unset for the platform and optimization level to select the supported default. On Ascend, use VLLM_COMPILE
+    only together with a supported non-NONE cudagraph mode; use NONE when debugging or when graph capture is incompatible.
+  suggested_values:
+  - scenario: Normal optimized vLLM or Ascend serving with supported graph capture
+    value: VLLM_COMPILE
+    reason: Uses vLLM's custom compilation path and is the only compiled mode supported by the pinned Ascend plugin.
+  - scenario: Debugging, correctness isolation, highly dynamic unsupported control flow, or required eager execution
+    value: NONE
+    reason: Avoids compile and graph-capture startup and compatibility constraints at the cost of foregoing compiled steady-state
+      optimizations.
+  - scenario: Upstream-only experiment comparing standard torch.compile with vLLM compilation
+    value: STOCK_TORCH_COMPILE
+    reason: Selects the stock PyTorch compilation pipeline, but must not be used to request NPU compilation because Ascend
+      normalizes it to NONE.
+  caveats:
+  - VLLM_COMPILE commonly improves steady-state serving performance but adds warmup/compilation work and may retain compiled
+    graphs or captured buffers; the crossover depends on model, shapes, batch mix, and run duration.
+  - Selecting mode 1 or 2 on Ascend does not provide those compilation strategies in the pinned plugin; inspect the effective
+    configuration rather than assuming the requested value remains active.
+  - On Ascend, setting VLLM_COMPILE alone is insufficient if cudagraph_mode is NONE or falls back to NONE.
+  - A null input is not the final runtime value; optimization_level resolves it during VllmConfig initialization.
+  quick_guide: Keep null for defaults; choose VLLM_COMPILE plus a supported graph mode for optimized serving, or NONE for
+    eager diagnostics.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

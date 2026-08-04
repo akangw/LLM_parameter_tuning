@@ -1,0 +1,130 @@
+name: additional_config.xlite_graph_config.enabled
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:548
+- vllm_ascend/platform.py:426
+- vllm_ascend/platform.py:562
+- vllm_ascend/utils.py:1421
+- vllm_ascend/xlite/xlite_model_runner.py:31
+- vllm_ascend/xlite/xlite.py:642
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"xlite_graph_config":{"enabled":true,"full_mode":false}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling this field opts an eligible Ascend engine into the openEuler Xlite execution path. When the worker
+  class is auto-selected on a device other than 310P, the platform replaces the normal NPUWorker with XliteWorker; its model
+  runner wraps the loaded model in XliteWrapper and initializes an Xlite runtime tensor pool. With the default full_mode=false,
+  the wrapper uses the Xlite graph for decode and falls back to the original runnable for prefill, while the platform forces
+  cudagraph_mode to FULL_DECODE_ONLY. With full_mode=true, Xlite handles prefill and decode, but the platform forces eager
+  execution and disables compilation and ACLGraph replay. The different worker, dispatch path, graph policy, tensor-pool allocation,
+  and possible KV-cache block-size reduction can materially change inter-token latency, throughput, startup cost, and device
+  memory. The pinned source supplies no universal speedup or memory-saving guarantee, so the effect must be benchmarked for
+  the supported architecture and workload.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:548
+  context: Reads enabled from additional_config.xlite_graph_config with a false default; when true, rejects speculative decoding
+    and pipeline parallel sizes above one and warns when the configured cache block size is not 128.
+- file: vllm_ascend/platform.py:426
+  context: 'Overrides graph policy when Xlite is enabled: full mode forces eager execution and CUDAGraphMode.NONE, while the
+    default decode-only mode forces CUDAGraphMode.FULL_DECODE_ONLY.'
+- file: vllm_ascend/platform.py:562
+  context: Selects XliteWorker instead of NPUWorker when worker_cls is auto and the earlier 310P-specific worker branch did
+    not match.
+- file: vllm_ascend/utils.py:1421
+  context: Caps cache block sizes greater than 128 to 128 for Xlite compatibility; values at or below 128 are not changed
+    by this Xlite-specific branch.
+- file: vllm_ascend/xlite/xlite_model_runner.py:31
+  context: XliteModelRunner wraps the loaded model in XliteWrapper and registers its KV caches with the wrapper.
+- file: vllm_ascend/xlite/xlite.py:642
+  context: XliteWrapper initializes the architecture-specific Xlite model and runtime tensor pool, allocates a max-token hidden-state
+    workspace, and dispatches requests between the Xlite graph and the original runnable.
+related_parameters:
+- name: additional_config.xlite_graph_config.full_mode
+  relation: Chooses decode-only Xlite dispatch when false and prefill-plus-decode Xlite dispatch when true; full mode also
+    forces eager execution.
+- name: compilation_config.cudagraph_mode
+  relation: Enabling Xlite overrides this to FULL_DECODE_ONLY by default or NONE in full mode.
+- name: model_config.enforce_eager
+  relation: Xlite full mode sets this true, which disables the platform compilation path.
+- name: cache_config.block_size
+  relation: Xlite caps values above 128 to 128, affecting KV-cache block layout and potentially capacity and scheduling behavior.
+- name: speculative_config
+  relation: Any truthy speculative configuration is rejected when Xlite is enabled.
+- name: parallel_config.pipeline_parallel_size
+  relation: Xlite requires a pipeline parallel size of one.
+- name: parallel_config.worker_cls
+  relation: The platform installs XliteWorker only when this remains auto; an explicit worker class bypasses that selection
+    branch.
+constraints:
+- Speculative decoding must be disabled; initialization raises RuntimeError when speculative_config is truthy.
+- pipeline_parallel_size must equal one; larger values raise RuntimeError.
+- 'The model architecture must be one of the architectures registered in the pinned Xlite strategy map: LlamaForCausalLM,
+  Qwen2ForCausalLM, Qwen3ForCausalLM, Qwen3VLForConditionalGeneration, Qwen3MoeForCausalLM, Qwen3VLMoeForConditionalGeneration,
+  Glm4MoeForCausalLM, or MiniMaxM2ForCausalLM; otherwise Xlite initialization raises ValueError.'
+- An Xlite-specific cache block size above 128 is automatically reduced to 128. The configuration validator recommends exactly
+  128 but only warns for other values, and the Xlite-specific refresh branch leaves smaller values unchanged.
+- Automatic XliteWorker selection requires worker_cls=auto and does not occur on the 310P branch, which has its own worker
+  class.
+tuning_advice:
+  summary: Enable Xlite only on a supported Ascend deployment after measuring it against the default NPU worker with the same
+    model, batch mix, sequence lengths, and memory budget. Start with decode-only mode unless prefill also needs the Xlite
+    path.
+  suggested_values:
+  - scenario: Supported model with decode-heavy serving and auto worker selection
+    value: true
+    reason: This activates XliteWorker and uses the Xlite graph for decode while retaining the original runnable for prefill;
+      compare token latency, throughput, and peak device memory with false.
+  - scenario: Speculative decoding or pipeline parallelism is required
+    value: false
+    reason: The pinned configuration rejects Xlite with either a truthy speculative configuration or pipeline_parallel_size
+      greater than one.
+  - scenario: Unsupported architecture, 310P, or an explicitly selected worker
+    value: false
+    reason: Unsupported architectures fail Xlite model initialization, while 310P and explicit worker selection do not take
+      the automatic XliteWorker branch.
+  - scenario: Stable baseline, debugging, or regression isolation
+    value: false
+    reason: The default preserves the normal NPUWorker and avoids Xlite's graph-policy, model-wrapper, runtime-pool, and block-size
+      changes.
+  caveats:
+  - Enabling the flag can add Xlite runtime-pool and hidden-state workspace memory; any capacity change must be measured rather
+    than inferred from graph use.
+  - full_mode=false and full_mode=true have different prefill behavior and graph policies, so benchmark them separately instead
+    of treating enabled as one execution mode.
+  - Reducing a block size above 128 changes KV-cache block granularity and may alter metadata overhead, allocation efficiency,
+    and scheduling behavior.
+  - Data-parallel decode-only dispatch has an additional token/request-count test, and requests with missing or unexpected
+    attention metadata fall back to the original runnable; observed gains therefore depend on the request mix.
+  - Xlite is Ascend-plugin functionality and has no corresponding implementation in the pinned upstream vLLM repository.
+  quick_guide: Keep false unless the model and deployment satisfy the Xlite constraints. For an eligible decode-heavy workload,
+    set enabled=true with full_mode=false first, retain worker_cls=auto, confirm that XliteWorker was selected, and benchmark
+    latency, throughput, startup time, and peak device memory before production use.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - vlm
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,84 @@
+name: --kv-offloading-size
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1124
+- vllm/config/cache.py:167
+value_type: float
+default: null
+valid_choices: any positive float (GiB), or None to disable
+cli_example: --kv-offloading-size 4.0
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: "When set to a non-None value, this parameter activates KV cache offloading from GPU/NPU memory to CPU memory.\
+  \ The value specifies the total buffer size in GiB for offloaded KV cache blocks. When tensor_parallel_size > 1, this is\
+  \ the total buffer summed across all TP ranks (not per-rank). The mechanism works as follows: 1. In VllmConfig._post_init_kv_transfer_config\
+  \ (vllm/config/vllm.py:682-701), if kv_offloading_size\n   is not None, a KVTransferConfig is created with a connector (e.g.,\
+  \ \"OffloadingConnector\" for\n   native backend, \"LMCacheConnectorV1\" for lmcache backend).\n2. The connector manages\
+  \ asynchronous transfer of KV cache blocks between NPU and CPU memory,\n   allowing vLLM to serve requests with longer context\
+  \ lengths than would fit in NPU HBM alone.\n3. For the native backend, the buffer size is converted to bytes (value * 1<<30)\
+  \ and stored as\n   cpu_bytes_to_use in the connector config.\n4. On Ascend NPU, this is purely an upstream vLLM feature\
+  \ — vllm-ascend does not override or\n   modify this parameter. However, the effectiveness depends on the CPU-NPU interconnect\
+  \ bandwidth\n   (PCIe on most Ascend servers) and the available CPU memory.\nPerformance tradeoff: \"offloading reduces\
+  \ NPU memory pressure, enabling larger batch sizes or\" longer contexts, but adds latency for every offloaded KV cache access.\
+  \ The latency penalty is proportional to the PCIe bandwidth and the frequency of offloaded block accesses.\n"
+usage_locations:
+- file: vllm/config/cache.py:167
+  context: Field definition in CacheConfig dataclass with docstring explaining the parameter
+- file: vllm/engine/arg_utils.py:687
+  context: EngineArgs field declaration, typed as float | None
+- file: vllm/engine/arg_utils.py:1124
+  context: CLI argument registration under CacheConfig group
+- file: vllm/engine/arg_utils.py:1710
+  context: Passed to CacheConfig constructor during engine config creation
+- file: vllm/config/vllm.py:682-701
+  context: Activates KV offloading in _post_init_kv_transfer_config; sets up connector and buffer size
+related_parameters:
+- name: --kv-offloading-backend
+  relation: Must be set together; kv_offloading_size activates offloading, kv_offloading_backend selects the implementation
+    (native or lmcache)
+- name: --tensor-parallel-size
+  relation: When TP > 1, kv_offloading_size is the total buffer summed across all TP ranks, not per-rank
+- name: --pipeline-parallel-size
+  relation: When PP > 1, kv_offloading_size is divided across all pipeline stages
+- name: --gpu-memory-utilization
+  relation: KV offloading reduces NPU memory usage for KV cache, allowing higher gpu_memory_utilization or larger batch sizes
+constraints:
+- kv_offloading_size must be a positive float when set; None disables offloading
+- KV offloading is only activated when kv_offloading_size is not None; setting kv_offloading_backend alone has no effect
+- When TP > 1, the specified size is the total buffer summed across all TP ranks, not per-rank
+tuning_advice:
+  summary: 'Set kv_offloading_size to enable CPU offloading of KV cache, trading latency for larger effective context length
+    on memory-constrained Ascend NPUs.
+
+    '
+  suggested_values:
+  - scenario: Long-context inference on Ascend NPU with limited HBM (e.g., 32GB or 64GB cards)
+    value: '4.0'
+    reason: Provides 4 GiB of CPU buffer for offloaded KV blocks, enabling context lengths 2-4x larger than NPU HBM alone
+      while keeping PCIe transfer overhead manageable
+  - scenario: Standard-context inference where KV cache fits in NPU HBM
+    value: 'null'
+    reason: Disables offloading entirely, avoiding unnecessary PCIe latency; NPU HBM is sufficient for the workload
+  - scenario: Very long context (128K+ tokens) on Ascend NPU with abundant CPU memory
+    value: '16.0'
+    reason: Larger buffer accommodates more offloaded blocks, but requires sufficient CPU RAM and increases worst-case latency
+      per token
+  caveats:
+  - On Ascend NPU, CPU-NPU communication goes through PCIe, which has lower bandwidth than NVLink on GPU systems — offloading
+    latency may be higher than on GPU platforms
+  - The buffer size is in GiB and is the total across all TP ranks; for TP=4 with kv_offloading_size=4.0, each rank effectively
+    manages 1 GiB of offload buffer
+  - KV offloading increases CPU memory usage significantly — ensure the host has enough RAM to accommodate the offload buffer
+    plus model weights and other overhead
+  - The native backend uses SimpleCPUOffloadConnector when VLLM_USE_SIMPLE_KV_OFFLOAD env var is set, which may have different
+    performance characteristics
+  quick_guide: 'Set to 4-8 GiB for long-context workloads on Ascend NPU; leave as None (default) if KV cache fits in NPU HBM
+    to avoid PCIe latency overhead.
+
+    '
+analysis_date: '2026-07-06'

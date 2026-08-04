@@ -1,0 +1,79 @@
+name: --data-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:968
+- vllm/config/parallel.py:117
+value_type: int
+default: 1
+valid_choices: positive integer
+cli_example: --data-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: Sets the number of data-parallel replicas. ParallelConfig documents that MoE layers are sharded by tensor_parallel_size
+  * data_parallel_size, and external-launcher setup multiplies the distributed world size by data_parallel_size. More replicas
+  can serve independent request work and therefore increase aggregate throughput, but require replicated runtime resources.
+  On Ascend, the v1 model runner synchronizes metadata across DP ranks when the size exceeds one, which can add coordination
+  overhead and padding; the worker also verifies that the local world size fits the visible NPUs. For piecewise graph compilation,
+  vllm-ascend passes this value to splitting-op setup. With deepep_high_throughput, upstream disables CUDA graphs when data_parallel_size
+  > 1, which can affect decode latency.
+usage_locations:
+- file: vllm/config/parallel.py:117
+  context: Defines the DP group count and documents MoE sharding by TP times DP.
+- file: vllm/config/parallel.py:770
+  context: Multiplies distributed world size by DP size for the external launcher.
+- file: vllm_ascend/worker/model_runner_v1.py:2737
+  context: Synchronizes metadata across DP ranks when DP size exceeds one.
+- file: vllm_ascend/worker/worker.py:295
+  context: Checks local world size against the number of visible NPUs for local DP.
+- file: vllm_ascend/platform.py:512
+  context: Passes DP size into piecewise compilation splitting-op configuration.
+- file: vllm/config/compilation.py:1172
+  context: Disables CUDA graphs for deepep_high_throughput with DP size greater than one.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: MoE sharding uses the product of tensor-parallel and data-parallel sizes.
+- name: --data-parallel-size-local
+  relation: Sets the number of DP ranks placed locally and must not exceed the global DP size.
+- name: --data-parallel-rank
+  relation: Must identify a valid rank in the range [0, data_parallel_size) when DP is configured.
+- name: --data-parallel-backend
+  relation: Multi-node DP requires the mp backend.
+- name: --data-parallel-external-lb
+  relation: Requires DP size greater than one and is intended for MoE serving.
+- name: --all2all-backend
+  relation: deepep_high_throughput disables CUDA graphs when DP size is greater than one.
+constraints:
+- data_parallel_size must be a positive integer.
+- data_parallel_size_local must not exceed data_parallel_size.
+- For nnodes greater than one, data_parallel_backend must be mp and the DP/PP/TP world size must be divisible by nnodes.
+- data_parallel_external_lb requires data_parallel_size greater than one.
+- data_parallel_hybrid_lb and data_parallel_external_lb cannot both be enabled, and hybrid load balancing is not valid in
+  headless mode.
+- On Ascend, with local DP and the non-Ray, non-external-launcher path, local_world_size must not exceed the number of visible
+  NPUs.
+- On Ascend, enabled fine-grained module TP sizes must divide data_parallel_size and require an MoE model.
+tuning_advice:
+  summary: Use DP to add MoE serving replicas only when the available devices and memory can sustain another replica; then
+    validate aggregate throughput and tail latency under representative traffic.
+  suggested_values:
+  - scenario: Single replica or dense-model serving
+    value: 1
+    reason: Keeps the default topology; upstream reports offline DP above one as unsupported or not useful for dense models.
+  - scenario: MoE serving with two independently provisioned DP replicas
+    value: 2
+    reason: Creates two DP groups while retaining explicit control of local placement, rank, and backend configuration.
+  caveats:
+  - DP greater than one adds Ascend metadata synchronization across ranks and may introduce padding or coordination overhead.
+  - Ensure each local DP arrangement passes the visible-NPU local_world_size check on Ascend.
+  - deepep_high_throughput with DP greater than one disables CUDA graphs, so measure decode latency before selecting that
+    combination.
+  - Multi-node deployment must satisfy the mp-backend and world-size divisibility constraints.
+  quick_guide: Start at 1; raise to 2 only for a supported MoE topology with sufficient devices, then measure throughput,
+    memory, and latency.
+analysis_date: '2026-07-27'

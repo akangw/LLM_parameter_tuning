@@ -1,0 +1,7 @@
+name: VLLM_RPC_TIMEOUT
+type: env
+performance_impact: none
+skip_reason: This upstream environment variable only sets the ZMQ client wait limit, in milliseconds, for simple backend data-operation
+  responses. The pinned vllm-ascend code does not read or override it; Ascend deployment examples raise it to 1800000 or 3600000
+  only to tolerate unusually long operations. Changing the deadline affects failure detection and robustness, not the latency
+  of a successful response, token throughput, or memory consumption.

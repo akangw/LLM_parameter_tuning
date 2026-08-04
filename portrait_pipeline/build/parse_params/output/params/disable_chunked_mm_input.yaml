@@ -1,0 +1,104 @@
+name: --disable-chunked-mm-input
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1357
+- vllm/config/scheduler.py:117
+value_type: bool
+default: 'False'
+valid_choices: true, false
+cli_example: --disable-chunked-mm-input
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When chunked prefill is enabled and this flag is set to True, the V1 scheduler will not partially schedule
+  a multimodal item (e.g., an image) across multiple prefill chunks. If the remaining token budget cannot cover the entire
+  multimodal input, the scheduler rolls back to before the mm item and schedules only the preceding text tokens. This ensures
+  that multimodal encoder inputs are always processed atomically in a single step, avoiding encoder cache fragmentation and
+  repeated encoder computation. The tradeoff is that it may reduce prefill batching efficiency for mixed text+image prompts,
+  as the scheduler must leave the mm item for the next step, potentially underutilizing the available token budget in the
+  current step. On Ascend NPU, this parameter is not overridden by vllm-ascend and follows the same V1 scheduler logic as
+  upstream. The parameter is only effective in V1 engine; V2 uses a different scheduling path.
+
+  '
+usage_locations:
+- file: vllm/v1/core/sched/scheduler.py:1155
+  context: 'V1 scheduler checks disable_chunked_mm_input to decide whether to roll back scheduling when a multimodal item
+    cannot be fully covered by the current token budget.
+
+    '
+- file: vllm/v1/core/encoder_cache_manager.py:299
+  context: 'Encoder cache manager validates that max_tokens_per_mm_item does not exceed max_num_batched_tokens when chunked
+    mm input is disabled.
+
+    '
+- file: vllm/config/scheduler.py:227
+  context: 'Automatically set to True for encoder-decoder models since they do not support chunked prefill.
+
+    '
+- file: vllm/platforms/cuda.py:235
+  context: 'CUDA platform check forces disable_chunked_mm_input to True for multimodal prefix language models with bidirectional
+    attention.
+
+    '
+- file: vllm/config/vllm.py:1984
+  context: 'Mamba cache align mode requires chunked mm input to be enabled (i.e., disable_chunked_mm_input must be False).
+
+    '
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: 'This parameter only has effect when chunked prefill is enabled. If chunked prefill is disabled, the scheduler
+    does not split prefill into chunks and this flag is irrelevant.
+
+    '
+- name: --max-num-batched-tokens
+  relation: 'When disable_chunked_mm_input is True, max_num_batched_tokens must be at least as large as the largest multimodal
+    item''s token count, otherwise a ValueError is raised.
+
+    '
+constraints:
+- When disable_chunked_mm_input is True, max_num_batched_tokens must be greater than or equal to the maximum number of tokens
+  in any single multimodal item.
+- Mamba cache align mode requires disable_chunked_mm_input to be False (i.e., chunked mm input must be enabled).
+- Encoder-decoder models automatically set disable_chunked_mm_input to True and disable chunked prefill entirely.
+- Multimodal prefix language models with bidirectional attention automatically have disable_chunked_mm_input forced to True.
+tuning_advice:
+  summary: 'Keep the default (False) for most multimodal workloads to allow efficient chunked scheduling of mixed text+image
+    prompts. Only set to True if your model has bidirectional multimodal attention or if you observe encoder cache thrashing
+    with large multimodal inputs.
+
+    '
+  suggested_values:
+  - scenario: 'Standard multimodal models (e.g., LLaVA, Qwen2-VL) with chunked prefill enabled and max_num_batched_tokens
+      large enough to hold the largest multimodal item.
+
+      '
+    value: 'False'
+    reason: 'Allows the scheduler to partially schedule multimodal items across chunks, maximizing token budget utilization
+      and throughput for mixed prompts.
+
+      '
+  - scenario: 'Models with multimodal bidirectional attention (e.g., some prefix language models) or when max_num_batched_tokens
+      is smaller than the largest multimodal item.
+
+      '
+    value: 'True'
+    reason: 'Prevents partial scheduling of multimodal items that would cause encoder cache misses or incorrect attention
+      computation. The platform check may force this automatically for applicable models.
+
+      '
+  caveats:
+  - Setting this to True may reduce prefill throughput for mixed text+image prompts because the scheduler cannot fill the
+    remaining token budget with partial multimodal items.
+  - On Ascend NPU, this parameter behaves identically to upstream — no vllm-ascend specific override exists, but the V1 scheduler
+    path is the same.
+  - This parameter is only effective in V1 engine. V2 engine uses a different scheduling architecture and this flag may not
+    apply.
+  quick_guide: 'Leave at default (False) unless your model requires atomic multimodal input scheduling or max_num_batched_tokens
+    is too small for your largest multimodal item.
+
+    '
+analysis_date: '2026-07-06'

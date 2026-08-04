@@ -1,0 +1,6 @@
+name: EPLBConfig.policy
+type: nested
+performance_impact: none
+skip_reason: The pinned upstream type permits only the default value, and source inspection found no runtime consumer of eplb_config.policy
+  beyond validation that asynchronous EPLB also uses that sole value. The pinned Ascend implementation uses its separate additional_config.eplb_config.eplb_policy_type
+  setting instead, so EPLBConfig.policy has no tunable latency, throughput, or memory effect.

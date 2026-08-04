@@ -1,0 +1,61 @@
+name: profiler.torch_profiler_with_flops
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/profiler/wrapper.py:184
+- vllm/profiler/wrapper.py:224
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls whether FLOPS (Floating Point Operations Per Second) counting is enabled in the PyTorch
+  profiler. When set to true, it is passed as the `with_flops` argument to `torch.profiler.profile()`. FLOPS counting adds
+  computational overhead to the profiling session itself — it does not affect normal (non-profiling) inference performance.
+  The overhead is only incurred during the active profiling window (controlled by `active_iterations`). On Ascend NPU, the
+  torch profiler''s FLOPS estimation may not accurately reflect NPU operations, as it relies on PyTorch''s operator-level
+  FLOP formulas which are designed for CPU/GPU kernels, not Ascend''s CANN-optimized operators. Enabling this flag during
+  profiling will increase the profiling overhead and may produce misleading FLOPS metrics on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm/profiler/wrapper.py:184
+  context: Logged as part of profiler configuration debug output
+- file: vllm/profiler/wrapper.py:224
+  context: Passed to torch.profiler.profile() as the with_flops argument
+related_parameters:
+- name: profiler.torch_profiler_record_shapes
+  relation: Another torch profiler option that adds overhead; often used together for detailed profiling
+- name: profiler.torch_profiler_with_memory
+  relation: Another torch profiler option that adds overhead; combined with with_flops increases profiling cost
+- name: profiler.torch_profiler_with_stack
+  relation: Another torch profiler option that adds overhead; combined with with_flops increases profiling cost
+- name: profiler.active_iterations
+  relation: Defines the window during which FLOPS counting overhead is incurred
+constraints: []
+tuning_advice:
+  summary: Keep disabled (default) unless you specifically need FLOPS metrics in torch profiler traces, and be aware that
+    FLOPS estimates may be inaccurate on Ascend NPU.
+  suggested_values:
+  - scenario: Normal production or performance benchmarking on Ascend NPU
+    value: false
+    reason: Avoids unnecessary profiling overhead; FLOPS counting is not needed for throughput/latency benchmarking and may
+      produce inaccurate results on Ascend hardware
+  - scenario: Detailed operator-level analysis where FLOPS estimates are desired despite potential inaccuracy
+    value: true
+    reason: Enables FLOPS counting in the trace output, but expect increased profiling overhead and potentially misleading
+      values on NPU
+  caveats:
+  - FLOPS counting adds overhead only during the active profiling window, not during normal inference
+  - PyTorch's FLOPS estimation formulas are designed for CPU/GPU kernels and may not accurately reflect Ascend NPU operations
+  - Enabling multiple torch profiler options (with_flops, with_stack, with_memory, record_shapes) cumulatively increases profiling
+    overhead
+  quick_guide: Leave disabled for performance benchmarking; enable only for detailed operator analysis with the understanding
+    that FLOPS values may be inaccurate on Ascend NPU.
+analysis_date: '2026-07-06'

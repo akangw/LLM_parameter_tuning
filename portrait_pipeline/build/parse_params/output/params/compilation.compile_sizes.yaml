@@ -1,0 +1,80 @@
+name: compilation.compile_sizes
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm_ascend/worker/worker.py:502
+- vllm/v1/worker/gpu_worker.py:581
+- vllm/compilation/piecewise_backend.py:154
+- vllm/v1/cudagraph_dispatcher.py:95
+- vllm/platforms/xpu.py:180
+value_type: list[int]
+default: '[]'
+valid_choices: list of positive integers, or the string 'cudagraph_capture_sizes'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'compile_sizes controls which batch sizes are pre-compiled and warmed up during model initialization. On Ascend
+  NPU, the vllm-ascend worker (vllm_ascend/worker/worker.py:502) reads this list and performs dummy runs for each size in
+  descending order. These warmup runs trigger CANN graph compilation and kernel auto-tuning for those specific batch sizes.
+  Without explicit compile_sizes, only sizes covered by cudagraph_capture_sizes or compile_ranges get compiled. For sizes
+  not pre-compiled, the first inference request at that batch size incurs JIT compilation latency (typically hundreds of milliseconds
+  to seconds on Ascend), causing tail latency spikes. The parameter also feeds into PiecewiseBackend (vllm/compilation/piecewise_backend.py:154)
+  which compiles separate FX graph variants for each specified size, enabling shape-specialized kernels. On Ascend, this is
+  critical because CANN''s graph compiler produces more efficient graphs when it knows the exact batch size at compile time
+  rather than using dynamic shapes.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/worker.py:502
+  context: NPUWorker.compile_or_warm_up_model reads compile_sizes and performs dummy runs for each size to trigger CANN compilation
+- file: vllm/v1/worker/gpu_worker.py:581
+  context: GPUWorker.compile_or_warm_up_model reads compile_sizes for warmup when using VLLM_COMPILE mode
+- file: vllm/compilation/piecewise_backend.py:154
+  context: PiecewiseBackend reads compile_sizes to compile shape-specialized FX graph variants
+- file: vllm/v1/cudagraph_dispatcher.py:95
+  context: Validates that compile_sizes values are not altered by cudagraph padding
+- file: vllm/platforms/xpu.py:180
+  context: XPU platform sets compile_sizes to empty list if None
+related_parameters:
+- name: compilation.cudagraph_capture_sizes
+  relation: Sizes in compile_sizes that overlap with cudagraph_capture_sizes are skipped during warmup (handled by cudagraph
+    capture instead)
+- name: compilation.cudagraph_mode
+  relation: When cudagraph_mode is NONE, all compile_sizes go through warmup; otherwise sizes in cudagraph_capture_sizes are
+    excluded from warmup
+- name: compilation.compile_ranges
+  relation: If no compile_size falls within a compile_range, the range's end value is automatically added to warmup_sizes
+- name: model_config.enforce_eager
+  relation: When enforce_eager is True, cudagraph capture is skipped and all compile_sizes go through warmup
+constraints:
+- compile_sizes values must not be altered by cudagraph padding; use values from cudagraph_capture_sizes to avoid ValueError
+- The string 'cudagraph_capture_sizes' is not supported in compile_sizes for PiecewiseBackend; it raises NotImplementedError
+tuning_advice:
+  summary: Pre-compile the most common batch sizes to eliminate JIT compilation latency on first inference requests
+  suggested_values:
+  - scenario: Production deployment with predictable batch sizes (e.g., fixed max_num_seqs)
+    value: '[1, 4, 8, 16, 32, 64]'
+    reason: Covers typical batch size progression; pre-compiling eliminates cold-start latency for these sizes. On Ascend
+      NPU, CANN graph compilation for each size takes 1-5 seconds during startup but saves 200-500ms per first request at
+      each size.
+  - scenario: Development or testing with variable batch sizes
+    value: '[1, 2, 4, 8]'
+    reason: Minimal set to cover small batch inference; reduces startup time while still avoiding JIT compilation for common
+      small-batch scenarios
+  - scenario: High-throughput serving with chunked prefill
+    value: '[max_num_batched_tokens]'
+    reason: Pre-compiles the maximum token batch size used in chunked prefill, which is the most performance-critical path
+  caveats:
+  - Each compile_size triggers a full CANN graph compilation on Ascend NPU, increasing startup time linearly with the number
+    of sizes. Balance coverage against startup overhead.
+  - Sizes that overlap with cudagraph_capture_sizes are automatically excluded from warmup — do not duplicate them in compile_sizes.
+  - On Ascend, the warmup runs execute real NPU kernels (not no-ops), so very large sizes may cause OOM during initialization
+    if memory is tight.
+  - compile_sizes only takes effect when compilation_config.mode is VLLM_COMPILE; in other modes the warmup loop is skipped.
+  quick_guide: Set compile_sizes to your most common batch sizes (e.g., [1,4,8,16]) to eliminate JIT compilation latency on
+    Ascend NPU; avoid duplicating cudagraph_capture_sizes values.
+analysis_date: '2026-07-06'

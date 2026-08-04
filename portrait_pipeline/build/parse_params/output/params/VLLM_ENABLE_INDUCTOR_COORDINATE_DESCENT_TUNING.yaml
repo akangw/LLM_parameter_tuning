@@ -1,0 +1,85 @@
+name: VLLM_ENABLE_INDUCTOR_COORDINATE_DESCENT_TUNING
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:1659
+- vllm/compilation/compiler_interface.py:759
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether PyTorch Inductor''s `coordinate_descent_tuning` option is enabled
+  during torch.compile. When enabled (default), Inductor performs an additional tuning pass using coordinate descent to optimize
+  kernel parameters for the specific static shapes passed from vLLM''s `compile_sizes` in `compilation_config`. This tuning
+  happens at compile time, not at runtime, so it affects model loading/startup time rather than steady-state inference performance.
+  On Ascend NPU, torch.compile uses the Ascend backend (torch_npu) rather than Triton, so the coordinate descent tuning operates
+  on Ascend kernel parameters. The performance benefit is typically marginal because the Ascend backend''s autotuner already
+  selects reasonable kernel configurations. Disabling it can reduce compilation time during model loading.
+
+  '
+usage_locations:
+- file: vllm/compilation/compiler_interface.py:759
+  context: 'In `set_inductor_config()`, the env var value is passed as the `coordinate_descent_tuning` key in the inductor
+    config dict when `compile_range.is_single_size()` is true (i.e., for static shape compilation).
+
+    '
+- file: vllm/envs.py:241
+  context: 'Declared as a typed environment variable with default `True` in the `VllmEnv` class definition.
+
+    '
+related_parameters:
+- name: VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE
+  relation: 'Companion env var that enables `max_autotune` in the same inductor config. Both are applied together in `set_inductor_config()`
+    for static shape compilation.
+
+    '
+- name: compilation_config.compile_sizes
+  relation: 'The static shapes that trigger single-size compilation and thus activate coordinate descent tuning. Without compile_sizes,
+    this tuning may not be applied.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Keep the default (enabled) for production; disable only if model compilation time is excessively long and you
+    accept a small potential throughput tradeoff.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with acceptable compilation time
+    value: true
+    reason: 'Enables coordinate descent tuning which may yield slightly better kernel configurations for the specific static
+      shapes used in your deployment.
+
+      '
+  - scenario: Development or rapid iteration where fast model loading is prioritized
+    value: false
+    reason: 'Disabling coordinate descent tuning reduces torch.compile time during model loading, at the cost of potentially
+      suboptimal kernel parameters.
+
+      '
+  caveats:
+  - 'On Ascend NPU, the performance gain from coordinate descent tuning is typically smaller than on CUDA/GPU because the
+    Ascend backend (torch_npu) has its own autotuning mechanisms that already select good kernel configurations.
+
+    '
+  - 'This tuning only applies when `compile_range.is_single_size()` is true, meaning static shapes are provided via `compilation_config.compile_sizes`.
+    Without static shapes, this env var has no effect.
+
+    '
+  - 'The tuning happens at compile time (model loading), not at inference runtime. It does not affect steady-state latency
+    or throughput directly — only the quality of the compiled kernels.
+
+    '
+  quick_guide: 'Leave enabled (default) unless model loading time is a bottleneck; the runtime performance difference on Ascend
+    NPU is usually negligible.
+
+    '
+analysis_date: '2026-07-06'

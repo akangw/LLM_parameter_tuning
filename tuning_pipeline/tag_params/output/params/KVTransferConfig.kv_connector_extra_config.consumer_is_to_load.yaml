@@ -1,0 +1,110 @@
+name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_load
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:75
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:224
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:89
+- docs/source/user_guide/feature_guide/kv_pool.md:32
+- vllm/config/kv_transfer.py:60
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"consumer_is_to_load":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'AscendStore''s scheduler reads this option with a false default. For an instance whose kv_role is exactly
+  kv_consumer, false makes get_num_new_matched_tokens return immediately with no external tokens, so the decode instance computes
+  the prompt KV locally. True allows the scheduler to query the KV Pool, allocate local KV blocks for an external hit, attach
+  a load specification, and load the cached prefix rather than recomputing it. This can reduce decode-side prefill work and
+  improve request latency and serving throughput when lookup and transfer are cheaper than recomputation, but slow or missed
+  external lookups and transfers can add overhead. The option does not reduce the local KV allocation for a successfully loaded
+  prefix: the scheduler still allocates blocks for the external tokens. The guard applies only to kv_consumer; kv_both proceeds
+  through external lookup regardless of this value. Upstream vLLM supplies only the generic kv_connector_extra_config dictionary
+  and has no consumer_is_to_load behavior.'
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:75
+  context: Reads consumer_is_to_load from kv_connector_extra_config and defaults it to false.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:224
+  context: For kv_consumer, false returns zero external matched tokens; otherwise the scheduler looks up the prompt prefix,
+    computes the external hit beyond local tokens, creates a load specification, and reports the blocks that must be allocated.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:295
+  context: Records the allocated local block IDs and enables the load specification only when external tokens were allocated.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:89
+  context: Constructs KVPoolScheduler for the AscendStoreConnector scheduler side, which is the component that consumes this
+    extra configuration key.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:32
+  context: Documents the option as controlling whether the Decode node loads KV cache from the KV Pool, with false as default.
+- file: vllm/config/kv_transfer.py:60
+  context: Upstream defines kv_connector_extra_config as an open connector-specific dictionary without defining this key.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The option is implemented by vllm-ascend's AscendStoreConnector scheduler.
+- name: KVTransferConfig.kv_role
+  relation: The option gates loading only when kv_role is exactly kv_consumer; it does not gate the kv_both path.
+- name: KVTransferConfig.kv_connector_extra_config.load_async
+  relation: After an external hit is admitted, this separate option controls whether non-layerwise loading is reported to
+    the scheduler as asynchronous.
+- name: KVTransferConfig.kv_connector_extra_config.backend
+  relation: Selects the Mooncake, Memcache, or Yuanrong KV Pool implementation used for lookup and transfer.
+- name: KVTransferConfig.kv_load_failure_policy
+  relation: Controls whether a failed admitted KV load fails the request or falls back to recomputation.
+constraints:
+- This key is meaningful only for the vllm-ascend AscendStoreConnector and a process configured with kv_role=kv_consumer;
+  for kv_both the source guard does not consult the value, and a producer does not use the consumer-load switch.
+- Enabling it requires a reachable, consistently configured KV Pool backend containing compatible KV entries; the backend,
+  lookup service, and hash generation must be configured across participating instances.
+- The scheduler only loads a positive external hit beyond tokens already computed locally. Short prompts below the transfer
+  granularity, misses, or hits no greater than the local prefix still produce no load.
+- Loaded tokens still require local KV-cache blocks, so this switch is not a direct HBM capacity reduction control.
+tuning_advice:
+  summary: Enable this on a decode-only kv_consumer when the shared KV Pool is intended to supply prefill KV; keep it false
+    when the consumer should recompute locally, and benchmark transfer against recomputation on the deployed backend and network.
+  suggested_values:
+  - scenario: Disaggregated prefill/decode serving with a decode-only kv_consumer and a healthy shared KV Pool
+    value: true
+    reason: Permits external-prefix lookup and loading, avoiding redundant decode-side prompt computation when the transfer
+      is faster than recomputation.
+  - scenario: Decode consumer without a reliable KV Pool, or where local recomputation is faster
+    value: false
+    reason: Preserves the default early return and avoids external lookup/load work on the consumer.
+  - scenario: AscendStore instance configured with kv_role=kv_both
+    value: false
+    reason: The value is immaterial for this role because the source only applies the load gate to kv_consumer; leave the
+      default rather than treating it as an effective switch.
+  caveats:
+  - 'The pinned sources provide no universal crossover point: benefit depends on prefix length and hit rate, KV size, backend,
+    network, and local NPU compute speed.'
+  - True can increase latency when lookup or transfer is slow, while false forces local recomputation even when a reusable
+    prefix exists remotely.
+  - load_async changes synchronization behavior after a hit but does not enable consumer loading by itself; use_layerwise
+    also changes whether the scheduler reports an asynchronous load.
+  - Choose kv_load_failure_policy deliberately because an admitted load failure otherwise follows that policy rather than
+    this boolean.
+  quick_guide: For a decode-only consumer, start with true when remote prefill KV is the design goal; measure hit rate and
+    end-to-end latency, and revert to false if transfer costs exceed saved recomputation.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input

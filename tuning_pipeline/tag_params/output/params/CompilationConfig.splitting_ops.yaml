@@ -1,0 +1,143 @@
+name: CompilationConfig.splitting_ops
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:491
+- vllm/config/compilation.py:1082
+- vllm/config/vllm.py:1218
+- vllm/v1/cudagraph_dispatcher.py:49
+- docs/design/torch_compile.md:175
+- docs/design/cuda_graphs.md:226
+- vllm_ascend/platform.py:436
+- vllm_ascend/platform.py:501
+value_type: list[str]
+default: null
+valid_choices:
+- null
+- []
+- list of PyTorch operator names in namespace::name form
+cli_example: vllm serve <model> --compilation-config='{"splitting_ops":["vllm::unified_attention_with_output","vllm::unified_mla_attention_with_output"]}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Selects custom-operator boundaries used to partition the model graph and keep those operations outside piecewise
+  CUDA/ACL graph capture. With the default null in VLLM_COMPILE mode, vLLM copies its complete attention-operator list; without
+  Inductor graph partitioning it also adds unified KV-cache update operations. This gives piecewise capture broad backend
+  compatibility and can reduce launch overhead around the remaining compiled subgraphs, but creates multiple compiled pieces
+  and prevents full-graph compiler passes from seeing patterns across a split. An explicit empty list keeps the graph unsplit
+  and can enable full-graph fusion, but PIECEWISE is then changed to NONE and FULL_AND_PIECEWISE is changed to FULL, altering
+  steady-state latency, throughput, graph-capture memory, and compilation/warm-up cost. On Ascend, piecewise ACL graph setup
+  uses the upstream auto-population and additionally excludes mla_forward and dsa_forward; full ACL graph modes force an empty
+  list, and eager mode disables compilation.
+usage_locations:
+- file: vllm/config/compilation.py:491
+  context: Declares the nullable operator list and documents Dynamo FX-level splitting versus post-pass Inductor partition-rule
+    registration.
+- file: vllm/config/compilation.py:1082
+  context: Resolves null, adds attention and KV-cache update exclusions, reconciles empty lists with cudagraph modes, and
+    clears splitting for full-graph attention, sequence-parallel, and AsyncTP passes.
+- file: vllm/config/vllm.py:1218
+  context: Finalizes the effective split list after platform-specific configuration updates.
+- file: vllm/v1/cudagraph_dispatcher.py:49
+  context: Requires piecewise graph modes to have attention compiled piecewise, either through the configured split list or
+    Inductor graph partitioning.
+- file: docs/design/torch_compile.md:175
+  context: Describes how attention split points produce separate attention modules and between-attention graph modules that
+    are compiled independently.
+- file: vllm_ascend/platform.py:436
+  context: In eager mode sets compilation mode to NONE and normalizes an unset split list to empty.
+- file: vllm_ascend/platform.py:501
+  context: For piecewise ACL graphs resolves the split list and appends MLA/DSA boundaries; for full graph modes replaces
+    it with an empty list.
+related_parameters:
+- name: CompilationConfig.mode
+  relation: Piecewise graph capture requires VLLM_COMPILE; outside that mode an unset split list is normalized to empty and
+    no piecewise compilation occurs.
+- name: CompilationConfig.cudagraph_mode
+  relation: PIECEWISE and FULL_AND_PIECEWISE need effective attention split points. An explicit empty list changes those modes
+    to NONE and FULL respectively.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: False applies split points before Inductor at Dynamo FX level; true registers Inductor partition rules after compilation
+    passes have seen the full graph.
+- name: CompilationConfig.pass_config.fuse_attn_quant
+  relation: Without Inductor partitioning, attention must remain in the full graph, so an implicit list becomes empty and
+    explicit attention split points are rejected.
+- name: CompilationConfig.pass_config.fuse_rope_kvcache
+  relation: Without Inductor partitioning, the default null path excludes KV-cache updates and disables this fusion; an empty
+    list keeps the update visible.
+- name: CompilationConfig.pass_config.enable_sp
+  relation: Without Inductor partitioning, sequence parallelism requires the full graph and therefore clears any non-empty
+    split list.
+- name: CompilationConfig.pass_config.fuse_gemm_comms
+  relation: AsyncTP shares sequence parallelism's full-graph requirement and clears a non-empty list when Inductor partitioning
+    is off.
+- name: ModelConfig.enforce_eager
+  relation: Ascend eager mode disables compilation; an unset list is normalized to empty and has no graph-partitioning effect.
+constraints:
+- Operator names use PyTorch's namespace::name form and must identify actual custom operations in the captured graph.
+- Piecewise CUDA/ACL graph modes require VLLM_COMPILE and effective attention split points. The v1 dispatcher rejects a configuration
+  in which attention is not compiled piecewise.
+- Explicit [] is intentionally different from null. It disables Dynamo split points, changes PIECEWISE to NONE, and changes
+  FULL_AND_PIECEWISE to FULL.
+- With fuse_attn_quant enabled and Inductor graph partitioning disabled, an explicit list containing the complete attention-op
+  set is rejected because the fusion requires attention to remain visible in the full graph.
+- Without Inductor graph partitioning, enable_sp or fuse_gemm_comms overrides a non-empty list with [] and converts a piecewise
+  cudagraph mode to FULL.
+- On Ascend, piecewise mode appends vllm::mla_forward and vllm::dsa_forward to the resolved list, while full ACL graph modes
+  override the list with [].
+- Full graph modes depend on the selected attention backend's graph-capture support; using [] cannot make an unsupported backend
+  graph-safe.
+tuning_advice:
+  summary: Leave the field null for normal piecewise CUDA or ACL graph operation. Choose [] only when a required full-graph
+    pass or a validated full-graph capture path outweighs the loss of piecewise capture, and use a custom list only for expert
+    backend integration or isolation of a known graph-unsafe operator.
+  suggested_values:
+  - scenario: Standard compiled vLLM or vLLM Ascend serving with piecewise graph capture
+    value: leave unset
+    reason: Auto-population supplies the complete maintained attention boundaries, upstream KV-cache exclusions where needed,
+      and Ascend MLA/DSA exclusions.
+  - scenario: Full-graph compiler fusion or supported full CUDA/ACL graph benchmark
+    value: []
+    reason: Keeps operations in one visible graph, but intentionally removes piecewise capture and may increase compile time
+      or captured-graph memory.
+  - scenario: Expert isolation of a graph-unsafe custom operator
+    value:
+    - namespace::operator
+    reason: A precise split can keep that operation outside capture, provided all required attention split points and platform-added
+      boundaries remain compatible with the requested graph mode.
+  caveats:
+  - 'Do not copy a short example list into production as a replacement for null: the maintained default includes many attention-like
+    operators and the effective list is platform dependent.'
+  - More splits are not automatically faster. They can improve capture compatibility but fragment compilation, block cross-boundary
+    fusions, and increase warm-up work.
+  - An empty list can improve full-graph optimization yet lose piecewise graph replay or require a backend that supports full
+    graph capture; benchmark end-to-end after warm-up.
+  - Ascend configuration may override the submitted value according to eager, piecewise, or full ACL graph mode, so inspect
+    the effective configuration rather than assuming the JSON value is retained verbatim.
+  quick_guide: Start with null. If a full-graph pass is required, test [] with a supported FULL or FULL_DECODE_ONLY mode.
+    Use a non-empty custom list only after verifying the exact captured operator names and comparing warmed-up latency, throughput,
+    graph memory, and compilation time.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

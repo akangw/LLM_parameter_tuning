@@ -1,0 +1,77 @@
+name: VLLM_ENABLE_V1_MULTIPROCESSING
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1112
+- vllm/envs.py:129
+value_type: bool
+default: 'True'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether the V1 LLMEngine uses multiprocessing mode (spawning a separate
+  process for the engine core) or runs the engine core in the same process as the caller. When enabled (default), the engine
+  core runs in a child process via multiprocessing.Process, which provides process isolation and avoids GIL contention between
+  the engine core and the Python caller. When disabled, the engine core runs in-process, which can affect the random state
+  of the launching Python process and reduces process isolation. On Ascend NPU, the impact is indirect but meaningful: multiprocessing
+  mode affects how the executor and workers are initialized, which in turn influences NPU memory allocation patterns and inter-process
+  communication overhead. The parameter is read in vllm/v1/engine/llm_engine.py:148 and :165 to set the multiprocess_mode
+  flag passed to the LLMEngine constructor. It is also checked in vllm/config/parallel.py:828 where it is forcibly set to
+  "0" when using the "external_launcher" distributed executor backend, and in vllm/v1/executor/uniproc_executor.py:168 where
+  it is asserted to be False for deterministic execution with ExecutorWithExternalLauncher.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/llm_engine.py:148
+  context: Passed as multiprocess_mode to LLMEngine constructor from vllm_config
+- file: vllm/v1/engine/llm_engine.py:165
+  context: Checked in from_engine_args to enable multiprocessing for LLMEngine
+- file: vllm/config/parallel.py:828
+  context: Forcibly set to "0" when distributed_executor_backend is "external_launcher"
+- file: vllm/v1/executor/uniproc_executor.py:168
+  context: Asserted to be False in ExecutorWithExternalLauncher for deterministic execution
+- file: vllm/engine/arg_utils.py:1502
+  context: Checked to warn about random seed affecting the launching Python process
+- file: vllm/benchmarks/startup.py:260
+  context: Set to "0" to collect startup metrics in a subprocess
+related_parameters:
+- name: distributed_executor_backend
+  relation: When set to "external_launcher", VLLM_ENABLE_V1_MULTIPROCESSING is forcibly disabled
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Controls the multiprocessing start method (spawn/fork), related to how worker processes are created
+constraints:
+- When using the "external_launcher" distributed executor backend, VLLM_ENABLE_V1_MULTIPROCESSING must be set to 0 for deterministic
+  execution.
+- ExecutorWithExternalLauncher requires VLLM_ENABLE_V1_MULTIPROCESSING to be 0; otherwise an assertion error is raised.
+tuning_advice:
+  summary: Keep the default value (1) for normal Ascend NPU deployments; disable only when using external launchers or for
+    deterministic offline inference.
+  suggested_values:
+  - scenario: Normal online serving or batch inference on Ascend NPU
+    value: '1'
+    reason: Provides process isolation between the engine core and the Python caller, avoiding GIL contention and ensuring
+      clean NPU memory management per process.
+  - scenario: Using torchrun or external launcher for offline tensor-parallel inference
+    value: '0'
+    reason: Required for deterministic execution with ExecutorWithExternalLauncher; the code forcibly sets this and asserts
+      it must be False.
+  - scenario: Benchmarking startup time or collecting startup metrics
+    value: '0'
+    reason: The startup benchmark script explicitly sets this to 0 to run the engine in a subprocess for measurement isolation.
+  caveats:
+  - When disabled, the global random seed set via --seed may affect the random state of the Python process that launched vLLM,
+    which can cause non-deterministic behavior in the caller.
+  - On Ascend NPU, multiprocessing mode affects how CANN contexts are initialized per process; disabling it may lead to NPU
+    resource sharing between the engine and the caller.
+  - The vllm-ascend plugin does not override this parameter, but Ascend-specific executor backends may interact with multiprocessing
+    mode differently than CUDA backends.
+  quick_guide: Use default (1) for all normal Ascend deployments; set to 0 only for external launcher or deterministic offline
+    inference.
+analysis_date: '2026-07-06'

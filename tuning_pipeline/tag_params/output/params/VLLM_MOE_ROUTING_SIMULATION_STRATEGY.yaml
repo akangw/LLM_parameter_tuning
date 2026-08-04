@@ -1,0 +1,107 @@
+name: VLLM_MOE_ROUTING_SIMULATION_STRATEGY
+type: env
+category: model
+scope: vllm
+source_file:
+- vllm/envs.py:1421
+- docs/serving/expert_parallel_deployment.md:221
+- vllm_ascend/utils.py:845
+- vllm_ascend/ops/fused_moe/fused_moe.py:621
+- vllm_ascend/ops/fused_moe/experts_selector.py:30
+- vllm_ascend/worker/model_runner_v1.py:3561
+value_type: str
+default: ''
+valid_choices: uniform_random, normal_routing, or the lowercase name of a strategy registered with RoutingSimulator.register_strategy()
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM, a non-empty value has the highest priority in the fused-MoE router factory and selects RoutingSimulatorRouter.
+  That router ignores the model's router logits when choosing experts and generates synthetic expert IDs and weights with
+  the named strategy. The built-in uniform_random strategy samples expert IDs uniformly and supplies unit weights, while normal_routing
+  samples a normal distribution and derives both IDs and normalized weights from it. Changing the routing distribution can
+  substantially change expert-parallel load balance, all-to-all traffic, and therefore benchmark latency and throughput; upstream
+  explicitly recommends uniform_random with randomized data-parallel dummy inputs for balanced EP benchmarking. The synthetic
+  route makes model outputs invalid. In the pinned vllm-ascend repository, the registered AscendFusedMoE implementation calls
+  its own select_experts function directly, and the Ascend model runner explicitly notes that this path does not go through
+  upstream BaseRouter. Consequently this environment variable does not alter the normal Ascend MoE expert-selection path in
+  the pinned revision.
+usage_locations:
+- file: vllm/envs.py:1421
+  context: Defines the variable with an empty-string default, lowercases the supplied strategy name, and documents that custom
+    strategies can produce incorrect outputs.
+- file: docs/serving/expert_parallel_deployment.md:221
+  context: Recommends uniform_random together with VLLM_RANDOMIZE_DP_DUMMY_INPUTS=1 to balance token routing across expert-parallel
+    ranks during benchmarking.
+- file: vllm_ascend/utils.py:845
+  context: Registers AscendFusedMoE as the Ascend replacement for upstream FusedMoE.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:621
+  context: The Ascend MoE apply path invokes the Ascend select_experts implementation directly instead of invoking the upstream
+    layer's router.
+- file: vllm_ascend/ops/fused_moe/experts_selector.py:30
+  context: Implements Ascend expert selection from router logits and routing options without reading VLLM_MOE_ROUTING_SIMULATION_STRATEGY.
+- file: vllm_ascend/worker/model_runner_v1.py:3561
+  context: States that Ascend select_experts does not pass through BaseRouter, explaining why upstream router hooks and the
+    simulator router are bypassed.
+related_parameters:
+- name: VLLM_RANDOMIZE_DP_DUMMY_INPUTS
+  relation: Upstream's expert-parallel benchmark guide enables it alongside uniform_random so dummy inputs and simulated routes
+    do not concentrate work on particular EP ranks.
+- name: --enable-expert-parallel
+  relation: Synthetic routing is most useful for measuring MoE expert-parallel dispatch and combine behavior under a controlled
+    routing distribution.
+- name: --enable-eplb
+  relation: Upstream's simulator router has factory priority over ordinary grouped, custom, bias, and default routing, while
+    its BaseRouter integration still receives EPLB state; results therefore depend on the broader EP/EPLB setup.
+constraints:
+- Leave the variable unset or empty for accuracy-sensitive inference; every synthetic strategy bypasses routing decisions
+  from the model's router logits, and upstream warns that model outputs will not be valid.
+- Built-in strategy names are uniform_random and normal_routing. Any other name must be registered with RoutingSimulator before
+  routing occurs, or upstream raises ValueError listing the available strategies.
+- The environment value is lowercased, so a custom strategy must be registered under the corresponding lowercase name.
+- Set the variable before service and model initialization. vLLM environment lookups may be cached after service initialization,
+  and the router class is chosen when the FusedMoE layer is constructed.
+- The pinned vllm-ascend custom MoE implementation bypasses the upstream RoutingSimulatorRouter; do not assume this flag balances
+  routes on Ascend.
+tuning_advice:
+  summary: Keep the variable empty for production. Use uniform_random only for upstream vLLM performance experiments that
+    intentionally trade output correctness for a balanced synthetic MoE workload; it is not an effective Ascend routing knob
+    in the pinned vllm-ascend implementation.
+  suggested_values:
+  - scenario: Production or any accuracy-sensitive inference
+    value: ''
+    reason: Preserves routing from the model's logits and avoids intentionally invalid synthetic-routing outputs.
+  - scenario: Upstream vLLM expert-parallel throughput benchmarking with balanced synthetic routing
+    value: uniform_random
+    reason: Uniformly samples expert IDs, and the upstream deployment guide pairs it with randomized DP dummy inputs to balance
+      traffic across EP ranks.
+  - scenario: Pinned vllm-ascend deployment
+    value: ''
+    reason: AscendFusedMoE bypasses the upstream simulator router, so setting a simulator strategy does not provide the intended
+      routing control and can mislead benchmark interpretation.
+  caveats:
+  - Latency and throughput measured with synthetic routing describe the chosen artificial distribution, not end-to-end model
+    behavior under real router logits.
+  - uniform_random uses unit weights and can select the same expert more than once for a token because it samples IDs independently;
+    it is a load generator rather than a correctness-preserving approximation.
+  - 'normal_routing is not a balanced-routing guarantee: its normal samples are mapped through a sigmoid to expert IDs, concentrating
+    the distribution differently from uniform_random.'
+  - Static source inspection establishes that the pinned Ascend path bypasses BaseRouter, but future vllm-ascend revisions
+    may integrate upstream routers; re-verify after an upgrade.
+  quick_guide: Leave empty normally; use uniform_random plus VLLM_RANDOMIZE_DP_DUMMY_INPUTS=1 only for upstream EP performance
+    tests with invalid outputs, and do not use this flag to tune the pinned Ascend path.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

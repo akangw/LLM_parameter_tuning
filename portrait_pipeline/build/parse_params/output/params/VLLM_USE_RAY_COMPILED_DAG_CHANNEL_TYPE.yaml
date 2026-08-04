@@ -1,0 +1,66 @@
+name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:770
+- vllm/envs.py:60
+value_type: str
+default: auto
+valid_choices:
+- auto
+- nccl
+- shm
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls the communication channel type used by Ray Compiled Graph for pipeline-parallel
+  (PP) stage communication. On Ascend NPU, the Ray compiled-graph executor path is NOT the default — vLLM on Ascend typically
+  uses the multiprocessing-based executor (VLLM_USE_RAY_V2_EXECUTOR_BACKEND defaults to 1 in upstream, and Ascend does not
+  override this). The compiled-graph path is only activated when distributed_executor_backend="ray" AND VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0.
+  In that specific configuration, this env var determines whether PP communication uses NCCL (via cupy), shared memory (shm),
+  or auto-detection. On Ascend, NCCL is not available — the platform uses HCCL instead. The code at vllm/v1/executor/ray_executor.py:74-75
+  shows that for TPU/XPU platforms, the channel type is forcibly set to "shm" because NCCL is NVIDIA-specific. Ascend NPU
+  is neither TPU nor XPU, so this auto-override does NOT apply. If a user explicitly sets this to "nccl" on Ascend, it will
+  fail at vllm/v1/executor/ray_executor.py:537-542 because cupy (required for NCCL channel) is not installed or compatible
+  with Ascend. The "auto" default will likely select "shm" on Ascend since NCCL is unavailable. Performance impact is low
+  because: (1) the compiled-graph path is rarely used on Ascend, and (2) when used, the effective choice is almost always
+  "shm", which has minimal tuning headroom.
+
+  '
+usage_locations:
+- file: vllm/envs.py:770
+  context: 'Environment variable definition with choices: auto, nccl, shm'
+- file: vllm/v1/executor/ray_executor.py:75
+  context: Forcibly sets to 'shm' for TPU/XPU platforms (not Ascend)
+- file: vllm/v1/executor/ray_executor.py:537
+  context: Validates cupy installation when channel type is 'nccl'
+related_parameters:
+- name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+  relation: When set to 1 (default), the compiled-graph path is bypassed entirely, making this parameter irrelevant
+- name: VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM
+  relation: Related compiled-graph communication optimization; only relevant when compiled-graph path is active
+- name: VLLM_USE_RAY_WRAPPED_PP_COMM
+  relation: Controls whether vLLM's PP communicator wraps Ray's compiled graph; interacts with channel type selection
+constraints:
+- Setting VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE to 'nccl' requires cupy to be installed, otherwise a ValueError is raised
+- This parameter only takes effect when distributed_executor_backend is 'ray' and VLLM_USE_RAY_V2_EXECUTOR_BACKEND is 0
+tuning_advice:
+  summary: Leave at default 'auto' on Ascend NPU; the compiled-graph path is rarely used and 'shm' is the only viable option
+  suggested_values:
+  - scenario: Default Ascend deployment (multiprocessing executor)
+    value: auto
+    reason: The compiled-graph path is not active by default; this parameter has no effect
+  - scenario: Ascend deployment with compiled-graph executor (VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0)
+    value: auto
+    reason: Auto-detection will select 'shm' since NCCL is unavailable on Ascend; explicit 'shm' is also safe
+  caveats:
+  - Do NOT set this to 'nccl' on Ascend — NCCL is NVIDIA-specific and cupy is not compatible with Ascend NPU
+  - The compiled-graph executor path (where this parameter matters) is not the default on Ascend and is rarely tested
+  - Ascend uses HCCL for collective communication, not NCCL; this parameter's 'nccl' option is fundamentally incompatible
+  quick_guide: Keep the default 'auto' — this parameter is only relevant for the rarely-used Ray compiled-graph executor path
+    and 'nccl' is incompatible with Ascend NPU
+analysis_date: '2026-07-06'

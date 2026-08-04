@@ -1,0 +1,79 @@
+name: additional_config.weight_prefetch_config.enabled
+type: nested
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:583
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: '''--additional-config ''''{"weight_prefetch_config": {"enabled": true}}'''''''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter activates the Ascend-specific weight prefetch mechanism (WeightPrefetchMethod)
+  that overlaps weight loading with computation. The mechanism prefetches attention (QKV, O projection) and MLP/MoE (gate_up,
+  down) weights ahead of their use, hiding memory access latency. The prefetch ratio controls how much of each weight is prefetched
+  (default: attn 1.0, moe gate_up 0.8, mlp gate_up 1.0, mlp down 1.0). For MoE models, only the moe path is enabled; for dense
+  models, only the mlp path is enabled. The MLA SFA prefetch is also gated by this flag. This reduces effective weight loading
+  stalls during decode, improving per-token latency and overall throughput, especially on memory-bandwidth-bound Ascend NPU
+  scenarios.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:583
+  context: WeightPrefetchConfig reads enabled from the weight_prefetch_config dict
+- file: vllm_ascend/ops/weight_prefetch.py:48
+  context: WeightPrefetchMethod uses enabled to gate MLA SFA prefetch and module-level prefetch configs
+- file: vllm_ascend/ops/weight_prefetch.py:52
+  context: Attention module prefetch enable flag set from weight_prefetch_config.enabled
+- file: vllm_ascend/ops/weight_prefetch.py:61
+  context: MoE module prefetch enable flag set from weight_prefetch_config.enabled AND is_moe check
+- file: vllm_ascend/ops/weight_prefetch.py:67
+  context: MLP module prefetch enable flag set from weight_prefetch_config.enabled AND not is_moe check
+related_parameters:
+- name: additional_config.weight_prefetch_config.prefetch_ratio
+  relation: Controls the fraction of each weight to prefetch; only effective when enabled is true
+- name: quantization
+  relation: Weight prefetch may interact with quantized weight layouts (e.g., ascend quantization)
+constraints: []
+tuning_advice:
+  summary: 'Enable weight prefetch on Ascend NPU to overlap weight loading with computation, reducing decode latency for both
+    dense and MoE models.
+
+    '
+  suggested_values:
+  - scenario: General Ascend NPU inference (dense or MoE models)
+    value: 'true'
+    reason: 'Overlaps weight loading with computation, hiding memory access latency and improving per-token decode latency.
+      Tested in vllm-ascend e2e performance tests with Qwen3 models.
+
+      '
+  - scenario: Memory-constrained deployments where prefetch buffer overhead is unacceptable
+    value: 'false'
+    reason: 'Disabling avoids the additional memory overhead of prefetch buffers, though at the cost of potentially higher
+      weight-loading stalls.
+
+      '
+  caveats:
+  - 'Weight prefetch consumes additional device memory for prefetch buffers; monitor memory utilization when enabling, especially
+    with large models.
+
+    '
+  - 'The prefetch ratio defaults (attn 1.0, moe gate_up 0.8, mlp 1.0) are tuned for typical scenarios; adjust prefetch_ratio
+    if you observe suboptimal overlap.
+
+    '
+  - 'For MoE models, only the MoE path is prefetched; for dense models, only the MLP path is prefetched — the mechanism automatically
+    selects the correct path based on model architecture.
+
+    '
+  quick_guide: 'Set enabled to true in weight_prefetch_config to reduce decode latency on Ascend NPU; disable if memory overhead
+    is a concern.
+
+    '
+analysis_date: '2026-07-06'

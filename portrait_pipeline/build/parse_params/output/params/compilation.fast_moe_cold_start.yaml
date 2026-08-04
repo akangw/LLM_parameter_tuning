@@ -1,0 +1,106 @@
+name: compilation.fast_moe_cold_start
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/vllm.py:1069
+- vllm/forward_context.py:216
+- vllm/model_executor/models/config.py:48
+value_type: bool
+default: <computed>
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether vLLM''s compilation system uses a "cold start" optimization for Mixture-of-Experts
+  (MoE) layers. When enabled (true), the system assumes that the only decoder forward pass being run is the current model,
+  allowing it to pre-compute and cache the set of all MoE layers (static_all_moe_layers) rather than discovering them dynamically
+  at runtime. This avoids a warm-up compilation step for MoE layers, reducing initial latency and compilation overhead. On
+  Ascend NPU, where compilation (via CANN) is already a significant overhead, this can meaningfully reduce cold-start time
+  for MoE models. However, the optimization is unsafe when speculative decoding is used with a draft model that also contains
+  MoE layers, or when models conditionally execute different MoE branches (e.g., Ernie4.5-VL). The parameter is automatically
+  forced to false on torch >= 2.11 (where OpaqueObject supersedes it) and for models that explicitly disable it. When left
+  as None (default), vLLM conservatively disables it if speculative decoding is detected.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1069
+  context: 'Forced to false on torch >= 2.11 (HAS_OPAQUE_TYPE); otherwise resolved from None to false if speculative_config
+    is present, true otherwise.
+
+    '
+- file: vllm/forward_context.py:216
+  context: 'When true, passes static_all_moe_layers to ForwardContext; when false, passes None, forcing dynamic MoE layer
+    discovery.
+
+    '
+- file: vllm/model_executor/models/config.py:48
+  context: 'Ernie4.5-VL model explicitly disables this optimization because it conditionally executes text/vision MoE branches,
+    which would produce incorrect execution order with fast_moe_cold_start.
+
+    '
+related_parameters:
+- name: compilation_config.static_all_moe_layers
+  relation: 'When fast_moe_cold_start is true, static_all_moe_layers is used as the pre-computed MoE layer set; when false,
+    it is ignored.
+
+    '
+- name: speculative_config
+  relation: 'When speculative decoding is configured, fast_moe_cold_start defaults to false to avoid incorrect execution with
+    draft models containing MoE layers.
+
+    '
+constraints:
+- Must not be enabled when using speculative decoding with a draft model that contains MoE layers.
+- Must not be enabled for models that conditionally execute different MoE branches (e.g., Ernie4.5-VL).
+- Has no effect on torch >= 2.11, where it is automatically forced to false.
+tuning_advice:
+  summary: 'Enable for MoE models without speculative decoding to reduce cold-start compilation latency on Ascend NPU; disable
+    otherwise.
+
+    '
+  suggested_values:
+  - scenario: 'Running a pure MoE model (e.g., Mixtral, DeepSeek-MoE) without speculative decoding on torch < 2.11.
+
+      '
+    value: true
+    reason: 'Eliminates dynamic MoE layer discovery and warm-up compilation, reducing initial inference latency. On Ascend
+      NPU, where CANN compilation is expensive, this provides a noticeable cold-start speedup.
+
+      '
+  - scenario: 'Running any model with speculative decoding, or models with conditional MoE branches (e.g., Ernie4.5-VL).
+
+      '
+    value: false
+    reason: 'Prevents incorrect execution order when draft models contain MoE layers or when MoE branches are conditionally
+      executed. The optimization''s assumption of a single decoder forward pass is violated in these cases.
+
+      '
+  - scenario: Running on torch >= 2.11.
+    value: false
+    reason: 'The parameter is automatically forced to false; the newer OpaqueObject approach supersedes this optimization.
+
+      '
+  caveats:
+  - 'On Ascend NPU, the compilation overhead reduction from this parameter is additive to CANN''s own graph compilation —
+    enabling it can significantly reduce end-to-end cold-start latency for MoE models.
+
+    '
+  - 'This is a "hack" per the source code comments — it assumes only the current model''s decoder forward pass is running,
+    which may not hold in multi-model or speculative decoding scenarios.
+
+    '
+  - 'The parameter is automatically resolved at VllmConfig initialization time; manual setting may be overridden by model-specific
+    configs (e.g., Ernie4.5-VL forces it to false).
+
+    '
+  quick_guide: 'Set to true for standalone MoE models without speculative decoding on torch < 2.11 to reduce cold-start latency;
+    leave as default (auto) for most cases.
+
+    '
+analysis_date: '2026-07-06'

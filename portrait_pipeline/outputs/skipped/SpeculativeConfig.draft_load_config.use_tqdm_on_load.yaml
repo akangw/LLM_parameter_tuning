@@ -1,0 +1,7 @@
+name: SpeculativeConfig.draft_load_config.use_tqdm_on_load
+type: nested
+performance_impact: none
+skip_reason: This draft-model LoadConfig field only enables or disables the tqdm progress bar while model weights are loading.
+  The pinned upstream source describes no change to weight loading, inference execution, latency, throughput, or memory, and
+  the pinned vllm-ascend source has no parameter-specific override or consumer; it merely passes the containing draft_load_config
+  to the model loader.

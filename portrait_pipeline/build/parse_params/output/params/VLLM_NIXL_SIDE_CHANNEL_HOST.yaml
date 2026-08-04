@@ -1,0 +1,70 @@
+name: VLLM_NIXL_SIDE_CHANNEL_HOST
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1366
+value_type: str
+default: localhost
+valid_choices: any valid IP address or hostname string
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable specifies the IP address or hostname used for the NIXL side-channel handshake between
+  remote agents in a distributed KV cache transfer setup. It is read by the NixlConnectorScheduler (v1-upstream) to bind a
+  ZMQ socket for receiving handshake metadata from remote workers. The value directly affects the network interface on which
+  the handshake listener binds. An incorrect or unreachable host can cause connection failures or timeouts during distributed
+  KV transfer initialization, indirectly affecting end-to-end latency. However, it does not affect the core inference computation,
+  memory usage, or steady-state throughput on Ascend NPU. The parameter has no Ascend-specific override or behavior change
+  in vllm-ascend.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:62
+  context: 'Read during NixlConnectorScheduler initialization to set the side channel host for the handshake listener.
+
+    '
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:232
+  context: 'Read in the background handshake listener thread to construct the ZMQ binding path (tcp://<host>:<port>).
+
+    '
+related_parameters:
+- name: VLLM_NIXL_SIDE_CHANNEL_PORT
+  relation: 'Together with VLLM_NIXL_SIDE_CHANNEL_HOST, defines the full network endpoint for the NIXL handshake side channel.
+
+    '
+constraints:
+- The value must be a valid IP address or hostname reachable by remote NIXL agents.
+- The host must be resolvable and bindable on the local machine where the scheduler runs.
+tuning_advice:
+  summary: 'Set to the correct IP address of the network interface that remote NIXL agents can reach. The default ''localhost''
+    only works for single-node deployments.
+
+    '
+  suggested_values:
+  - scenario: Single-node deployment
+    value: localhost
+    reason: 'When all NIXL agents run on the same node, localhost is sufficient and avoids external network configuration.
+
+      '
+  - scenario: Multi-node distributed KV transfer
+    value: <node's reachable IP address>
+    reason: 'Remote agents must be able to connect to this IP for the handshake. Use the IP of a high-speed network interface
+      (e.g., InfiniBand or RoCE) if available to minimize handshake latency.
+
+      '
+  caveats:
+  - 'Using ''localhost'' in a multi-node setup will cause handshake failures because remote agents cannot connect to the local
+    loopback interface.
+
+    '
+  - 'This parameter only affects the NIXL KV transfer connector. If NIXL is not used as the KV connector, this parameter has
+    no effect.
+
+    '
+  quick_guide: 'Use ''localhost'' for single-node; set to the node''s reachable IP for multi-node NIXL deployments.
+
+    '
+analysis_date: '2026-07-06'

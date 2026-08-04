@@ -1,0 +1,56 @@
+name: speculative.draft_load_config.pt_load_map_location
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: cpu
+valid_choices: any valid torch.device string or dict mapping
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls the device location used when loading draft model checkpoints via torch.load(). On
+  Ascend NPU, the default value ''cpu'' means draft model weights are loaded into CPU memory first, then moved to NPU during
+  model initialization. Setting this to ''npu'' or a specific NPU device string could bypass the CPU intermediate step, slightly
+  reducing model loading time and peak CPU memory usage. However, this only affects the one-time model loading phase, not
+  steady-state inference throughput or latency. The parameter is passed directly to torch.load()''s map_location argument.
+  No vllm-ascend override or Ascend-specific handling was found for this parameter.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.draft_load_config
+  relation: Parent configuration object that contains pt_load_map_location
+- name: speculative.model
+  relation: The draft model whose checkpoint loading is affected by this parameter
+constraints:
+- The value must be a valid torch.device string or a dict mapping device strings
+- When set to a device string like "npu", the NPU device must be available and have sufficient memory to hold the draft model
+  weights
+tuning_advice:
+  summary: 'On Ascend NPU, the default ''cpu'' is generally safe and recommended. Setting to ''npu'' may slightly speed up
+    model loading but offers no inference performance benefit.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU
+    value: cpu
+    reason: 'Safe default that loads weights to CPU first. Avoids potential NPU memory pressure during model initialization
+      and is compatible with all Ascend environments.
+
+      '
+  - scenario: Large draft model where CPU memory is constrained
+    value: npu
+    reason: 'Bypasses CPU memory usage for draft model weights, loading directly to NPU. Only useful if CPU RAM is insufficient
+      for the draft model checkpoint.
+
+      '
+  caveats:
+  - This parameter only affects model loading time, not inference throughput or latency
+  - Loading directly to NPU may fail if NPU memory is fragmented or insufficient during initialization
+  - No Ascend-specific handling exists; behavior follows standard PyTorch map_location semantics
+  quick_guide: Keep the default 'cpu' unless CPU memory is insufficient for the draft model checkpoint.
+analysis_date: '2026-07-06'

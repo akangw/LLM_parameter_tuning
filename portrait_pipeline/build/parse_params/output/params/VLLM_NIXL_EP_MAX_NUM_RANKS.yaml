@@ -1,0 +1,63 @@
+name: VLLM_NIXL_EP_MAX_NUM_RANKS
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1772
+- vllm/envs.py:267
+value_type: int
+default: '32'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This environment variable controls the maximum number of expert-parallel (EP) ranks that the NIXL EP All2All
+  communication backend pre-allocates buffers for. It is read in `NixlEPAll2AllManager.__init__` (vllm/distributed/device_communicators/all2all.py:340)
+  and used in `_init_buffer` (line 350-366) to compute `max_num_global_experts` and the RDMA buffer size hint via `Buffer.get_rdma_size_hint`.
+  A larger value increases the pre-allocated RDMA buffer memory footprint but allows more EP ranks to connect dynamically
+  during elastic EP scaling. This parameter only affects deployments using the NIXL EP backend for expert-parallel MoE models.
+  On Ascend NPU, NIXL EP is not the primary communication backend (HCCL is), so this parameter has minimal impact unless a
+  NIXL-based EP setup is explicitly configured.
+
+  '
+usage_locations:
+- file: vllm/distributed/device_communicators/all2all.py:340
+  context: Read in NixlEPAll2AllManager.__init__ to set self.max_num_ep_ranks
+- file: vllm/distributed/device_communicators/all2all.py:350
+  context: Used to compute max_num_global_experts for buffer sizing
+- file: vllm/distributed/device_communicators/all2all.py:354
+  context: Passed to Buffer.get_rdma_size_hint for RDMA memory estimation
+- file: vllm/distributed/device_communicators/all2all.py:365
+  context: Passed to buffer.update_memory_buffers for actual buffer allocation
+related_parameters:
+- name: VLLM_ELASTIC_EP_SCALE_UP_LAUNCH
+  relation: Both are part of the elastic EP feature set; this env var controls whether the current process is a scale-up launch
+- name: VLLM_ELASTIC_EP_DRAIN_REQUESTS
+  relation: Both are part of the elastic EP feature set; this env var controls request draining before scaling
+constraints:
+- Must be a positive integer (parsed via int() from the environment variable string)
+- Only meaningful when using the NIXL EP All2All communication backend for MoE models
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter is typically irrelevant as NIXL EP is not the standard communication backend. Leave
+    at default unless explicitly using NIXL-based elastic expert parallelism.
+
+    '
+  suggested_values:
+  - scenario: Default / standard Ascend NPU deployment (HCCL-based communication)
+    value: '32'
+    reason: NIXL EP is not used; the default value has no effect on memory or performance
+  - scenario: NIXL EP deployment with known maximum EP rank count
+    value: <exact_max_ep_ranks>
+    reason: Set to the exact maximum number of EP ranks expected to avoid over-allocating RDMA buffers
+  - scenario: NIXL EP deployment with dynamic scaling beyond 32 ranks
+    value: <larger_than_32>
+    reason: Increase to accommodate the maximum possible number of EP ranks in the elastic scaling group
+  caveats:
+  - This parameter only affects the NIXL EP All2All backend, which is not the default communication backend on Ascend NPU
+    (HCCL is)
+  - Setting a value larger than needed wastes RDMA-accessible memory that could otherwise be used for KV cache or model weights
+  - No vllm-ascend override or Ascend-specific behavior was found for this parameter
+  quick_guide: Leave at default (32) on Ascend NPU unless explicitly using NIXL EP for MoE elastic scaling
+analysis_date: '2026-07-06'

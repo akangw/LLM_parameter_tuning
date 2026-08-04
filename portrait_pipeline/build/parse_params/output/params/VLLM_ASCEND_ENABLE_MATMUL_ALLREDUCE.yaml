@@ -1,0 +1,86 @@
+name: VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:71
+- vllm_ascend/ascend_config.py:143
+value_type: bool
+default: false
+valid_choices:
+- 0 (disabled)
+- 1 (enabled)
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, this parameter activates a MatmulAllReduce fusion kernel that fuses the matrix multiplication
+  and all-reduce communication operations during the prefill phase when tensor parallelism (TP) is enabled. On Ascend NPUs,
+  all-reduce communication between TP ranks can be a significant bottleneck. By fusing the matmul computation with the all-reduce
+  communication, the kernel overlaps computation and communication, reducing the overall latency of the prefill phase and
+  improving throughput. The feature is specifically supported on Ascend A2 hardware (Ascend910B) and is noted to achieve better
+  performance in eager mode rather than graph mode. The parameter is read in vllm_ascend/ascend_config.py:143 via the _get_config_value
+  method, which checks both the additional_config dict (key: enable_matmul_allreduce) and the environment variable, with additional_config
+  taking precedence. The env var is deprecated in favor of the additional_config key.
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:71
+  context: Environment variable definition with default value "0" (disabled)
+- file: vllm_ascend/ascend_config.py:143
+  context: Read into AscendConfig.enable_matmul_allreduce via _get_config_value, with additional_config override support
+- file: tests/e2e/nightly/multi_node/external_dp/scripts/utils.py:175
+  context: Feature extraction for benchmark result labeling
+- file: tests/e2e/nightly/multi_node/internal_dp/scripts/test_multi_node.py:32
+  context: Feature extraction for multi-node benchmark result labeling
+- file: tests/e2e/nightly/single_node/models/scripts/test_single_node.py:191
+  context: Feature extraction for single-node benchmark result labeling
+- file: tests/e2e/pull_request/two_card/test_external_launcher.py:219
+  context: Test case enabling matmul_allreduce with HCCL_BUFFSIZE=500 for Qwen3 models on Ascend910B
+- file: tests/ut/test_ascend_config.py:106
+  context: Unit test verifying env var fallback when additional_config is not set
+- file: tests/ut/test_ascend_config.py:170
+  context: Unit test verifying additional_config overrides env var
+related_parameters:
+- name: enable_matmul_allreduce
+  relation: additional_config key that overrides this env var; takes precedence when both are set
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Another communication optimization for TP; both can be enabled independently
+- name: HCCL_BUFFSIZE
+  relation: HCCL buffer size env var; test cases set HCCL_BUFFSIZE=500 alongside this feature
+- name: tensor_parallel_size
+  relation: This feature only takes effect when tensor parallelism is enabled (TP > 1)
+constraints:
+- This feature is only supported on Ascend A2 hardware (Ascend910B).
+- Tensor parallelism must be enabled (tensor_parallel_size > 1) for this feature to have any effect.
+- Eager mode is recommended over graph mode for better performance with this feature.
+tuning_advice:
+  summary: Enable on Ascend A2 (910B) with TP > 1 in eager mode to fuse matmul and all-reduce in prefill, improving throughput.
+  suggested_values:
+  - scenario: Ascend A2 (910B) with TP > 1, eager mode, prefill-heavy workloads
+    value: '1'
+    reason: Fuses matmul and all-reduce during prefill, overlapping computation with communication to reduce latency and improve
+      throughput. Release notes confirm this feature was implemented specifically for prefill phase optimization.
+  - scenario: Ascend A3 or other non-A2 hardware
+    value: '0'
+    reason: Feature is explicitly documented as supported only on A2 hardware. Enabling on unsupported hardware may cause
+      errors or have no effect.
+  - scenario: Graph mode (ACL graph / npugraph) with TP > 1
+    value: '0'
+    reason: Documentation states eager mode gets better performance with this feature. Graph mode may not benefit or could
+      conflict with the fusion kernel.
+  - scenario: Single card deployment (TP = 1)
+    value: '0'
+    reason: Feature requires tensor parallelism to be enabled; with TP=1 there is no all-reduce to fuse, so enabling has no
+      effect.
+  caveats:
+  - This env var is deprecated; prefer using the additional_config key enable_matmul_allreduce instead.
+  - The additional_config key takes precedence over the env var when both are set.
+  - Performance benefit is most noticeable in prefill-heavy workloads where the matmul-allreduce fusion reduces communication
+    overhead.
+  - Test cases combine this with HCCL_BUFFSIZE=500, suggesting HCCL buffer tuning may complement this optimization.
+  quick_guide: Set VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE=1 on Ascend910B with TP>1 in eager mode for prefill performance gains;
+    use additional_config key enable_matmul_allreduce for non-deprecated configuration.
+analysis_date: '2026-07-06'

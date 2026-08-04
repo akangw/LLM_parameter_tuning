@@ -1,0 +1,91 @@
+name: additional_config.xlite_graph_config.enabled
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:548
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this parameter activates the Xlite graph optimization mode on Ascend NPU, which fundamentally
+  changes the execution path by switching to a specialized XliteWorker (vllm_ascend/xlite/xlite_worker.py) instead of the
+  default NPUWorker. The Xlite mode leverages openEuler''s GVirt xlite technology for graph-level optimizations that can significantly
+  improve inference performance. In full_mode, it disables ACL graph compilation entirely and forces eager execution, which
+  trades compilation overhead for potentially better runtime performance. In decode-only mode (full_mode=false), it sets cudagraph_mode
+  to FULL_DECODE_ONLY, enabling graph capture for decode steps while keeping prefill in eager mode. The parameter also enforces
+  block_size=128 for optimal xlite compatibility, which affects KV cache memory layout and access patterns. The XliteWrapper
+  wraps the model to apply xlite-specific optimizations, and the worker override ensures all ranks build consistent attention
+  metadata during dummy runs, which is critical for distributed correctness.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:548
+  context: XliteGraphConfig initialization — reads 'enabled' from xlite_graph_config dict, defaults to False
+- file: vllm_ascend/ascend_config.py:550-565
+  context: 'Validation: raises RuntimeError if speculative decoding or pipeline parallelism is enabled; warns if block_size
+    != 128'
+- file: vllm_ascend/platform.py:426-434
+  context: 'Platform check_and_update_config: in full_mode disables ACL graph and forces eager; in decode-only mode sets FULL_DECODE_ONLY
+    cudagraph_mode'
+- file: vllm_ascend/platform.py:562-564
+  context: 'Worker class selection: when xlite enabled, sets worker_cls to XliteWorker instead of NPUWorker'
+- file: vllm_ascend/utils.py:1421-1428
+  context: 'refresh_block_size: forces block_size to 128 when xlite is enabled and current block_size > 128'
+- file: vllm_ascend/xlite/xlite_model_runner.py:51
+  context: 'XliteModelRunner._should_build_dummy_attn_metadata: ensures metadata is built during DP dummy runs for all ranks'
+related_parameters:
+- name: additional_config.xlite_graph_config.full_mode
+  relation: Controls whether xlite operates in full eager mode (disables ACL graph) or decode-only graph mode
+- name: compilation_config.cudagraph_mode
+  relation: 'Xlite overrides cudagraph_mode: NONE in full_mode, FULL_DECODE_ONLY in decode-only mode'
+- name: cache_config.block_size
+  relation: Xlite enforces block_size=128 for optimal compatibility; warns if different
+- name: model_config.enforce_eager
+  relation: Xlite full_mode sets enforce_eager=True, disabling all compilation
+- name: speculative_config
+  relation: Xlite is incompatible with speculative decoding; raises RuntimeError if both enabled
+- name: parallel_config.pipeline_parallel_size
+  relation: Xlite is incompatible with pipeline parallelism; requires pp_size=1
+constraints:
+- Xlite graph mode cannot be used with speculative decoding — both must not be enabled simultaneously
+- Xlite graph mode requires pipeline_parallel_size to be 1 — pipeline parallelism is not supported
+- Xlite graph mode requires block_size to be 128 or less for optimal performance — larger block sizes will be automatically
+  clamped to 128
+- Xlite full_mode disables ACL graph compilation entirely and forces eager execution
+- Xlite decode-only mode sets cudagraph_mode to FULL_DECODE_ONLY, overriding any user setting
+tuning_advice:
+  summary: Enable xlite_graph_config for graph-level optimizations on Ascend NPU when using supported model configurations
+    without speculative decoding or pipeline parallelism
+  suggested_values:
+  - scenario: Standard single-node inference with supported models (no speculative decoding, no pipeline parallelism)
+    value: true
+    reason: Activates XliteWorker with graph-level optimizations that can significantly improve throughput and reduce latency
+      on Ascend NPU
+  - scenario: Using speculative decoding or pipeline parallelism
+    value: false
+    reason: Xlite is incompatible with these features — enabling it would raise a RuntimeError
+  - scenario: Debugging or profiling with ASCEND_LAUNCH_BLOCKING=1
+    value: false
+    reason: ACL graph (used by xlite) is incompatible with ASCEND_LAUNCH_BLOCKING=1; disable xlite for debugging sessions
+  caveats:
+  - Xlite full_mode disables all graph compilation and forces eager execution — this may increase memory usage and reduce
+    throughput for some workloads despite graph-level optimizations
+  - Xlite decode-only mode only captures decode steps in CUDA graphs; prefill remains in eager mode, which may limit prefill-heavy
+    workload performance
+  - Block size is automatically adjusted to 128 when xlite is enabled, which may affect KV cache efficiency for models optimized
+    for other block sizes
+  - Xlite is an openEuler-specific technology (GVirt xlite) — ensure your Ascend environment supports it before enabling
+  - The XliteWorker path is separate from the default NPUWorker and may have different behavior or limitations not present
+    in the standard worker
+  quick_guide: Set additional_config.xlite_graph_config.enabled=true for graph-level Ascend optimizations when not using speculative
+    decoding or pipeline parallelism; use full_mode=true for full eager execution or false for decode-only graph capture
+analysis_date: '2026-07-06'

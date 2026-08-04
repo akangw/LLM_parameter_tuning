@@ -1,0 +1,98 @@
+name: additional_config.msmonitor_use_daemon
+type: nested
+category: observability
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:164
+- vllm_ascend/envs.py:81
+- vllm_ascend/worker/worker.py:423
+- vllm_ascend/profiler/torch_npu_profiler.py:43
+- docs/source/user_guide/configuration/additional_config.md:95
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --additional-config='{"msmonitor_use_daemon":true}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This Ascend-only observability switch enables torch_npu's dynamic-profile daemon integration. When true, the
+  NPU worker calls dynamic_profile.step() once at the start of every execute_model invocation, including before it determines
+  whether the invocation contains a forward pass. That adds a monitoring check to the serving hot path and can slightly increase
+  per-step latency or reduce throughput; the pinned source provides no measured or guaranteed overhead. The switch does not
+  change model tensors, KV-cache allocation, or model execution algorithms, so no direct device-memory tradeoff is established.
+  It is intended to expose performance monitoring rather than improve serving performance, and enabling it prevents creation
+  of the Ascend torch profiler. The pinned upstream vLLM repository has no matching option or msmonitor execution hook.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:164
+  context: Resolves the nested value first, otherwise falls back to the deprecated MSMONITOR_USE_DAEMON environment variable,
+    whose default is false.
+- file: vllm_ascend/envs.py:81
+  context: Defines the legacy environment fallback as bool(int(value)), defaulting to false when the variable is unset.
+- file: vllm_ascend/worker/worker.py:423
+  context: Calls torch_npu.profiler.dynamic_profile.step() on every execute_model invocation when the resolved option is true.
+- file: vllm_ascend/profiler/torch_npu_profiler.py:43
+  context: Reads the resolved Ascend option, falling back to the environment only if AscendConfig is unavailable, and rejects
+    torch-profiler creation when it is enabled.
+- file: docs/source/user_guide/configuration/additional_config.md:95
+  context: Documents the boolean default, daemon-mode purpose, and deprecated environment-variable alternative.
+related_parameters:
+- name: MSMONITOR_USE_DAEMON
+  relation: Deprecated environment fallback. An explicitly supplied additional_config.msmonitor_use_daemon value takes precedence,
+    including false overriding a true environment setting.
+- name: profiler_config.profiler
+  relation: The Ascend torch profiler cannot be created while msmonitor daemon mode is enabled; the profiler wrapper raises
+    RuntimeError for that combination.
+- name: profiler_config.torch_profiler_dir
+  relation: Used by the mutually exclusive torch-profiler path and therefore does not make torch profiling compatible with
+    msmonitor daemon mode.
+constraints:
+- Do not enable this option together with the Ascend torch profiler; profiler creation raises RuntimeError when the resolved
+  value is true.
+- Use a YAML/JSON boolean in additional_config. The legacy environment form accepts integer text through bool(int(...)) and
+  is deprecated.
+- The option is specific to vllm-ascend and requires the torch_npu dynamic profile integration imported by its NPU worker.
+tuning_advice:
+  summary: Leave false for normal serving benchmarks and production runs unless msmonitor daemon data is specifically required;
+    enable only for an observability session after measuring its hot-path overhead on the target workload.
+  suggested_values:
+  - scenario: Normal production serving or clean performance benchmarking
+    value: false
+    reason: Avoids the per-execute_model monitoring step and preserves availability of the separate Ascend torch-profiler
+      path.
+  - scenario: Performance investigation that specifically requires msmonitor daemon mode
+    value: true
+    reason: Activates dynamic_profile.step() on each worker execution so msmonitor can monitor vllm-ascend, accepting its
+      unquantified runtime overhead.
+  caveats:
+  - The pinned code shows an extra hot-path call but contains no benchmark, so the size of the latency or throughput effect
+    must be measured rather than assumed.
+  - It is an observability control, not a serving optimization; monitoring can perturb the performance being measured.
+  - An explicit false value overrides a true legacy environment setting, while omitting the nested key permits the environment
+    fallback.
+  - Enabling it and configuring the Ascend torch profiler is invalid rather than a supported way to collect both profiles
+    simultaneously.
+  quick_guide: Keep false by default; set true only when msmonitor daemon monitoring is the goal, verify torch profiling is
+    disabled, and compare representative latency and throughput before and after enabling it.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

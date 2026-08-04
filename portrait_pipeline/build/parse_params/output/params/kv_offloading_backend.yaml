@@ -1,0 +1,74 @@
+name: --kv-offloading-backend
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1127
+- vllm/config/cache.py:173
+- vllm/config/vllm.py:686
+value_type: str
+default: native
+valid_choices:
+- native
+- lmcache
+cli_example: --kv-offloading-backend native
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: "This parameter selects the backend for KV cache offloading from GPU/NPU memory to CPU memory. It only takes\
+  \ effect when --kv-offloading-size is set to a non-None value (in GiB). The backend choice determines which connector is\
+  \ used to transfer KV cache blocks between device and host memory, directly affecting memory pressure on the NPU and the\
+  \ overhead of offloading operations.\nIn vllm/config/vllm.py:686-704, the _post_init_kv_transfer_config method reads this\
+  \ parameter and configures KVTransferConfig accordingly: - \"\\\"native\\\": Uses OffloadingConnector (or SimpleCPUOffloadConnector\
+  \ if VLLM_USE_SIMPLE_KV_OFFLOAD\"\n  env var is set). The kv_offloading_size is converted to bytes and passed as cpu_bytes_to_use.\n\
+  - \"\\\"lmcache\\\": Uses LMCacheConnectorV1. The kv_offloading_size is divided by (tp_size * pp_size)\"\n  to get per-rank\
+  \ size, and passed as lmcache.max_local_cpu_size.\n\nOn Ascend NPU, KV cache offloading can reduce NPU memory usage at the\
+  \ cost of increased latency due to CPU-NPU data transfers. The \"native\" backend is vLLM's built-in offloading mechanism,\
+  \ while \"lmcache\" integrates with the LMCache external caching system. The choice affects both memory footprint and the\
+  \ efficiency of KV cache eviction/reloading during inference.\nNo vllm-ascend specific overrides were found for this parameter\
+  \ in the provided context.\n"
+usage_locations:
+- file: vllm/config/cache.py:173
+  context: Field definition with default 'native' and docstring listing supported backends
+- file: vllm/config/vllm.py:686-704
+  context: Configures KVTransferConfig connector and extra config based on backend choice
+- file: vllm/engine/arg_utils.py:688
+  context: EngineArgs field declaration with KVOffloadingBackend type
+- file: vllm/engine/arg_utils.py:1711
+  context: Passed to CacheConfig constructor during engine config creation
+related_parameters:
+- name: --kv-offloading-size
+  relation: Must be set to a non-None value for this parameter to take effect; determines the total CPU buffer size for offloading
+- name: --tensor-parallel-size
+  relation: For lmcache backend, kv_offloading_size is divided by tp_size to get per-rank allocation
+- name: --pipeline-parallel-size
+  relation: For lmcache backend, kv_offloading_size is divided by pp_size to get per-rank allocation
+- name: VLLM_USE_SIMPLE_KV_OFFLOAD
+  relation: Environment variable that switches native backend from OffloadingConnector to SimpleCPUOffloadConnector
+constraints:
+- KV offloading is only activated when --kv-offloading-size is set to a non-None value; otherwise this parameter is ignored
+- Only 'native' and 'lmcache' are supported as valid backend values
+tuning_advice:
+  summary: Use 'native' for simple CPU offloading on Ascend NPU; consider 'lmcache' only if you have an external LMCache deployment
+    and need cross-instance KV cache sharing.
+  suggested_values:
+  - scenario: Standard Ascend NPU deployment with CPU offloading to reduce NPU memory pressure
+    value: native
+    reason: The native backend is vLLM's built-in offloading mechanism with no external dependencies, suitable for most Ascend
+      NPU use cases where CPU memory is available for KV cache overflow
+  - scenario: Multi-instance deployment with shared KV cache across instances
+    value: lmcache
+    reason: LMCache backend enables cross-instance KV cache sharing, which can improve cache hit rates in distributed serving
+      scenarios, though it requires additional LMCache infrastructure
+  caveats:
+  - KV offloading adds CPU-NPU transfer latency; only enable when NPU memory is insufficient for the full KV cache
+  - The lmcache backend divides --kv-offloading-size by (tp_size * pp_size) for per-rank allocation, so the total CPU memory
+    usage equals the specified size
+  - On Ascend NPU, CPU-NPU bandwidth may be lower than GPU-CPU bandwidth on CUDA systems, making offloading overhead more
+    significant
+  - No vllm-ascend specific optimizations or overrides were found for this parameter; behavior follows upstream vLLM
+  quick_guide: Set --kv-offloading-backend native along with --kv-offloading-size to enable CPU offloading on Ascend NPU when
+    NPU memory is constrained.
+analysis_date: '2026-07-06'

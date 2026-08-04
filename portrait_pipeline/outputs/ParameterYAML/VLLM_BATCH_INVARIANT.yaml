@@ -1,0 +1,118 @@
+name: VLLM_BATCH_INVARIANT
+type: env
+category: scheduling
+scope: both
+source_file:
+- vllm/envs.py:528
+- vllm_ascend/batch_invariant.py:76
+- vllm_ascend/batch_invariant.py:90
+- vllm_ascend/batch_invariant.py:126
+- vllm_ascend/ascend_config.py:219
+- vllm_ascend/utils.py:374
+- vllm_ascend/sample/sampler.py:135
+- vllm_ascend/_310p/sample/sampler.py:63
+- vllm_ascend/worker/worker.py:757
+- docs/source/user_guide/feature_guide/batch_invariance.md:16
+- docs/source/user_guide/feature_guide/flash_attention.md:58
+- vllm/config/parallel.py:919
+- vllm/config/vllm.py:1269
+- vllm/v1/attention/backends/fa_utils.py:144
+- vllm/v1/attention/backends/flash_attn.py:414
+- vllm/v1/attention/backends/flashinfer.py:560
+- vllm/v1/attention/backends/flex_attention.py:1173
+value_type: bool
+default: false
+valid_choices:
+- 0 (disabled)
+- 1 (enabled)
+cli_example: VLLM_BATCH_INVARIANT=1 vllm serve Qwen/Qwen3-8B
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling this variable requests deterministic outputs independent of batch size or request order, at the cost
+  of disabling or constraining several performance optimizations. On Ascend, initialization sets deterministic HCCL and LCCL
+  modes, disables NZ weight layout and fused matmul-allreduce, replaces relevant PyTorch operations with AscendC or Triton
+  batch-invariant kernels, disables vllm-ascend custom operators, turns off asynchronous exponential sampling, and sends sampling
+  through the upstream native implementation. Upstream vLLM also disables custom all-reduce and cascade attention, prevents
+  batch-dependent FlashAttention AOT scheduling and multi-split reductions, downgrades FlashAttention 4 to version 2, fixes
+  FlexAttention blocks at 16-by-16, and makes FlashInfer use fixed splits with split-KV disabled and a batch-invariant workspace
+  size. These changes can increase latency, reduce throughput, and, for FlashInfer, alter or increase workspace memory use.
+usage_locations:
+- file: vllm_ascend/batch_invariant.py:76
+  context: Disables NZ weight mode and matmul-allreduce, then requests strict HCCL and deterministic LCCL behavior.
+- file: vllm_ascend/batch_invariant.py:90
+  context: Registers AscendC batch-invariant operators when available, otherwise uses Triton implementations for supported
+    operations.
+- file: vllm_ascend/batch_invariant.py:126
+  context: Enables the Ascend mode only when the environment flag is set and an AscendC or Triton implementation is available.
+- file: vllm_ascend/ascend_config.py:225
+  context: Forces asynchronous exponential sampling off while batch invariance is requested.
+- file: vllm_ascend/utils.py:374
+  context: Disables vllm-ascend custom operators because some lack batch-invariant implementations.
+- file: vllm_ascend/sample/sampler.py:135
+  context: Uses upstream native sampling instead of the optimized Ascend sampling path.
+- file: vllm_ascend/worker/worker.py:757
+  context: Initializes Ascend batch invariance before the HCCL distributed environment.
+- file: docs/source/user_guide/feature_guide/flash_attention.md:62
+  context: Requires this flag when enabling the Ascend FlashAttention 3 backend.
+- file: vllm/config/parallel.py:919
+  context: Forces custom all-reduce off in the upstream parallel configuration.
+- file: vllm/config/vllm.py:1269
+  context: Forces cascade attention off in the upstream vLLM configuration.
+- file: vllm/v1/attention/backends/fa_utils.py:144
+  context: Rejects FlashAttention 4's batch-shape-dependent scheduling and falls back to version 2.
+- file: vllm/v1/attention/backends/flash_attn.py:414
+  context: Disables AOT scheduling and forces single-split execution in FlashAttention paths.
+- file: vllm/v1/attention/backends/flashinfer.py:560
+  context: Uses fixed decode and prefill split sizes and disables split-KV.
+- file: vllm/v1/attention/backends/flashinfer.py:751
+  context: Selects the dedicated batch-invariant FlashInfer workspace-buffer size.
+- file: vllm/v1/attention/backends/flex_attention.py:1173
+  context: Fixes FlexAttention block dimensions at 16 and disables the divisibility assumption.
+related_parameters:
+- name: enable_async_exponential
+  relation: Ascend forces this sampling optimization off when batch invariance is enabled.
+- name: VLLM_ASCEND_ENABLE_NZ
+  relation: Ascend overrides the resolved NZ weight mode to zero during batch-invariant initialization.
+- name: enable_matmul_allreduce
+  relation: Ascend disables fused matmul-allreduce during batch-invariant initialization.
+- name: disable_custom_all_reduce
+  relation: Upstream forces this setting to true when batch invariance is enabled.
+- name: disable_cascade_attn
+  relation: Upstream forces this setting to true when batch invariance is enabled.
+- name: attention_backend
+  relation: Ascend FlashAttention 3 setup requires both FLASH_ATTN and VLLM_BATCH_INVARIANT=1.
+constraints:
+- The environment value is parsed as an integer before conversion to bool; use 0 or 1.
+- Ascend batch invariance is currently documented for Atlas A2 inference products and requires its custom operator library.
+- Ascend initialization is skipped with a warning if neither Triton nor AscendC batch-invariant operators are available.
+- NVIDIA batch invariance requires a GPU with compute capability 9.0 or higher.
+- The feature is beta, and the pinned Ascend documentation lists only selected Qwen3 dense and MoE models as tested.
+tuning_advice:
+  summary: Keep this disabled for normal production serving; enable it only when batch-independent reproducibility or Ascend
+    FlashAttention 3 is more important than peak performance.
+  suggested_values:
+  - scenario: Throughput- or latency-oriented production serving
+    value: 0
+    reason: Retains optimized collectives, attention scheduling and splitting, Ascend custom operators, fused matmul-allreduce,
+      NZ layout, and optimized sampling paths.
+  - scenario: Debugging, reproducibility tests, or deterministic RL rollouts
+    value: 1
+    reason: Requests deterministic results across changes in batch size and request order, provided the documented hardware
+      and operator requirements are met.
+  - scenario: Ascend FlashAttention 3
+    value: 1
+    reason: The pinned Ascend FlashAttention guide makes batch-invariant mode a prerequisite for this backend.
+  caveats:
+  - Enabling the flag does not provide Ascend batch invariance when required Triton or AscendC implementations are unavailable;
+    initialization is skipped.
+  - Disabling custom and fused collectives can materially reduce multi-device throughput.
+  - Fixed or single-split attention execution sacrifices adaptive parallelism and can increase latency for some sequence shapes.
+  - FlashInfer switches to a dedicated workspace size, so memory effects depend on the backend and its ordinary configured
+    workspace.
+  - Ascend support is beta and documented hardware and tested-model coverage are limited.
+  quick_guide: Use 0 for performance; use 1 only for verified deterministic workloads or the documented Ascend FA3 configuration.
+analysis_date: '2026-07-28'

@@ -1,0 +1,77 @@
+name: --override-generation-config
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:822
+- vllm/config/model.py:285
+value_type: dict
+default: '''{}'''
+valid_choices: '''A JSON dictionary mapping generation parameter names to values, e.g. {"temperature": 0.5, "max_new_tokens":
+  100}'''
+cli_example: '''--override-generation-config {"temperature": 0.5}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: "This parameter overrides or sets generation configuration parameters (e.g., temperature, top_p, max_new_tokens)\
+  \ that are applied as default sampling parameters for all requests. It does not directly affect the inference engine's compute,\
+  \ memory allocation, or scheduling behavior. However, it can indirectly influence performance: - \"Setting `max_new_tokens`\
+  \ here establishes a server-wide limit on output tokens, which caps per-request latency\"\n  and total throughput.\n- \"\
+  Parameters like `temperature` and `top_p` affect the sampling algorithm's computational cost (e.g., higher\"\n  temperature\
+  \ may require more random sampling operations), but this impact is negligible compared to model\n  forward passes.\n- \"\
+  The parameter is merged with or replaces the model's default generation config depending on the value of\"\n  `--generation-config`.\
+  \ When `--generation-config vllm` is used, only the override parameters are applied;\n  when `--generation-config auto`\
+  \ (default), overrides are merged with the model's defaults.\n- \"On Ascend NPU, there is no vllm-ascend specific override\
+  \ or modification of this parameter's behavior.\"\n  The sampling logic runs on the CPU or NPU depending on the sampling\
+  \ backend, but the parameter itself\n  does not change Ascend-specific execution paths.\n"
+usage_locations:
+- file: vllm/config/model.py:1413
+  context: get_diff_sampling_param() applies override_generation_config on top of base generation config to produce default
+    sampling params
+- file: vllm/entrypoints/openai/chat_completion/serving.py:155
+  context: OpenAI chat completion serving reads override_generation_config to extract max_new_tokens for server-wide token
+    limit
+- file: vllm/entrypoints/openai/completion/serving.py:79
+  context: OpenAI text completion serving reads override_generation_config to extract max_new_tokens for server-wide token
+    limit
+- file: vllm/entrypoints/openai/responses/serving.py:199
+  context: OpenAI responses API serving reads override_generation_config to extract max_new_tokens for server-wide token limit
+- file: vllm/entrypoints/serve/render/serving.py:117
+  context: Render server reads override_generation_config to extract max_new_tokens for server-wide token limit
+- file: vllm/model_executor/models/llama4.py:734
+  context: Llama4 model initialization reads override_generation_config to set attn_temperature_tuning from generation config
+related_parameters:
+- name: --generation-config
+  relation: Controls the base generation config source. When set to 'auto', override_generation_config is merged with model
+    defaults. When set to 'vllm', only override parameters are used.
+constraints:
+- Must be a valid JSON dictionary with string keys and values of appropriate types for the target generation parameters.
+- When --generation-config is set to a custom path (not 'auto' or 'vllm'), max_new_tokens from override_generation_config
+  is NOT used as the server-wide token limit; instead max_tokens from the custom config is used.
+tuning_advice:
+  summary: Use this parameter to set server-wide default sampling parameters, particularly max_new_tokens to cap output length
+    and prevent runaway generation.
+  suggested_values:
+  - scenario: Production deployment requiring output length limits
+    value: '''{"max_new_tokens": 2048}'''
+    reason: Sets a server-wide cap on generated tokens, preventing individual requests from consuming excessive resources
+      and degrading overall throughput.
+  - scenario: Creative text generation requiring higher temperature
+    value: '''{"temperature": 0.8, "top_p": 0.95}'''
+    reason: Adjusts sampling parameters globally without modifying model files. Higher temperature increases output diversity
+      at minimal performance cost.
+  - scenario: Deterministic output for testing or reproducibility
+    value: '''{"temperature": 0.0, "seed": 42}'''
+    reason: Forces greedy decoding across all requests, which is slightly faster than sampling and ensures reproducible outputs.
+  caveats:
+  - Setting max_new_tokens here only acts as a server-wide limit when --generation-config is 'auto' or 'vllm'. When using
+    a custom generation config path, the limit must be set in that file instead.
+  - Overriding sampling parameters globally may conflict with per-request parameters sent by clients. Per-request parameters
+    always take precedence over server defaults.
+  - On Ascend NPU, sampling operations may run on CPU depending on the sampling backend configuration, which could add minor
+    latency for large batch sizes with complex sampling parameters.
+  quick_guide: Set max_new_tokens to cap output length server-wide; use with --generation-config auto to merge with model
+    defaults.
+analysis_date: '2026-07-06'

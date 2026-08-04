@@ -1,0 +1,112 @@
+name: additional_config.layer_sharding
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:97
+- vllm_ascend/platform.py:300
+- vllm_ascend/ops/layer_shard_linear.py:205
+- vllm_ascend/ops/layer_shard_linear.py:279
+- vllm_ascend/attention/mla_v1.py:768
+- vllm_ascend/attention/sfa_v1.py:494
+- vllm_ascend/utils.py:1309
+- vllm_ascend/utils.py:1501
+- docs/source/user_guide/feature_guide/layer_sharding.md:1
+value_type: list[str]
+default: null
+valid_choices: A list of linear-layer keyword names exposed by the active attention implementation; documented targets are
+  o_proj and q_b_proj. Null or an empty list disables sharding.
+cli_example: --additional-config '{"layer_sharding":["q_b_proj","o_proj"]}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: The Ascend-only setting names repeated linear-layer series whose weights are distributed by hidden-layer index
+  across the shard-weight communication group. For a series, rank i stores only layers whose index maps to it; non-owning
+  ranks discard the original weight and use a small rotating pool of broadcast buffers. Before execution, the implementation
+  asynchronously broadcasts a coming layer's weight and the wrapped linear forward waits for that weight. This can substantially
+  reduce per-NPU model-weight memory for deep models, especially the full o_proj used by FlashComm2 and q_b_proj/o_proj used
+  by DSA-CP. When broadcast is hidden by prefill attention computation, the documentation describes the transfer as zero-overhead
+  from the end-to-end perspective. If it is not hidden, the extra collectives and waits can increase latency and lower throughput;
+  AscendConfig explicitly warns of significant performance degradation without FlashComm2 or DSA-CP. The pinned upstream vLLM
+  tree contains no matching setting.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:97
+  context: Reads the additional_config value, leaves an absent key as null, and logs the FlashComm2/DSA-CP performance warning
+    when truthy.
+- file: vllm_ascend/platform.py:300
+  context: Treats null and empty lists as disabled and rejects a nonempty value unless kv_transfer_config.kv_role is kv_producer.
+- file: vllm_ascend/attention/mla_v1.py:768
+  context: Resolves configured names against the attention constructor's linear-layer kwargs, warns for missing names, and
+    registers found layers for sharding.
+- file: vllm_ascend/attention/sfa_v1.py:494
+  context: Activates named-layer registration on the DSA-CP prefill path and triggers asynchronous weight reach/prefetch calls
+    during execution.
+- file: vllm_ascend/ops/layer_shard_linear.py:205
+  context: Assigns each registered hidden-layer weight to an owning rank, skips weight loading on other ranks, wraps forward
+    to wait for broadcast, and manages prefetch buffers.
+- file: vllm_ascend/ops/layer_shard_linear.py:279
+  context: Groups configured LinearBase objects into series by their final prefix component and registers them with prefetch_step
+    1.
+- file: vllm_ascend/utils.py:1309
+  context: Detects whether o_proj is selected so the FlashComm2 O-shard path can be enabled.
+- file: docs/source/user_guide/feature_guide/layer_sharding.md:1
+  context: Documents the memory-saving design, asynchronous overlap, supported FlashComm2 and DSA-CP scenarios, examples,
+    and P-node restriction.
+related_parameters:
+- name: kv_transfer_config.kv_role
+  relation: Must equal kv_producer for every nonempty layer_sharding value; this restricts the feature to the prefill node
+    of a PD-disaggregated deployment.
+- name: additional_config.enable_dsa_cp
+  relation: Enables the DSA-CP path where q_b_proj and o_proj are documented sharding targets and prefill compute can hide
+    weight broadcasts.
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: A positive value enables FlashComm2; selecting o_proj then enables its O-shard manager and reduces the memory
+    cost of full output-projection weights.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: DSA-CP requires sequence parallelism enabled through this environment setting in the pinned implementation.
+constraints:
+- A nonempty value is valid only when kv_transfer_config exists and kv_role is exactly kv_producer; otherwise startup raises
+  ValueError.
+- Values must name linear-layer keyword arguments available to the active attention implementation; unknown names are warned
+  about and skipped.
+- Registered layers in one named series must be consecutive hidden layers with isomorphic weight structure; the implementation
+  asserts these invariants during post-load processing.
+- The built-in registration path uses prefetch_step 1, which requires at least three registered layers because post-load processing
+  asserts prefetch_step <= num_layers - 2.
+- The feature is Ascend-specific and has no corresponding parameter or consumer in the pinned upstream vLLM repository.
+tuning_advice:
+  summary: Leave unset unless model-weight memory is the limiting resource on a PD-disaggregated prefill node. Prefer the
+    documented o_proj target with FlashComm2 or q_b_proj plus o_proj with DSA-CP, then benchmark because benefit depends on
+    hiding broadcasts.
+  suggested_values:
+  - scenario: FlashComm2 prefill node where full output-projection weights create memory pressure
+    value:
+    - o_proj
+    reason: Distributes the repeated full o_proj matrices across the shard-weight group while allowing the next weight broadcast
+      to overlap attention computation.
+  - scenario: DSA-CP prefill node for a deep model with large query and output projection matrices
+    value:
+    - q_b_proj
+    - o_proj
+    reason: This is the documented DSA-CP configuration for reducing the per-NPU footprint of both large repeated projection
+      series.
+  - scenario: Decode node, non-PD deployment, or deployment without demonstrated memory pressure and communication overlap
+    value: []
+    reason: Empty disables the feature, satisfies the P-node restriction, and avoids asynchronous broadcast overhead when
+      its memory saving is unnecessary or cannot be hidden.
+  caveats:
+  - Enabling outside a kv_producer prefill node is rejected during platform validation.
+  - Without FlashComm2 or DSA-CP, the source logs that significant performance degradation may occur.
+  - Every configured name is architecture- and implementation-dependent; a name absent from attention kwargs is skipped rather
+    than sharded.
+  - Memory savings trade replicated weights for asynchronous broadcasts and a rotating buffer pool, so measure TTFT, token
+    latency, and throughput under production-like prefill lengths and concurrency.
+  - The default is null in code; although one configuration table labels this field as dict with {}, runtime consumers iterate
+    it as a list of layer-name strings.
+  quick_guide: On a PD-disaggregated kv_producer, start with [o_proj] for FlashComm2 or [q_b_proj, o_proj] for DSA-CP. Confirm
+    the names are recognized, compare peak NPU memory and serving metrics against null, and keep sharding only when the memory
+    gain outweighs broadcast overhead.
+analysis_date: '2026-08-01'

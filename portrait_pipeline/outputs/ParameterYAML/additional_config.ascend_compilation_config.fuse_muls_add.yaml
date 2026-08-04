@@ -1,0 +1,72 @@
+name: additional_config.ascend_compilation_config.fuse_muls_add
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:519
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:69
+- vllm_ascend/compilation/passes/muls_add_pass.py:27
+- vllm_ascend/ops/triton/muls_add.py:8
+- docs/source/user_guide/configuration/additional_config.md:137
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When true, the Ascend graph-fusion pass manager installs MulsAddFusionPass. For a compiled graph containing
+  the exact element-wise sequence x * scale + y, the pass replaces the two operations with torch.ops.vllm.muls_add, whose
+  Ascend implementation performs both arithmetic operations in one Triton kernel. This can remove a kernel launch and avoid
+  materializing the multiplication result, reducing transient memory traffic and improving latency and throughput where the
+  pattern occurs. False leaves the original graph unchanged. The effect is workload-dependent: the pass registers only for
+  float16, bfloat16, or float32, uses the model''s routed_scaling_factor as the matched scalar, and does nothing when the
+  graph has no matching sequence. It does not change persistent model or KV-cache capacity.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:519
+  context: Reads the nested key and records the default-enabled setting in AscendCompilationConfig.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:69
+  context: Conditionally appends MulsAddFusionPass to the Ascend custom compilation pass pipeline.
+- file: vllm_ascend/compilation/passes/muls_add_pass.py:27
+  context: Matches x * routed_scaling_factor + y and rewrites it to the registered vllm.muls_add custom op.
+- file: vllm_ascend/ops/triton/muls_add.py:8
+  context: Implements the fused pointwise multiply-add as a single Triton NPU kernel.
+- file: docs/source/user_guide/configuration/additional_config.md:137
+  context: Documents the boolean nested option and its true default.
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: Commonly enabled alongside this pass in GLM-5 deployment examples, but the pass-manager condition does not make
+    it a direct prerequisite.
+- name: model_config.hf_text_config.routed_scaling_factor
+  relation: Supplies the scalar captured by the fusion pattern; it defaults to 1.0 when absent.
+constraints:
+- The rewrite is registered only when the model dtype is float16, bfloat16, or float32; unsupported dtypes make this switch
+  ineffective.
+- A graph must contain the exact x * routed_scaling_factor + y pattern for the pass to match; otherwise enabling it makes
+  no graph change.
+- The fused kernel requires x and y to have identical shapes.
+- This setting affects compiled Ascend graphs only; an execution path that does not invoke the Ascend compilation pass pipeline
+  receives no benefit.
+tuning_advice:
+  summary: Keep the default enabled for compiled Ascend workloads, especially GLM-5, and disable it only for fusion-specific
+    compatibility or accuracy diagnosis.
+  suggested_values:
+  - scenario: Compiled Ascend inference with a supported floating-point dtype and matching multiply-add graph patterns
+    value: true
+    reason: A single fused kernel can reduce launch overhead, transient intermediate traffic, and pointwise-operation latency.
+  - scenario: Debugging a suspected muls_add rewrite, Triton-kernel compatibility issue, or numerical regression
+    value: false
+    reason: Preserves the unfused x * scale + y graph and cleanly isolates this optimization pass.
+  caveats:
+  - No source-backed universal speedup is stated; benchmark representative prompts, batch sizes, and model configurations.
+  - The optimization is a no-op for unsupported dtypes or when pattern matching finds zero occurrences.
+  - The fused result is validated against the PyTorch expression with floating-point tolerances, so exact bitwise equivalence
+    should not be assumed.
+  quick_guide: Set {"ascend_compilation_config":{"fuse_muls_add":true}} inside --additional-config; compare true and false
+    under the same compiled workload.
+analysis_date: '2026-07-31'

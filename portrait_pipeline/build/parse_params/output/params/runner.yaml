@@ -1,0 +1,83 @@
+name: --runner
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:120
+- vllm/engine/arg_utils.py:421
+- vllm/engine/arg_utils.py:765
+value_type: str
+default: auto
+valid_choices:
+- auto
+- generate
+- pooling
+- draft
+cli_example: --runner generate
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'The `--runner` parameter determines which model runner type vLLM uses for inference. It is resolved in `ModelConfig._get_runner_type()`
+  (vllm/config/model.py:543) based on the model architecture and the user-provided value. The runner type controls the execution
+  path: "\"generate\" for text generation models, \"pooling\"" for embedding/reranker models, and "draft" for speculative
+  decoding draft models. On Ascend NPU, the runner type directly affects which worker and model runner implementation is used.
+  The vllm-ascend plugin provides `NPUModelRunner` (vllm_ascend/worker/model_runner_v1.py:17) which is the Ascend-specific
+  implementation adapted from upstream''s GPU model runner. The runner type also influences speculative decoding: "in v1-ascend,
+  the" `get_spec_decode_method` function (documented in Multi_Token_Prediction.md:86) receives the runner instance and selects
+  Ascend-specific proposers (AscendNgramProposer, AscendEagleProposer, AscendMtpProposer) based on the method. Choosing the
+  wrong runner type for a model will cause a ValueError at startup (vllm/config/model.py:548-561), preventing the engine from
+  initializing. For pooling models, using `--runner pooling` is required to enable the score API and efficient embedding extraction,
+  avoiding the overhead of computing full vocabulary logits.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:543
+  context: Runner type resolved via _get_runner_type() based on model architecture and user input
+- file: vllm/config/model.py:548-561
+  context: 'Validation: raises ValueError if runner type is incompatible with model architecture'
+- file: vllm/engine/arg_utils.py:1515
+  context: Passed to ModelConfig constructor during engine initialization
+- file: vllm_ascend/worker/model_runner_v1.py:17
+  context: NPUModelRunner is the Ascend-specific model runner implementation (v1)
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:557
+  context: use_v2_model_runner flag affects scheduling behavior based on runner version
+related_parameters:
+- name: --convert
+  relation: Works with --runner to adapt models; e.g., --runner pooling --convert sequence_classification converts a generative
+    model to a pooling model
+- name: --model
+  relation: The model architecture determines which runner types are valid
+- name: --speculative-config
+  relation: Speculative decoding uses 'draft' runner type for the draft model
+constraints:
+- The model architecture must support the specified runner type; otherwise a ValueError is raised at startup
+- Only one runner type can be used per vLLM instance, even if the model supports multiple types
+tuning_advice:
+  summary: Use 'auto' for most cases; explicitly set 'pooling' for embedding/reranker models to enable efficient score API
+    and avoid full logit computation overhead
+  suggested_values:
+  - scenario: Text generation models (default use case)
+    value: auto
+    reason: Auto-detection correctly selects 'generate' runner for causal LM architectures, which is the optimal path for
+      text generation on Ascend NPU
+  - scenario: Embedding, reranker, or sequence classification models
+    value: pooling
+    reason: Required to enable the score API and avoid computing full vocabulary logits (151k+ tokens), which is extremely
+      inefficient on NPU; documented in Qwen3-VL-Reranker tutorial
+  - scenario: Speculative decoding draft model
+    value: draft
+    reason: Necessary for the draft model in speculative decoding setups; enables Ascend-specific proposers (ngram, eagle,
+      mtp) in v1-ascend
+  caveats:
+  - Using 'generate' runner for a pooling model causes the engine to compute full logits for all vocabulary tokens, wasting
+    significant NPU compute and memory bandwidth
+  - On Ascend NPU, the v1 model runner (NPUModelRunner) is the stable default; v2 model runner behavior may differ and is
+    controlled by VLLM_USE_V2_MODEL_RUNNER env var, not by --runner
+  - The --runner parameter selects the model type, not the worker implementation version (v1 vs v2); worker version is controlled
+    separately
+  quick_guide: Leave as 'auto' for text generation; set to 'pooling' for embedding/reranker models to avoid unnecessary logit
+    computation overhead
+analysis_date: '2026-07-06'

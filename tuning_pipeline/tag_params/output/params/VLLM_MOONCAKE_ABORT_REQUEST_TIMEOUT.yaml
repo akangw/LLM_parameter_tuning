@@ -1,0 +1,87 @@
+name: VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT
+type: env
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm/envs.py:1490
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:201
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:185
+value_type: int
+default: 480
+valid_choices: Any integer accepted by Python int(); the source performs no range validation, but a positive number of seconds
+  is operationally meaningful.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'In the pinned Ascend Mooncake connector, this value is the age threshold in seconds for requests placed in
+  the producer''s delayed-free queue. When the oldest queued request exceeds the threshold, the tracker removes it from the
+  processing set and reports it as finished, allowing stale producer-side KV cache resources to be reclaimed. A smaller value
+  can reclaim blocks sooner after an abort or missing completion notification, while a larger value can retain those blocks
+  longer and increase KV-cache pressure; any throughput effect is indirect through capacity recovery. The pinned upstream
+  repository defines and documents the variable but contains no runtime consumer of it. The Ascend hybrid Mooncake connector
+  also does not use it as the expiration threshold: that path compares against VLLM_NIXL_ABORT_REQUEST_TIMEOUT and reads this
+  variable only to format the expiration log message.'
+usage_locations:
+- file: vllm/envs.py:1490
+  context: Parses the environment variable as an integer with a default of 480 seconds.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:201
+  context: Compares delayed-request age with this threshold before removing the request and reporting it finished.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:210
+  context: Reports the configured threshold when logging a forced release.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:185
+  context: The hybrid path uses VLLM_NIXL_ABORT_REQUEST_TIMEOUT for expiration, so this location establishes that the Mooncake
+    variable does not control its threshold.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:194
+  context: Reads the Mooncake value only as a log-message argument after expiration under the NIXL timeout.
+related_parameters:
+- name: VLLM_NIXL_ABORT_REQUEST_TIMEOUT
+  relation: Controls the actual delayed-request expiration comparison in the pinned Ascend hybrid Mooncake connector, despite
+    that path logging the Mooncake value.
+constraints:
+- Applies to disaggregated prefill-decode serving with the Ascend Mooncake connector and has no effect in unrelated connector
+  modes.
+- The environment value must be parseable by Python int() or startup fails when the environment accessor is evaluated.
+- No positivity or range check is implemented; zero or a negative value makes every delayed request with positive elapsed
+  time immediately eligible for cleanup.
+- In the pinned hybrid Mooncake connector, changing this value changes the logged threshold text but not the expiration decision.
+tuning_advice:
+  summary: Keep 480 seconds unless delayed producer KV blocks measurably cause memory pressure or legitimate cleanup notifications
+    routinely take longer.
+  suggested_values:
+  - scenario: General Ascend Mooncake disaggregated serving
+    value: 480
+    reason: This is the source and documentation default and avoids introducing a more aggressive cleanup policy without workload
+      evidence.
+  caveats:
+  - Reducing the value can mark a delayed request finished before its normal remote completion notification arrives.
+  - Increasing the value retains stale producer-side KV blocks longer and can reduce usable cache capacity under repeated
+    aborts or lost notifications.
+  - Tune from observed delayed-request age and KV-cache pressure; the pinned sources provide no workload-specific alternative
+    values.
+  - Do not use this variable to tune the hybrid connector's effective cleanup timeout in this revision because that comparison
+    uses VLLM_NIXL_ABORT_REQUEST_TIMEOUT.
+  - The pinned upstream vLLM tree documents the setting but does not read it in Mooncake runtime code.
+  quick_guide: Use 480 by default; on the non-hybrid Ascend Mooncake connector, lower it only when stale delayed requests
+    cause KV-cache pressure and raise it only when valid cleanup notifications arrive after the current threshold.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

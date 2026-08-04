@@ -1,0 +1,108 @@
+name: ECTransferConfig.ec_connector
+type: nested
+category: communication
+scope: both
+source_file:
+- vllm/config/ec_transfer.py:19
+- vllm_ascend/core/recompute_scheduler.py:413
+- vllm_ascend/core/recompute_scheduler.py:787
+- vllm_ascend/worker/model_runner_v1.py:1808
+- vllm_ascend/worker/model_runner_v1.py:4389
+- examples/epd_disaggregated/epd_disaggregated_guide.md:43
+value_type: str
+default: null
+valid_choices:
+- ECExampleConnector
+- custom connector class named by ec_connector with ec_connector_module_path set
+cli_example: --ec-transfer-config '{"ec_connector":"ECExampleConnector","ec_role":"ec_consumer","ec_connector_extra_config":{"shared_storage_path":"/data/ec_cache"}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field selects and enables the encoder-cache transfer connector. When it is non-null and paired with a
+  valid ec_role, upstream constructs scheduler-side and worker-side connector instances; a consumer can load a remotely produced
+  multimodal encoder cache instead of spending encoder compute budget on the input. The pinned Ascend schedulers preserve
+  that control flow by updating connector state after encoder-cache allocation and attaching connector metadata to each scheduler
+  output. Ascend's model runner executes the connector lifecycle for an EC producer and omits its KV-cache specification,
+  so enabling EC separation can materially change end-to-end latency, throughput, and device-memory allocation. The built-in
+  ECExampleConnector is explicitly a debug implementation that serializes tensors through shared storage, so storage bandwidth
+  and filesystem latency can dominate the transfer path.
+usage_locations:
+- file: vllm/config/ec_transfer.py:88
+  context: Validates that a non-null connector is accompanied by ec_role; the helper properties use the pair to decide whether
+    this engine is an EC-transfer producer, consumer, or both.
+- file: vllm_ascend/core/recompute_scheduler.py:413
+  context: Updates connector state after allocating encoder-cache entries, including entries scheduled for external loading.
+- file: vllm_ascend/core/recompute_scheduler.py:787
+  context: Builds connector metadata and attaches it to the scheduler output consumed by the model runner.
+- file: vllm_ascend/worker/model_runner_v1.py:1808
+  context: Runs the EC connector lifecycle around multimodal encoder execution on an EC producer and returns an encoder-only
+    model-runner output.
+- file: vllm_ascend/worker/model_runner_v1.py:4389
+  context: Returns an empty KV-cache specification for an EC producer, changing the producer engine's device-memory allocation.
+- file: examples/epd_disaggregated/epd_disaggregated_guide.md:43
+  context: The pinned Ascend deployment guide configures ECExampleConnector with complementary ec_producer and ec_consumer
+    roles and shared storage.
+related_parameters:
+- name: ECTransferConfig.ec_role
+  relation: Required whenever ec_connector is set and determines whether the instance produces, consumes, or both produces
+    and consumes encoder caches.
+- name: ECTransferConfig.ec_connector_module_path
+  relation: Supplies the import module for a connector name that is not in the built-in registry.
+- name: ECTransferConfig.ec_connector_extra_config
+  relation: Carries connector-specific settings; ECExampleConnector uses shared_storage_path.
+- name: ECTransferConfig.ec_buffer_size
+  relation: Connector implementations that buffer transferred caches may use this separately configured capacity.
+- name: CacheConfig.gpu_memory_utilization
+  relation: The Ascend EPD guide assigns different device-memory budgets to the encoder producer and the consumer serving
+    the language model.
+constraints:
+- A non-null ec_connector requires ec_role to be ec_producer, ec_consumer, or ec_both.
+- ECExampleConnector is the only connector registered by the pinned upstream factory; any other connector name requires ec_connector_module_path
+  to point to an importable module containing a class with that exact name.
+- The producer and consumer must use compatible connector configuration and access the same transfer medium; the Ascend ECExampleConnector
+  deployment uses a shared_storage_path visible to both nodes.
+- ECExampleConnector is a simple debug backend that saves and loads safetensors files and should not be assumed to provide
+  production-grade transfer latency.
+tuning_advice:
+  summary: Leave ec_connector null for a conventional single-engine deployment. Use ECExampleConnector only to validate EPD/disaggregated-encoder
+    topology on the pinned Ascend stack, then benchmark the complete producer-transfer-consumer path before production use.
+  suggested_values:
+  - scenario: Conventional deployment without disaggregated encoder-cache transfer
+    value: disabled
+    reason: Keeping the field null avoids connector creation, external cache I/O, and the operational requirements of separate
+      producer and consumer engines.
+  - scenario: Ascend EPD functional validation with shared storage
+    value: ECExampleConnector
+    reason: This is the connector used by the pinned Ascend guide and the sole built-in EC connector in the pinned upstream
+      factory.
+  - scenario: Production disaggregated encoder deployment
+    value: custom connector class name
+    reason: The built-in ECExampleConnector is marked as a disk-based debug implementation; a production transport should
+      be selected through an importable custom connector and validated on the target topology.
+  caveats:
+  - The parameter is a connector class selector, not a numeric knob; performance depends on the selected implementation, transfer
+    medium, cache hit rate, media embedding size, topology, and producer/consumer load balance.
+  - ECExampleConnector performs CPU detachment plus safetensors filesystem I/O, so slow or non-shared storage can erase the
+    benefit of avoiding encoder recomputation or cause cache misses and failures.
+  - Enabling a producer changes Ascend memory behavior by suppressing its KV-cache specification, so producer and consumer
+    gpu_memory_utilization values should be sized separately rather than copied from a monolithic deployment.
+  quick_guide: Start with null. For an EPD trial, set ECExampleConnector, set ec_role to ec_producer on the encoder node and
+    ec_consumer on the serving node, give both the same shared_storage_path, then compare end-to-end p50/p99 latency, throughput,
+    cache-hit rate, storage I/O, and peak HBM against the monolithic baseline.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

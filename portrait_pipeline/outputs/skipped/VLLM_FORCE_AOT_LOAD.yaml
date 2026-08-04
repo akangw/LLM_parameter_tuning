@@ -1,0 +1,6 @@
+name: VLLM_FORCE_AOT_LOAD
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares and parses this environment variable and explicitly excludes it from the
+  environment fingerprint; no current vLLM code reads it to control AOT loading, and the pinned vllm-ascend repository contains
+  no reference to it. It therefore has no current latency, throughput, or memory effect.

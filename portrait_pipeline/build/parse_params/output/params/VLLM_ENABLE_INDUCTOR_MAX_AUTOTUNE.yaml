@@ -1,0 +1,70 @@
+name: VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:1654
+- vllm/compilation/compiler_interface.py:757
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether PyTorch Inductor''s max_autotune mode is enabled during torch.compile.
+  When enabled (default), Inductor performs extensive kernel tuning for static shapes passed from compile_sizes in compilation_config,
+  searching through a larger space of kernel configurations to find the optimal one. This can significantly improve inference
+  performance for the compiled shapes but increases compilation time. On Ascend NPU, the effect depends on whether vllm-ascend
+  uses torch.compile with the Inductor backend or relies on CANN''s own graph compilation (torch_npu). The parameter is set
+  in vllm/compilation/compiler_interface.py:757 only when compile_range.is_single_size() is true, meaning it only activates
+  for static-shape compilation scenarios. No vllm-ascend override was found for this parameter, so the upstream behavior applies
+  directly.
+
+  '
+usage_locations:
+- file: vllm/compilation/compiler_interface.py:757
+  context: Sets inductor config max_autotune when compiling for a single static shape (compile_range.is_single_size() returns
+    True)
+- file: vllm/envs.py:240
+  context: Declared as environment variable with default True
+related_parameters:
+- name: VLLM_ENABLE_INDUCTOR_COORDINATE_DESCENT_TUNING
+  relation: Companion tuning parameter; both are enabled by default and applied together in set_inductor_config for static
+    shapes
+- name: compilation_config.compile_sizes
+  relation: max_autotune only activates when compile_sizes specifies a single static shape; without static shapes, this env
+    var has no effect
+constraints:
+- max_autotune only takes effect when compilation_config.compile_sizes specifies a single static shape (compile_range.is_single_size()
+  returns True)
+- This parameter is only relevant when torch.compile with Inductor backend is active; it has no effect on CANN-native graph
+  compilation paths
+tuning_advice:
+  summary: Keep enabled (default) for static-shape compilation to maximize kernel performance; disable only if compilation
+    time is excessive during development
+  suggested_values:
+  - scenario: Production deployment with static batch sizes defined in compile_sizes
+    value: true
+    reason: Enables Inductor max_autotune which searches for optimal kernel configurations, improving throughput and latency
+      for the compiled static shapes
+  - scenario: Development or frequent model switching where fast compilation is prioritized over peak performance
+    value: false
+    reason: Disabling max_autotune significantly reduces torch.compile time at the cost of potentially suboptimal kernel selection
+  - scenario: Using CANN-native compilation (torch_npu backend) instead of Inductor
+    value: false
+    reason: max_autotune is an Inductor-specific setting and has no effect on CANN's graph compiler; disabling avoids confusion
+  caveats:
+  - max_autotune increases compilation time substantially because Inductor benchmarks multiple kernel variants before selecting
+    the best one
+  - On Ascend NPU, if vllm-ascend bypasses torch.compile in favor of CANN graph capture, this parameter has no effect regardless
+    of its value
+  - The parameter only activates for single-size compile ranges; if compile_sizes contains multiple shapes, max_autotune is
+    not applied
+  quick_guide: Set VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE=1 for production static-shape inference; set to 0 during development
+    to reduce compilation overhead
+analysis_date: '2026-07-06'

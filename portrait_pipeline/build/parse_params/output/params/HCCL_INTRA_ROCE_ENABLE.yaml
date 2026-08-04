@@ -1,0 +1,90 @@
+name: HCCL_INTRA_ROCE_ENABLE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:1218
+- vllm_ascend/ops/fused_moe/token_dispatcher.py:115
+value_type: str
+default: ''
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether RoCE (RDMA over Converged Ethernet) is used as the intra-server
+  communication link between NPU groups on Ascend hardware. When set to "0" together with HCCL_INTRA_PCIE_ENABLE="1", it enables
+  hierarchical communication mode, which triggers the MC2 (Multi-Core Communication) optimized dispatch/combine path in the
+  MoE token dispatcher (vllm_ascend/ops/fused_moe/token_dispatcher.py:115-118). In this mode, cross-machine communication
+  traffic is reduced and communication performance is significantly improved for MoE models on A2 series hardware. The parameter
+  is checked in is_hierarchical_communication_enabled() (vllm_ascend/utils.py:1216-1219), which gates the MC2 hierarchy communication
+  feature. When hierarchical communication is enabled, the token dispatcher uses expert_scales and specialized all-to-all
+  communication patterns that bypass standard allreduce across DP groups, directly affecting token dispatch throughput and
+  end-to-end inference latency for MoE models.
+
+  '
+usage_locations:
+- file: vllm_ascend/utils.py:1218
+  context: Checked in is_hierarchical_communication_enabled() to determine if hierarchical communication mode is active
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:115
+  context: Referenced in comment explaining that setting HCCL_INTRA_ROCE_ENABLE=0 with HCCL_INTRA_PCIE_ENABLE=1 reduces cross-machine
+    communication traffic for MC2 ops
+related_parameters:
+- name: HCCL_INTRA_PCIE_ENABLE
+  relation: Must be set to "1" together with HCCL_INTRA_ROCE_ENABLE="0" to enable hierarchical communication mode
+- name: enable_mc2_hierarchy_comm
+  relation: Ascend config flag that can also enable hierarchical communication independently of these env vars
+- name: HCCL_RDMA_TIMEOUT
+  relation: Related RDMA timeout configuration that affects collective communication behavior when RoCE is enabled
+- name: HCCL_RDMA_TC
+  relation: Traffic class configuration for RDMA NIC when RoCE is used
+- name: HCCL_RDMA_SL
+  relation: Service level configuration for RDMA NIC when RoCE is used
+constraints:
+- On A2 series hardware, HCCL_INTRA_ROCE_ENABLE must be set to "1" when using the direct transmission scheme for KV pool transfer
+- Hierarchical communication mode requires both HCCL_INTRA_ROCE_ENABLE="0" and HCCL_INTRA_PCIE_ENABLE="1" to be set simultaneously
+- When HCCL_RDMA_TIMEOUT is configured, it must satisfy ASCEND_TRANSFER_TIMEOUT > RDMA_TIMEOUT * 7 for proper RDMA transfer
+  behavior
+tuning_advice:
+  summary: 'For MoE models on A2 series hardware, set HCCL_INTRA_ROCE_ENABLE=0 with HCCL_INTRA_PCIE_ENABLE=1 to enable hierarchical
+    communication and significantly improve cross-machine dispatch/combine performance. For KV pool direct transmission on
+    A2, set HCCL_INTRA_ROCE_ENABLE=1.
+
+    '
+  suggested_values:
+  - scenario: MoE model inference on A2 series hardware with multiple NPU groups
+    value: '0'
+    reason: 'Setting to "0" together with HCCL_INTRA_PCIE_ENABLE="1" enables hierarchical communication mode, which reduces
+      cross-machine communication traffic and significantly improves MC2 dispatch/combine performance as documented in vllm_ascend/ops/fused_moe/token_dispatcher.py:114-116
+
+      '
+  - scenario: KV pool direct transmission scheme on A2 series hardware
+    value: '1'
+    reason: 'Required by the direct transmission scheme on 800 I/T A2 series as documented in user_guide/feature_guide/kv_pool.md:111.
+      Uses RDMA link instead of SDMA link between two 8P groups as the mesh interconnect link
+
+      '
+  - scenario: A3 series hardware or non-MoE workloads
+    value: ''
+    reason: 'The hierarchical communication optimization is specific to A2 series and MoE models. On A3 series, use ASCEND_ENABLE_USE_FABRIC_MEM=1
+      instead for unified memory address direct transmission. Leaving unset avoids unnecessary configuration
+
+      '
+  caveats:
+  - This setting only affects A2 series hardware; on A3 series, use ASCEND_ENABLE_USE_FABRIC_MEM=1 instead for similar optimizations
+  - Hierarchical communication mode (HCCL_INTRA_ROCE_ENABLE=0) is only beneficial for MoE models using MC2 dispatch/combine
+    operations
+  - When enabling RoCE (value "1"), related RDMA parameters like HCCL_RDMA_TIMEOUT, HCCL_RDMA_TC, and HCCL_RDMA_SL should
+    also be configured for optimal performance
+  - The hierarchical communication path requires expert_scales to be passed in the token dispatcher, which may have memory
+    implications
+  - Setting this incorrectly for the hardware type may cause communication failures or suboptimal performance
+  quick_guide: 'For MoE models on A2: "export HCCL_INTRA_ROCE_ENABLE=0 and HCCL_INTRA_PCIE_ENABLE=1." For KV pool direct transfer
+    on A2: "export HCCL_INTRA_ROCE_ENABLE=1." For A3: "leave unset and use ASCEND_ENABLE_USE_FABRIC_MEM=1 instead."
+
+    '
+analysis_date: '2026-07-06'

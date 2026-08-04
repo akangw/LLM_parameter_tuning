@@ -1,0 +1,69 @@
+name: --mamba-cache-philox-rounds
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:892
+- vllm/engine/arg_utils.py:667
+- vllm/engine/arg_utils.py:2065
+value_type: int
+default: '0'
+valid_choices: non-negative integer
+cli_example: --mamba-cache-philox-rounds 4
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the number of Philox PRNG rounds used for stochastic rounding random number generation
+  in Mamba model cache operations. It is only active when --enable-mamba-cache-stochastic-rounding is set. The value is passed
+  to MambaConfig.stochastic_rounding_philox_rounds (default 0, which uses the Triton default). Higher values improve randomness
+  quality at the cost of additional compute per cache access. The performance impact is limited to Mamba-family models (Mamba,
+  Mamba2, Jamba, etc.) and only when stochastic rounding is enabled. On Ascend NPU, Mamba models are supported but the Mamba
+  backend may differ from Triton — vllm-ascend does not override this parameter, so the upstream behavior applies. The compute
+  overhead scales linearly with the number of rounds, affecting both prefill and decode latency for Mamba cache operations.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:892
+  context: CLI argument definition in MambaConfig argument group
+- file: vllm/engine/arg_utils.py:667
+  context: EngineArgs field declaration with default from MambaConfig
+- file: vllm/engine/arg_utils.py:2065
+  context: 'Override logic: copies value to mamba_config.stochastic_rounding_philox_rounds'
+related_parameters:
+- name: --enable-mamba-cache-stochastic-rounding
+  relation: Must be enabled for this parameter to have any effect
+- name: --mamba-backend
+  relation: The Mamba backend determines whether Philox rounds are applicable (Triton backend uses Philox PRNG)
+constraints:
+- Must be a non-negative integer
+- Only has effect when --enable-mamba-cache-stochastic-rounding is set to true
+- Only applicable to Mamba-family models (Mamba, Mamba2, Jamba, etc.)
+tuning_advice:
+  summary: 'Only relevant for Mamba models with stochastic rounding enabled; higher values improve numerical precision at
+    a small compute cost. Default 0 is sufficient for most use cases.
+
+    '
+  suggested_values:
+  - scenario: Default / general use
+    value: 0
+    reason: Uses the Triton default number of Philox rounds, which provides adequate randomness quality for most inference
+      workloads without additional compute overhead
+  - scenario: High-precision numerical requirements for Mamba cache
+    value: 4
+    reason: Provides improved randomness quality for stochastic rounding at a modest compute cost; 4 rounds is a common choice
+      in PRNG applications balancing quality and performance
+  - scenario: Maximum numerical precision for Mamba cache
+    value: 10
+    reason: Maximizes randomness quality for stochastic rounding, useful when numerical stability is critical; expect measurable
+      but small latency increase per Mamba cache access
+  caveats:
+  - This parameter has no effect unless --enable-mamba-cache-stochastic-rounding is also set
+  - Only applies to Mamba-family models; has zero impact on Transformer-based models
+  - On Ascend NPU, the actual Mamba backend implementation may differ from upstream Triton, potentially affecting how Philox
+    rounds are utilized
+  - The performance cost scales linearly with the number of rounds but is typically small relative to overall inference time
+  quick_guide: Leave at default 0 unless you have Mamba models with stochastic rounding enabled and need higher numerical
+    precision
+analysis_date: '2026-07-06'

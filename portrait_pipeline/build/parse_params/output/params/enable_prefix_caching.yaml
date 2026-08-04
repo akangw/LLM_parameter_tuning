@@ -1,0 +1,112 @@
+name: --enable-prefix-caching
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1093
+- vllm/config/cache.py:91
+value_type: bool
+default: None
+valid_choices: true, false
+cli_example: --enable-prefix-caching
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Enables automatic reuse of KV cache blocks across requests that share a common prefix. When enabled, the scheduler
+  computes block hashes for incoming requests and attempts to match them against cached blocks, avoiding recomputation of
+  attention for those tokens. On Ascend NPU, this parameter has several platform-specific effects:
+
+  1. **Block size resolution for hybrid KV cache groups** (vllm_ascend/patch/ platform/patch_kv_cache_utils.py:53): When multiple
+  KV cache groups exist (e.g., MLA + SWA-MLA layers) and context parallelism is active, the hash block size is computed as
+  gcd(group_block_sizes) rather than the scheduler block size. This enables finer-grained prefix matching across groups with
+  different block sizes.
+
+  2. **Mamba block allocation** (vllm_ascend/worker/model_runner_v1.py:4252, vllm_ascend/_310p/model_runner_310p.py:869):
+  When prefix caching is enabled for Mamba models, the number of Mamba blocks per request is set to max_num_blocks_per_req
+  instead of 1, significantly increasing memory usage but enabling prefix caching for Mamba layers.
+
+  3. **Mamba block size alignment** (vllm_ascend/patch/platform/ patch_mamba_config.py:113): When prefix caching is enabled
+  and mamba_cache_mode is "align", mamba_block_size is forced to equal block_size to ensure consistent hashing across attention
+  and Mamba blocks.
+
+  4. **CPU offloading connector** (vllm_ascend/distributed/kv_transfer/ kv_pool/cpu_offload/cpu_offload_connector.py:69):
+  The CPU offloading connector is only instantiated when prefix caching is enabled. Without it, the connector scheduler and
+  worker are set to None, disabling KV transfer to CPU.
+
+  5. **Mamba prefix caching limitation** (vllm_ascend/distributed/kv_transfer/ kv_pool/cpu_offload/cpu_offload_connector.py:442):
+  Prefix caching raises NotImplementedError for Mamba models in the CPU offloading path.
+
+  The upstream default in CacheConfig is True (vllm/config/cache.py:91), but the CLI argument overrides this with default=None
+  (vllm/engine/arg_utils.py: 1095-1097), meaning the config default is used unless explicitly set. On Ascend, the documentation
+  recommends disabling it for Mamba-like models (e.g., Qwen3.5) due to very large effective block sizes that make short prefixes
+  uncacheable.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:53
+  context: Determines hash_block_size for hybrid KV cache groups with CP
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:113
+  context: Forces mamba_block_size alignment when prefix caching is enabled
+- file: vllm_ascend/platform.py:283
+  context: Controls mamba_block_size adjustment for KV transfer with hybrid cache
+- file: vllm_ascend/worker/model_runner_v1.py:4252
+  context: Sets Mamba blocks per request based on prefix caching status (v1)
+- file: vllm_ascend/_310p/model_runner_310p.py:869
+  context: Sets Mamba blocks per request based on prefix caching status (310P)
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py:69
+  context: Controls CPU offloading connector instantiation
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py:442
+  context: Raises NotImplementedError for Mamba with prefix caching in CPU offload path
+- file: vllm/v1/core/kv_cache_utils.py:609
+  context: Determines whether hash_block_size is computed for prefix caching
+- file: vllm/v1/core/sched/scheduler.py:227
+  context: Passed to KVCacheManager as enable_caching
+- file: vllm/v1/engine/core.py:203
+  context: Controls request_block_hasher creation for prefix matching
+related_parameters:
+- name: --mamba-cache-mode
+  relation: Must be 'align' for prefix caching to work with Mamba/hybrid models on Ascend
+- name: --block-size
+  relation: Prefix caching hash granularity depends on block_size; mamba_block_size is forced to equal block_size when prefix
+    caching is enabled with mamba_cache_mode=align
+- name: --prefix-caching-hash-algo
+  relation: Selects the hash algorithm used for prefix block identification
+- name: --kv-cache-dtype
+  relation: Affects KV cache memory layout which interacts with prefix caching block management
+constraints:
+- Prefix caching is not supported for Mamba models in the CPU offloading path (raises NotImplementedError)
+- When prefix caching is enabled with mamba_cache_mode=align, mamba_block_size is forced to equal block_size
+- For hybrid KV cache models (e.g., Qwen3.5), enabling prefix caching may result in very large effective block_size (e.g.,
+  2048), meaning prefixes shorter than block_size will never be cached
+tuning_advice:
+  summary: Enable for workloads with shared prompt prefixes to reduce prefill computation; disable for Mamba/hybrid models
+    unless mamba_cache_mode=align is also set, and be aware of large effective block sizes
+  suggested_values:
+  - scenario: Standard transformer models with shared prefixes (e.g., system prompts, RAG)
+    value: 'true'
+    reason: Reuses KV cache across requests with common prefixes, reducing prefill latency and compute
+  - scenario: Mamba/hybrid models (e.g., Qwen3.5) on Ascend
+    value: 'false'
+    reason: Hybrid KV cache may produce very large effective block_size (e.g., 2048), making short prefixes uncacheable; also
+      raises NotImplementedError in CPU offloading path
+  - scenario: Mamba/hybrid models requiring prefix caching on Ascend
+    value: true (with --mamba-cache-mode align)
+    reason: Forces mamba_block_size to equal block_size for consistent hashing, but still subject to large effective block_size
+      limitation
+  - scenario: Workloads with unique prompts and no shared prefixes
+    value: 'false'
+    reason: Avoids hash computation overhead and extra memory for Mamba block allocation without benefit
+  caveats:
+  - On Ascend with hybrid KV cache models, enabling prefix caching may cause block_size to be adjusted to a very large value
+    (e.g., 2048), rendering prefix caching ineffective for short prefixes
+  - Enabling prefix caching for Mamba models increases Mamba blocks per request from 1 to max_num_blocks_per_req, significantly
+    increasing memory usage
+  - CPU offloading connector only functions when prefix caching is enabled; disabling it also disables KV transfer to CPU
+  - The upstream CacheConfig default is True, but the CLI default is None, meaning the config default applies unless explicitly
+    overridden
+  quick_guide: Enable --enable-prefix-caching for workloads with shared prefixes on standard transformer models; disable for
+    Mamba/hybrid models on Ascend unless --mamba-cache-mode align is also set
+analysis_date: '2026-07-06'

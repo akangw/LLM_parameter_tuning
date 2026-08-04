@@ -1,0 +1,87 @@
+name: --safetensors-prefetch-block-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/load.py:13
+- vllm/config/load.py:90
+- vllm/engine/arg_utils.py:361
+- vllm/engine/arg_utils.py:432
+- vllm/engine/arg_utils.py:858
+- vllm/engine/arg_utils.py:1602
+- docs/source/tutorials/models/DeepSeek-V4-Pro.md:190
+value_type: int
+default: 16777216
+valid_choices: '>= 1'
+cli_example: --safetensors-prefetch-block-size 16M
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This option sets the byte count passed to each file read performed by each safetensors page-cache prefetch
+  worker. It can therefore change cold model startup I/O granularity and the transient userspace read-buffer footprint, but
+  it does not change inference after weights are loaded. The pinned upstream implementation starts prefetch in a daemon thread,
+  partitions checkpoint files across distributed ranks, and uses a thread pool whose workers each repeatedly call read(block_size).
+  The setting is consumed only by the ordinary safetensors iterator when explicit prefetch is selected or when the null load
+  strategy automatically enables prefetch for a recognized network filesystem whose checkpoint fits the RAM threshold. The
+  pinned vllm-ascend tree has no override or direct reference to this option, although its deployment documentation uses the
+  upstream prefetch strategy.
+usage_locations:
+- file: vllm/config/load.py:13
+  context: Defines the current default as 16 MiB.
+- file: vllm/config/load.py:90
+  context: Defines the integer field, enforces a minimum of one byte, and describes it as the read size for checkpoint prefetch.
+- file: vllm/engine/arg_utils.py:361
+  context: Gives this CLI option the human-readable integer parser, so suffixes such as 16M are accepted.
+- file: vllm/engine/arg_utils.py:858
+  context: Registers the command-line option from LoadConfig metadata.
+- file: vllm/engine/arg_utils.py:1602
+  context: Propagates the parsed value into LoadConfig for model loading.
+- file: docs/source/tutorials/models/DeepSeek-V4-Pro.md:190
+  context: The pinned vllm-ascend deployment guide selects the prefetch strategy under which this upstream setting can take
+    effect.
+related_parameters:
+- name: --safetensors-load-strategy
+  relation: This block size is used only when page-cache prefetch is active, either through the explicit prefetch strategy
+    or automatic network-filesystem prefetch under the null default.
+- name: --safetensors-prefetch-num-threads
+  relation: Sets the maximum number of concurrent file readers; together with block size it bounds the read calls in flight
+    and their transient buffers.
+- name: --model-loader-extra-config
+  relation: enable_multithread_load selects a different safetensors iterator in the inspected upstream loader and bypasses
+    this prefetch setting.
+- name: --load-format
+  relation: Specialized and non-safetensors loaders bypass the ordinary safetensors iterator that consumes this value.
+constraints:
+- The value must be at least 1 byte; both LoadConfig validation and the prefetch helpers enforce this.
+- The default is 16777216 bytes (16 MiB), not the 2 MiB value recorded by the legacy migration hint.
+- The setting has no effect unless page-cache prefetch is active in the ordinary safetensors iterator.
+- Each worker reads one block at a time, so increasing the value increases transient userspace buffer size per active worker.
+- Prefetch can warm page cache for the full checkpoint; block size does not remove the strategy's overall host-RAM and page-cache
+  requirements.
+tuning_advice:
+  summary: Keep the 16 MiB default unless clean-cache startup measurements on the target storage show that a different read
+    granularity is useful.
+  suggested_values:
+  - scenario: General deployment or no storage-specific benchmark
+    value: 16777216
+    reason: This is the current source default and avoids speculative tuning for a workload that affects startup only.
+  - scenario: Host-memory pressure from several concurrent prefetch workers
+    value: 4194304
+    reason: A smaller block reduces each worker's temporary read buffer, at the cost of more read calls; validate cold-start
+      time before adopting it.
+  - scenario: High-latency storage where syscall granularity is suspected to limit cold start
+    value: 67108864
+    reason: A larger block performs fewer read calls for a checkpoint of fixed size, but increases per-worker temporary buffers
+      and requires a storage-specific benchmark rather than being assumed faster.
+  caveats:
+  - This changes model initialization latency, not steady-state request latency or token throughput.
+  - The total transient read-buffer footprint scales approximately with active prefetch workers times block size.
+  - Operating-system readahead, filesystem behavior, cache state, shard sizes, rank count, and thread count can dominate the
+    result.
+  - Ascend deployment examples enable prefetch but do not provide evidence for overriding the upstream 16 MiB default.
+  - If enable_multithread_load selects the alternate iterator, changing this option has no effect.
+  quick_guide: Keep 16 MiB; benchmark smaller blocks for buffer pressure and larger blocks only for demonstrated cold-start
+    I/O overhead.
+analysis_date: '2026-07-27'

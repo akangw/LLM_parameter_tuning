@@ -1,0 +1,49 @@
+name: compilation.static_all_moe_layers
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/forward_context.py:217
+- vllm/model_executor/layers/fused_moe/layer.py:349
+value_type: list[str]
+default: '[]'
+valid_choices: list of MoE layer prefix strings (auto-populated at model load)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter is an internal list automatically populated during model loading. Each FusedMoE layer appends
+  its prefix (layer name) to this list at initialization (vllm/model_executor/layers/fused_moe/layer.py:349). It is only consumed
+  when `compilation_config.fast_moe_cold_start` is True (vllm/forward_context.py:217), where it is passed to ForwardContext
+  as `all_moe_layers`. This enables the "fast MoE cold start" compilation optimization, which pre-compiles all MoE layers
+  to avoid JIT compilation latency on the first inference step. On Ascend NPU, this can reduce cold-start latency for MoE
+  models by avoiding CANN graph compilation delays during the first forward pass. However, it is not a user-tunable parameter
+  — it is automatically populated and has no direct CLI or config exposure. Its performance effect is limited to the first
+  inference step only.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/layer.py:349
+  context: Each FusedMoE layer appends its prefix to static_all_moe_layers during __init__
+- file: vllm/forward_context.py:217
+  context: Read when fast_moe_cold_start is True to populate ForwardContext.all_moe_layers
+related_parameters:
+- name: compilation_config.fast_moe_cold_start
+  relation: static_all_moe_layers is only used when fast_moe_cold_start is True; otherwise it is ignored
+- name: compilation_config.static_forward_context
+  relation: Both are populated during MoE layer init; static_forward_context stores layer references, static_all_moe_layers
+    stores layer names
+constraints: []
+tuning_advice:
+  summary: 'This is an internal auto-populated parameter with no user-facing controls. To benefit from the associated optimization,
+    enable fast_moe_cold_start instead.
+
+    '
+  suggested_values: []
+  caveats:
+  - This parameter is automatically populated and cannot be set directly by users.
+  - Performance benefit is limited to cold-start (first inference step) latency reduction.
+  - On Ascend NPU, the actual cold-start improvement depends on CANN compilation caching behavior.
+  quick_guide: Not user-configurable; enable fast_moe_cold_start to activate the associated MoE cold-start optimization.
+analysis_date: '2026-07-06'

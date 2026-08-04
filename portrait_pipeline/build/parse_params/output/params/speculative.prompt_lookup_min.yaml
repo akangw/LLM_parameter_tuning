@@ -1,0 +1,65 @@
+name: speculative.prompt_lookup_min
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/v1/spec_decode/ngram_proposer.py:15
+- vllm/v1/spec_decode/ngram_proposer_gpu.py:36
+- vllm/v1/spec_decode/ngram_proposer_gpu.py:218
+value_type: int
+default: '1'
+valid_choices: integer >= 1
+cli_example: '--speculative-config ''{"method": "ngram", "prompt_lookup_min": 2}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter sets the minimum n-gram length used by the NgramProposer (both CPU and GPU variants) when searching
+  for matching token sequences in the prompt to generate speculative draft tokens. A larger value requires longer exact matches,
+  which reduces the number of candidate matches found. This directly affects how many draft tokens can be proposed per step,
+  influencing both the acceptance rate of speculative decoding and the computational overhead of the n-gram search itself.
+  On Ascend NPU, the ngram proposer runs on CPU (v1-upstream path) or GPU (v1-upstream GPU path), and the parameter controls
+  the search window size in both cases. The performance impact is low because it only affects the proposer''s match-finding
+  logic, not the main model forward pass.
+
+  '
+usage_locations:
+- file: vllm/v1/spec_decode/ngram_proposer.py:19
+  context: Assigned to self.min_n, used as minimum n-gram length in CPU-based ngram matching
+- file: vllm/v1/spec_decode/ngram_proposer_gpu.py:39
+  context: Assigned to self.min_n in NgramGPUKernel, used in GPU-accelerated ngram matching
+- file: vllm/v1/spec_decode/ngram_proposer_gpu.py:247
+  context: Assigned to self.min_n in NgramProposerGPU wrapper class
+related_parameters:
+- name: speculative.prompt_lookup_max
+  relation: Upper bound for n-gram length; min must be <= max
+- name: speculative.num_speculative_tokens
+  relation: Number of draft tokens proposed after a match; independent of n-gram length but jointly determines proposal behavior
+- name: speculative.method
+  relation: Must be set to 'ngram' for this parameter to take effect
+constraints:
+- prompt_lookup_min must not be None when using ngram speculative decoding (enforced by assert in NgramProposer.__init__)
+- prompt_lookup_min must be less than or equal to prompt_lookup_max
+- prompt_lookup_min must be at least 1 (n-gram length cannot be zero or negative)
+tuning_advice:
+  summary: Use the default value of 1 for most workloads; increase only if draft acceptance rate is too low due to short spurious
+    matches.
+  suggested_values:
+  - scenario: General-purpose speculative decoding with ngram method
+    value: 1
+    reason: Default value; maximizes the number of candidate matches found, giving the proposer more opportunities to generate
+      draft tokens
+  - scenario: High-precision drafting where short matches produce low-quality proposals
+    value: 3
+    reason: Requires longer exact matches, reducing false-positive proposals and potentially improving acceptance rate at
+      the cost of fewer draft opportunities
+  caveats:
+  - Setting prompt_lookup_min too high may result in very few or zero matches, effectively disabling speculative decoding
+    benefits
+  - On Ascend NPU, the ngram proposer runs on CPU by default (v1 path), so this parameter does not affect NPU compute directly
+  - The GPU-accelerated ngram proposer (NgramProposerGPU) is designed for CUDA devices and may not be available or optimized
+    for Ascend NPU
+  quick_guide: Start with the default value of 1; increase to 2-3 only if you observe low draft acceptance rates due to overly
+    short n-gram matches.
+analysis_date: '2026-07-06'

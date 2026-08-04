@@ -1,0 +1,115 @@
+name: additional_config.fuse_allreduce_rms
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:379
+- vllm_ascend/ascend_config.py:487
+- vllm_ascend/platform.py:399
+- vllm_ascend/compilation/compiler_interface.py:259
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+- vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:29
+- vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:134
+- docs/source/user_guide/configuration/additional_config.md:136
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":false,"fuse_allreduce_rms":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: The effective Ascend setting is fuse_allreduce_rms under additional_config.ascend_compilation_config. On the
+  custom Ascend fusion-pass compiler path, true registers MatmulAllReduceAddRMSNormPass. For an exact tensor-parallel graph
+  consisting of an unquantized GEMM, tensor-model-parallel all-reduce, residual handling, and AddRMSNorm, the pass replaces
+  the sequence with the Ascend matmul_allreduce_add_rmsnorm operator. Its implementation changes the all-reduce to a ReduceScatter/AllGather
+  scheme and runs only for compile ranges whose start exceeds 512 tokens. A successful match can reduce communication/computation
+  overhead, operator launches, and intermediate traffic, improving latency and throughput; false leaves the original sequence.
+  The option is disabled by the typed Ascend default because the documentation reports a conflict with sequence parallelism.
+  With the default enable_npugraph_ex=true, this flag adds the 512-token compile-range boundary but the pinned backend configuration
+  does not pass it to GraphFusionPassManager, so the explicit rewrite described here is on the enable_npugraph_ex=false path.
+  Upstream vLLM has a same-named compilation pass option, but it controls different CUDA/HIP implementations and does not
+  define this Ascend setting's behavior.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:487
+  context: Declares and stores the typed Ascend compilation option with the effective default false.
+- file: vllm_ascend/platform.py:399
+  context: Writes all typed Ascend compilation values back into the nested additional_config mapping, making the false constructor
+    default visible to dictionary consumers.
+- file: vllm_ascend/ascend_config.py:379
+  context: Adds 512 as a compile-range split point when the effective flag is enabled, aligning graph ranges with the pass's
+    strict greater-than-512 applicability condition.
+- file: vllm_ascend/compilation/compiler_interface.py:259
+  context: Selects npugraph_ex when enabled and the custom fusion_pass_compile path when disabled.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+  context: Appends MatmulAllReduceAddRMSNormPass to the custom graph-fusion pass list only when enabled.
+- file: vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:134
+  context: Registers middle- and last-layer patterns, performs their replacement, and restricts the pass to compile ranges
+    starting above the 512-token fusion threshold.
+- file: docs/source/user_guide/configuration/additional_config.md:136
+  context: Documents the nested spelling, false default, and conflict with sequence parallelism.
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: The explicit GraphFusionPassManager rewrite is selected by the compiler only when this sibling option is false;
+    when it is true, fuse_allreduce_rms only affects compile-range splitting in the pinned Ascend code.
+- name: compilation_config.pass_config.enable_sp
+  relation: Ascend documentation says the all-reduce/RMSNorm fusion is disabled by default because it conflicts with sequence
+    parallelism, whose passes are configured by this upstream option.
+- name: tensor_parallel_size
+  relation: A benefit requires a tensor-model-parallel all-reduce in the matched graph; ordinary single-rank execution has
+    no such communication sequence to fuse.
+constraints:
+- Supply the value under additional_config.ascend_compilation_config; the task's shortened portrait name does not mean that
+  a top-level additional_config.fuse_allreduce_rms key is consumed.
+- The explicit rewrite requires enable_npugraph_ex=false and a compiled FX graph matching the exact unquantized-GEMM, tensor-parallel-all-reduce,
+  residual, and AddRMSNorm patterns.
+- MatmulAllReduceAddRMSNormPass is applicable only when compile_range.start is greater than 512; smaller-token ranges remain
+  unfused.
+- Do not combine this pass with sequence parallelism without workload-specific correctness and performance validation; the
+  pinned Ascend guide identifies a conflict and defaults the flag off.
+tuning_advice:
+  summary: Keep false unless using the custom Ascend compiler path with tensor parallelism, sequence parallelism disabled,
+    and a representative benchmark that confirms the matching fused operator improves the target workload.
+  suggested_values:
+  - scenario: Tensor-parallel Ascend serving with enable_npugraph_ex=false, enable_sp=false, and matching graphs above 512
+      tokens
+    value: true
+    reason: Enables replacement of the eligible GEMM/all-reduce/AddRMSNorm sequence with the fused Ascend operator, which
+      can lower communication and launch overhead.
+  - scenario: Default deployment, sequence parallelism, small-token ranges, or an unverified model
+    value: false
+    reason: This is the typed and documented default, avoids the stated sequence-parallel conflict, and avoids enabling a
+      conditional rewrite where its graph and token-range requirements are unmet.
+  - scenario: Diagnosing compilation, numerical, or distributed-communication behavior
+    value: false
+    reason: Removes this graph rewrite so the unfused tensor-parallel operation sequence provides a clear comparison baseline.
+  caveats:
+  - True only registers an eligible pass; it does not guarantee that the model graph matches or that end-to-end latency improves.
+  - The pass threshold is based on the compile range rather than a promise that every request in a mixed workload will receive
+    the same benefit.
+  - The source gives no universal speedup, so compare steady-state latency and throughput with identical model, tensor-parallel
+    topology, shapes, and concurrency.
+  - The fused operation changes transient activation and communication behavior, not model-weight or KV-cache capacity.
+  quick_guide: Start with false. Test true only with enable_npugraph_ex=false and enable_sp=false on a TP workload that reaches
+    compile ranges above 512 tokens; retain it only if profiling confirms matches and an end-to-end gain.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

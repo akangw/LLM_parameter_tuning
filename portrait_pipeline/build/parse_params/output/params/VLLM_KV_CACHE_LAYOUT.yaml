@@ -1,0 +1,82 @@
+name: VLLM_KV_CACHE_LAYOUT
+type: env
+category: kv_cache
+scope: both
+source_file:
+- vllm/envs.py:1446
+- vllm/envs.py:196
+- vllm/v1/attention/backends/utils.py:68
+- vllm/platforms/xpu.py:60
+value_type: str
+default: null
+valid_choices:
+- NHD
+- HND
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Controls the memory layout of the KV cache tensor, which directly affects attention kernel performance and
+  memory access patterns. The layout determines whether the number of blocks (N), number of heads (H), or head size (D) is
+  the innermost dimension. On Ascend NPU, the attention backend''s kernel implementations may be optimized for a specific
+  layout. An incompatible layout can cause the backend to fall back to a slower kernel path or fail entirely. The default
+  value (None) leaves the choice to the backend, which selects the optimal layout for the hardware. For example, the XPU platform
+  explicitly forces NHD layout because its attention kernels only support that layout. The TRT-LLM attention backend in vLLM
+  V1 requires HND layout for its optimized prefill and decode paths, asserting on this requirement at runtime. On Ascend,
+  the vllm-ascend plugin''s attention backend will similarly have a preferred layout; forcing an unsupported layout may degrade
+  performance or cause errors.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/backends/utils.py:68
+  context: Reads VLLM_KV_CACHE_LAYOUT to determine the KV cache tensor layout for attention backends
+- file: vllm/v1/attention/backends/flashinfer.py:1597
+  context: Asserts KV cache layout is HND for TRT-LLM prefill attention path
+- file: vllm/v1/attention/backends/flashinfer.py:1762
+  context: Asserts KV cache layout is HND for TRT-LLM decode attention path
+- file: vllm/platforms/xpu.py:58
+  context: XPU platform forces NHD layout via set_kv_cache_layout
+related_parameters:
+- name: VLLM_ATTENTION_BACKEND
+  relation: The attention backend determines which KV cache layouts are supported and optimal
+- name: VLLM_SSM_CONV_STATE_LAYOUT
+  relation: Analogous layout parameter for SSM/Mamba models; HND KV cache layout is consistent with DS SSM state layout
+constraints:
+- Only NHD and HND are valid values; any other value will cause a validation error.
+- The TRT-LLM attention backend requires HND layout and will assert if a different layout is used.
+- The XPU platform forces NHD layout and does not support HND.
+tuning_advice:
+  summary: 'Leave VLLM_KV_CACHE_LAYOUT unset (default None) to let the Ascend attention backend choose the optimal layout
+    automatically. Only set it explicitly if you have confirmed the specific layout is supported and beneficial for your Ascend
+    NPU model and backend combination.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with vllm-ascend
+    value: null
+    reason: 'Letting the backend auto-select the layout ensures compatibility with the Ascend-optimized attention kernels
+      and avoids forcing an unsupported or suboptimal memory layout.
+
+      '
+  - scenario: Using TRT-LLM attention backend (GPU-only, not applicable to Ascend)
+    value: HND
+    reason: 'The TRT-LLM backend''s optimized prefill and decode paths require HND layout for contiguous memory access patterns.
+
+      '
+  caveats:
+  - 'Forcing an unsupported layout on Ascend NPU may cause the attention backend to fail or fall back to a slower kernel path,
+    significantly degrading throughput and latency.
+
+    '
+  - 'The optimal layout depends on the specific attention backend and model architecture. vllm-ascend may have its own preferred
+    layout that differs from upstream vLLM defaults.
+
+    '
+  quick_guide: 'Do not set VLLM_KV_CACHE_LAYOUT on Ascend NPU unless explicitly recommended by vllm-ascend documentation for
+    your specific model and backend.
+
+    '
+analysis_date: '2026-07-06'

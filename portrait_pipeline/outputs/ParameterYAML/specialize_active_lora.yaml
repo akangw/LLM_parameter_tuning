@@ -1,0 +1,107 @@
+name: --specialize-active-lora
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/lora.py:67
+- vllm/engine/arg_utils.py:579
+- vllm/engine/arg_utils.py:1262
+- vllm/engine/arg_utils.py:2001
+- vllm/v1/cudagraph_dispatcher.py:64
+- vllm/v1/cudagraph_dispatcher.py:114
+- vllm/v1/cudagraph_dispatcher.py:181
+- vllm/v1/cudagraph_dispatcher.py:282
+- vllm_ascend/worker/model_runner_v1.py:2707
+- vllm_ascend/worker/model_runner_v1.py:3199
+- vllm_ascend/worker/model_runner_v1.py:3297
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-lora --specialize-active-lora
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'With LoRA and cudagraph LoRA specialization enabled, this option changes graph keys and LoRA kernel metadata
+  from one conservative active-adapter count (max_loras + 1) to count-specific buckets: powers of two through max_loras plus
+  max_loras + 1. Runtime active-adapter counts are rounded up to the nearest captured bucket. Upstream GPU kernels can therefore
+  launch a grid closer to actual Multi-LoRA demand, which can reduce serving latency and improve throughput, but every active-count
+  bucket is crossed with graph capture sizes, increasing graph-capture startup work and device memory. Ascend uses the same
+  V1 dispatcher for ACLGraph selection and supplies the runtime number of distinct adapters, so enabling the flag also creates
+  count-specific ACLGraph descriptors. However, the current Ascend Punica path does not consume this flag to size its custom
+  NPU LoRA kernels, and its capture dummy-run temporarily activates max_loras adapters; consequently the pinned Ascend source
+  establishes the extra capture variants but not the upstream GPU kernel-grid speedup.'
+usage_locations:
+- file: vllm/config/lora.py:67
+  context: Defines the false default and documents active-count graph specialization, its possible runtime benefit, and its
+    startup-time and memory costs.
+- file: vllm/engine/arg_utils.py:2001
+  context: Copies the CLI-derived value into LoRAConfig when LoRA support is enabled.
+- file: vllm/v1/cudagraph_dispatcher.py:114
+  context: Builds LoRA graph cases; when the compilation-level LoRA graph switch is enabled, this flag selects count-specific
+    capture buckets.
+- file: vllm/v1/cudagraph_dispatcher.py:181
+  context: Crosses each LoRA-count case with graph capture descriptors, increasing captured graph variants as active-count
+    buckets are added.
+- file: vllm/v1/cudagraph_dispatcher.py:282
+  context: Normalizes each runtime active-adapter count to the nearest captured bucket, or to max_loras + 1 while count specialization
+    is disabled.
+- file: vllm_ascend/worker/model_runner_v1.py:2707
+  context: Counts distinct active LoRA requests and passes that count to the shared graph dispatcher for Ascend runtime selection.
+- file: vllm_ascend/worker/model_runner_v1.py:3199
+  context: Passes the requested active-adapter count into graph dispatch while preparing Ascend graph-capture dummy runs.
+- file: vllm_ascend/worker/model_runner_v1.py:3297
+  context: Uses max_loras for the actual dummy LoRA activation as a temporary Ascend accuracy workaround, limiting evidence
+    for count-specific NPU kernel benefits.
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled so that LoRAConfig exists; otherwise this option has no graph or kernel effect.
+- name: --max-loras
+  relation: Sets the upper adapter concurrency and therefore the active-count buckets and number of additional graph variants.
+- name: compilation_config.cudagraph_specialize_lora
+  relation: Must remain true for the dispatcher to construct separate LoRA graph cases; it defaults to true in the pinned
+    upstream source.
+- name: --enforce-eager
+  relation: Disables graph execution, removing the graph-capture side of this optimization and its graph memory cost.
+- name: --cudagraph-capture-sizes
+  relation: Each active-LoRA-count case is combined with applicable capture sizes, so a larger size list magnifies startup
+    and memory costs.
+constraints:
+- Only meaningful when --enable-lora creates a LoRAConfig.
+- Count-specific graph cases require compilation_config.cudagraph_specialize_lora to be true.
+- Graph specialization has no effect when the resolved graph mode is NONE, including enforced eager execution.
+- The active-count buckets are powers of two up to max_loras plus max_loras + 1; intermediate runtime counts round up to the
+  next bucket.
+tuning_advice:
+  summary: Keep disabled unless measurements show that variable concurrent LoRA counts make conservative GPU LoRA grids expensive
+    enough to justify more captured graphs. On Ascend, keep it disabled in the pinned implementation unless platform-specific
+    benchmarks demonstrate a benefit, because the current source shows additional ACLGraph cases but no count-specialized
+    NPU kernel path.
+  suggested_values:
+  - scenario: Ascend NPU serving with ACLGraph
+    value: false
+    reason: The shared dispatcher would add active-count graph descriptors, while the current Ascend Punica implementation
+      does not read this option to specialize its NPU kernel grid.
+  - scenario: GPU serving with fixed or usually single-adapter batches
+    value: false
+    reason: A conservative capture avoids multiplying graph variants when active-count-specific grids offer little workload
+      benefit.
+  - scenario: GPU Multi-LoRA serving with frequently varying concurrent adapter counts
+    value: true
+    reason: Powers-of-two active-count buckets can reduce overprovisioned LoRA kernel grids; enable only after benchmarks
+      outweigh capture-time and graph-memory growth.
+  caveats:
+  - More active-count buckets increase startup capture work and device memory roughly in combination with the configured graph
+    capture sizes and modes.
+  - The performance gain is workload- and backend-dependent; the source promises only that it can improve variable-LoRA patterns.
+  - Ascend LoRA support is experimental, and its current custom Punica operators do not consume specialize_active_lora.
+  - The Ascend capture dummy-run currently activates max_loras adapters as an accuracy workaround even when the dispatcher
+    descriptor carries another count.
+  quick_guide: Start false. For GPU Multi-LoRA, benchmark true using the production distribution of simultaneous adapters
+    and compare steady-state latency and throughput against startup time and graph memory. Retain false on Ascend unless an
+    NPU benchmark shows a net gain.
+analysis_date: '2026-07-28'

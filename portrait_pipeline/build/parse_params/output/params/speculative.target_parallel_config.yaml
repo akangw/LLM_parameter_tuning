@@ -1,0 +1,53 @@
+name: speculative.target_parallel_config
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: dict
+default: <computed>
+valid_choices: null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This nested configuration controls the tensor parallelism (TP) and pipeline parallelism (PP) settings for
+  the target model in speculative decoding. On Ascend NPU, the primary performance impact comes from the tensor_parallel_size
+  field, which determines how many NPUs are used for the target model''s forward pass. The test code in vllm-ascend explicitly
+  sets target_parallel_config.tensor_parallel_size = 1 alongside draft_parallel_config.tensor_parallel_size = 1, with a TODO
+  comment indicating that target_tp != draft_tp is not yet supported on Ascend. This means the parameter currently has limited
+  tuning flexibility on Ascend — it must match the draft model''s TP size. When target_tp != draft_tp support is added, this
+  parameter will directly affect target model throughput and memory usage by controlling the degree of model parallelism.
+
+  '
+usage_locations:
+- file: tests/ut/spec_decode/a2/test_eagle_proposer.py:286
+  context: Set to 1 in test_initialization_draft_model; TODO notes target_tp != draft_tp not yet supported
+- file: tests/ut/spec_decode/a2/test_eagle_proposer.py:2787
+  context: Set to 1 in setUp for AscendDraftModelProposer integration tests
+related_parameters:
+- name: speculative.draft_parallel_config
+  relation: Must match draft_parallel_config.tensor_parallel_size on Ascend (target_tp != draft_tp not supported)
+- name: speculative.draft_tensor_parallel_size
+  relation: Legacy parameter; target_parallel_config.tensor_parallel_size should match this value
+- name: parallel_config.tensor_parallel_size
+  relation: Target model TP size; target_parallel_config overrides this for speculative decoding
+constraints:
+- target_parallel_config.tensor_parallel_size must equal draft_parallel_config.tensor_parallel_size on Ascend NPU (target_tp
+  != draft_tp is not yet supported)
+tuning_advice:
+  summary: 'On Ascend NPU, keep target_parallel_config.tensor_parallel_size equal to draft_parallel_config.tensor_parallel_size.
+    Currently only TP=1 is tested and supported for speculative decoding with draft models on Ascend.
+
+    '
+  suggested_values:
+  - scenario: Ascend NPU speculative decoding with draft model (current limitation)
+    value: 'tensor_parallel_size: 1'
+    reason: Ascend vllm-ascend currently requires target_tp == draft_tp; TP=1 is the tested and supported configuration
+  caveats:
+  - target_tp != draft_tp is explicitly noted as not yet supported on Ascend (see TODO in test_eagle_proposer.py:284)
+  - Changing this value independently of draft_parallel_config may cause runtime errors or undefined behavior on Ascend
+  quick_guide: Match target_parallel_config.tensor_parallel_size to draft_parallel_config.tensor_parallel_size; use TP=1 on
+    Ascend until asymmetric TP is supported
+analysis_date: '2026-07-06'

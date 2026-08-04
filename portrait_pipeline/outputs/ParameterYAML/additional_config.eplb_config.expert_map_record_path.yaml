@@ -1,0 +1,91 @@
+name: additional_config.eplb_config.expert_map_record_path
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:634
+- vllm_ascend/ascend_config.py:664
+- vllm_ascend/worker/model_runner_v1.py:466
+- vllm_ascend/eplb/eplb_updator.py:55
+- vllm_ascend/eplb/eplb_updator.py:81
+- vllm_ascend/eplb/adaptor/vllm_adaptor.py:124
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:49
+value_type: str
+default: null
+valid_choices: A path string ending in .json and containing a writable parent directory, or null.
+cli_example: --additional-config '{"eplb_config":{"expert_map_record_path":"/path/to/eplb.json"}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'A non-null path is not merely an output filename: Ascend validation forces dynamic_eplb to true, which creates
+  the EPLB process, shared state, loader, and communication group and performs periodic cross-rank MoE-load collection during
+  inference. After expert_heat_collection_interval plus algorithm_execution_interval steps and the per-layer update phase,
+  rank 0 serializes the calculated expert maps to this JSON path. In recording mode, the updater deliberately skips applying
+  expert-map and weight updates, so the current run pays the collection, planning, communication, and file-write overhead
+  without receiving live rebalancing gains. The recorded map can improve throughput or tail latency only on a later run when
+  supplied through expert_map_path. A null value leaves this recording trigger inactive unless dynamic_eplb is enabled separately.
+  The pinned upstream vLLM repository has EPLB configuration but no expert_map_record_path field, so this behavior is Ascend-specific.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:664
+  context: Forces dynamic_eplb on, requires a .json suffix, creates the parent directory, and enforces the EPLB environment
+    gate.
+- file: vllm_ascend/worker/model_runner_v1.py:466
+  context: Uses the forced dynamic_eplb value to launch the EPLB process and construct its loader, shared state, and updater.
+- file: vllm_ascend/eplb/eplb_updator.py:81
+  context: Exports the calculated expert maps at the end of each collection and algorithm cycle when a record path is present.
+- file: vllm_ascend/eplb/eplb_updator.py:131
+  context: Applies live expert-map and weight updates only when the record path is null, making record mode a map-generation
+    run.
+- file: vllm_ascend/eplb/adaptor/vllm_adaptor.py:124
+  context: Converts the global expert-map tensor to the JSON structure and writes it on rank 0.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:49
+  context: Documents EXPERT_MAP_RECORD=true, initial map recording, and reuse through expert_map_path on later deployments.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: A non-null record path automatically sets this to true and activates dynamic EPLB infrastructure.
+- name: additional_config.eplb_config.expert_map_path
+  relation: Accepts the generated JSON on subsequent deployments to start from the recorded static expert placement.
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: Controls the number of iterations before load collection and therefore contributes to the recording cadence.
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Adds the planner interval between load collection and export of the calculated map.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Controls redundant expert capacity represented in the generated placement and has separate device-memory cost.
+- name: EXPERT_MAP_RECORD
+  relation: Must be exactly true, unless DYNAMIC_EPLB is true or 1, to pass configuration validation and load the required
+    multiprocessing patch.
+constraints:
+- The value must be null or a string whose final five characters are .json; suffix validation is case-sensitive.
+- A non-null value forces dynamic_eplb=true and requires DYNAMIC_EPLB=true or 1, or EXPERT_MAP_RECORD=true, in the process
+  environment.
+- Set the environment variable before process startup because Ascend conditionally imports its multiprocessing executor patch
+  at module import time.
+- The path must include a writable parent directory; validation calls os.makedirs on the derived directory and rank 0 later
+  overwrites the JSON file.
+- Dynamic EPLB requires expert parallelism with an expert-parallel size greater than one.
+- Dynamic EPLB, and therefore recording through this parameter, is unsupported by the Ascend NPU model runner v2.
+tuning_advice:
+  summary: Use a non-null path only for a deliberate Ascend MoE calibration run, then disable recording and load the generated
+    JSON through expert_map_path for serving.
+  suggested_values:
+  - scenario: Initial calibration of an Ascend MoE expert-parallel deployment
+    value: /path/to/eplb.json
+    reason: Records the planned expert placement after representative load has been collected so it can be reused by later
+      serving processes.
+  - scenario: Normal serving after a map has been generated
+    value: default null
+    reason: Avoids recording-mode collection and export overhead; configure expert_map_path with the generated file instead.
+  caveats:
+  - Recording mode does not apply the calculated expert-map and weight changes to the current run.
+  - The calibration traffic should represent production routing, or the recorded static placement can be ineffective when
+    workload skew changes.
+  - The file is rewritten on rank 0 at every completed recording cycle, so the destination must remain writable and consumers
+    should use a completed file.
+  - Coordinate the collection interval, algorithm interval, policy, and redundant-expert count; the path alone does not determine
+    map quality.
+  - This field is absent from the pinned upstream vLLM EPLBConfig and is not portable to an upstream-only deployment.
+  quick_guide: Set EXPERT_MAP_RECORD=true before startup, record representative MoE traffic to a .json path with a parent
+    directory, then set this field back to null and use expert_map_path for subsequent serving.
+analysis_date: '2026-08-03'

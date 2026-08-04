@@ -1,0 +1,7 @@
+name: CompilationConfig.dynamic_shapes_config.assume_32_bit_indexing
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source, this field is declared with a default of false and included only indirectly in CompilationConfig's
+  generic configuration hash; no executable code reads it to select 32-bit indexing or otherwise change compiled execution.
+  The pinned vLLM-Ascend source contains no occurrence of the field. Therefore changing it has no current latency, throughput,
+  or memory effect; the declaration's PyTorch 2.10+ note describes intended rather than implemented behavior.

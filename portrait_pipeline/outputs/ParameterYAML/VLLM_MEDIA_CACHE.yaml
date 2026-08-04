@@ -1,0 +1,81 @@
+name: VLLM_MEDIA_CACHE
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:821
+- docs/usage/security.md:328
+value_type: str
+default: ''
+valid_choices: Empty string to disable caching, or a filesystem directory path that the vLLM process can create and write.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: Enables an on-disk cache for bytes downloaded from HTTP and HTTPS media URLs by the default HTTP media connector.
+  On a cache hit, vLLM reads the saved bytes and avoids the network request, which can reduce request preprocessing latency
+  when image, video, or audio URLs repeat. A miss still performs the download, writes the bytes, and scans the cache directory
+  for TTL and LRU eviction, so caching can add filesystem latency for unique-URL workloads. The setting does not cache decoded
+  media, alter model execution, or affect NPU kernels. vLLM Ascend has no definition or override and therefore inherits this
+  upstream connector behavior.
+usage_locations:
+- file: vllm/envs.py:821
+  context: Reads the directory path from the environment and defaults to an empty string, which disables caching.
+- file: docs/usage/security.md:328
+  context: Documents the media cache as disabled by default and recommends protecting cache directories from untrusted users
+    and storage.
+related_parameters:
+- name: VLLM_MEDIA_CACHE_MAX_SIZE_MB
+  relation: Sets the byte budget used for LRU eviction after a cache write; it matters only when this cache is enabled.
+- name: VLLM_MEDIA_CACHE_TTL_HOURS
+  relation: Sets entry lifetime; expired entries are removed on lookup or during post-write eviction.
+- name: VLLM_MEDIA_CONNECTOR
+  relation: This cache is implemented by the built-in HTTP connector; another connector need not honor it.
+- name: VLLM_MEDIA_LOADING_THREAD_COUNT
+  relation: Sizes the global thread pool used for asynchronous cache reads, writes, and media decoding.
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls network retry behavior on cache misses, while cache hits avoid network fetches and retries.
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Controls image network-fetch timeout on a miss; a cache hit bypasses that network operation.
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Controls video network-fetch timeout on a miss; a cache hit bypasses that network operation.
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Controls audio network-fetch timeout on a miss; a cache hit bypasses that network operation.
+constraints:
+- An empty string disables the cache.
+- A non-empty value must name a directory that can be created and written by the vLLM process; an OSError during setup causes
+  a warning and leaves caching disabled.
+- Only HTTP and HTTPS media loads through the built-in HTTP connector use this cache; data URLs and file URLs bypass it.
+- The cache stores downloaded encoded bytes, not decoded tensors or model outputs.
+- The cache directory must be trusted and protected from untrusted writers because cached content is consumed by the serving
+  process.
+tuning_advice:
+  summary: Enable the cache only when HTTP media URLs repeat often enough for avoided downloads to outweigh local filesystem
+    reads, writes, and eviction scans.
+  suggested_values:
+  - scenario: Repeated media URLs with a fast local persistent volume
+    value: /var/cache/vllm/media
+    reason: Reuses downloaded bytes across requests and can substantially reduce preprocessing latency when network fetches
+      dominate.
+  - scenario: Ephemeral deployment with repeated media and fast local scratch storage
+    value: /tmp/vllm-media-cache
+    reason: Provides a simple writable local cache when persistence across restarts is unnecessary; verify that the backing
+      storage has adequate capacity and performance.
+  - scenario: Unique URLs, sensitive media, or slow and contended storage
+    value: ''
+    reason: Keeps the default disabled behavior and avoids cache writes, directory scans, retained media, and low-value disk
+      reads.
+  caveats:
+  - Benefits depend on URL reuse because cache keys are derived from the complete URL string; different URLs for identical
+    content do not share an entry.
+  - A hit still performs a disk read and media decoding, so it does not eliminate all preprocessing latency.
+  - Every successful miss writes the full downloaded payload and scans the directory for expiry and LRU eviction, which can
+    hurt latency on large or slow cache directories.
+  - Cache capacity and lifetime default to 5120 MB and 24 hours; tune the sibling variables and provision disk space before
+    enabling this setting.
+  - Cached media persists on disk until eviction or external cleanup and may contain sensitive input data.
+  - This setting has no direct effect on NPU compute, model memory, KV-cache capacity, or compilation.
+  quick_guide: Keep it empty for mostly unique media; for repeated HTTP URLs, point it at a protected fast local directory
+    and verify hit rate, disk use, and request latency.
+analysis_date: '2026-07-29'

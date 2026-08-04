@@ -1,0 +1,7 @@
+name: --expert-placement-strategy
+type: cli
+performance_impact: none
+skip_reason: In the pinned upstream source this option is defined on ParallelConfig and forwarded from EngineArgs, but has
+  no current consumer. In the pinned vLLM-Ascend EPLB path, the only determine_expert_map call does not forward this setting,
+  so it uses that function's default placement behavior. The setting therefore has no verified latency, throughput, or memory
+  effect in the pinned repositories.

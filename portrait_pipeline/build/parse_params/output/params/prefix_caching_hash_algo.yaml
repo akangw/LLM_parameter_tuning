@@ -1,0 +1,65 @@
+name: --prefix-caching-hash-algo
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1100
+- vllm/config/cache.py:93
+value_type: str
+default: sha256
+valid_choices:
+- sha256
+- sha256_cbor
+- xxhash
+- xxhash_cbor
+cli_example: --prefix-caching-hash-algo sha256_cbor
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter selects the hash function used to compute block hashes for prefix caching. The hash is computed
+  on every request''s token blocks during scheduling (vllm/v1/engine/core.py:205). A faster hash algorithm (xxhash) reduces
+  CPU overhead in the scheduling loop, which can marginally improve throughput and reduce scheduling latency under high request
+  rates. However, the hash computation is typically a tiny fraction of overall inference time, so the performance impact is
+  low. The parameter does not affect NPU-specific execution paths — it is purely a CPU-side scheduling optimization.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/core.py:205
+  context: Retrieves the hash function by name and creates the request block hasher for prefix caching.
+- file: vllm/config/cache.py:196
+  context: Listed in ignored_factors for compute_hash — does not affect compiled graph shape.
+- file: vllm/engine/arg_utils.py:1702
+  context: Passed to CacheConfig constructor during engine config creation.
+related_parameters:
+- name: --enable-prefix-caching
+  relation: This parameter only takes effect when prefix caching is enabled. If prefix caching is disabled, the hash algorithm
+    is never used.
+constraints:
+- Only valid values are 'sha256', 'sha256_cbor', 'xxhash', and 'xxhash_cbor'. Any other value raises an ArgumentError.
+- The 'xxhash' and 'xxhash_cbor' options require the optional xxhash Python package to be installed.
+tuning_advice:
+  summary: Use the default 'sha256' unless you have measured a meaningful CPU bottleneck in the scheduler's hash computation
+    and are willing to accept the (very low) collision risk of xxhash.
+  suggested_values:
+  - scenario: Default / production multi-tenant deployment
+    value: sha256
+    reason: Cryptographically secure, no additional dependencies, and the performance difference is negligible for most workloads.
+  - scenario: High-throughput single-tenant deployment where every microsecond of CPU scheduling overhead matters
+    value: xxhash
+    reason: xxHash is significantly faster than SHA-256 for non-cryptographic hashing, reducing CPU time in the scheduling
+      loop. Requires the xxhash package.
+  - scenario: Cross-language or cross-platform reproducibility of block hashes
+    value: sha256_cbor
+    reason: CBOR serialization provides deterministic, language-agnostic object encoding before SHA-256 hashing, ensuring
+      identical hashes across different Python versions or non-Python clients.
+  caveats:
+  - xxhash and xxhash_cbor are not cryptographically secure. In multi-tenant environments, hash collisions could theoretically
+    lead to cross-tenant KV cache leakage. The risk is very low but non-zero.
+  - The performance gain from xxhash is only noticeable if prefix caching is heavily used and the scheduler processes a very
+    large number of blocks per second. For typical deployments, the difference is unmeasurable.
+  - This parameter has no effect on Ascend NPU execution — it only affects CPU-side hash computation during scheduling.
+  quick_guide: Stick with the default 'sha256' unless you have a specific need for faster hashing (xxhash) or cross-language
+    reproducibility (sha256_cbor).
+analysis_date: '2026-07-06'

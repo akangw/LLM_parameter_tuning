@@ -1,0 +1,108 @@
+name: --max-num-seqs
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1327
+- vllm/config/scheduler.py:63
+- vllm_ascend/platform.py:189
+value_type: int
+default: '128'
+valid_choices: integer >= 1
+cli_example: --max-num-seqs 256
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter controls the maximum number of concurrent sequences (requests) the scheduler can process in\
+  \ a single iteration. It directly bounds batch size, which is the primary lever for throughput on Ascend NPU.\nOn Ascend,\
+  \ the impact is amplified by several vllm-ascend mechanisms:\n1. **CUDA Graph capture size**: vllm-ascend overrides the\
+  \ default\n   `max_cudagraph_capture_size` to `min(max_num_seqs * decode_query_len, 512)`\n   (vllm_ascend/platform.py:211).\
+  \ This means `--max-num-seqs` directly\n   determines how many CUDA graph sizes are captured, affecting startup time\n \
+  \  and memory usage. The upstream vLLM default multiplies by 2; Ascend removes\n   this multiplier to reduce memory pressure.\n\
+  \n2. **Buffer allocation**: Multiple Ascend attention backends allocate tensors\n   sized by `max_num_seqs`:\n   - \"`start_pos_prefill`\
+  \ and `start_pos_decode` tensors in DSA metadata builder\"\n     (vllm_ascend/attention/dsa_v1.py:421-422)\n   - \"`actual_seq_lengths_query`\
+  \ in SFA metadata builder\"\n     (vllm_ascend/attention/sfa_v1.py:208-209)\n   - \"`local_query_start_loc` and `local_seq_lens`\
+  \ in DSA CP builder\"\n     (vllm_ascend/attention/context_parallel/dsa_cp.py:200-209)\n   - \"Slot mapping buffer padding\
+  \ in SFA CP:\"\n     `max_num_batched_tokens + 2 * pcp_size * max_num_seqs`\n     (vllm_ascend/attention/context_parallel/sfa_cp.py:54)\n\
+  \n3. **PCP padding**: In the v1 model runner, `max_num_batched_tokens` is\n   temporarily increased by `pcp_size * 2 * max_num_seqs`\
+  \ to accommodate\n   context-parallel padding (vllm_ascend/worker/model_runner_v1.py:259).\n\n4. **Speculative decoding**:\
+  \ `max_num_seqs` multiplies with\n   `max_num_new_slots_for_drafting` to reserve token budget for draft slots\n   (vllm/config/vllm.py:1437).\
+  \ Setting it too high with speculative decoding\n   can cause `max_num_scheduled_tokens <= 0` errors.\n\n5. **Mamba models**:\
+  \ Each decode sequence requires one Mamba cache block.\n   If `max_num_seqs > num_blocks`, CUDA graph capture raises a ValueError\n\
+  \   (vllm/config/compilation.py:1435-1441).\n\nHigher values increase maximum throughput but consume more NPU memory for\
+  \ buffers and KV cache. Lower values reduce memory pressure and startup time but cap concurrency.\n"
+usage_locations:
+- file: vllm/config/scheduler.py:63
+  context: Field definition with default=128, ge=1
+- file: vllm/config/scheduler.py:273
+  context: 'Validation: max_num_batched_tokens must be >= max_num_seqs'
+- file: vllm_ascend/platform.py:202
+  context: Used to compute default max_cudagraph_capture_size
+- file: vllm_ascend/worker/model_runner_v1.py:259
+  context: PCP padding calculation for max_num_batched_tokens
+- file: vllm_ascend/worker/model_runner_v1.py:295
+  context: Sets self.max_num_reqs for buffer sizing
+- file: vllm_ascend/attention/dsa_v1.py:421
+  context: Allocates start_pos_prefill/start_pos_decode tensors
+- file: vllm_ascend/attention/sfa_v1.py:208
+  context: Allocates actual_seq_lengths_query tensor
+- file: vllm_ascend/attention/context_parallel/dsa_cp.py:200
+  context: Allocates start_pos_prefill and local tensors
+- file: vllm_ascend/attention/context_parallel/sfa_cp.py:54
+  context: Slot mapping buffer padding calculation
+- file: vllm/config/vllm.py:1437
+  context: Speculative decoding token budget calculation
+- file: vllm/config/compilation.py:677
+  context: Upstream default max_cudagraph_capture_size derivation
+related_parameters:
+- name: --max-num-batched-tokens
+  relation: Must be >= max_num_seqs; together they bound batch dimensions
+- name: --max-model-len
+  relation: max_num_batched_tokens should not exceed max_num_seqs * max_model_len
+- name: --enable-chunked-prefill
+  relation: Required if max_num_batched_tokens < max_model_len
+- name: --gpu-memory-utilization
+  relation: Higher max_num_seqs requires more KV cache memory; may need to adjust this
+- name: --num-speculative-tokens
+  relation: 'Affects token budget reservation: max_num_seqs * max_num_new_slots_for_drafting'
+- name: --max-cudagraph-capture-size
+  relation: Ascend derives default from max_num_seqs; explicit setting overrides
+constraints:
+- --max-num-seqs must be >= 1
+- --max-num-batched-tokens must be >= --max-num-seqs
+- For Mamba models with full CUDA graphs, --max-num-seqs must not exceed available Mamba cache blocks (num_blocks)
+- With speculative decoding, --max-num-seqs * max_num_new_slots_for_drafting must leave room for at least one scheduled token
+tuning_advice:
+  summary: 'Set --max-num-seqs based on available NPU memory and target concurrency. On Ascend, this parameter also controls
+    CUDA graph capture size (capped at 512), so larger values increase startup time. Start with 128-256 for most models, reduce
+    if OOM occurs.
+
+    '
+  suggested_values:
+  - scenario: High-throughput serving with abundant NPU memory (e.g., Qwen3-235B on multi-NPU)
+    value: '144'
+    reason: Documented as providing good weight prefetch performance for Qwen3-235B-A22B-W8A8
+  - scenario: Moderate concurrency for dense models (e.g., Qwen3-32B-W8A8)
+    value: '72'
+    reason: Documented as providing good weight prefetch performance for Qwen3-32B-W8A8
+  - scenario: Memory-constrained deployment or OOM at startup
+    value: '32'
+    reason: Reduces buffer allocations and KV cache pressure; documented as first troubleshooting step for OOM
+  - scenario: General-purpose serving with balanced memory/throughput
+    value: '128'
+    reason: Matches the upstream default; reasonable starting point for most Ascend deployments
+  caveats:
+  - On Ascend, --max-num-seqs directly controls CUDA graph capture size (capped at 512). Values above 512 do not increase
+    graph capture but still allocate larger buffers.
+  - Context-parallel (PCP) deployments add padding of `pcp_size * 2 * max_num_seqs` to max_num_batched_tokens, increasing
+    memory usage.
+  - Higher values increase NPU memory consumption for attention metadata tensors (start_pos, seq_lens, slot_mapping buffers).
+  - With speculative decoding, setting max_num_seqs too high can cause max_num_scheduled_tokens to become <= 0, raising a
+    ValueError.
+  - For Mamba-family models, max_num_seqs must not exceed the number of available Mamba cache blocks.
+  quick_guide: Start with 128, reduce to 32-72 if OOM, increase to 144-256 for high-throughput scenarios with sufficient NPU
+    memory.
+analysis_date: '2026-07-06'

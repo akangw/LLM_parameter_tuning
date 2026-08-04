@@ -1,0 +1,7 @@
+name: --max-long-partial-prefills
+type: cli
+performance_impact: none
+skip_reason: On Ascend, platform configuration resets max_num_partial_prefills to 1 because concurrent partial prefills are
+  a ROCm-specific optimization (vllm_ascend/platform.py). SchedulerConfig requires max_long_partial_prefills to be no greater
+  than that value (vllm/config/scheduler.py), so the only effective valid value is 1; the Ascend scheduler sources do not
+  consume this setting. It therefore has no latency, throughput, or memory tuning effect on the pinned Ascend target.

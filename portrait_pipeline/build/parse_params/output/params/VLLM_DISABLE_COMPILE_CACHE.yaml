@@ -1,0 +1,70 @@
+name: VLLM_DISABLE_COMPILE_CACHE
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:309
+- vllm/envs.py:1118
+- vllm/envs.py:131
+value_type: bool
+default: false
+valid_choices:
+- 0 (false, cache enabled)
+- 1 (true, cache disabled)
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When VLLM_DISABLE_COMPILE_CACHE=0 (default), vLLM caches torch.compile artifacts (Inductor compiled graphs
+  and AOT compiled functions) to disk under VLLM_CACHE_ROOT/torch_compile_cache/. On subsequent warm starts, these cached
+  artifacts are loaded from disk instead of being recompiled, dramatically reducing startup latency. When set to 1, all compilation
+  caching is disabled — every warm start must recompile all torch.compile graphs from scratch. The code at vllm/compilation/compiler_interface.py:409
+  explicitly warns that disabling the cache "will greatly increase vLLM server warm start times." This affects both the Inductor
+  backend path (vllm/compilation/backends.py:1076) and the AOT compile path (vllm/compilation/decorators.py:564,689). On Ascend
+  NPU, where CANN graph compilation is already expensive, forcing torch.compile recompilation on every restart compounds startup
+  overhead significantly. The parameter does not affect steady-state inference throughput or latency — only startup/warm-up
+  time. No vllm-ascend override was found; the upstream behavior applies directly on Ascend.
+
+  '
+usage_locations:
+- file: vllm/compilation/compiler_interface.py:204
+  context: is_compile_cache_enabled() checks VLLM_DISABLE_COMPILE_CACHE to determine if caching is allowed
+- file: vllm/compilation/backends.py:1076
+  context: Honors VLLM_DISABLE_COMPILE_CACHE to disable Inductor compile cache
+- file: vllm/compilation/decorators.py:564
+  context: Skips loading AOT compiled function from disk when cache is disabled
+- file: vllm/compilation/decorators.py:689
+  context: Skips saving AOT compiled function to disk when cache is disabled
+- file: vllm/compilation/compiler_interface.py:409
+  context: Error message suggests disabling cache as workaround for serialization issues
+related_parameters:
+- name: VLLM_CACHE_ROOT
+  relation: Base directory where compile cache artifacts are stored when caching is enabled
+- name: compilation_config.mode
+  relation: CompilationMode.NONE also disables caching; VLLM_DISABLE_COMPILE_CACHE is an additional opt-out
+- name: force_disable_caches (inductor config)
+  relation: torch._inductor.config.force_disable_caches also disables caching; either being true disables the cache
+constraints:
+- Disabling the compile cache will greatly increase vLLM server warm start times.
+tuning_advice:
+  summary: Keep compile cache enabled (default) for fast warm starts; only disable as a temporary workaround for serialization
+    errors.
+  suggested_values:
+  - scenario: Normal production deployment on Ascend NPU
+    value: 0 (default, cache enabled)
+    reason: Eliminates redundant torch.compile recompilation on every restart, reducing warm start time from minutes to seconds
+  - scenario: Debugging torch.compile serialization errors (e.g., non-serializable model code)
+    value: 1 (cache disabled)
+    reason: Allows the server to start when compiled artifacts cannot be saved to disk; recompilation happens on every restart
+  caveats:
+  - Disabling the cache does NOT affect steady-state inference performance — only startup/warm-up latency is impacted
+  - On Ascend NPU, CANN graph compilation is already time-consuming; adding torch.compile recompilation on every restart compounds
+    the startup delay
+  - The cache is keyed by environment hash, config hash, code hash, and compiler hash — changing any of these invalidates
+    the cache and triggers recompilation even with caching enabled
+  - If you encounter "The compiled artifact is not serializable" errors, disabling the cache is a workaround but the root
+    cause should be fixed for production use
+  quick_guide: Leave at default (0) for production; set to 1 only when debugging serialization errors during development.
+analysis_date: '2026-07-06'

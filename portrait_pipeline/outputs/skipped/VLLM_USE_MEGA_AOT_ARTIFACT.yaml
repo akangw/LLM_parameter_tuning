@@ -1,0 +1,8 @@
+name: VLLM_USE_MEGA_AOT_ARTIFACT
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source declares and parses this environment variable, but no current vLLM runtime code reads
+  it to select mega-AOT artifact loading; the referenced reconstruction, caching, backend, and compiler-interface paths from
+  the legacy profile are absent from the pinned source. The pinned vllm-ascend repository also contains no reference to the
+  variable and uses its own compilation and cache-loading paths, so this setting has no current latency, throughput, or memory
+  effect.

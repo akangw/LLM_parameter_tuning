@@ -1,0 +1,202 @@
+[CmdletBinding()]
+param(
+    [switch]$Foreground,
+    [switch]$Resume,
+    [switch]$RetryPausedCurrent,
+    [switch]$NewSession,
+    [switch]$CheckOnly
+)
+
+$ErrorActionPreference = "Stop"
+$root = $PSScriptRoot
+$downstreamRoot = Split-Path -Parent (Split-Path -Parent $root)
+$pipelineRoot = Split-Path -Parent $downstreamRoot
+
+if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
+    throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
+}
+
+function Get-ControllerProcess {
+    $candidatePids = @()
+    foreach ($pidName in @("controller.lock", "controller.pid")) {
+        $pidPath = Join-Path $root $pidName
+        if (Test-Path -LiteralPath $pidPath) {
+            $value = (Get-Content -Raw -LiteralPath $pidPath).Trim()
+            if ($value -match '^\d+$') {
+                $candidatePids += [int]$value
+            }
+        }
+    }
+    foreach ($candidatePid in ($candidatePids | Select-Object -Unique)) {
+        $process = Get-Process -Id $candidatePid -ErrorAction SilentlyContinue
+        if ($null -eq $process) {
+            continue
+        }
+        $commandLine = (Get-CimInstance Win32_Process `
+            -Filter "ProcessId = $candidatePid" -ErrorAction SilentlyContinue).CommandLine
+        if ($commandLine -and $commandLine -match 'continuous_tuning\.py') {
+            return $process
+        }
+    }
+    return $null
+}
+
+function Resolve-Python {
+    $override = $env:VLLMTKB_PYTHON
+    if ($override) {
+        if (-not (Test-Path -LiteralPath $override)) {
+            throw "VLLMTKB_PYTHON does not exist: $override"
+        }
+        return (Resolve-Path -LiteralPath $override).Path
+    }
+    $command = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $command) {
+        throw "Python was not found. Install Python 3.11+ or set VLLMTKB_PYTHON."
+    }
+    return $command.Source
+}
+
+$running = Get-ControllerProcess
+if ($null -ne $running) {
+    Write-Host "Controller is already running. PID=$($running.Id)"
+    Write-Host "No second controller was started."
+    exit 0
+}
+
+$requiredFiles = @(
+    "continuous_tuning.py",
+    "config.yaml",
+    "agent_decision.schema.json",
+    "failure_decision.schema.json",
+    "remote\image_version_manifest.yaml"
+)
+foreach ($relativePath in $requiredFiles) {
+    $fullPath = Join-Path $root $relativePath
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        throw "Required file is missing: $fullPath"
+    }
+}
+
+$portraitIndexPath = Join-Path $pipelineRoot "portrait_pipeline\build\codex_portrait_pipeline\run\index.json"
+if (-not (Test-Path -LiteralPath $portraitIndexPath)) {
+    throw "Portrait queue index is missing: $portraitIndexPath"
+}
+$portraitIndex = Get-Content -Raw -LiteralPath $portraitIndexPath | ConvertFrom-Json
+$portraitUnfinished = [int]$portraitIndex.summary.pending +
+    [int]$portraitIndex.summary.in_progress +
+    [int]$portraitIndex.summary.error
+if ($portraitUnfinished -gt 0) {
+    throw "Portrait migration is not complete: $portraitUnfinished unfinished tasks."
+}
+
+$tagProgressPath = Join-Path $downstreamRoot "tag_params\output\progress.json"
+if (-not (Test-Path -LiteralPath $tagProgressPath)) {
+    throw "Codex tags have not been generated: $tagProgressPath"
+}
+$tagProgress = Get-Content -Raw -LiteralPath $tagProgressPath | ConvertFrom-Json
+$tagUnfinished = [int]$tagProgress.summary.pending +
+    [int]$tagProgress.summary.in_progress +
+    [int]$tagProgress.summary.error
+if ($tagUnfinished -gt 0) {
+    throw "Codex tags are not complete: $tagUnfinished unfinished items."
+}
+
+$activationPath = Join-Path $root "activation.approved.yaml"
+if (-not (Test-Path -LiteralPath $activationPath)) {
+    throw @"
+Remote activation is intentionally locked. Verify the target image actually
+contains vLLM 418bd6273c03bf48d5066733769e0a74bdc51694 and vllm-ascend
+32c8cf190f596b47f0d0b965e64aea9f2b789ad4, then create:
+$activationPath
+from activation.example.yaml.
+"@
+}
+$activationText = Get-Content -Raw -LiteralPath $activationPath
+if ($activationText -notmatch '(?m)^approved:\s*true\s*$') {
+    throw "Remote activation file does not contain 'approved: true': $activationPath"
+}
+foreach ($requiredIdentity in @(
+    "418bd6273c03bf48d5066733769e0a74bdc51694",
+    "32c8cf190f596b47f0d0b965e64aea9f2b789ad4"
+)) {
+    if ($activationText -notmatch [regex]::Escape($requiredIdentity)) {
+        throw "Remote activation evidence is missing commit $requiredIdentity"
+    }
+}
+
+$python = Resolve-Python
+& $python -c "import yaml, paramiko; print('Python dependencies: OK')"
+if ($LASTEXITCODE -ne 0) {
+    throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r requirements-runtime.txt"
+}
+
+$codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
+if ($null -eq $codex) {
+    $codex = Get-Command codex -ErrorAction SilentlyContinue
+}
+if (($null -eq $codex) -and (-not $env:VLLMTKB_CODEX_COMMAND)) {
+    throw "Codex CLI was not found. Put it on PATH or set VLLMTKB_CODEX_COMMAND."
+}
+
+$mode = "--start"
+if ($RetryPausedCurrent) {
+    $mode = "--retry-paused-current"
+} elseif ($Resume) {
+    $mode = "--resume"
+} elseif (-not $NewSession) {
+    $statePath = Join-Path $root "state.json"
+    if (Test-Path -LiteralPath $statePath) {
+        $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+        $resumableStatuses = @(
+            "initialized",
+            "running",
+            "stop_requested",
+            "paused_controller_error",
+            "stopped_after_current_round",
+            "stopped_after_failed_round"
+        )
+        if ($state.status -eq "paused_for_human") {
+            throw "The last Session is paused for human review. Inspect state.json before resuming."
+        }
+        if ($state.active_run_id -and ($resumableStatuses -contains $state.status)) {
+            $mode = "--resume"
+        }
+    }
+}
+
+Write-Host "Preflight: OK"
+Write-Host "Recommended launch mode: $mode"
+if ($CheckOnly) {
+    Write-Host "Check-only mode: no controller was started and no files were changed."
+    exit 0
+}
+
+$stopFile = Join-Path $root "STOP_REQUESTED"
+if (Test-Path -LiteralPath $stopFile) {
+    $archived = Join-Path $root ("STOP_REQUESTED." + (Get-Date -Format "yyyyMMdd_HHmmss"))
+    Move-Item -LiteralPath $stopFile -Destination $archived
+}
+
+$arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
+if ($Foreground) {
+    & $python @arguments
+    exit $LASTEXITCODE
+}
+
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$stdout = Join-Path $root "controller_process_$timestamp.stdout.log"
+$stderr = Join-Path $root "controller_process_$timestamp.stderr.log"
+$process = Start-Process -FilePath $python -ArgumentList $arguments `
+    -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+$process.Id | Set-Content -LiteralPath (Join-Path $root "controller.pid") -Encoding ascii
+@(
+    "pid=$($process.Id)"
+    "mode=$mode"
+    "started_at=$(Get-Date -Format o)"
+    "stdout=$stdout"
+    "stderr=$stderr"
+) | Set-Content -LiteralPath (Join-Path $root "latest_controller_launch.txt") -Encoding utf8
+
+Write-Host "Continuous controller started. PID=$($process.Id), mode=$mode"
+Write-Host "State: $(Join-Path $root 'state.json')"

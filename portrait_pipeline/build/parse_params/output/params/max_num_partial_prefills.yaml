@@ -1,0 +1,59 @@
+name: --max-num-partial-prefills
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1334
+- vllm/config/scheduler.py:70
+- vllm_ascend/platform.py:985
+value_type: int
+default: '1'
+valid_choices: integer >= 1
+cli_example: --max-num-partial-prefills 4
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On Ascend NPU, vllm-ascend silently overrides this parameter to 1 regardless of user input (vllm_ascend/platform.py:985-990).
+  The override is unconditional — any non-default value triggers a warning and is reset to 1. This means concurrent partial
+  prefills are effectively disabled on Ascend hardware. The parameter controls how many sequences can be partially prefilled
+  in a single scheduler step when chunked prefill is enabled. On GPU platforms, increasing this value allows the scheduler
+  to interleave multiple long prompts, improving latency fairness and throughput under mixed-length workloads. On Ascend,
+  the override neutralizes this optimization, so the parameter has no runtime effect beyond the warning message. The performance
+  impact is classified as "low" because the parameter is forcibly pinned to 1 on Ascend — users cannot change it, and the
+  default behavior (single partial prefill) is the only behavior available.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:985-990
+  context: Ascend platform check resets max_num_partial_prefills to 1 with warning
+- file: vllm/config/scheduler.py:70-72
+  context: Field definition with default=1, ge=1 constraint
+- file: vllm/config/scheduler.py:244-255
+  context: 'Post-init logic: when >1, sets long_prefill_token_threshold and logs concurrent prefills enabled'
+- file: vllm/engine/arg_utils.py:1977
+  context: Passed to SchedulerConfig constructor during engine config creation
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: Must be enabled for max_num_partial_prefills to have any effect
+- name: --max-long-partial-prefills
+  relation: Controls how many of the partial prefills can be long prompts
+- name: --long-prefill-token-threshold
+  relation: Defines the token count above which a prompt is considered 'long' for partial prefill scheduling
+constraints:
+- max_num_partial_prefills must be >= 1 (enforced by pydantic Field(ge=1))
+- On Ascend NPU, vllm-ascend forcibly resets this parameter to 1; any other value is overridden
+tuning_advice:
+  summary: This parameter has no tunable effect on Ascend NPU — vllm-ascend unconditionally resets it to 1.
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: 1
+    reason: vllm-ascend overrides any user-set value to 1; setting a different value only produces a warning log
+  caveats:
+  - vllm-ascend resets max_num_partial_prefills to 1 unconditionally, citing ROCm-specific optimization incompatibility
+  - Concurrent partial prefills are not supported on Ascend; chunked prefill still works but processes only one partial prefill
+    at a time
+  - The warning message 'Parameter is optimized for incompatible platform' appears if any value other than 1 is set
+  quick_guide: Leave at default (1) on Ascend — the platform overrides any other value.
+analysis_date: '2026-07-06'

@@ -1,0 +1,80 @@
+name: VLLM_RAY_DP_PACK_STRATEGY
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1180
+value_type: str
+default: strict
+valid_choices:
+- strict
+- fill
+- span
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: "This environment variable controls how data-parallel (DP) ranks are packed onto Ray nodes when using the Ray-based\
+  \ data-parallel backend. The packing strategy directly affects inter-node communication patterns and resource utilization,\
+  \ which in turn impacts throughput and latency on Ascend NPU clusters.\nThree strategies are available: - \"\\\"strict\\\
+  \": Allocates exactly data-parallel-size-local DP ranks to each selected node.\"\n  This ensures predictable, balanced placement\
+  \ and is required for DeepEP all-to-all\n  backends (deepep_high_throughput, deepep_low_latency) which mandate that EP ranks\n\
+  \  [0,7], [8,15], etc. reside on the same node.\n- \"\\\"fill\\\": For the DP master node, allocates exactly data-parallel-size-local\
+  \ DP ranks;\"\n  for non-master nodes, allocates as many DP ranks as can fit. This can lead to\n  unbalanced placement and\
+  \ is incompatible with DeepEP backends.\n- \"\\\"span\\\": Allocates one DP rank across as many nodes as required for the\
+  \ configured\"\n  world_size. Should only be used when a single DP rank requires multiple nodes\n  (i.e., when world_size\
+  \ exceeds the maximum device count per node). Uses Ray's\n  \"PACK\" placement strategy instead of \"STRICT_PACK\".\n\n\
+  On Ascend NPU multi-node deployments, the choice of packing strategy affects HCCL communication topology. \"strict\" placement\
+  \ keeps DP groups within single nodes where possible, minimizing cross-node HCCL traffic. \"span\" forces cross-node communication\
+  \ for every DP group, which can significantly increase latency due to inter-node network bandwidth limitations. \"fill\"\
+  \ may create asymmetric communication patterns where some nodes handle more DP ranks than others, leading to load imbalance.\n\
+  This parameter is ignored when data-parallel-backend is not \"ray\".\n"
+usage_locations:
+- file: vllm/v1/engine/utils.py:508
+  context: Reads the strategy to determine Ray placement group creation logic and validates against supported strategies.
+- file: vllm/engine/arg_utils.py:1855
+  context: Checks if strategy is "span" to default data_parallel_size_local to 1 when DP ranks span multiple nodes.
+related_parameters:
+- name: VLLM_DP_SIZE
+  relation: Determines the total number of data-parallel ranks to be packed across nodes.
+- name: data_parallel_size_local
+  relation: When pack strategy is "span", data_parallel_size_local defaults to 1 regardless of VLLM_DP_SIZE.
+- name: data_parallel_backend
+  relation: This env var is only effective when data_parallel_backend is set to "ray".
+- name: all2all_backend
+  relation: '"fill" strategy is incompatible with DeepEP all-to-all backends (deepep_high_throughput, deepep_low_latency);
+    "strict" is required.'
+constraints:
+- VLLM_RAY_DP_PACK_STRATEGY must be one of "strict", "fill", or "span".
+- VLLM_RAY_DP_PACK_STRATEGY is ignored if data-parallel-backend is not "ray".
+- '"fill" strategy cannot be used with DeepEP all-to-all backends (deepep_high_throughput or deepep_low_latency); use "strict"
+  instead.'
+- '"span" strategy requires world_size to be larger than the maximum number of devices per node.'
+- '"span" strategy requires all available nodes to be homogeneous (same number of devices per node).'
+tuning_advice:
+  summary: Use "strict" for most Ascend multi-node deployments to ensure balanced DP rank placement and minimize cross-node
+    HCCL communication overhead.
+  suggested_values:
+  - scenario: Standard multi-node Ascend deployment with homogeneous nodes
+    value: strict
+    reason: Ensures each node gets exactly data-parallel-size-local DP ranks, keeping DP groups within single nodes where
+      possible and minimizing cross-node HCCL traffic.
+  - scenario: Single DP rank requires more devices than available on a single node (world_size > max devices per node)
+    value: span
+    reason: Allows a single DP rank to span multiple nodes when the model's tensor-parallel or pipeline-parallel size exceeds
+      single-node device count.
+  - scenario: Using DeepEP all-to-all backend for expert parallelism
+    value: strict
+    reason: DeepEP kernels require EP ranks [0,7] to be on the same node; "fill" does not guarantee this and will raise a
+      ValueError.
+  caveats:
+  - On Ascend NPU clusters, "span" strategy forces every DP group to communicate across nodes via HCCL, which can significantly
+    increase latency compared to "strict" due to inter-node bandwidth constraints.
+  - '"fill" strategy can create asymmetric load where some nodes host more DP ranks than others, potentially causing memory
+    pressure and uneven throughput on Ascend nodes.'
+  - When using "span", data_parallel_size_local is automatically set to 1, which may affect hybrid load balancing behavior.
+  quick_guide: For Ascend multi-node deployments, prefer VLLM_RAY_DP_PACK_STRATEGY=strict unless a single DP rank must span
+    multiple nodes.
+analysis_date: '2026-07-06'

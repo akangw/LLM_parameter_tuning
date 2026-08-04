@@ -1,0 +1,7 @@
+name: CompilationConfig.enabled_custom_ops
+type: nested
+performance_impact: none
+skip_reason: This init=False Counter is internal bookkeeping, not a configurable tuning input. Upstream vLLM populates it
+  only after each CustomOp has independently selected its enabled or disabled implementation, then reads it solely to log
+  enabled operators and validate names in the separate custom_ops setting. The pinned vLLM Ascend repository neither defines
+  nor directly consumes this field. It therefore has no independent effect on latency, throughput, or memory.

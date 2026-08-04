@@ -1,0 +1,68 @@
+name: HCCL_SO_PATH
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:61
+- vllm_ascend/utils.py:421
+- vllm_ascend/distributed/device_communicators/pyhccl_wrapper.py:192
+value_type: str
+default: null
+valid_choices: any valid filesystem path to an HCCL shared library (e.g., libhccl.so)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'HCCL_SO_PATH specifies the filesystem path to the HCCL (Huawei Collective Communication Library) shared object
+  used by vllm-ascend''s pyhccl communicator backend. When this environment variable is set, the library is loaded via ctypes.CDLL
+  from the explicit path (vllm_ascend/utils.py:426-430). When unset, the system falls back to loading "libhccl.so" via the
+  default dynamic linker search path (vllm_ascend/utils.py:432-433). The HCCL library itself is performance-critical for all
+  multi-NPU collective operations (all-reduce, all-gather, reduce-scatter, broadcast) used in tensor parallelism and pipeline
+  parallelism. However, HCCL_SO_PATH only controls *which* library binary is loaded — it does not tune HCCL behavior. Performance
+  impact is low because in typical deployments the default libhccl.so found via LD_LIBRARY_PATH or CANN installation is the
+  correct and optimized version. Setting this variable is primarily a troubleshooting or multi-version coexistence mechanism,
+  not a performance tuning knob.
+
+  '
+usage_locations:
+- file: vllm_ascend/utils.py:426
+  context: find_hccl_library() reads HCCL_SO_PATH env var; if set, uses it as the explicit so_file path; otherwise falls back
+    to 'libhccl.so'
+- file: vllm_ascend/distributed/device_communicators/pyhccl_wrapper.py:178
+  context: HCCLLibrary.__init__() calls find_hccl_library() to resolve the HCCL shared object path, then loads it via ctypes.CDLL
+- file: vllm_ascend/distributed/device_communicators/pyhccl_wrapper.py:192
+  context: Error message in HCCLLibrary.__init__() advises users to set HCCL_SO_PATH if HCCL library loading fails
+related_parameters:
+- name: ASCEND_HOME_PATH
+  relation: ASCEND_HOME_PATH sets the CANN toolkit home directory; the default HCCL library is typically located under $ASCEND_HOME_PATH/lib/libhccl.so
+- name: LD_LIBRARY_PATH
+  relation: When HCCL_SO_PATH is unset, the dynamic linker searches for libhccl.so using LD_LIBRARY_PATH; this env var can
+    serve as an alternative way to specify the HCCL library location
+constraints:
+- The path specified by HCCL_SO_PATH must point to a valid, loadable HCCL shared library compatible with the current Ascend
+  NPU platform and CANN version.
+- If HCCL_SO_PATH is set but the file does not exist or cannot be loaded, vllm-ascend will raise an error at initialization.
+- HCCL_SO_PATH is only meaningful on Ascend NPU backends; setting it on non-Ascend platforms has no effect.
+tuning_advice:
+  summary: Leave HCCL_SO_PATH unset in production; only set it when you need to use a non-default HCCL library build for debugging
+    or multi-version coexistence.
+  suggested_values:
+  - scenario: Standard production deployment with a single CANN version installed
+    value: unset (default)
+    reason: The default libhccl.so found via the CANN installation path is the optimized, tested version for your Ascend hardware.
+      No manual configuration is needed.
+  - scenario: Multi-version CANN coexistence or custom HCCL build for debugging
+    value: /path/to/custom/libhccl.so
+    reason: Explicitly point to a specific HCCL library build when you need to test a patched version, use a different CANN
+      version, or isolate performance experiments without modifying LD_LIBRARY_PATH globally.
+  caveats:
+  - Using a mismatched HCCL library version (e.g., from a different CANN release) can cause silent correctness errors, hangs,
+    or crashes during collective operations — not just performance degradation.
+  - HCCL_SO_PATH only affects the pyhccl backend; it does not influence the native torch.distributed HCCL backend used by
+    PyTorch itself.
+  - Setting this variable to an incorrect path will cause vllm-ascend to fail at startup with a clear error message, not at
+    runtime during inference.
+  quick_guide: Leave HCCL_SO_PATH unset unless you have a specific reason to use a non-default HCCL library build.
+analysis_date: '2026-07-06'

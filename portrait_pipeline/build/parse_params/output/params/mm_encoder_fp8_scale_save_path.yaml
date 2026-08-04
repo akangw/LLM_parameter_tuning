@@ -1,0 +1,68 @@
+name: --mm-encoder-fp8-scale-save-path
+type: cli
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:171
+- vllm/engine/arg_utils.py:1211
+- vllm/config/model.py:336
+- vllm/model_executor/layers/attention/mm_encoder_attention.py:65
+- vllm/model_executor/layers/attention/mm_encoder_attention.py:107
+value_type: str
+default: None
+valid_choices: any valid file path string
+cli_example: --mm-encoder-fp8-scale-save-path /path/to/auto_scales.json
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter specifies a file path where dynamically calibrated FP8 attention scales for the ViT encoder
+  are saved after the amax history buffer fills. It does not directly affect runtime performance during inference. Its primary
+  purpose is to enable a two-phase workflow: "(1) run with dynamic FP8 scaling and save calibrated scales, then (2) use the"
+  saved scales via `--mm-encoder-fp8-scale-path` for static scaling in subsequent runs. The static scaling path eliminates
+  the overhead of dynamic amax tracking and scale computation, which can improve latency and throughput. However, this parameter
+  itself only controls the save destination; the performance benefit comes from the follow-up static scaling run. The save
+  operation is a one-shot file write that occurs after the amax history buffer wraps (typically after 16 forward passes),
+  causing a single GPU→CPU sync and file I/O stall at that point, which is negligible in the context of a full calibration
+  run.
+
+  '
+usage_locations:
+- file: vllm/config/multimodal.py:171
+  context: Field definition with docstring explaining the save mechanism
+- file: vllm/config/multimodal.py:258
+  context: 'Validation: requires mm_encoder_attn_dtype=''fp8'' and cannot be used with mm_encoder_fp8_scale_path'
+- file: vllm/model_executor/layers/attention/mm_encoder_attention.py:107
+  context: '_maybe_save_fp8_scales function: accumulates scale tensors and dumps to disk on first amax buffer wrap'
+- file: vllm/model_executor/layers/attention/mm_encoder_attention.py:65
+  context: _load_fp8_scales_file docstring references this parameter for producing scale files
+related_parameters:
+- name: --mm-encoder-attn-dtype
+  relation: Must be set to 'fp8' for this parameter to have any effect
+- name: --mm-encoder-fp8-scale-path
+  relation: Mutually exclusive; cannot be used together (saving requires dynamic scaling, loading uses static scaling)
+- name: --mm-encoder-fp8-scale-save-margin
+  relation: Safety margin multiplied onto saved scales; defaults to 1.5
+constraints:
+- --mm-encoder-attn-dtype must be set to 'fp8' when using --mm-encoder-fp8-scale-save-path
+- --mm-encoder-fp8-scale-save-path cannot be used together with --mm-encoder-fp8-scale-path (saving requires dynamic scaling
+  without a pre-loaded scale file)
+tuning_advice:
+  summary: Use this parameter to capture calibrated FP8 scales during a calibration run, then switch to static scaling for
+    production inference.
+  suggested_values:
+  - scenario: Calibration run to generate static FP8 scales for ViT encoder attention
+    value: /path/to/calibrated_scales.json
+    reason: Saves the dynamically calibrated per-layer Q/K/V scales to a JSON file that can be reused via --mm-encoder-fp8-scale-path
+      in subsequent runs, eliminating dynamic scaling overhead.
+  caveats:
+  - The save operation triggers a one-time GPU→CPU sync and file write when the amax history buffer wraps (typically after
+    16 forward passes), causing a brief stall during the calibration run.
+  - This parameter has no effect on Ascend NPU specifically; the FP8 ViT attention feature is FlashInfer cuDNN-based and may
+    not be available on Ascend hardware. Check Ascend FP8 support before relying on this workflow.
+  - The saved scales include the safety margin from --mm-encoder-fp8-scale-save-margin (default 1.5), which provides headroom
+    against activation outliers in production data.
+  quick_guide: Set to a writable file path during calibration with --mm-encoder-attn-dtype fp8 to capture scales; then use
+    --mm-encoder-fp8-scale-path with the same file for static scaling in production.
+analysis_date: '2026-07-06'

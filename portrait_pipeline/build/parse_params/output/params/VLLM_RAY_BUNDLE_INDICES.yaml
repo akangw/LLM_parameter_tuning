@@ -1,0 +1,78 @@
+name: VLLM_RAY_BUNDLE_INDICES
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1148
+- vllm/v1/executor/ray_executor.py:177
+- vllm/v1/executor/ray_executor_v2.py:272
+- vllm/v1/executor/ray_utils.py:358
+value_type: str
+default: '''""'''
+valid_choices: comma-separated list of non-negative integers, e.g. "0,1,2,3"
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls which Ray placement group bundles are assigned to vLLM workers. When set,
+  it overrides the default behavior of selecting the first N GPU bundles from the placement group. By explicitly specifying
+  bundle indices, users can control which physical GPUs/NPUs each worker lands on, affecting inter-worker communication topology
+  (e.g., NVLink/HCCS connectivity, NUMA locality). On Ascend NPU clusters, HCCL communication performance is highly sensitive
+  to inter-chip topology — placing workers on NPUs that share an HCCS ring vs. those connected only via HCCS network can significantly
+  impact tensor-parallel all-reduce latency and throughput. The parameter is consumed in both v1 (ray_executor.py:177) and
+  v2 (ray_executor_v2.py:272) Ray executors, with validation in ray_utils.py:358 ensuring the number of indices matches world_size
+  and contains no duplicates. No vllm-ascend override was found; the upstream behavior applies directly to Ascend deployments
+  using Ray.
+
+  '
+usage_locations:
+- file: vllm/v1/executor/ray_executor.py:177
+  context: 'v1 executor: reads VLLM_RAY_BUNDLE_INDICES to assign workers to specific Ray bundles; falls back to first N GPU
+    bundles if unset'
+- file: vllm/v1/executor/ray_executor_v2.py:272
+  context: 'v2 executor: reads VLLM_RAY_BUNDLE_INDICES and passes to get_bundles_for_indices() for worker placement'
+- file: vllm/v1/executor/ray_utils.py:358
+  context: 'get_bundles_for_indices(): validates bundle_indices count equals world_size and no duplicates, then maps indices
+    to node IDs and IPs'
+related_parameters:
+- name: VLLM_RAY_PER_WORKER_GPUS
+  relation: Controls GPU fraction per worker; bundle_indices selects which bundles, while per_worker_gpus controls resource
+    allocation granularity
+- name: tensor_parallel_size
+  relation: world_size (which must equal len(bundle_indices)) is derived from tp_size * pp_size * pcp_size
+- name: pipeline_parallel_size
+  relation: Contributes to world_size calculation that bundle_indices must match
+constraints:
+- The number of bundle indices must equal world_size (tp_size × pp_size × pcp_size)
+- Bundle indices must not contain duplicate values
+- Bundle indices must be valid indices within the Ray placement group's bundle_specs
+tuning_advice:
+  summary: Use VLLM_RAY_BUNDLE_INDICES to place workers on NPUs with optimal HCCS topology, avoiding cross-node or cross-ring
+    communication for tensor-parallel groups.
+  suggested_values:
+  - scenario: Single-node multi-NPU deployment with known HCCS topology
+    value: '''"0,1,2,3,4,5,6,7"'''
+    reason: Explicitly assigns workers to all 8 NPUs on a single node, ensuring predictable placement and avoiding Ray's default
+      bundle ordering which may not align with physical topology
+  - scenario: Multi-node deployment where TP group should stay within one HCCS ring
+    value: '''"0,1,2,3"'''
+    reason: Limits tensor-parallel workers to the first 4 NPU bundles, which typically share an HCCS ring on Ascend 910B nodes,
+      minimizing all-reduce latency
+  - scenario: Co-locating vLLM with other Ray actors on the same node
+    value: '''"4,5,6,7"'''
+    reason: Reserves bundles 0-3 for other actors while placing vLLM workers on bundles 4-7, enabling resource sharing without
+      contention
+  caveats:
+  - On Ascend clusters, HCCL performance degrades significantly when tensor-parallel workers span NPUs connected only via
+    HCCS network (inter-node) rather than HCCS ring (intra-node). Use bundle_indices to keep TP groups within a single HCCS
+    ring.
+  - Ray placement group bundle ordering may not match physical NPU ordering. Verify actual bundle-to-NPU mapping with ray
+    status or placement group inspection before setting indices.
+  - When using pipeline parallelism, ensure PP stages are placed on bundles with good inter-stage connectivity (e.g., same
+    node or high-bandwidth inter-node links).
+  - This parameter has no effect when not using Ray (e.g., single-process or multiprocessing backends).
+  quick_guide: Set VLLM_RAY_BUNDLE_INDICES to a comma-separated list of bundle indices matching world_size to control which
+    NPUs each worker uses; keep TP groups within a single HCCS ring for best performance.
+analysis_date: '2026-07-06'

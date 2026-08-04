@@ -1,0 +1,83 @@
+name: KVTransferConfig.kv_buffer_device
+type: nested
+category: communication
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:16
+- vllm/config/kv_transfer.py:33
+- vllm_ascend/platform.py:109
+- docs/source/user_guide/feature_guide/large_scale_ep.md:162
+- examples/disaggregated_prefill_v1/mooncake_connector_deployment_guide.md:43
+value_type: str
+default: current_platform.device_type
+valid_choices:
+- npu
+- cuda
+- cpu
+- xpu
+cli_example: --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_buffer_device":"npu","kv_role":"kv_producer"}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This connector-facing setting selects the device on which a KV-transfer connector buffers cache data. The upstream
+  default factory returns current_platform.device_type, and the pinned Ascend platform declares device_type as "npu"; therefore
+  the computed Ascend default is "npu". Current vllm-ascend Mooncake deployment examples also set "npu" on both producer and
+  consumer nodes so transferred KV remains associated with the NPU execution path. Buffer placement can affect transfer staging,
+  device-memory consumption, and the copies on the latency-critical prefill/decode handoff, so it can affect latency, throughput,
+  and the split between host and accelerator memory when a connector supports multiple placement targets. The pinned repositories
+  do not contain a generic in-tree implementation that quantifies an "npu" versus "cpu" performance delta; the exact cost
+  is connector- and transport-dependent.
+usage_locations:
+- file: vllm/config/kv_transfer.py:16
+  context: Computes the default from the active platform device type.
+- file: vllm/config/kv_transfer.py:33
+  context: Declares the connector buffer-device field and documents upstream CUDA, CPU, and XPU choices.
+- file: vllm_ascend/platform.py:109
+  context: Declares the Ascend platform device type as npu, making npu the computed default under vllm-ascend.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:162
+  context: Configures MooncakeConnectorV1 producer-side KV buffering on npu in an Ascend prefill/decode deployment.
+- file: examples/disaggregated_prefill_v1/mooncake_connector_deployment_guide.md:43
+  context: Shows the supported Ascend Mooncake producer configuration with kv_buffer_device set to npu.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The selected connector determines whether this field is consumed and which buffer devices and transports it supports.
+- name: KVTransferConfig.kv_role
+  relation: Producer and consumer endpoints should use connector-compatible buffer placement for their respective transfer
+    path.
+- name: KVTransferConfig.kv_buffer_size
+  relation: Where supported, buffer size controls the capacity while kv_buffer_device controls its placement.
+constraints:
+- The value must name a device supported by the selected KV connector and active platform.
+- On Ascend the computed default is npu because NPUPlatform.device_type is npu.
+- Current vllm-ascend Mooncake deployment examples use npu on both producer and consumer nodes.
+- The upstream field documentation lists cuda, cpu, and xpu; npu is the Ascend-specific effective value evidenced by the platform
+  and deployment guides.
+- The setting matters only when a configured KV connector actually consumes it; connector-specific extra configuration can
+  independently select transports or storage tiers.
+tuning_advice:
+  summary: Keep the platform-computed default; on Ascend use npu for the documented Mooncake transfer path, and change placement
+    only when the selected connector explicitly supports the alternative and a workload-level benchmark justifies it.
+  suggested_values:
+  - scenario: vllm-ascend Mooncake prefill/decode deployment
+    value: npu
+    reason: This matches the Ascend platform device type and every pinned Ascend Mooncake deployment example for this field.
+  - scenario: General platform-native connector deployment
+    value: leave unset
+    reason: The default factory selects the active platform's device type and avoids hard-coding a device from another backend.
+  - scenario: Host-buffer experiment with a connector that explicitly supports CPU placement
+    value: cpu
+    reason: Use only to test a documented host-memory transport or capacity tradeoff against the platform-native buffer path.
+  caveats:
+  - A non-native device can add host-device staging or fail connector initialization; support must be confirmed in the selected
+    connector.
+  - NPU buffering consumes accelerator memory, while CPU placement may shift capacity to host memory at the cost of additional
+    transfer latency.
+  - The pinned sources provide deployment configurations but no controlled benchmark for alternative buffer devices, so measure
+    TTFT, transfer completion latency, throughput, and memory on both endpoints.
+  - This field does not by itself choose the connector backend, network transport, or buffer capacity.
+  quick_guide: Leave it unset for automatic platform selection; if writing an explicit Ascend Mooncake configuration, set
+    npu.
+analysis_date: '2026-07-30'

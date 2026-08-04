@@ -1,0 +1,78 @@
+name: kv_transfer_config.kv_connector_extra_config.decode
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:60
+- examples/offline_disaggregated_prefill_npu.py:59
+- examples/offline_disaggregated_prefill_npu.py:106
+value_type: dict
+default: '{}'
+valid_choices: dict with keys 'dp_size' and 'tp_size' (both int)
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'This nested configuration specifies the data-parallel (dp_size) and tensor-parallel (tp_size) dimensions of
+  the decode instance in a disaggregated prefill (PD separation) deployment. The values are passed through kv_connector_extra_config
+  to the KV connector (e.g., MooncakeConnectorV1) and are used to set up the distributed communication topology for KV cache
+  transfer from the prefill node to the decode node. On Ascend NPU, the decode instance typically runs in an all-DP configuration
+  (dp_size > 1, tp_size = 1) to maximize throughput for memory-bound decode GEMMs. Incorrect values will cause KV transfer
+  failures or suboptimal resource utilization. The parameter does not directly control vLLM''s tensor_parallel_size or data_parallel_size;
+  it informs the KV connector about the decode instance''s parallelism layout so that KV blocks can be correctly routed and
+  assembled.
+
+  '
+usage_locations:
+- file: examples/offline_disaggregated_prefill_npu.py:59
+  context: Prefill node sets decode dp_size=1, tp_size=1 in kv_connector_extra_config
+- file: examples/offline_disaggregated_prefill_npu.py:106
+  context: Decode node sets its own dp_size=1, tp_size=1 in kv_connector_extra_config
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.prefill
+  relation: Mirrors the prefill instance's parallelism layout; both must be consistent with actual deployment
+- name: tensor_parallel_size
+  relation: Must match the actual TP size of the decode instance
+- name: data_parallel_size
+  relation: Must match the actual DP size of the decode instance
+- name: kv_transfer_config.kv_connector
+  relation: Only used when kv_connector is set (e.g., MooncakeConnectorV1)
+- name: kv_transfer_config.kv_role
+  relation: Only meaningful when kv_role is 'kv_consumer' or 'kv_both'
+constraints:
+- dp_size and tp_size must match the actual parallel configuration of the decode instance
+- The product dp_size × tp_size must not exceed the total number of available NPU devices on the decode node
+- kv_connector must be set and kv_role must include consumer role for this config to take effect
+tuning_advice:
+  summary: 'Set dp_size and tp_size to exactly match the decode instance''s actual data-parallel and tensor-parallel configuration.
+    For Ascend NPU decode-heavy workloads, prefer all-DP layout (tp_size=1) to reduce memory-bound GEMM overhead.
+
+    '
+  suggested_values:
+  - scenario: Single-NPU decode instance (1 card)
+    value:
+      dp_size: 1
+      tp_size: 1
+    reason: Matches the actual parallelism; no KV redistribution needed
+  - scenario: Multi-NPU decode instance, all-DP layout (recommended for Ascend decode)
+    value:
+      dp_size: 8
+      tp_size: 1
+    reason: All-DP maximizes decode throughput on Ascend NPU by reducing per-device weight fetch volume; documented as most
+      effective for PD separation decode instances
+  - scenario: Multi-NPU decode instance with tensor parallelism
+    value:
+      dp_size: 4
+      tp_size: 2
+    reason: When model exceeds single-NPU memory, combine DP and TP; ensure total matches available NPU count
+  caveats:
+  - Mismatched dp_size/tp_size between config and actual deployment will cause KV transfer failures or silent data corruption
+  - On Ascend NPU, decode GEMMs are memory-bound; using tp_size > 1 increases communication overhead without proportional
+    speedup — prefer dp_size scaling
+  - The prefill instance's kv_connector_extra_config must also include the decode layout for proper connection setup
+  quick_guide: Set decode dp_size and tp_size to match the decode instance's actual parallel configuration; prefer dp_size
+    scaling over tp_size for Ascend decode workloads
+analysis_date: '2026-07-06'

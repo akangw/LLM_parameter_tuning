@@ -1,0 +1,99 @@
+name: --prefix-caching-hash-algo
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/config/cache.py:37
+- vllm/config/cache.py:93
+- vllm/engine/arg_utils.py:1100
+value_type: str
+default: sha256
+valid_choices:
+- sha256
+- sha256_cbor
+- xxhash
+- xxhash_cbor
+cli_example: --prefix-caching-hash-algo xxhash
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This option selects the serialization-and-hash function used to build chained block keys for automatic prefix
+  caching. The pinned vLLM engine resolves the configured function and installs a request block hasher when prefix caching
+  or a KV connector is active. Request construction and token appends hash every newly completed block, so the choice changes
+  CPU work on the request-processing path: xxHash can reduce hashing time relative to SHA-256 and therefore marginally improve
+  latency and throughput when block-hashing volume is high. It does not change model kernels, NPU KV-cache capacity, or compiled
+  graph shape. The pinned vllm-ascend tree has no override for this option and consumes the resulting upstream block-hash
+  chain in its cache lookup path.'
+usage_locations:
+- file: vllm/v1/request.py:230
+  context: Computes and appends hashes for newly completed request blocks through the engine-supplied block hasher.
+- file: vllm/engine/arg_utils.py:1702
+  context: Copies the CLI value into CacheConfig during engine configuration construction.
+- file: vllm/config/cache.py:196
+  context: Excludes the hash algorithm from the configuration factors that affect compiled graph shape.
+- file: vllm_ascend/core/single_type_kv_cache_manager.py:211
+  context: The Ascend cache manager iterates the upstream request block-hash chain to find the longest cached prefix.
+- file: docs/benchmarking/cli.md:842
+  context: Documents standalone latency and end-to-end throughput benchmarks for choosing among prefix-cache hash algorithms.
+related_parameters:
+- name: --enable-prefix-caching
+  relation: Enables the normal automatic-prefix-cache path that uses this algorithm; a configured KV connector can also cause
+    block hashing to be installed.
+- name: --block-size
+  relation: Block sizing controls how frequently full request blocks become eligible for hashing.
+- name: PYTHONHASHSEED
+  relation: A fixed seed is needed for reproducible CBOR-based block-hash chains across engine processes.
+constraints:
+- The accepted values are sha256, sha256_cbor, xxhash, and xxhash_cbor.
+- The xxhash and xxhash_cbor choices require the optional xxhash Python package; otherwise hashing raises ModuleNotFoundError.
+- xxHash is non-cryptographic, so its collision risk must be evaluated for multi-tenant deployments because a collision can
+  cause incorrect reuse or information leakage.
+- CBOR-based choices use canonical serialization, but reproducible complete block-hash chains also require a fixed PYTHONHASHSEED
+  because the initial chain seed is otherwise random.
+tuning_advice:
+  summary: Keep sha256 for the security-oriented default; consider an xxHash variant only after a hashing benchmark shows
+    material CPU overhead and the deployment can accept a non-cryptographic cache key.
+  suggested_values:
+  - scenario: General or multi-tenant production serving
+    value: sha256
+    reason: It is the current default, needs no optional xxhash dependency, and provides the strongest collision resistance.
+  - scenario: CPU-bound prefix-cache or KV-connector workload with measured block-hashing overhead
+    value: xxhash
+    reason: It retains Pickle serialization while using faster 128-bit xxHash, reducing per-block CPU hash cost.
+  - scenario: Reproducible cross-language cache keys with a fixed PYTHONHASHSEED
+    value: sha256_cbor
+    reason: Canonical CBOR avoids Python Pickle representation dependence while SHA-256 retains cryptographic collision resistance.
+  caveats:
+  - xxhash and xxhash_cbor require the optional xxhash package and are not cryptographically secure.
+  - sha256_cbor and xxhash_cbor do not provide a reproducible complete chain when PYTHONHASHSEED is unset because the engine
+    initializes the first parent hash randomly.
+  - The likely performance effect is small and workload-dependent; use the pinned hashing benchmarks and compare end-to-end
+    request latency and throughput on the target host.
+  - The Ascend-specific cache manager consumes these hashes, but the algorithm runs on the host and does not select an NPU
+    kernel.
+  quick_guide: Start with sha256; benchmark xxhash only when host-side block hashing is measurable, and use sha256_cbor plus
+    a fixed PYTHONHASHSEED when reproducibility is required.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

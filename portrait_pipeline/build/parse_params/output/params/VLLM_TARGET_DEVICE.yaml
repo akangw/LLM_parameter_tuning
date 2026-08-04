@@ -1,0 +1,97 @@
+name: VLLM_TARGET_DEVICE
+type: env
+category: hardware
+scope: vllm
+source_file:
+- vllm/envs.py:513
+- vllm/envs.py:81
+- setup.py:40
+value_type: str
+default: cuda
+valid_choices:
+- cuda
+- rocm
+- cpu
+- xpu
+- empty
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'VLLM_TARGET_DEVICE is an installation-time environment variable that determines which hardware backend vLLM
+  is compiled for. It is read during `pip install` (setup.py:40) and at runtime (vllm/envs.py:513). On Ascend NPU, this parameter
+  does NOT directly control runtime dispatch — vllm-ascend overrides the device detection via its own plugin mechanism. However,
+  setting it incorrectly can cause vLLM to compile CUDA-specific kernels or skip Ascend-compatible code paths, leading to
+  runtime errors or fallback to CPU. The vllm-ascend documentation explicitly recommends setting VLLM_TARGET_DEVICE=empty
+  when installing vLLM for Ascend use (doc: developer_guide/contribution/index.md:47, testing.md:53, tutorials/models/Hunyuan-A13B-Instruct.md:53).
+  This prevents vLLM from compiling any device-specific extensions, allowing vllm-ascend to provide the Ascend backend entirely.
+  Performance impact is low because this is primarily a build-time flag; at runtime, vllm-ascend''s platform detection takes
+  precedence.
+
+  '
+usage_locations:
+- file: setup.py:40
+  context: Read during vLLM installation to determine which device-specific extensions to compile
+- file: setup.py:53-59
+  context: Auto-detection logic for ROCm and XPU when VLLM_TARGET_DEVICE is not explicitly set
+- file: setup.py:89
+  context: Controls whether tcmalloc is bundled (only for cpu target on Linux aarch64/x86_64)
+- file: vllm/envs.py:513
+  context: Runtime environment variable definition with default "cuda"
+- file: vllm/envs.py:81
+  context: Type annotation in EnvironmentVariables class
+- file: tests/compile/passes/distributed/test_async_tp.py:246
+  context: Test skip condition — only runs on CUDA
+- file: tests/compile/passes/distributed/test_fusion_all_reduce.py:247
+  context: Test skip condition — only runs on CUDA
+- file: tests/compile/passes/distributed/test_sequence_parallelism.py:182
+  context: Test skip condition — only runs on CUDA
+- file: tests/compile/passes/test_silu_mul_quant_fusion.py:280
+  context: Test skip condition — only runs on CUDA and ROCm
+- file: tests/distributed/test_nccl_symm_mem_allreduce.py:85
+  context: Test skip condition — only runs on CUDA
+- file: tests/distributed/test_symm_mem_allreduce.py:103
+  context: Test skip condition — only runs on CUDA
+related_parameters:
+- name: VLLM_MAIN_CUDA_VERSION
+  relation: Companion installation-time variable; only meaningful when VLLM_TARGET_DEVICE=cuda
+- name: CMAKE_BUILD_TYPE
+  relation: Both affect the vLLM build process; VLLM_TARGET_DEVICE selects which device-specific CMake targets are built
+constraints:
+- On macOS, VLLM_TARGET_DEVICE is automatically forced to "cpu" regardless of the set value.
+- On non-Linux and non-macOS platforms, VLLM_TARGET_DEVICE is automatically forced to "empty".
+- When installing vLLM for use with vllm-ascend on Ascend NPU, VLLM_TARGET_DEVICE must be set to "empty" to avoid compiling
+  incompatible CUDA kernels.
+tuning_advice:
+  summary: 'For Ascend NPU deployments, always set VLLM_TARGET_DEVICE=empty during vLLM installation to prevent CUDA-specific
+    compilation and let vllm-ascend provide the full backend.
+
+    '
+  suggested_values:
+  - scenario: Installing vLLM for use with vllm-ascend on Ascend NPU
+    value: empty
+    reason: 'Prevents vLLM from compiling any device-specific (CUDA/ROCm) extensions. vllm-ascend provides the complete Ascend
+      backend as a plugin, so the base vLLM installation should be device-agnostic. This is the documented recommendation
+      in vllm-ascend developer guides.
+
+      '
+  - scenario: Installing vLLM for native CUDA GPU use
+    value: cuda
+    reason: Default value; compiles CUDA kernels and enables CUDA-specific optimizations.
+  - scenario: Installing vLLM on macOS (any hardware)
+    value: cpu
+    reason: Automatically forced by setup.py; explicit setting is unnecessary but harmless.
+  caveats:
+  - This is primarily a build-time (pip install) variable. Changing it after installation has no effect on already-compiled
+    extensions.
+  - If VLLM_TARGET_DEVICE is not set to "empty" when building for Ascend, vLLM may attempt to compile CUDA kernels, which
+    will fail if CUDA toolkit is not installed, or produce incompatible binaries if it is.
+  - At runtime, vllm-ascend overrides device detection through its plugin system, so the runtime value of VLLM_TARGET_DEVICE
+    has minimal direct impact on Ascend — but incorrect build-time configuration can cause import errors or missing operators.
+  quick_guide: 'Set VLLM_TARGET_DEVICE=empty when pip-installing vLLM for Ascend NPU; this is a build-time flag, not a runtime
+    tuning knob.
+
+    '
+analysis_date: '2026-07-06'

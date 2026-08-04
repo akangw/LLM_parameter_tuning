@@ -1,0 +1,9 @@
+name: --mm-encoder-attn-dtype
+type: cli
+performance_impact: none
+skip_reason: The pinned upstream configuration exposes only the optional fp8 value and propagates it into MultiModalConfig
+  (vllm/config/multimodal.py:162; vllm/engine/arg_utils.py:1556). Upstream vision metadata uses that value only to request
+  FP8 head-dimension padding (vllm/model_executor/models/vision.py:128). In the pinned Ascend implementation, the registered
+  AscendMMEncoderAttention operator reshapes Q/K/V and invokes NPU flash attention without reading mm_encoder_attn_dtype (vllm_ascend/ops/mm_encoder_attention.py:41).
+  The target source therefore has no verified Ascend FP8 ViT-attention path, so this flag provides no latency, throughput,
+  or memory tuning effect on Ascend.

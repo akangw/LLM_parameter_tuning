@@ -1,0 +1,106 @@
+name: --decode-context-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:945
+- vllm/config/parallel.py:310
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:187
+value_type: int
+default: 1
+valid_choices: Positive integer; tensor_parallel_size must be divisible by decode_context_parallel_size.
+cli_example: --tensor-parallel-size 4 --decode-context-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Decode Context Parallelism (DCP) reuses devices already assigned to a tensor-parallel group and divides that
+  group into DCP groups; it does not increase the world size (vllm/config/parallel.py:469). On Ascend, each DCP rank stores
+  only its shard of the context: the KV-cache memory calculation divides max_model_len by the combined DCP and PCP world size
+  (vllm_ascend/patch/platform/patch_kv_cache_interface.py:187). This reduces per-NPU KV-cache pressure and can permit larger
+  long-context batches, improving long-context serving throughput. It also adds cross-device decode attention communication,
+  so its latency/throughput trade-off depends on context length, model, and topology. The Ascend context-parallel guide identifies
+  DCP as a long-sequence optimization that reduces KV-cache duplication and creates capacity for larger decode batches (docs/source/user_guide/feature_guide/context_parallel.md:3).'
+usage_locations:
+- file: vllm/config/parallel.py:469
+  context: Validates that tensor_parallel_size is divisible by DCP size and requires DCP size greater than one for the a2a
+    communication backend.
+- file: vllm/config/model.py:1161
+  context: Applies additional GQA/MQA head-sharding constraints whenever DCP exceeds one.
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:187
+  context: Sizes the Ascend KV cache using the DCP and PCP shard count, directly affecting per-NPU cache memory.
+- file: vllm_ascend/worker/worker.py:761
+  context: Passes the configured DCP size while initializing Ascend model parallelism.
+- file: vllm_ascend/worker/v2/model_runner.py:64
+  context: Rejects context parallelism, including DCP greater than one, in the Ascend NPU model runner v2.
+- file: docs/source/user_guide/feature_guide/context_parallel.md:3
+  context: Documents DCP as a long-context optimization that reduces KV-cache duplication and can increase decode batch capacity.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: DCP reuses tensor-parallel devices; tensor_parallel_size must be divisible by decode_context_parallel_size.
+- name: --prefill-context-parallel-size
+  relation: Together with DCP it determines the context-parallel KV-cache shard count; Ascend sizes cache using their product.
+- name: --dcp-comm-backend
+  relation: The a2a backend is valid only when decode_context_parallel_size is greater than one.
+- name: --cp-kv-cache-interleave-size
+  relation: For context parallelism with KV-cache transfer on Ascend, the guide requires this setting to match the KV-cache
+    block size.
+- name: --max-model-len
+  relation: Larger DCP values shard the configured context length across ranks for KV-cache sizing.
+constraints:
+- tensor_parallel_size must be divisible by decode_context_parallel_size (vllm/config/parallel.py:469).
+- dcp_comm_backend=a2a requires decode_context_parallel_size greater than 1 (vllm/config/parallel.py:480).
+- For non-MLA GQA/MQA models with DCP greater than 1, tensor_parallel_size must exceed total KV heads; DCP must not exceed
+  tensor_parallel_size divided by total KV heads; and query heads per KV head must be divisible by DCP size (vllm/config/model.py:1161).
+- For speculative decoding with a non-MLA GQA/MQA draft model, equivalent constraints apply to the draft tensor-parallel size
+  and draft-model head counts (vllm_ascend/platform.py:324).
+- Ascend NPU model runner v2 does not support context parallelism, so DCP must remain 1 there (vllm_ascend/worker/v2/model_runner.py:64).
+- The Mooncake Hybrid Connector requires prefill_context_parallel_size multiplied by decode_context_parallel_size to equal
+  1 (vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1082).
+tuning_advice:
+  summary: Use DCP only for long-context workloads where KV-cache capacity is the bottleneck. Start at 2 with a compatible
+    tensor-parallel topology, then benchmark decode token latency and batch throughput against DCP=1.
+  suggested_values:
+  - scenario: Long-context Ascend serving on the v1 worker, with a tensor-parallel group divisible by 2.
+    value: 2
+    reason: Halves the DCP portion of per-rank KV-cache context while limiting extra cross-device decode communication.
+  - scenario: Very long-context workloads with compatible model head counts and a larger tensor-parallel group.
+    value: 4
+    reason: Provides further KV-cache sharding; use only after benchmarking because DCP communication and topology effects
+      can offset the memory benefit.
+  - scenario: Short-context workloads, incompatible topology/model constraints, or the Ascend NPU model runner v2.
+    value: 1
+    reason: Avoids DCP communication overhead and is required by the Ascend v2 runner, which rejects context parallelism.
+  caveats:
+  - DCP does not add devices; it reuses the tensor-parallel group, so a valid tensor-parallel layout is mandatory.
+  - Higher DCP lowers per-rank KV-cache demand but introduces cross-device decode communication; measure both token latency
+    and sustained throughput.
+  - DCP greater than 1 is unsupported by the Ascend NPU model runner v2.
+  - GQA/MQA models and speculative draft models impose additional head-count divisibility limits.
+  - Mooncake Hybrid Connector cannot be used with DCP greater than 1.
+  quick_guide: Set --decode-context-parallel-size 2 for a compatible long-context v1 Ascend deployment, verify tensor-parallel
+    and head-count constraints, then increase only if KV-cache capacity remains the bottleneck.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

@@ -1,0 +1,93 @@
+name: additional_config.prefill_comm_compute_overlap
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:138
+- vllm_ascend/attention/dsa_v1.py:1432
+- vllm_ascend/attention/dsa_v1.py:1591
+- vllm_ascend/attention/dsa_v1.py:1782
+- vllm_ascend/ops/dsa.py:172
+- vllm_ascend/ascend_forward_context.py:125
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"prefill_comm_compute_overlap": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: When true, the Ascend DSA v1 attention implementation can replace the normal up-front hidden-state all-gather
+  for a pure-prefill batch with a delayed all-gather prologue. It first computes projections on each rank's local sequence
+  partition, gathers smaller q and kv intermediates later, and uses an auxiliary NPU stream to overlap those collective operations
+  with kv and q projection work. This can reduce prefill execution time and improve prefill throughput when communication
+  is significant. The alternate path is selected only when FlashComm1 sequence partitioning requests a gather, the batch has
+  prefill tokens and no decode tokens, and multistream_dsv4_dsa_overlap is false. Otherwise this setting does not change execution.
+  It has no upstream vLLM consumer in the pinned source.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:138
+  context: Reads the boolean from additional_config and defaults it to false.
+- file: vllm_ascend/attention/dsa_v1.py:1432
+  context: Copies the Ascend configuration value into the DSA v1 attention implementation.
+- file: vllm_ascend/attention/dsa_v1.py:1591
+  context: Gates the delayed-gather path on this flag, pure prefill, a requested FlashComm1 gather, and the competing multistream
+    option being disabled.
+- file: vllm_ascend/attention/dsa_v1.py:1782
+  context: Implements the local projection, delayed all-gathers, and auxiliary-stream compute/communication overlap.
+- file: vllm_ascend/attention/dsa_v1.py:1900
+  context: Dispatches the DSA prefill prologue to the overlap implementation when all gates are satisfied.
+- file: vllm_ascend/ops/dsa.py:172
+  context: Derives the gather request from the forward context's FlashComm1 enablement and passes it into DSA attention.
+- file: vllm_ascend/ascend_forward_context.py:125
+  context: Enables the relevant FlashComm1 sequence-partitioned forward path according to enable_sp and workload conditions.
+related_parameters:
+- name: additional_config.enable_flashcomm1
+  relation: Enables sequence partitioning that supplies the required gather request; without it, prefill_comm_compute_overlap
+    cannot select its alternate path.
+- name: additional_config.multistream_dsv4_dsa_overlap
+  relation: Takes precedence in DSA v1; when true, the prefill communication-compute overlap path is not selected.
+- name: tensor_parallel_size
+  relation: FlashComm1 partitions work across tensor-parallel ranks, so a multi-rank tensor-parallel deployment is the relevant
+    communication case, but TP alone does not activate this flag's path.
+constraints:
+- The setting affects only the Ascend DSA v1 attention implementation.
+- The alternate path requires a pure-prefill batch; mixed prefill/decode and decode-only batches use the normal path.
+- A gather request from the FlashComm1 sequence-partitioned path is required.
+- additional_config.multistream_dsv4_dsa_overlap must be false because that implementation takes precedence.
+tuning_advice:
+  summary: Test true only for DSA prefill workloads already using FlashComm1 sequence partitioning; retain false unless measurements
+    show that delayed all-gather and stream overlap improve the target prompt distribution.
+  suggested_values:
+  - scenario: Pure-prefill-heavy DSA workload with FlashComm1 enabled across multiple tensor-parallel ranks
+    value: true
+    reason: Selects the delayed-all-gather prologue that can hide collective time behind q and kv projection work.
+  - scenario: Decode-heavy or mixed prefill/decode workload, FlashComm1 disabled, or non-DSA model
+    value: false
+    reason: The source gates prevent the alternate path in these cases, so enabling the flag provides no benefit.
+  - scenario: additional_config.multistream_dsv4_dsa_overlap is enabled
+    value: false
+    reason: The multistream DSV4 path takes precedence, making this setting ineffective for that configuration.
+  caveats:
+  - Benefit depends on prompt sizes, tensor-parallel communication cost, and how well projection work hides the collectives;
+    benchmark end-to-end prefill latency and throughput.
+  - The optimization changes the ordering and sizes of intermediate all-gathers, so validate model correctness and performance
+    on the deployed CANN and torch-npu stack.
+  - The pinned documentation does not advertise this key, and the pinned upstream vLLM repository has no matching setting.
+  quick_guide: Enable only for measured pure-prefill DSA plus FlashComm1 workloads; otherwise keep false.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

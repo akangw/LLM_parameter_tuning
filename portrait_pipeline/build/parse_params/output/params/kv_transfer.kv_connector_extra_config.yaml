@@ -1,0 +1,127 @@
+name: kv_transfer.kv_connector_extra_config
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:75
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99
+- vllm_ascend/utils.py:531
+- vllm/config/vllm.py:702
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:752
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/connector.py:84
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/scheduler.py:51
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:520
+- vllm/v1/kv_offload/base.py:340
+- vllm/v1/kv_offload/factory.py:40
+- vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:589
+value_type: dict
+default: '{}'
+valid_choices: any dict with connector-specific keys
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This is a catch-all dictionary that controls behavior of KV transfer connectors (AscendStore, Mooncake, LMCache,\
+  \ CPU offloading, etc.). On Ascend NPU, the AscendStoreConnector reads keys like `use_layerwise`, `consumer_is_to_put`,\
+  \ `load_async`, `backend`, `prefill_pp_size`, `prefill_pp_layer_partition`, and `ascend_local_comm_res_path` from this dict.\
+  \ These keys directly affect:\n- \"**Latency/throughput**: `use_layerwise` enables layer-by-layer KV transfer\"\n  which\
+  \ forces PIECEWISE CUDA graph mode (disabling full-graph capture), trading\n  some throughput for reduced memory pressure.\
+  \ `load_async` controls whether KV\n  cache loads are asynchronous, directly impacting request scheduling latency.\n  `consumer_is_to_put`\
+  \ and `consumer_is_to_load` change the data flow direction\n  in PD separation deployments, affecting end-to-end latency.\n\
+  \n- \"**Memory**: `use_layerwise` reduces peak memory by transferring KV cache\"\n  layer-by-layer instead of all at once.\
+  \ `prefill_pp_size` and\n  `prefill_pp_layer_partition` control how layers are partitioned across\n  prefill pipeline stages,\
+  \ directly determining per-worker memory usage.\n\n- \"**Communication**: `ascend_local_comm_res_path` provides the path\
+  \ to NPU\"\n  endpoint configuration files for local communication resources, which is\n  critical for inter-NPU KV transfer\
+  \ performance on Ascend hardware.\n\nThe dict is connector-specific — different connectors read different keys. Misconfiguration\
+  \ can cause crashes (e.g., invalid partition strings) or silently degraded performance (e.g., missing async loading).\n"
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86-89
+  context: Reads use_layerwise and consumer_is_to_put to configure AscendStore connector behavior
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:75-81
+  context: Reads consumer_is_to_load, consumer_is_to_put, and load_async for scheduler-side KV pool management
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99-105
+  context: Reads load_async, consumer_is_to_put, and backend for worker-side KV transfer
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:154-157
+  context: Reads prefill_pp_layer_partition and prefill_pp_size for pipeline-parallel layer partitioning
+- file: vllm_ascend/utils.py:531-532
+  context: Reads ascend_local_comm_res_path to set up ASCEND_LOCAL_COMM_RES environment variable
+- file: vllm/config/vllm.py:702-704
+  context: 'Upstream: sets cpu_bytes_to_use for native CPU offloading connector'
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:752-761
+  context: 'Upstream: reads num_workers and mooncake_protocol for Mooncake transfer engine'
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/connector.py:84-88
+  context: 'Upstream: reads enable_cross_layers_blocks for MooncakeStoreConnector'
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/scheduler.py:51-53
+  context: 'Upstream: reads load_async for MooncakeStore scheduler'
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:520-522
+  context: 'Upstream: reads load_async for MooncakeStore worker'
+- file: vllm/v1/kv_offload/base.py:340
+  context: 'Upstream: passes extra_config to OffloadingSpec base class'
+- file: vllm/v1/kv_offload/factory.py:40-41
+  context: 'Upstream: reads spec_name to select offloading spec implementation'
+- file: vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:589-600
+  context: 'Upstream: passes lmcache.* prefixed keys to LMCache engine config'
+related_parameters:
+- name: kv_transfer.kv_connector
+  relation: Determines which connector reads kv_connector_extra_config and which keys are valid
+- name: kv_transfer.kv_role
+  relation: kv_role (producer/consumer/both) determines which extra_config keys are relevant
+- name: compilation_config.cudagraph_mode
+  relation: use_layerwise=true in extra_config forces PIECEWISE cudagraph mode, overriding user setting
+- name: parallel_config.prefill_context_parallel_size
+  relation: prefill_pp_size in extra_config controls prefill pipeline parallelism, interacting with pcp_size
+- name: cache_config.kv_offloading_size
+  relation: When kv_offloading_size is set, extra_config is populated with cpu_bytes_to_use automatically
+constraints:
+- When prefill_pp_layer_partition is provided, its comma-separated layer counts must sum to the model's total hidden layers
+- When prefill_pp_layer_partition is provided, the number of partition values must equal prefill_pp_size
+- ascend_local_comm_res_path must point to a directory containing ub_endpoint_npu_*.json files, or ASCEND_LOCAL_COMM_RES setup
+  will fail
+- AscendStore layerwise mode does not support hybrid KV cache groups (multiple kv_cache_group_ids)
+- AscendStore hybrid linear-attention support requires mamba_cache_mode='align'
+tuning_advice:
+  summary: 'Configure connector-specific keys based on the active kv_connector; for AscendStore on NPU, enable use_layerwise
+    to reduce memory pressure and set load_async=true for lower latency.
+
+    '
+  suggested_values:
+  - scenario: AscendStore with PD separation, memory-constrained prefill nodes
+    value:
+      use_layerwise: true
+      load_async: true
+      consumer_is_to_put: false
+    reason: Layerwise transfer reduces peak memory on prefill nodes; async loading hides transfer latency
+  - scenario: AscendStore with PD separation, consumer also stores KV cache
+    value:
+      use_layerwise: true
+      load_async: true
+      consumer_is_to_put: true
+    reason: consumer_is_to_put=true allows decode nodes to write KV cache back to the pool, enabling cache reuse
+  - scenario: AscendStore with prefill pipeline parallelism
+    value:
+      prefill_pp_size: 2
+      prefill_pp_layer_partition: null
+    reason: Let the system auto-partition layers evenly; only specify partition_list if manual control is needed
+  - scenario: MooncakeConnectorV1 on Ascend NPU for PD separation
+    value:
+      mooncake_protocol: rdma
+      num_workers: 10
+    reason: RDMA protocol provides best NPU-to-NPU transfer bandwidth; 10 workers is the upstream default
+  - scenario: CPU offloading with native backend
+    value:
+      cpu_bytes_to_use: <kv_offloading_size_in_GB * 1073741824>
+    reason: Automatically set by vllm when kv_offloading_size is configured; manual override rarely needed
+  caveats:
+  - use_layerwise=true forces PIECEWISE CUDA graph mode, which disables full-graph capture and may reduce throughput for small
+    models
+  - consumer_is_to_put and consumer_is_to_load are mutually exclusive in practice — enabling both may cause undefined behavior
+  - prefill_pp_layer_partition must be carefully aligned with the model's layer count; misconfiguration raises ValueError
+    at startup
+  - ascend_local_comm_res_path is Ascend-specific and required only when using local communication resources for KV transfer
+  - Keys not recognized by the active connector are silently ignored — verify key names against connector documentation
+  quick_guide: For AscendStore on NPU, set use_layerwise=true and load_async=true; for Mooncake, set mooncake_protocol=rdma
+analysis_date: '2026-07-06'

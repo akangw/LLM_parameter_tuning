@@ -1,0 +1,78 @@
+name: OMP_PROC_BIND
+type: env
+category: parallelism
+scope: vllm-ascend
+source_file:
+- docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:67
+- docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:80
+- docs/source/tutorials/features/pd_disaggregation_mooncake_multi_node.md:265
+- docs/source/user_guide/feature_guide/large_scale_ep.md:122
+- examples/run_dp_server.sh:7
+- examples/external_online_dp/run_dp_template.sh:6
+value_type: bool
+default: false
+valid_choices:
+- 'false'
+- 'true'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'OMP_PROC_BIND is consumed by the external OpenMP runtime rather than by vLLM Python code. It controls whether
+  OpenMP worker threads may migrate between processor resources: false leaves them unbound, while true enables runtime-selected
+  binding. Binding can improve CPU cache locality and reduce scheduler migration for CPU-heavy OpenMP regions, but an unsuitable
+  binding policy or shared-core placement can increase contention and request latency. The pinned Ascend launch recipes consistently
+  set false for single-node, multi-node, long-context, expert-parallel, data-parallel, and disaggregated deployments, paired
+  with OMP_NUM_THREADS values of either 1 or 10. Therefore false is the repository''s operational baseline and avoids imposing
+  an external affinity policy across the many vLLM worker processes. The setting does not change model tensors, KV-cache capacity,
+  or accelerator allocations, and any throughput or latency effect is indirect through host-side thread scheduling. Pinned
+  upstream vLLM contains no occurrence of OMP_PROC_BIND.'
+usage_locations:
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:67
+  context: Sets false with OMP_NUM_THREADS=1 before launching a two-stage pipeline-parallel DeepSeek server.
+- file: docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:80
+  context: Sets false with one OpenMP thread for a single-node 128K context-parallel deployment.
+- file: docs/source/tutorials/features/pd_disaggregation_mooncake_multi_node.md:265
+  context: Sets false with OMP_NUM_THREADS=10 in a multi-node Mooncake prefill-decode launch environment.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:122
+  context: Sets false with ten OpenMP threads for the documented large-scale expert-parallel deployment.
+- file: examples/run_dp_server.sh:7
+  context: Sets false with ten OpenMP threads in the repository's internal data-parallel server example.
+- file: examples/external_online_dp/run_dp_template.sh:6
+  context: Sets false with ten OpenMP threads in the external data-parallel launch template.
+related_parameters:
+- name: OMP_NUM_THREADS
+  relation: Controls the number of OpenMP worker threads whose placement behavior is governed by OMP_PROC_BIND; Ascend recipes
+    configure both together.
+constraints:
+- Set the variable before launching vLLM so the external OpenMP runtime observes it during initialization.
+- The pinned vllm-ascend repository only demonstrates the boolean value false and provides no benchmark or validation for
+  enabling binding.
+- Binding outcomes depend on the OpenMP implementation, processor topology, process affinity, worker count, and any container
+  or scheduler CPU restrictions.
+- This setting has no effect in code paths that do not execute host-side OpenMP parallel regions.
+tuning_advice:
+  summary: Keep false for Ascend deployments unless controlled host-side profiling shows that OpenMP thread binding improves
+    the exact worker topology.
+  suggested_values:
+  - scenario: Standard vllm-ascend serving, including multi-worker and distributed recipes
+    value: 'false'
+    reason: This is the value used consistently by the pinned Ascend documentation and launch templates with both one and
+      ten OpenMP threads.
+  - scenario: CPU-heavy OpenMP work with dedicated, explicitly allocated CPU resources
+    value: 'true'
+    reason: Binding may reduce thread migration and improve cache locality, but it requires topology-aware validation absent
+      from the pinned repositories.
+  caveats:
+  - Enabling binding can worsen performance when several vLLM processes or other workloads share the same CPU resources.
+  - With OMP_NUM_THREADS=1, the setting generally has less opportunity to affect performance than with a larger OpenMP team.
+  - Evaluate end-to-end latency and throughput after a fresh process start; accelerator kernel timing alone will not expose
+    host scheduling regressions.
+  - For detailed placement control, an external OpenMP runtime may support non-boolean policies and OMP_PLACES, but those
+    choices are not documented or validated by the pinned vllm-ascend tree.
+  - The pinned repositories provide no measured speedup for true, so it should not be treated as a general optimization.
+  quick_guide: Use false by default; test true only on dedicated CPUs with more than one OpenMP thread, and retain it only
+    if end-to-end benchmarks improve.
+analysis_date: '2026-08-03'

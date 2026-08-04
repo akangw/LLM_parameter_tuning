@@ -1,0 +1,41 @@
+name: kv_transfer.kv_buffer_size
+type: nested
+category: communication
+scope: both
+source_file:
+- vllm_ascend/platform.py:1006
+value_type: float
+default: 1e9
+valid_choices: any positive float (bytes)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter controls the buffer size (in bytes) for the TorchDistributedConnector used in KV cache transfer
+  during disaggregated prefill-decode serving. On Ascend NPU, vllm-ascend forcibly resets this value to the default 1e9 (approximately
+  1GB) regardless of user input, as shown in vllm_ascend/platform.py:1004-1014. The override is applied because the buffer
+  size is primarily tied to NCCL-based GPU backends, and Ascend uses HCCL instead. Since the value is always reset to 1e9
+  on Ascend, user configuration has no practical effect on runtime behavior. The parameter only affects memory allocation
+  for the KV transfer buffer when disaggregated serving is enabled, which is a niche use case.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:1004-1014
+  context: Ascend platform check resets kv_buffer_size to default 1e9, overriding any user-set value
+related_parameters:
+- name: kv_transfer.enable_permute_local_kv
+  relation: Also reset by vllm-ascend in the same platform check block; both are tied to NCCL-incompatible backends
+constraints:
+- On Ascend NPU, any user-specified value is ignored and reset to 1e9 by vllm-ascend platform checks
+tuning_advice:
+  summary: This parameter has no tunable effect on Ascend NPU — vllm-ascend always resets it to 1e9.
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: 1e9
+    reason: vllm-ascend forcibly resets kv_buffer_size to 1e9; any other value is overridden with a warning
+  caveats:
+  - Setting a non-default value triggers a warning log but has no runtime effect on Ascend
+  - This parameter only matters for disaggregated prefill-decode serving with KV cache transfer, which is rarely used
+  quick_guide: Leave at default (1e9) — vllm-ascend enforces this value regardless of user input.
+analysis_date: '2026-07-06'

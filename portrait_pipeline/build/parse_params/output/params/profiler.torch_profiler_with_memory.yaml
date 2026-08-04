@@ -1,0 +1,75 @@
+name: profiler.torch_profiler_with_memory
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/profiler/wrapper.py:182
+- vllm/profiler/wrapper.py:222
+- vllm_ascend/profiler/torch_npu_profiler.py:67
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls whether the torch profiler records memory allocation/deallocation events during profiling
+  sessions. When enabled, it adds memory tracking overhead to every profiled operation. On Ascend NPU, the vllm-ascend plugin
+  passes this flag directly to torch_npu.profiler.profile() via the profile_memory argument (vllm_ascend/profiler/torch_npu_profiler.py:67).
+  The upstream vLLM path also passes it to torch.profiler.profile() (vllm/profiler/wrapper.py:222). Memory profiling adds
+  per-op memory tracking which increases profiling overhead and trace file size, but does not affect normal (non-profiling)
+  inference performance. The impact is limited to profiling sessions only.
+
+  '
+usage_locations:
+- file: vllm_ascend/profiler/torch_npu_profiler.py:67
+  context: Passed as profile_memory argument to torch_npu.profiler.profile() for Ascend NPU profiling
+- file: vllm/profiler/wrapper.py:182
+  context: Logged in debug output showing profiler configuration
+- file: vllm/profiler/wrapper.py:222
+  context: Passed as profile_memory argument to torch.profiler.profile() for upstream GPU profiling
+related_parameters:
+- name: profiler.torch_profiler_with_stack
+  relation: Both control profiling detail level; enabling both increases overhead multiplicatively
+- name: profiler.torch_profiler_record_shapes
+  relation: Both add per-op metadata collection during profiling
+- name: profiler.torch_profiler_with_flops
+  relation: Both are optional profiling detail flags that increase overhead when enabled
+constraints: []
+tuning_advice:
+  summary: 'Enable only when diagnosing memory-related issues (OOM, memory leaks); disable for latency-focused profiling to
+    minimize overhead.
+
+    '
+  suggested_values:
+  - scenario: Latency or throughput profiling on Ascend NPU
+    value: false
+    reason: 'Memory profiling adds per-op tracking overhead that distorts latency measurements. The Ascend torch_npu profiler
+      already has significant overhead (noted in code comments about with_stack vs with_modules), and adding memory tracking
+      compounds this.
+
+      '
+  - scenario: Diagnosing NPU memory allocation patterns or OOM issues
+    value: true
+    reason: 'Provides per-operator memory allocation traces essential for identifying memory spikes, leaks, or inefficient
+      allocation patterns on Ascend NPU.
+
+      '
+  caveats:
+  - 'Enabling this flag increases profiling overhead and trace file size. On Ascend NPU, the torch_npu profiler already has
+    non-trivial overhead — adding memory profiling further distorts timing measurements.
+
+    '
+  - 'This flag only affects profiling sessions. It has zero impact on normal inference performance when profiling is not active.
+
+    '
+  - 'The vllm-ascend torch_npu profiler uses Level1 profiling with data_simplification=True by default, which may limit the
+    granularity of memory information collected even when this flag is enabled.
+
+    '
+  quick_guide: Set to true only for memory debugging; keep false for latency/throughput profiling.
+analysis_date: '2026-07-06'

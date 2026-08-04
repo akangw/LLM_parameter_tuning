@@ -1,0 +1,69 @@
+name: VLLM_DP_RANK_LOCAL
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1156
+- vllm/envs.py:143
+- vllm/config/parallel.py:815
+value_type: int
+default: <computed>
+valid_choices: non-negative integer, defaults to VLLM_DP_RANK when not set
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+impact_detail: 'VLLM_DP_RANK_LOCAL identifies the local data-parallel rank of a process within a node in offline (SPMD) data-parallel
+  mode. It is read in vllm/config/parallel.py:815 and stored as `data_parallel_rank_local`. This value is used to determine
+  which subset of prompts each DP rank processes (see examples/offline_data_parallel.py:121 and examples/features/data_parallel/data_parallel_offline.py:95).
+  The parameter itself does not directly control any performance-critical code path — it is purely an identifier for workload
+  partitioning. Performance impact is indirect: incorrect assignment could cause uneven load distribution across DP ranks,
+  reducing aggregate throughput, but the parameter value itself does not change any execution behavior (no kernel selection,
+  memory allocation, or communication pattern changes).
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:815
+  context: Read from env and stored as self.data_parallel_rank_local when not using Ray backend
+- file: examples/offline_data_parallel.py:121
+  context: Set in environment before engine initialization to identify local DP rank
+- file: examples/features/data_parallel/data_parallel_offline.py:95
+  context: Set in environment before engine initialization for offline DP example
+- file: tests/e2e/conftest.py:858
+  context: Set in test worker process to simulate DP rank
+- file: tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:80
+  context: Set in test worker process for ACL graph capture/replay test
+related_parameters:
+- name: VLLM_DP_RANK
+  relation: VLLM_DP_RANK_LOCAL defaults to VLLM_DP_RANK when not explicitly set
+- name: VLLM_DP_SIZE
+  relation: Together with VLLM_DP_SIZE defines the data-parallel topology
+- name: VLLM_DP_MASTER_IP
+  relation: Used alongside for establishing DP communication
+- name: VLLM_DP_MASTER_PORT
+  relation: Used alongside for establishing DP communication
+constraints:
+- VLLM_DP_RANK_LOCAL must be a non-negative integer
+- VLLM_DP_RANK_LOCAL must be less than the number of DP ranks on the local node
+- Offline data parallel mode (using env vars) is only supported for MoE models, not dense models
+tuning_advice:
+  summary: 'Set VLLM_DP_RANK_LOCAL to a unique integer per process on each node when using offline data-parallel mode. This
+    parameter has minimal direct performance impact but must be correctly assigned for proper workload distribution.
+
+    '
+  suggested_values:
+  - scenario: Single DP rank per node
+    value: 0
+    reason: Only one DP rank exists locally, so the local rank is always 0
+  - scenario: Multiple DP ranks per node (e.g., 4 GPUs per DP rank, 2 DP ranks per node)
+    value: 0 or 1
+    reason: Assign sequential integers starting from 0 for each DP rank on the same node
+  caveats:
+  - This parameter is only meaningful in offline (SPMD) data-parallel mode when not using Ray. When using Ray, DP ranks are
+    managed automatically.
+  - On Ascend NPU, data-parallel mode is only supported on the V1 engine (as noted in examples/offline_data_parallel.py:119)
+  - Incorrect assignment of VLLM_DP_RANK_LOCAL can cause multiple processes to process the same prompt shard or leave some
+    prompts unprocessed, reducing effective throughput
+  quick_guide: Set to a unique integer (0, 1, 2, ...) for each DP process on the same node; defaults to VLLM_DP_RANK if unset
+analysis_date: '2026-07-06'

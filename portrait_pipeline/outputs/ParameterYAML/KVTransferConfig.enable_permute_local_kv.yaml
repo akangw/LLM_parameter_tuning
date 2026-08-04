@@ -1,0 +1,87 @@
+name: KVTransferConfig.enable_permute_local_kv
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:67
+- docs/features/nixl_connector_compatibility.md:91
+- docs/features/nixl_connector_usage.md:210
+- vllm_ascend/platform.py:1016
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","enable_permute_local_kv":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This experimental upstream NixlConnector switch permits an HND producer to transfer KV cache to an NHD consumer.
+  During handshake, the pinned connector accepts that specific remote-HND/local-NHD mismatch when the flag is true; after
+  each receive it gathers the affected local blocks, reshapes and permutes the head and token dimensions, and copies the converted
+  blocks back into the local cache. That post-receive device work consumes memory bandwidth, creates temporary tensors for
+  the selected blocks and indices, and can add decode-side latency or reduce throughput relative to a layout-matched direct
+  transfer. It can nevertheless enable a heterogeneous prefill/decode topology that otherwise fails compatibility validation,
+  including head splitting for heterogeneous tensor parallelism. The exact cost scales with transferred KV volume and request
+  concurrency and is not quantified in the pinned source. On vllm-ascend, any true value is classified as tied to an incompatible
+  backend and reset to false during platform configuration, so the permutation path is not an effective Ascend tuning option.
+usage_locations:
+- file: vllm/config/kv_transfer.py:67
+  context: Declares the experimental boolean with default false for HND-to-NHD KV transfer.
+- file: docs/features/nixl_connector_compatibility.md:91
+  context: Documents NixlConnector's HND default, the NHD heterogeneous-TP restriction, the experimental layout permutation,
+    and its HMA exclusion.
+- file: docs/features/nixl_connector_usage.md:210
+  context: 'Shows the supported heterogeneous-layout scenario: HND prefill and NHD decode with this flag enabled.'
+- file: vllm_ascend/platform.py:1017
+  context: Detects a true value during Ascend platform configuration, warns that it belongs to an incompatible backend, and
+    resets it to false.
+related_parameters:
+- name: VLLM_KV_CACHE_LAYOUT
+  relation: Determines whether each endpoint uses HND or NHD; this switch is relevant when the upstream NIXL producer is HND
+    and the consumer is NHD.
+- name: KVTransferConfig.kv_connector
+  relation: The heterogeneous-layout behavior is implemented by NixlConnector, not as a general conversion for every KV connector.
+- name: ParallelConfig.tensor_parallel_size
+  relation: Differing prefill and decode TP sizes can require head-dimension splitting, for which the upstream NIXL implementation
+    normally requires HND and uses this conversion to support an NHD consumer.
+- name: SchedulerConfig.disable_hybrid_kv_cache_manager
+  relation: The NIXL worker derives whether HMA is required from hybrid KV-cache management; the layout-conversion path asserts
+    that HMA is not required.
+constraints:
+- The pinned upstream path accepts only remote HND to local NHD conversion; the flag is not a general bidirectional layout
+  converter.
+- The feature is experimental and limited to NixlConnector prefill/decode KV transfer.
+- It is not supported with HMA; upstream handshake validation rejects the conversion when hybrid-memory allocation is required.
+- For non-MLA heterogeneous TP with non-replicated KV heads, head splitting requires HND transfer layout or this enabled local
+  conversion.
+- On vllm-ascend, true is overwritten with false before connector execution, so false is the only effective value.
+tuning_advice:
+  summary: Keep false for layout-matched NIXL deployments and all Ascend deployments. Enable only when an upstream HND-prefill/NHD-decode
+    topology is required, then benchmark the receive-side conversion cost under the target KV volume and concurrency.
+  suggested_values:
+  - scenario: Upstream NIXL with matching producer and consumer KV layouts
+    value: false
+    reason: Avoids unnecessary experimental behavior; matching layouts can use the normal transfer path without a post-receive
+      layout conversion.
+  - scenario: Upstream NIXL with HND prefill and required NHD decode
+    value: true
+    reason: Allows the otherwise rejected layout mismatch and converts received blocks into the consumer's NHD layout.
+  - scenario: vllm-ascend deployment
+    value: false
+    reason: Ascend treats the feature as backend-incompatible and forcibly restores false, so enabling it cannot improve the
+      effective runtime.
+  caveats:
+  - Conversion gathers and copies every affected received block; its latency, throughput, and transient-memory cost grows
+    with KV volume and must be measured on the target workload.
+  - Enabling the flag does not make unsupported HMA combinations valid.
+  - The feature addresses HND-producer to NHD-consumer transfer only; reverse or other layout mismatches still fail handshake
+    validation.
+  - Upstream XPU platform configuration forces this field to true, so an explicit false value is not the effective XPU setting
+    in the pinned source.
+  quick_guide: Use false unless upstream NIXL must connect HND prefill to NHD decode; for that topology use true and measure
+    receive-completion latency and throughput. Always use false on Ascend.
+analysis_date: '2026-07-30'

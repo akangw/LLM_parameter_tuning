@@ -1,0 +1,88 @@
+name: compilation.backend
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:450
+- vllm_ascend/platform.py:498
+value_type: str
+default: '''""'''
+valid_choices:
+- '''""'''
+- eager
+- inductor
+- openxla
+- <custom qualified module name>
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'On Ascend NPU, vllm-ascend overrides the compilation backend selection at vllm_ascend/platform.py:498 via
+  `cls.get_compile_backend()`, which sets `compilation_config.oot_compiler` to an Ascend-specific compiler. The `compilation_config.backend`
+  field itself is validated in upstream vllm (vllm/config/compilation.py:980-987): when `mode == VLLM_COMPILE`, only `""`,
+  `"eager"`, or `"inductor"` are accepted for piecewise compilation; custom backends raise ValueError. On Ascend, `is_cuda_alike`
+  is False, so the default backend is NOT inductor. The actual compilation path is determined by `make_compiler()` in vllm/compilation/backends.py:101-121:
+  `"inductor"` uses InductorAdaptor/InductorStandaloneAdaptor, `"eager"` uses EagerAdaptor (no graph optimization), and any
+  other string is treated as a custom backend resolved via `current_platform.get_compile_backend()`. Since vllm-ascend patches
+  the platform''s `get_compile_backend()` to return an Ascend compiler, setting `backend` to a custom value effectively selects
+  the Ascend-native compilation pipeline. Setting it to `"eager"` disables all graph-level compilation, falling back to eager
+  execution which significantly increases latency and reduces throughput. Setting it to `"inductor"` is not supported on Ascend
+  (is_cuda_alike=False) and may cause errors. The backend choice also affects custom op enablement (vllm/config/vllm.py:998-1005):
+  inductor backend disables custom ops by default, while other backends enable all custom ops.
+
+  '
+usage_locations:
+- file: vllm/config/compilation.py:980
+  context: Validation that only "", "eager", "inductor" are allowed for piecewise compilation in VLLM_COMPILE mode
+- file: vllm/compilation/backends.py:101
+  context: make_compiler() dispatches to InductorAdaptor, EagerAdaptor, or custom backend based on backend string
+- file: vllm/config/vllm.py:956
+  context: Warning when backend is "eager" or mode is not VLLM_COMPILE that inductor optimizations are ignored
+- file: vllm/config/vllm.py:995
+  context: ir_enable_torch_wrap defaults to True only when backend is "inductor" and mode is VLLM_COMPILE
+- file: vllm/config/vllm.py:1000
+  context: Custom ops default to "none" when backend is "inductor", otherwise "all"
+- file: vllm_ascend/platform.py:498
+  context: vllm-ascend sets oot_compiler via get_compile_backend(), overriding the backend selection for Ascend
+related_parameters:
+- name: compilation.mode
+  relation: Backend is only used when mode is VLLM_COMPILE or STOCK_TORCH_COMPILE; mode=NONE ignores backend entirely
+- name: compilation.custom_ops
+  relation: Backend choice affects default custom_ops setting (inductor disables, others enable all)
+- name: compilation.cudagraph_mode
+  relation: Piecewise cudagraph modes require VLLM_COMPILE mode and a valid backend
+- name: compilation.ir_enable_torch_wrap
+  relation: Defaults to True only when backend is "inductor"
+constraints:
+- When compilation.mode is VLLM_COMPILE, backend must be one of "" (empty string), "eager", or "inductor"; custom backends
+  are not supported for piecewise compilation and will raise ValueError
+- The "inductor" backend is only functional on CUDA-alike platforms; Ascend NPU is not CUDA-alike, so inductor may not work
+  correctly
+- Setting backend to "eager" disables all torch.compile optimizations, which is equivalent to running without graph compilation
+tuning_advice:
+  summary: On Ascend NPU, leave backend as "" (empty string) to let vllm-ascend select the optimal Ascend-native compiler;
+    do NOT set it to "inductor" as Ascend is not CUDA-alike
+  suggested_values:
+  - scenario: Default Ascend deployment with vllm-ascend plugin
+    value: '''""'''
+    reason: vllm-ascend overrides the compilation backend via get_compile_backend() to use the Ascend-native compiler; leaving
+      backend empty allows this override to take effect seamlessly
+  - scenario: Debugging or isolating compilation issues on Ascend
+    value: eager
+    reason: Disables all graph compilation and runs in eager mode; useful for debugging but significantly degrades throughput
+      and increases latency
+  caveats:
+  - Do not set backend to "inductor" on Ascend NPU — Ascend is not CUDA-alike and inductor is designed for CUDA platforms;
+    this may cause crashes or silently fall back to suboptimal paths
+  - vllm-ascend patches the platform's get_compile_backend() method, so the actual compilation pipeline may differ from what
+    the backend string suggests
+  - When backend is "eager", all inductor-specific optimizations (custom op fusion, graph partitioning, cudagraph piecewise
+    compilation) are disabled
+  - 'The backend choice interacts with custom_ops defaults: non-inductor backends enable all custom ops by default, which
+    may affect Ascend-specific operator selection'
+  quick_guide: On Ascend NPU, use the default empty string backend to leverage vllm-ascend's native compiler; avoid "inductor"
+    and only use "eager" for debugging
+analysis_date: '2026-07-06'

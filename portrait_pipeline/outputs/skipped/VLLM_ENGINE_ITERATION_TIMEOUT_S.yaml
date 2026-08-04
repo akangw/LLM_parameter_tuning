@@ -1,0 +1,7 @@
+name: VLLM_ENGINE_ITERATION_TIMEOUT_S
+type: env
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, this integer (default 60 seconds) is used only as the asyncio.wait_for deadline
+  while Voxtral Realtime waits for the next item from its engine input stream. The pinned vllm-ascend repository contains
+  no reference or override. Changing the value changes when a stalled realtime token feed raises TimeoutError, but it does
+  not change successful inference latency, throughput, or memory use.

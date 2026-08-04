@@ -1,0 +1,6 @@
+name: ECTransferConfig.ec_parallel_size
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source, ec_parallel_size is only declared and documented in vllm/config/ec_transfer.py; no
+  runtime code reads it. The pinned vllm-ascend source contains no occurrence of ec_parallel_size. Therefore this field has
+  no latency, throughput, or memory effect in the pinned implementations.

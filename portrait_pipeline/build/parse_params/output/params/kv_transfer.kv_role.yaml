@@ -1,0 +1,153 @@
+name: kv_transfer.kv_role
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/vllm.py:714
+- vllm_ascend/platform.py:307
+- vllm_ascend/platform.py:576
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1597
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1401
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:84
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:74
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:98
+- vllm_ascend/model_loader/rfork/rfork_loader.py:96
+- vllm_ascend/utils.py:1510
+- vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/vllm_v1_adapter.py:580
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:498
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py:750
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/connector.py:102
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/scheduler.py:50
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:519
+- vllm/distributed/kv_transfer/kv_connector/v1/moriio/moriio_connector.py:265
+value_type: str
+default: kv_both
+valid_choices:
+- kv_producer
+- kv_consumer
+- kv_both
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter determines the role of the vLLM instance in Prefill-Decode (PD) disaggregation, which is a\
+  \ critical architecture choice for Ascend NPU deployments. The three roles are:\n- \"`kv_producer`: The instance runs the\
+  \ prefill phase and produces KV cache blocks, which are\"\n  transferred to consumer instances via KV transfer connectors\
+  \ (e.g., Mooncake, AscendStore).\n  This instance does NOT perform decode — it offloads that work to consumers.\n\n- \"\
+  `kv_consumer`: The instance receives KV cache blocks from a producer and performs only the\"\n  decode phase. It does not\
+  \ run prefill computation.\n\n- \"`kv_both`: The instance performs both prefill and decode locally (PD-mixed mode). No KV\"\
+  \n  transfer between instances occurs.\n\nOn Ascend NPU, this parameter gates multiple performance-critical features:\n\
+  1. **Layer Sharding** (`additional_config.layer_sharding`): Only available when `kv_role` is\n   `kv_producer` (vllm_ascend/platform.py:307).\
+  \ Layer sharding distributes transformer layers\n   across NPUs for memory savings and higher throughput on the prefill\
+  \ side.\n\n2. **Recompute Scheduler** (`recompute_scheduler_enable`): Only available in PD-disaggregated\n   mode (`kv_producer`\
+  \ or `kv_consumer`). It is explicitly forbidden in PD-mixed mode\n   (`kv_both`), and startup will fail with a clear error\
+  \ (vllm_ascend/platform.py:586-593).\n   The recompute scheduler trades compute for memory by recomputing activations during\n\
+  \   backward passes, enabling larger batch sizes on memory-constrained NPUs.\n\n3. **Balance Scheduling** (`enable_balance_scheduling`):\
+  \ Only supports PD-mixed mode\n   (`kv_both` or no kv_transfer_config). It is explicitly forbidden in PD-disaggregated mode\n\
+  \   (vllm_ascend/platform.py:574-582). Balance scheduling optimizes load distribution across\n   NPUs in mixed prefill-decode\
+  \ scenarios.\n\n4. **DSA Context Parallel with Layer Sharding** (`enable_dsa_cp_with_layer_shard`): Only\n   activates on\
+  \ the prefill side when `kv_role` is `kv_producer` (vllm_ascend/utils.py:1510).\n   This optimization hides layer-sharding\
+  \ broadcast overhead behind prefill computation.\n\n5. **KV Transfer Connector Selection**: The role determines which connector\
+  \ code paths are\n   active. In `kv_producer` mode, the instance sends KV cache; in `kv_consumer` mode, it\n   receives.\
+  \ The Mooncake and AscendStore connectors use this to configure RDMA transfers\n   over HCCS/RoCE on Ascend NPUs.\n\n6.\
+  \ **RFork Model Loading**: The disaggregation mode derived from `kv_role` is encoded into\n   the seed key for RFork topology-sensitive\
+  \ model loading (vllm_ascend/model_loader/\n   rfork/rfork_loader.py:96). This ensures only topology-compatible instances\
+  \ share seeds.\n\nThe upstream vLLM default is `kv_both` (vllm/config/vllm.py:714), which means no disaggregation. vllm-ascend\
+  \ inherits this default but adds Ascend-specific validation and feature gating on top of it.\nChoosing the wrong role for\
+  \ your deployment topology will cause either startup failures (due to validation checks) or severe performance degradation\
+  \ (e.g., running prefill on a consumer-only instance wastes compute, while running decode on a producer-only instance leaves\
+  \ decode capacity idle).\n"
+usage_locations:
+- file: vllm_ascend/platform.py:307
+  context: Validates that layer_sharding is only enabled when kv_role is kv_producer
+- file: vllm_ascend/platform.py:576-582
+  context: Validates that balance_scheduling is only enabled in PD-mixed mode (kv_both)
+- file: vllm_ascend/platform.py:586-593
+  context: Validates that recompute_scheduler_enable is only enabled in PD-disaggregated mode
+- file: vllm_ascend/utils.py:1510
+  context: Enables DSA CP with layer sharding only on prefill (kv_producer) instances
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1597
+  context: Mooncake P2P connector reads kv_role to configure send/receive behavior
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1401
+  context: Mooncake hybrid connector reads kv_role for hybrid attention KV transfer
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:84
+  context: AscendStore connector reads kv_role for KV pool operations
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:74
+  context: AscendStore pool scheduler uses kv_role for scheduling KV transfers
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:98
+  context: AscendStore pool worker uses kv_role for KV transfer execution
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:96
+  context: RFork loader encodes kv_role into seed key for topology matching
+- file: vllm/config/vllm.py:714
+  context: Upstream default set to kv_both when KV offloading is configured
+related_parameters:
+- name: kv_transfer_config.kv_connector
+  relation: Must be set to a valid connector (e.g., MooncakeConnector, AscendStoreConnector) for PD-disaggregated mode to
+    function
+- name: additional_config.layer_sharding
+  relation: Only valid when kv_role is kv_producer; raises ValueError otherwise
+- name: additional_config.recompute_scheduler_enable
+  relation: Only valid when kv_role is kv_producer or kv_consumer; raises ValueError if kv_both
+- name: additional_config.enable_balance_scheduling
+  relation: Only valid when kv_role is kv_both or no kv_transfer_config; raises ValueError in PD-disaggregated mode
+- name: parallel_config.prefill_context_parallel_size
+  relation: Context parallelism on prefill side interacts with kv_role for KV transfer block size calculation
+- name: parallel_config.decode_context_parallel_size
+  relation: Context parallelism on decode side interacts with kv_role for KV transfer block size calculation
+constraints:
+- kv_role must be 'kv_producer' to enable additional_config.layer_sharding; startup will fail with ValueError otherwise
+- kv_role must be 'kv_producer' or 'kv_consumer' to enable recompute_scheduler_enable; startup will fail with ValueError if
+  kv_role is 'kv_both'
+- kv_role must be 'kv_both' (or kv_transfer_config must be absent) to enable enable_balance_scheduling; startup will fail
+  with ValueError in PD-disaggregated mode
+- When kv_role is 'kv_producer' or 'kv_consumer', a valid kv_connector must be configured for KV transfer to function
+- Mooncake Hybrid Connector requires cp_world_size (pcp_size * dcp_size) to be 1
+tuning_advice:
+  summary: 'Choose kv_role based on your deployment topology: "use kv_both for single-instance or" homogeneous deployments,
+    and kv_producer/kv_consumer for PD-disaggregated deployments that separate prefill and decode across different Ascend
+    NPU instances.
+
+    '
+  suggested_values:
+  - scenario: Single-instance or homogeneous multi-instance deployment (all instances do both prefill and decode)
+    value: kv_both
+    reason: 'This is the default and simplest configuration. All instances perform both prefill and decode locally. Compatible
+      with balance_scheduling for load optimization. No KV transfer overhead. Suitable for most standard deployments.
+
+      '
+  - scenario: PD-disaggregated deployment — prefill node (P node)
+    value: kv_producer
+    reason: 'The prefill node runs only the prefill phase and sends KV cache to consumer nodes. This enables layer_sharding
+      for memory savings and higher prefill throughput. DSA context parallel with layer sharding is automatically activated
+      on Ascend NPU. The recompute_scheduler can be enabled to trade compute for memory, allowing larger batch sizes.
+
+      '
+  - scenario: PD-disaggregated deployment — decode node (D node)
+    value: kv_consumer
+    reason: 'The decode node receives KV cache from the producer and runs only the decode phase. This allows the decode node
+      to be optimized specifically for low-latency token generation. The recompute_scheduler can be enabled for memory-compute
+      tradeoffs. Decode nodes can scale independently from prefill nodes.
+
+      '
+  caveats:
+  - PD-disaggregated mode (kv_producer/kv_consumer) requires a KV transfer connector (e.g., MooncakeConnector, AscendStoreConnector)
+    and network infrastructure (RDMA/RoCE) for KV cache transfer between nodes
+  - balance_scheduling is incompatible with PD-disaggregated mode — if you need both prefill-decode separation and load balancing,
+    you must implement load balancing at the orchestration layer instead
+  - recompute_scheduler_enable is incompatible with PD-mixed mode (kv_both) — it only works in disaggregated mode where the
+    memory-compute tradeoff is beneficial
+  - layer_sharding is only available on the prefill side (kv_producer) — decode nodes cannot use layer sharding
+  - RFork model loading uses kv_role to build seed keys — changing kv_role will prevent seed matching with instances that
+    have a different role, potentially slowing down model loading
+  - 'Mooncake Hybrid Connector has additional constraints: it requires cp_world_size to be 1, meaning context parallelism
+    cannot be combined with hybrid KV transfer'
+  - When switching between PD-mixed and PD-disaggregated modes, you must also update related parameters (kv_connector, layer_sharding,
+    recompute_scheduler_enable, balance_scheduling) to avoid startup failures
+  quick_guide: 'Use kv_both for standard deployments; use kv_producer on prefill nodes and kv_consumer on decode nodes for
+    PD-disaggregated deployments with KV transfer connectors.
+
+    '
+analysis_date: '2026-07-06'

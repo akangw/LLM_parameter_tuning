@@ -1,0 +1,84 @@
+name: AttentionConfig.tq_max_kv_splits_for_cuda_graph
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/attention.py:34
+- vllm/v1/attention/backends/turboquant_attn.py:291
+- vllm/v1/attention/ops/triton_turboquant_decode.py:486
+value_type: int
+default: 32
+valid_choices: positive integer
+cli_example: --attention-config.tq_max_kv_splits_for_cuda_graph=32
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This value fixes NUM_KV_SPLITS for the upstream TurboQuant Triton decode implementation. A constant split count
+  keeps the launch grid stable for CUDA graph capture, while the implementation also uses the configured count in eager execution.
+  The stage-one grid has one program per batch item, query head, and split, and stage two reduces across all splits, so changing
+  the value changes decode parallelism and reduction work and can affect latency and throughput. The float32 intermediate
+  tensor has shape (batch_size, num_query_heads, split_count, head_size + 1); increasing the value therefore raises its memory
+  requirement linearly. When the shared workspace manager is available, a buffer of that shape is requested in advance; otherwise
+  the decode function allocates it on demand. The pinned vllm-ascend repository has no use or override of this field and uses
+  its own attention backends, so it is not a standard Ascend tuning control.
+usage_locations:
+- file: vllm/v1/attention/backends/turboquant_attn.py:291
+  context: Reads the configured value during TurboQuantAttentionImpl construction and stores it as the fixed maximum split
+    count; the source notes that fixed grid dimensions are required for CUDA graphs and reports no benchmark regression from
+    using the fixed count in eager mode.
+- file: vllm/v1/attention/backends/turboquant_attn.py:872
+  context: Uses the split count as the third dimension of the float32 decode intermediate workspace requested for the current
+    batch and query heads.
+- file: vllm/v1/attention/backends/turboquant_attn.py:885
+  context: Passes the stored split count to every TurboQuant Triton decode call.
+- file: vllm/v1/attention/ops/triton_turboquant_decode.py:530
+  context: Assigns the value to NUM_KV_SPLITS, sizes or slices the intermediate tensor with it, and launches the stage-one
+    grid across that many splits.
+- file: vllm/v1/attention/ops/triton_turboquant_decode.py:610
+  context: Launches stage two to reduce the intermediate results across the same fixed number of KV splits.
+related_parameters:
+- name: CacheConfig.cache_dtype
+  relation: The parameter is consumed only when a turboquant_* KV-cache dtype selects the TurboQuant attention backend.
+- name: AttentionConfig.flash_attn_version
+  relation: TurboQuant cache dtypes force FlashAttention 2 for compatible boundary layers, but this split count controls the
+    separate TurboQuant Triton decode kernel rather than FlashAttention's split scheduler.
+- name: AttentionConfig.flash_attn_max_num_splits_for_cuda_graph
+  relation: That independent field controls upstream FlashAttention split scheduling; it does not set TurboQuant's NUM_KV_SPLITS.
+constraints:
+- Use a positive integer; the value becomes a Triton launch-grid dimension and an intermediate-tensor dimension, and the source
+  performs no explicit range validation.
+- The parameter affects only the upstream TurboQuant decode backend selected by a turboquant_* KV-cache dtype; it does not
+  affect prefill attention or other attention backends.
+- CUDA graph capture requires the split count and resulting grid dimensions to remain constant.
+- Intermediate float32 workspace grows linearly with the split count as batch_size * num_query_heads * split_count * (head_size
+  + 1).
+- The pinned vllm-ascend implementation does not consume this field.
+tuning_advice:
+  summary: Keep 32 as the baseline. Change it only for an upstream TurboQuant workload after measuring decode latency, throughput,
+    CUDA-graph behavior, and peak workspace memory together.
+  suggested_values:
+  - scenario: General upstream TurboQuant serving
+    value: 32
+    reason: This is the source default and provides the fixed split grid and pre-allocation behavior intended by the implementation.
+  - scenario: Memory-constrained upstream TurboQuant serving
+    value: benchmark a smaller positive integer
+    reason: Reducing the split count lowers the dominant float32 intermediate workspace linearly, but may reduce split-KV
+      parallelism and worsen decode latency or throughput.
+  - scenario: Standard Ascend NPU deployment
+    value: 32
+    reason: Leave the inherited default unchanged because native vllm-ascend attention backends do not read this TurboQuant-specific
+      field.
+  caveats:
+  - The pinned source supplies no tested numeric range or workload-specific optimum beyond the default, so do not assume that
+    more splits improve performance.
+  - Larger values launch more stage-one programs and make stage two reduce more partial results while also reserving more
+    workspace; they can cost memory and compute without improving useful parallelism.
+  - Smaller values save workspace but can under-parallelize long-context decode; benchmark representative sequence lengths,
+    batch sizes, head counts, and head sizes.
+  - CUDA graph captures and their preallocated workspaces must be recreated after changing this startup configuration.
+  quick_guide: Start at 32. If TurboQuant decode workspace is a material memory cost, test smaller positive counts and keep
+    the smallest value that preserves end-to-end decode latency and throughput; otherwise retain the default.
+analysis_date: '2026-07-30'

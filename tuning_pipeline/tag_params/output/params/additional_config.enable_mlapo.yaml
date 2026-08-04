@@ -1,0 +1,122 @@
+name: additional_config.enable_mlapo
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:152
+- vllm_ascend/envs.py:83
+- vllm_ascend/attention/utils.py:377
+- vllm_ascend/attention/mla_v1.py:74
+- vllm_ascend/attention/mla_v1.py:962
+- vllm_ascend/attention/mla_v1.py:1749
+- vllm_ascend/attention/sfa_v1.py:429
+- vllm_ascend/attention/sfa_v1.py:576
+- vllm_ascend/attention/sfa_v1.py:1170
+- docs/source/user_guide/configuration/additional_config.md:96
+- docs/source/tutorials/models/DeepSeek-V3.1.md:566
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"enable_mlapo": true}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When effective, this switch selects MLAPO preprocessing, which fuses the Q/K/V preprocessing steps of MLA
+  into one MlaPreprocessOperation. The pinned model guide says that the fusion can significantly improve performance but consumes
+  more NPU memory, so it can reduce attention preprocessing latency and raise decode throughput at a memory cost. The configured
+  default is true, but true does not guarantee that every request uses the fused path: on non-A5 devices enabling_mlapo returns
+  true only for a decode-only KV consumer, MLA disables it for layers that are not W8A8 or W8A8MXFP8, SFA disables it for
+  unsupported projection/quantization or SFA context-parallel cases, and the runtime falls back when its token-count condition
+  is not met. A5 takes the configured boolean directly and its SFA path also supports a floating-point weight transformation.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:152
+  context: Reads additional_config.enable_mlapo first and otherwise falls back to the deprecated environment variable, whose
+    default is true.
+- file: vllm_ascend/envs.py:83
+  context: Defines the legacy boolean fallback and documents higher performance versus higher NPU-memory consumption for DeepSeek
+    W8A8 models.
+- file: vllm_ascend/attention/utils.py:377
+  context: Makes MLAPO decode-consumer-only on non-A5 devices while applying the configured value directly on A5.
+- file: vllm_ascend/attention/mla_v1.py:962
+  context: Disables MLAPO per MLA layer unless its fused projection uses supported W8A8 or W8A8MXFP8 quantization, then prepares
+    fused weights.
+- file: vllm_ascend/attention/mla_v1.py:1749
+  context: Selects the fused decode preprocessing only for decode-only batches with at most 1,024 decode tokens; otherwise
+    execution uses the non-MLAPO preprocessing path.
+- file: vllm_ascend/attention/sfa_v1.py:576
+  context: Validates the SFA projection, device-specific quantization support, and context-parallel incompatibility before
+    retaining MLAPO for a layer.
+- file: vllm_ascend/attention/sfa_v1.py:1170
+  context: Runs SFA MLAPO within the pre-A5 1,024-input-token limit, while A5 is exempt from that runtime condition.
+- file: docs/source/tutorials/models/DeepSeek-V3.1.md:566
+  context: Describes the significant performance improvement, extra NPU memory, and decode-node-only recommendation for PD
+    separation.
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_MLAPO
+  relation: Deprecated fallback; additional_config.enable_mlapo takes precedence whenever the nested key is present.
+- name: --kv-transfer-config
+  relation: On non-A5 devices, its producer/consumer roles must describe a decode-only KV consumer for MLAPO to become active.
+- name: --max-num-batched-tokens
+  relation: The MLAPO operator has a 1,024-token limit in the guarded non-A5 paths, and eligible decode consumers can discard
+    replaced weights when this configured maximum is at most that limit.
+- name: additional_config.enable_context_parallel
+  relation: Context-parallel attention support is path-dependent; the SFA implementation explicitly disables MLAPO when its
+    DSA context-parallel mode is active.
+constraints:
+- The value must be a YAML/JSON boolean in additional_config; the nested value overrides the deprecated environment variable.
+- On non-A5 devices, MLAPO is enabled only on a KV-transfer consumer that is not also a producer; ordinary or mixed producer-consumer
+  instances do not activate it.
+- The MLA implementation supports MLAPO only for layers whose fused projection uses Ascend W8A8 or W8A8MXFP8 dynamic quantization.
+- On non-A5 SFA, the fused projection must use supported W8A8 quantization and SFA context parallelism must be disabled; A5
+  SFA additionally supports floating-point MLAPO.
+- The guarded non-A5 fused runtime paths accept no more than 1,024 input/decode tokens; larger batches fall back to the unfused
+  path.
+tuning_advice:
+  summary: Keep true for eligible MLA/SFA decode workloads when latency or throughput is the priority and memory headroom
+    is adequate; use false when NPU memory is tighter or when comparing the fused path against its fallback.
+  suggested_values:
+  - scenario: Eligible decode-only PD node with adequate NPU memory
+    value: true
+    reason: Enables the fused MLA preprocessing path where current device, quantization, context-parallel, and token-count
+      gates permit it.
+  - scenario: Prefill node in a non-A5 PD-separated deployment
+    value: false
+    reason: Current code already gates MLAPO to decode-only consumers, and the model guide recommends enabling it only on
+      decode nodes, so false makes the intended role explicit.
+  - scenario: Memory-constrained eligible deployment
+    value: false
+    reason: Avoids the additional NPU-memory cost documented for the fusion operator, accepting lower performance from separate
+      preprocessing operations.
+  caveats:
+  - A configured value of true may have no runtime effect when device, KV-transfer role, layer quantization, SFA context-parallel
+    mode, or token-count checks reject the fused path.
+  - 'The 1,024-token behavior is implementation-specific: A5 SFA bypasses that runtime check, while MLA retains a decode-token
+    limit in its fused-selection condition.'
+  - Benchmark end-to-end latency, throughput, and peak NPU memory on the actual model and batching pattern; the pinned source
+    does not provide a universal gain or memory delta.
+  - Set the nested key instead of VLLM_ASCEND_ENABLE_MLAPO because the environment-variable fallback is deprecated and logged
+    for removal.
+  quick_guide: Use true on supported decode workloads with memory headroom; use false on non-A5 prefill nodes or when peak
+    NPU memory is the limiting resource.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - mla
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

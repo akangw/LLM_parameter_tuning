@@ -1,0 +1,53 @@
+name: compilation.encoder_compilation_time
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/monitor.py:50
+value_type: float
+default: '0.0'
+valid_choices: any non-negative float
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter is a runtime accumulator, not a user-configurable setting. It tracks the total time spent compiling
+  the multimodal encoder portion of the model during the warmup phase. The value is set internally by the compilation monitor
+  (vllm/compilation/monitor.py:50) when `is_encoder=True`, and is propagated from worker processes to the main process via
+  `CompilationTimes` (vllm/v1/executor/abstract.py:135). It is only used for logging informational messages about startup
+  compilation time breakdown (vllm/v1/engine/core.py:287-297) and in the startup benchmark (vllm/benchmarks/startup.py:160).
+  It does not control any compilation behavior, optimization level, or runtime execution path. The parameter has no direct
+  effect on inference throughput, latency, or memory usage — it merely records how long encoder compilation took during initialization.
+
+  '
+usage_locations:
+- file: vllm/compilation/monitor.py:50
+  context: Accumulates encoder compilation time when is_encoder=True during torch.compile warmup
+- file: vllm/v1/executor/abstract.py:135
+  context: Propagates max encoder compilation time from workers to main process config
+- file: vllm/v1/engine/core.py:287
+  context: Reads encoder_compilation_time for logging startup time breakdown
+- file: vllm/v1/worker/gpu_worker.py:726
+  context: Returns encoder compilation time as part of CompilationTimes from GPU worker
+- file: vllm/v1/worker/cpu_worker.py:219
+  context: Returns encoder compilation time as part of CompilationTimes from CPU worker
+- file: vllm/benchmarks/startup.py:160
+  context: Reads encoder_compilation_time for startup benchmark reporting
+related_parameters:
+- name: compilation.compilation_time
+  relation: Sibling accumulator for language model compilation time; both are set by the same compilation monitor and logged
+    together
+- name: compilation.mode
+  relation: Encoder compilation time is only accumulated when compilation.mode is VLLM_COMPILE
+constraints: []
+tuning_advice:
+  summary: This is a read-only diagnostic metric, not a tunable parameter — no tuning is applicable.
+  suggested_values: []
+  caveats:
+  - This parameter is only populated when compilation.mode is VLLM_COMPILE; otherwise it remains 0.0
+  - The value is only meaningful for multimodal models with a separate encoder component
+  - On Ascend NPU, encoder compilation behavior may differ from GPU due to CANN compilation paths, but this parameter still
+    only records timing, not behavior
+  quick_guide: No tuning needed — this is an internal timing accumulator for startup diagnostics only.
+analysis_date: '2026-07-06'

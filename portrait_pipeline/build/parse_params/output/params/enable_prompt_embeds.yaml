@@ -1,0 +1,80 @@
+name: --enable-prompt-embeds
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:250
+- vllm/engine/arg_utils.py:809
+- vllm_ascend/worker/model_runner_v1.py:837
+- vllm_ascend/worker/model_runner_v1.py:846
+- vllm_ascend/_310p/model_runner_310p.py:293
+- vllm_ascend/_310p/model_runner_310p.py:744
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --enable-prompt-embeds
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: "When enabled, this flag allows users to pass pre-computed text embeddings directly as input (via the `prompt_embeds`\
+  \ key) instead of token IDs. On Ascend NPU, this triggers additional data movement and tensor preparation in the model runner's\
+  \ `_prepare_input_ids` method. Specifically, in both v1-ascend and 310p-ascend paths, when `enable_prompt_embeds` is True,\
+  \ the runner must:\n1. Copy `is_token_ids` tensor to GPU for every batch (vllm_ascend/worker/model_runner_v1.py:837-841,\n\
+  \   vllm_ascend/_310p/model_runner_310p.py:293-297), adding a small per-iteration overhead.\n\n2. Copy `inputs_embeds` tensor\
+  \ to GPU alongside `input_ids` (vllm_ascend/_310p/model_runner_310p.py:744-746),\n   increasing GPU memory transfer volume\
+  \ per step.\n\n3. Execute an additional loop over requests to scatter prompt embeddings into the\n   pre-allocated `prompt_embeds`\
+  \ tensor (vllm_ascend/worker/model_runner_v1.py:846-865),\n   which adds CPU-side processing time proportional to the number\
+  \ of requests with embeddings.\n\nThe performance impact is low because these operations are lightweight compared to model\
+  \ forward passes, and the flag only affects batches that actually contain prompt_embeds requests. When no prompt_embeds\
+  \ requests are present, the overhead is limited to a boolean check and a conditional branch that is not taken.\nThe flag\
+  \ also forces tokenization during chat template rendering (vllm/entrypoints/llm.py:931, vllm/entrypoints/serve/render/serving.py:548),\
+  \ which adds preprocessing latency but is not on the critical inference path.\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:837
+  context: Copies is_token_ids tensor to GPU when enable_prompt_embeds is True during input preparation
+- file: vllm_ascend/worker/model_runner_v1.py:846
+  context: Guards the prompt embeddings scatter loop — only executes when enable_prompt_embeds is True
+- file: vllm_ascend/_310p/model_runner_310p.py:293
+  context: '310P variant: copies is_token_ids tensor to GPU when enable_prompt_embeds is True'
+- file: vllm_ascend/_310p/model_runner_310p.py:744
+  context: '310P variant: copies inputs_embeds and is_token_ids to GPU when enable_prompt_embeds is True'
+- file: vllm/entrypoints/chat_utils.py:952
+  context: Raises ValueError if prompt_embeds are passed but enable_prompt_embeds is False
+- file: vllm/entrypoints/llm.py:931
+  context: Forces tokenize=True in chat template rendering when enable_prompt_embeds is True
+related_parameters:
+- name: --enable-mm-embeds
+  relation: Similar mechanism for multimodal embeddings; both flags control whether pre-computed embeddings can be passed
+    as input
+- name: --model
+  relation: The model must support the embedding dimension of the passed prompt_embeds tensor; shape mismatch causes crashes
+constraints:
+- prompt_embeds tensor shape must match the model's expected input embedding dimension; incorrect shape will crash the vLLM
+  engine
+- Only enable this flag for trusted users, as malformed embeddings can cause engine crashes
+- When enabled, passing prompt_embeds in a request without this flag set raises a ValueError
+tuning_advice:
+  summary: Enable only if your application requires passing pre-computed text embeddings as input; otherwise leave disabled
+    to avoid minor per-step overhead on Ascend NPU.
+  suggested_values:
+  - scenario: Standard text-only inference with token IDs
+    value: 'False'
+    reason: Avoids unnecessary is_token_ids and inputs_embeds GPU copies and the prompt embeddings scatter loop, reducing
+      per-step CPU/NPU overhead
+  - scenario: Application requires passing pre-computed text embeddings (e.g., embedding-based retrieval, custom embedding
+      pipelines)
+    value: 'True'
+    reason: Required for the prompt_embeds input key to be accepted; the performance overhead is minimal compared to model
+      inference time
+  caveats:
+  - On Ascend NPU, enabling this flag adds a small per-iteration GPU copy of is_token_ids (and inputs_embeds on 310P) even
+    for batches without prompt_embeds requests — the boolean check itself is cheap but the copy is unconditional when the
+    flag is on
+  - The prompt embeddings scatter loop (v1-ascend model_runner_v1.py:846-865) iterates over all requests in the batch, which
+    can add measurable CPU time for large batch sizes with many prompt_embeds requests
+  - Incorrect embedding shape will crash the engine — ensure embeddings match the model's hidden dimension exactly
+  quick_guide: Leave disabled (default) unless your application explicitly passes prompt_embeds; the Ascend NPU overhead is
+    small but unnecessary for token-ID-only workloads.
+analysis_date: '2026-07-06'

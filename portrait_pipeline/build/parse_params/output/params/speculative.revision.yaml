@@ -1,0 +1,54 @@
+name: speculative.revision
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: null
+valid_choices: null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter specifies the exact model revision (branch, tag, or commit hash) to use for the speculative
+  draft model. It is passed to the model loading infrastructure when initializing the draft model. The performance impact
+  is indirect: different revisions may contain different model weights, architectures, or bug fixes that affect draft model
+  accuracy and thus speculative decoding acceptance rate. A higher acceptance rate directly improves throughput and reduces
+  latency. However, the parameter itself does not control any runtime execution path or resource allocation — it only determines
+  which version of the model is downloaded and loaded. On Ascend NPU, the revision choice may affect whether the draft model
+  is compatible with vllm-ascend''s supported model architectures and speculative decoding backends (e.g., eagle, ngram, mtp,
+  medusa).
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.model
+  relation: speculative.revision specifies which version of the model identified by speculative.model to load
+- name: speculative.method
+  relation: The draft model revision must be compatible with the chosen speculative decoding method (e.g., eagle, ngram)
+constraints:
+- The specified revision must exist in the model repository (branch, tag, or commit hash)
+- The draft model at the specified revision must be compatible with vllm-ascend's supported model architectures
+tuning_advice:
+  summary: 'Pin to a known-good revision for reproducibility; use the latest compatible revision for best draft model accuracy
+    on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Production deployment requiring reproducibility
+    value: <specific commit hash>
+    reason: Pinning to a commit hash ensures consistent draft model behavior across deployments and avoids unexpected changes
+      from upstream updates.
+  - scenario: Development or testing with latest improvements
+    value: null (use default branch HEAD)
+    reason: Allows automatic pickup of upstream draft model improvements and bug fixes without manual revision updates.
+  caveats:
+  - Changing the draft model revision may silently change model weights or architecture, affecting speculative decoding acceptance
+    rate and thus end-to-end throughput.
+  - Not all revisions of a draft model are guaranteed to be compatible with vllm-ascend's speculative decoding backends —
+    test after changing revisions.
+  - On Ascend NPU, draft model loading may fail if the revision introduces ops or architectures not supported by CANN compilation.
+  quick_guide: Pin to a specific commit hash for production; leave unset for development to track latest improvements.
+analysis_date: '2026-07-06'

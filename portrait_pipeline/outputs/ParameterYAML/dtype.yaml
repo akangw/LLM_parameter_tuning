@@ -1,0 +1,85 @@
+name: --dtype
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:772
+- vllm/config/model.py:148
+- vllm_ascend/attention/attention_mask.py:81
+- vllm_ascend/compilation/passes/norm_quant_fusion_pass.py:486
+value_type: str
+default: auto
+valid_choices:
+- auto
+- half
+- float16
+- bfloat16
+- float
+- float32
+cli_example: --dtype bfloat16
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: Selects the torch dtype used for model weights and activations. Lower-precision FP16 or BF16 values reduce
+  tensor storage relative to FP32 and change the compute kernels selected for inference, affecting memory capacity, prefill/decode
+  latency, and throughput. On Ascend, the selected model dtype is consumed by attention-mask construction and compilation
+  passes; some fused quantization and QKNorm/RoPE paths are enabled only for FP16/BF16 or BF16 respectively. The auto value
+  resolves against the model configuration and platform-supported dtypes, downcasting FP32 model configs to the platform preferred
+  dtype when appropriate.
+usage_locations:
+- file: vllm/engine/arg_utils.py:772
+  context: Registers --dtype from EngineArgs model configuration arguments.
+- file: vllm/config/model.py:611
+  context: Resolves and validates ModelConfig.dtype during model configuration initialization.
+- file: vllm/config/model.py:1992
+  context: Maps auto or named dtype values to torch.dtype and validates compatibility.
+- file: vllm_ascend/attention/attention_mask.py:81
+  context: Uses model_config.dtype to create final MLA attention masks.
+- file: vllm_ascend/compilation/passes/norm_quant_fusion_pass.py:486
+  context: Enables RMSNorm quantization fusion only for BF16 or FP16 model dtypes.
+- file: vllm_ascend/compilation/passes/qknorm_rope_fusion_pass.py:196
+  context: Enables QKNorm/RoPE fusion only for BF16 model dtype.
+related_parameters:
+- name: --quantization
+  relation: Quantization methods and Ascend quantization fusion paths may constrain or benefit from the selected model dtype.
+- name: --kv-cache-dtype
+  relation: Sets the KV-cache storage dtype independently; choosing it with the model dtype determines cache memory use and
+    compatibility.
+constraints:
+- The value must be auto, a supported named dtype, or a torch.dtype accepted by ModelConfig; unknown strings raise ValueError
+  during dtype resolution.
+- The selected dtype must be valid for the model architecture and supported by the active platform; auto falls back to a supported
+  preferred dtype when necessary.
+- Casting between BF16 and FP16 is allowed with a warning; FP32 upcasts and downcasts from FP32 model configs are explicitly
+  allowed.
+- On Ascend, some compilation fusions are unavailable outside FP16/BF16, and the QKNorm/RoPE fusion path requires BF16.
+tuning_advice:
+  summary: Start with auto to honor the checkpoint and active platform. For deliberate tuning, benchmark BF16 and FP16 on
+    the target Ascend model and workload, measuring both memory headroom and prefill/decode performance.
+  suggested_values:
+  - scenario: Unknown checkpoint precision or general deployment
+    value: auto
+    reason: Resolves from the model configuration while selecting a supported platform dtype and downcasting FP32 configurations
+      when appropriate.
+  - scenario: Ascend workload using BF16-compatible fused paths
+    value: bfloat16
+    reason: Enables Ascend paths that explicitly require BF16, including the QKNorm/RoPE fusion pass when other model conditions
+      are met.
+  - scenario: Ascend quantization fusion workload
+    value: half
+    reason: FP16 is one of the two dtypes accepted by the Ascend RMSNorm quantization fusion pass and reduces storage versus
+      FP32.
+  - scenario: Numerical comparison or an FP32-required experiment
+    value: float32
+    reason: Retains FP32, at the cost of higher tensor memory and potentially excluding dtype-gated Ascend fusions.
+  caveats:
+  - The fastest supported dtype is hardware-, model-, and workload-dependent; benchmark representative prefill and decode
+    traffic.
+  - Changing model dtype can affect numerical output and may disable dtype-specific Ascend compilation fusions.
+  - KV-cache dtype is configured separately and should be evaluated together with model dtype for total memory use.
+  quick_guide: Use auto first; compare bfloat16 and half on supported Ascend workloads, and reserve float32 for cases that
+    require it.
+analysis_date: '2026-07-27'

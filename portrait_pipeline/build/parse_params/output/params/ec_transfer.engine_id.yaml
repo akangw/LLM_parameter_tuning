@@ -1,0 +1,56 @@
+name: ec_transfer.engine_id
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/distributed/ec_transfer/ec_connector/factory.py:48
+value_type: str
+default: <computed>
+valid_choices: any unique string identifier
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter is used as a logging identifier when creating EC (Elastic/Expert Connector) transfer connectors
+  in vllm/distributed/ec_transfer/ec_connector/factory.py:48. It does not directly control any performance-critical code path,
+  memory allocation, or communication pattern. However, the vllm-ascend documentation for P/D (Prefiller/Decoder) disaggregation
+  deployments explicitly warns that each node''s engine_id must be uniquely assigned to avoid conflicts. If engine_id conflicts
+  occur between nodes in a multi-node P/D setup, it can cause connection failures or misrouting of KV cache transfers, which
+  would manifest as errors or degraded throughput/latency. The parameter itself is a configuration identifier, not a performance
+  tuning knob, but incorrect configuration in multi-node scenarios can indirectly impact performance by causing operational
+  failures.
+
+  '
+usage_locations:
+- file: vllm/distributed/ec_transfer/ec_connector/factory.py:48
+  context: Logged during connector creation to identify the engine instance
+related_parameters:
+- name: ec_transfer_config.ec_connector
+  relation: The connector type that uses engine_id for identification
+- name: kv_port
+  relation: In P/D deployments, both engine_id and kv_port must be uniquely configured per node to avoid conflicts
+constraints:
+- In multi-node P/D disaggregation deployments, each node's engine_id must be uniquely assigned to avoid conflicts
+tuning_advice:
+  summary: 'Ensure engine_id is unique per node in multi-node P/D deployments; otherwise use any descriptive string as it
+    has no direct performance impact.
+
+    '
+  suggested_values:
+  - scenario: Single-node deployment
+    value: '''"default"'''
+    reason: No uniqueness requirement; any string works
+  - scenario: Multi-node P/D disaggregation
+    value: '''"node-0", "node-1", etc.'''
+    reason: Each node must have a unique engine_id to prevent connection conflicts
+  caveats:
+  - In multi-node P/D deployments, duplicate engine_id values can cause connection conflicts that prevent proper KV cache
+    transfer between prefiller and decoder nodes
+  - This parameter is primarily an identifier and does not directly tune performance; its impact is limited to correct multi-node
+    operation
+  quick_guide: 'Set a unique engine_id per node in multi-node P/D deployments; for single-node setups, any value is acceptable.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,61 @@
+name: eplb.window_size
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/distributed/eplb/eplb_state.py:420
+value_type: int
+default: <computed>
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter controls the size of the sliding window buffer used to record expert loads for Expert-Parallel
+  Load Balancing (EPLB). In eplb_state.py:420-429, the value is read from `parallel_config.eplb_config.window_size` and used
+  to allocate a tensor of shape `(window_size, num_moe_layers, num_physical_experts)` of dtype int32. A larger window_size
+  increases GPU memory consumption linearly (each entry is 4 bytes × num_moe_layers × num_physical_experts) but provides more
+  historical data for the load-balancing algorithm to make rearrangement decisions. The parameter does not directly affect
+  computation time or communication — it only affects the memory footprint of the load recording buffer and the statistical
+  quality of the load estimates used by the EPLB policy. On Ascend NPU, the behavior is identical to upstream vLLM since vllm-ascend
+  does not override or modify this parameter.
+
+  '
+usage_locations:
+- file: vllm/distributed/eplb/eplb_state.py:420
+  context: Reads window_size from parallel_config.eplb_config to set self.expert_load_window_size
+- file: vllm/distributed/eplb/eplb_state.py:421-429
+  context: Allocates expert_load_window tensor of shape (window_size, num_moe_layers, num_physical_experts)
+related_parameters:
+- name: eplb.step_interval
+  relation: step_interval controls how often rearrangement occurs; window_size controls how much history feeds into each rearrangement
+    decision
+- name: eplb.policy
+  relation: The EPLB policy consumes the load window data; different policies may benefit from different window sizes
+constraints:
+- window_size must be a positive integer.
+tuning_advice:
+  summary: 'Use the default value unless you observe poor load-balancing quality in MoE models; increasing window_size improves
+    load estimation at the cost of additional GPU memory.
+
+    '
+  suggested_values:
+  - scenario: Default usage with stable workloads
+    value: <default from eplb_config>
+    reason: The default provides a reasonable balance between memory overhead and load estimation quality
+  - scenario: Highly dynamic workloads with frequent expert load shifts
+    value: 2x to 4x the default
+    reason: A larger window captures more history, smoothing out transient load spikes and improving rearrangement decisions
+  - scenario: Memory-constrained deployments
+    value: 1x default or lower
+    reason: Reducing window_size saves GPU memory; each entry costs num_moe_layers × num_physical_experts × 4 bytes
+  caveats:
+  - Memory overhead scales linearly with window_size — for large MoE models with many experts, even small increases can consume
+    significant memory
+  - A window_size that is too small may cause the EPLB policy to overreact to transient load fluctuations, leading to unnecessary
+    expert rearrangements
+  - This parameter has no Ascend-specific override; behavior is identical to upstream vLLM
+  quick_guide: Keep the default unless load balancing quality is visibly poor, then increase gradually while monitoring memory
+    usage.
+analysis_date: '2026-07-06'

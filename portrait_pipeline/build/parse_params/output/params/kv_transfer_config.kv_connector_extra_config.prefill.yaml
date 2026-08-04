@@ -1,0 +1,83 @@
+name: kv_transfer_config.kv_connector_extra_config.prefill
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:60
+- examples/offline_disaggregated_prefill_npu.py:59
+- examples/offline_disaggregated_prefill_npu.py:106
+value_type: dict
+default: <computed>
+valid_choices: dict with optional keys 'dp_size' and 'tp_size' (positive integers)
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'This nested configuration specifies the data-parallel (dp_size) and tensor-parallel (tp_size) dimensions of
+  the prefill instance in a disaggregated prefill/decode deployment. It is passed through kv_connector_extra_config to the
+  KV connector (e.g., MooncakeConnectorV1) and determines how the prefill workload is partitioned across NPUs. The dp_size
+  controls how many prefill replicas handle requests in parallel, directly affecting prefill throughput and TTFT (time to
+  first token). The tp_size controls tensor parallelism within each prefill replica, affecting per-NPU memory usage and compute
+  latency. On Ascend NPU, incorrect sizing can lead to HCCL communication bottlenecks, memory oversubscription, or underutilization
+  of NPU compute units. The vllm-ascend example at examples/offline_disaggregated_prefill_npu.py:59 shows both prefill and
+  decode instances setting dp_size=1 and tp_size=1 for a single-NPU-per-role deployment.
+
+  '
+usage_locations:
+- file: examples/offline_disaggregated_prefill_npu.py:59
+  context: Prefill instance sets kv_connector_extra_config with prefill dp_size=1, tp_size=1
+- file: examples/offline_disaggregated_prefill_npu.py:106
+  context: Decode instance sets kv_connector_extra_config with prefill dp_size=1, tp_size=1 (mirrors prefill config for consistency)
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.decode
+  relation: Mirror configuration for the decode instance; must be consistent with prefill config for correct KV cache transfer
+    topology
+- name: kv_transfer_config.kv_connector
+  relation: The KV connector (e.g., MooncakeConnectorV1) consumes this config to set up distributed communication
+- name: kv_transfer_config.kv_role
+  relation: Must be set to 'kv_producer' or 'kv_both' for the prefill instance to use this config
+- name: tensor_parallel_size
+  relation: The top-level --tensor-parallel-size should match or be compatible with the tp_size specified here
+constraints:
+- dp_size and tp_size must be positive integers
+- dp_size × tp_size must not exceed the total number of available NPUs for the prefill instance
+- The prefill dp_size and tp_size must be consistent with the decode instance's kv_connector_extra_config.prefill settings
+  for correct KV cache transfer
+tuning_advice:
+  summary: 'Set dp_size based on prefill throughput requirements and tp_size based on model size and NPU memory constraints;
+    start with dp_size=1, tp_size=1 for single-NPU deployments and scale up for larger models or higher throughput.
+
+    '
+  suggested_values:
+  - scenario: Single NPU per role (small models, development)
+    value:
+      dp_size: 1
+      tp_size: 1
+    reason: Matches the vllm-ascend example configuration; sufficient for models like DeepSeek-R1-Distill-Qwen-1.5B on a single
+      Ascend NPU
+  - scenario: Multiple NPUs for prefill throughput (data parallelism)
+    value:
+      dp_size: 2
+      tp_size: 1
+    reason: Increases prefill throughput by distributing requests across 2 NPU replicas; each replica holds a full model copy
+  - scenario: Large model requiring tensor parallelism
+    value:
+      dp_size: 1
+      tp_size: 4
+    reason: Splits the model across 4 NPUs to handle models that exceed single-NPU memory; reduces per-NPU memory pressure
+      at the cost of HCCL communication overhead
+  caveats:
+  - Increasing dp_size improves prefill throughput but requires more NPUs and increases memory usage proportionally (each
+    replica holds a full KV cache)
+  - Increasing tp_size reduces per-NPU memory but introduces HCCL all-reduce communication overhead on Ascend NPU, which can
+    increase prefill latency
+  - The prefill dp_size and tp_size must match the decode instance's understanding of the prefill topology; mismatched values
+    can cause KV cache transfer failures or silent correctness issues
+  - On Ascend NPU, HCCL communication performance is sensitive to NPU topology; ensure dp_size and tp_size align with physical
+    NPU interconnect (e.g., within the same NPU group for tp_size > 1)
+  quick_guide: Start with dp_size=1, tp_size=1; increase dp_size for throughput, increase tp_size only when model exceeds
+    single-NPU memory
+analysis_date: '2026-07-06'

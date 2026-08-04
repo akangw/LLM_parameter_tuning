@@ -1,0 +1,44 @@
+name: pooler.returned_token_ids
+type: nested
+category: model
+scope: vllm
+source_file: []
+value_type: list[int]
+default: <computed>
+valid_choices: list of integer token IDs within model vocabulary range
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter specifies which vocabulary indices to extract from the pooler''s output hidden states. It controls
+  the number of output dimensions returned by the pooling layer. The primary performance impact is on memory: "a larger list
+  of returned token IDs means" more output dimensions per request, increasing the size of the returned tensors. However, this
+  is typically a very small fraction of total model memory (the pooler output is a single vector per request, not per token),
+  so the impact on overall throughput or latency is negligible. The parameter does not affect the main model forward pass,
+  KV cache, or any Ascend-specific execution path.
+
+  '
+usage_locations: []
+related_parameters: []
+constraints:
+- Each token ID in the list must be a valid index within the model's vocabulary size.
+tuning_advice:
+  summary: 'Set this to the specific token IDs needed for your downstream task (e.g., reward model scoring). There is no meaningful
+    performance tuning opportunity here.
+
+    '
+  suggested_values:
+  - scenario: Reward model scoring (e.g., math-shepherd-mistral-7b-prm)
+    value: '''[tokenizer.encode("good_token"), tokenizer.encode("bad_token")]'''
+    reason: 'Extracts only the logits/hidden states for the tokens relevant to the reward model, minimizing unnecessary output
+      dimensions.
+
+      '
+  caveats:
+  - This parameter only affects the pooler output size, not the main model computation or KV cache.
+  - On Ascend NPU, there is no special override or hardware-specific behavior for this parameter.
+  quick_guide: 'Set to the token IDs your downstream task requires; no performance tuning needed.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,103 @@
+name: OffloadConfig.uva
+type: nested
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:16
+- vllm/config/offload.py:91
+- vllm/config/offload.py:116
+- vllm/engine/arg_utils.py:2142
+- vllm_ascend/worker/model_runner_v1.py:4261
+value_type: dict
+default:
+  cpu_offload_gb: 0
+  cpu_offload_params: []
+valid_choices:
+  cpu_offload_gb: Non-negative float in GiB per device.
+  cpu_offload_params: Set of exact parameter-name segments; an empty set selects non-selectively up to the capacity limit.
+cli_example: --offload-backend uva --cpu-offload-gb 4 --cpu-offload-params experts
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This nested object supplies the capacity and optional parameter-name filter for UVA zero-copy CPU weight offloading.
+  Its default object has a zero-GiB budget and empty filter, so UVA offloading is inactive. A positive cpu_offload_gb can
+  make model weights fit by keeping some weights in CPU-pinned memory, but every affected forward pass can pay host-device
+  interconnect access cost and reduce latency or throughput; cpu_offload_params narrows which weights are eligible. With offload_backend=auto,
+  a positive UVA budget activates this backend unless prefetch offloading is also active, in which case prefetch wins. Ascend
+  reads the inherited nested value, but its model-runner input-batch reinitialization path asserts that cpu_offload_gb is
+  zero, so positive settings are not universally compatible with the pinned Ascend runtime.
+usage_locations:
+- file: vllm/config/offload.py:91
+  context: Defines the nested UVAOffloadConfig object with a fresh default instance.
+- file: vllm/config/offload.py:116
+  context: Treats the UVA backend as active when the nested cpu_offload_gb value is positive and resolves conflicts with prefetch
+    settings.
+- file: vllm/engine/arg_utils.py:2142
+  context: Constructs this object from the --cpu-offload-gb and --cpu-offload-params CLI values when assembling VllmConfig.
+- file: vllm_ascend/worker/model_runner_v1.py:4261
+  context: Reads the inherited nested budget and requires it to be zero in the Ascend input-batch reinitialization path.
+related_parameters:
+- name: OffloadConfig.offload_backend
+  relation: Selects UVA explicitly or, in auto mode, derives backend selection from this object's positive capacity budget.
+- name: OffloadConfig.prefetch
+  relation: Competing weight-offload configuration; when both sub-configurations are active under auto, prefetch is selected.
+- name: --cpu-offload-gb
+  relation: CLI input mapped to this object's capacity field and the switch that makes UVA active when positive.
+- name: --cpu-offload-params
+  relation: CLI input mapped to this object's optional parameter-name filter.
+constraints:
+- cpu_offload_gb must be non-negative; zero disables UVA offloading.
+- cpu_offload_params uses exact parameter-name segments, not arbitrary substrings; an empty set applies no selection filter.
+- Explicit offload_backend=prefetch ignores active UVA settings and emits a warning.
+- Under offload_backend=auto, simultaneously active UVA and prefetch configurations select prefetch and emit a warning.
+- The pinned Ascend model runner requires cpu_offload_gb=0 when its input-batch reinitialization condition is reached.
+tuning_advice:
+  summary: Keep the default inactive object for normal Ascend serving; enable a small positive budget only on a verified runner
+    path and benchmark the real host-device interconnect.
+  suggested_values:
+  - scenario: Normal Ascend serving or maximum latency and throughput
+    value:
+      cpu_offload_gb: 0
+      cpu_offload_params: []
+    reason: This disables UVA, avoids host-memory access during forward passes, and satisfies the explicit Ascend runner restriction.
+  - scenario: Model does not fit in device memory and the exact Ascend path has been validated
+    value:
+      cpu_offload_gb: smallest positive GiB that makes the model fit
+      cpu_offload_params:
+      - verified parameter-name segment
+    reason: A minimal capacity budget and narrow filter limit the weights exposed to host-device access overhead while recovering
+      required device memory.
+  caveats:
+  - UVA performance depends strongly on CPU memory bandwidth and the host-device interconnect; capacity gains can substantially
+    reduce serving speed.
+  - The pinned Ascend runtime contains a conditional assertion requiring the nested budget to remain zero, so positive values
+    need topology- and runner-specific compatibility testing.
+  - If prefetch settings are active, backend selection may ignore this object; set OffloadConfig.offload_backend explicitly
+    when evaluating UVA.
+  - Changing this nested object changes OffloadConfig's compilation hash and can cause separate compilation-cache entries.
+  quick_guide: 'Start with {cpu_offload_gb: 0, cpu_offload_params: []}. If weights do not fit, first verify the Ascend runner
+    path, then increase the budget only as much as needed, optionally restrict parameter segments, and benchmark latency,
+    throughput, and host-memory use.'
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

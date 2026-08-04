@@ -1,0 +1,120 @@
+name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:75
+- vllm_ascend/ascend_config.py:83
+- vllm_ascend/utils.py:990
+- vllm_ascend/ascend_forward_context.py:125
+- vllm_ascend/ops/linear_op.py:500
+- docs/source/user_guide/configuration/additional_config.md:20
+- docs/source/tutorials/models/Qwen3-Dense.md:329
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: This deprecated environment switch enables FlashComm1 sequence parallelism unless the preferred additional_config.enable_flashcomm1
+  key is present, in which case that key takes precedence. During eligible tensor-parallel execution, the Ascend implementation
+  changes row-parallel communication from a conventional all-reduce to a sequence-parallel path built around reduce-scatter
+  and later all-gather, with optional matmul/reduce-scatter fusion. That can reduce communication and RMSNorm token-dimension
+  work and improve prefill latency and throughput at large token counts. The runtime protects dense-model low-concurrency
+  schedules with a num_tokens > 1000 gate, because changing collectives and padding can otherwise degrade performance; MoE
+  contexts do not use that numeric threshold. The pinned upstream vLLM repository has no implementation of this Ascend-specific
+  variable.
+usage_locations:
+- file: vllm_ascend/envs.py:75
+  context: Parses the environment value with bool(int(...)); the unset default is "0".
+- file: vllm_ascend/ascend_config.py:83
+  context: Resolves enable_flashcomm1, preferring the additional-config key and falling back to this deprecated environment
+    variable.
+- file: vllm_ascend/utils.py:990
+  context: Caches the resolved switch as the enable_sp() decision used throughout Ascend model execution.
+- file: vllm_ascend/ascend_forward_context.py:125
+  context: Activates FlashComm1 per forward; dense main-model execution requires more than 1000 tokens, MoE requires a known
+    token count, and dense draft execution disables it.
+- file: vllm_ascend/ops/linear_op.py:500
+  context: Uses ordinary tensor-parallel all-reduce when inactive and the padded sequence-parallel matmul/reduce-scatter path
+    when active.
+- file: vllm_ascend/utils.py:1477
+  context: Rejects enabled DSA context parallelism unless sequence parallelism from FlashComm1 is enabled.
+- file: docs/source/tutorials/models/Qwen3-Dense.md:329
+  context: Documents the reduce-scatter/all-gather decomposition, prefill benefits at large batch, and possible degradation
+    outside high-concurrency cases.
+related_parameters:
+- name: additional_config.enable_flashcomm1
+  relation: Preferred replacement; when present it overrides this environment variable, including an explicit false value.
+- name: tensor_parallel_size
+  relation: FlashComm1 changes tensor-parallel collectives and is useful only when the tensor-parallel group has multiple
+    ranks.
+- name: additional_config.enable_dsa_cp
+  relation: DSA context parallelism requires FlashComm1 sequence parallelism and raises ValueError when requested without
+    it.
+- name: additional_config.enable_shared_expert_dp
+  relation: When shared-expert DP is valid and enabled, Ascend forces enable_sp true even if FlashComm1 was otherwise disabled.
+- name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+  relation: Configures a separate FlashComm2 communication optimization; applicability and runtime gating differ from FlashComm1.
+constraints:
+- The value is parsed by int(), so use numeric strings; "0" is false and any nonzero integer is true, while a nonnumeric value
+  fails during parsing.
+- additional_config.enable_flashcomm1 has precedence over the environment variable and is the supported migration target.
+- Effective communication changes require tensor parallelism with more than one rank.
+- For dense main-model forwards, the per-forward FlashComm1 path is gated to num_tokens > 1000; MoE forwards enable it whenever
+  the token count is available.
+- Dense draft-model forwards explicitly disable the per-forward FlashComm1 path.
+- DSA context parallelism on supported indexed models raises ValueError if requested while FlashComm1 sequence parallelism
+  is disabled.
+tuning_advice:
+  summary: Migrate to additional_config.enable_flashcomm1 and benchmark it for high-concurrency tensor-parallel prefill workloads;
+    retain the disabled default where its changed collectives and padding do not pay off.
+  suggested_values:
+  - scenario: High-concurrency or large-token-count tensor-parallel prefill on a supported Ascend model
+    value: '1'
+    reason: The reduce-scatter/all-gather sequence-parallel path can lower communication and normalization work and improve
+      prefill latency and throughput.
+  - scenario: Single-rank execution, low concurrency, or a dense draft-model path
+    value: '0'
+    reason: There is no useful multi-rank collective to optimize, and the implementation warns that FlashComm1 can regress
+      low-concurrency performance.
+  - scenario: New or migrated deployments that need FlashComm1
+    value: '0'
+    reason: Leave the deprecated variable unset or disabled and use the preferred additional_config.enable_flashcomm1=true
+      setting instead.
+  caveats:
+  - The environment variable is scheduled for removal; new configurations should use the preferred additional-config key.
+  - The dense-model 1000-token runtime threshold is implementation-specific and does not apply to the MoE branch.
+  - FlashComm1 pads token rows to tensor-parallel divisibility and changes tensor shapes across collectives; model and speculative-decoding
+    paths contain compatibility handling.
+  - Model-specific guidance can be stricter; for example, the GLM4.x guide recommends disabling it for long-sequence, low-concurrency
+    workloads because padding invalidates an FIA optimization.
+  - The pinned sources provide qualitative guidance rather than portable benchmark gains, so measure TTFT, prefill throughput,
+    and end-to-end throughput on the target model, quantization, and topology.
+  quick_guide: Use the additional-config replacement for high-concurrency TP prefill after benchmarking; otherwise keep FlashComm1
+    disabled.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

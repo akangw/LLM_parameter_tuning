@@ -1,0 +1,125 @@
+name: --eplb-config
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1053
+- vllm/config/parallel.py:162
+- vllm_ascend/ascend_config.py:48
+value_type: dict
+default: '{}'
+valid_choices: A JSON/dict mapping of EPLBConfig fields (see vllm/config/parallel.py EPLBConfig class and vllm-ascend docs
+  for supported keys)
+cli_example: '--eplb-config ''{"num_redundant_experts": 4, "expert_heat_collection_interval": 200}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter controls Expert Parallelism Load Balancing (EPLB) for MoE models on Ascend NPU. It is a nested\
+  \ dict that populates the EPLBConfig dataclass (vllm/config/parallel.py:162). On Ascend, vllm-ascend reads this config from\
+  \ `additional_config[\"eplb_config\"]` (vllm_ascend/ascend_config.py:48) and constructs an EplbConfig object. The config\
+  \ directly affects:\n1. **Dynamic EPLB (v1 worker only):** When `dynamic_eplb=True`, the v1 model runner\n   (vllm_ascend/worker/model_runner_v1.py:465-476)\
+  \ launches a background EplbProcess that\n   periodically collects expert load statistics, runs a load-balancing algorithm,\
+  \ and\n   redistributes expert weights across EP ranks using D2D (device-to-device) transfers.\n   This dynamically balances\
+  \ expert workload to improve throughput but adds CPU overhead\n   and periodic weight-transfer latency. The v2 worker explicitly\
+  \ raises NotImplementedError\n   for dynamic_eplb (vllm_ascend/worker/v2/model_runner.py:71-72).\n\n2. **Static expert mapping:**\
+  \ When `expert_map_path` is set, a pre-computed expert-to-physical\n   mapping is loaded from file (vllm_ascend/eplb/core/eplb_utils.py:83-86).\
+  \ This avoids\n   runtime load-balancing overhead but requires offline profiling.\n\n3. **Redundant experts:** `num_redundant_experts`\
+  \ adds extra physical expert copies that\n   can be assigned to overloaded ranks, improving load balance at the cost of\
+  \ additional\n   NPU memory for the redundant expert weights (vllm_ascend/models/deepseek_v4.py:265-268).\n\n4. **Collection/execution\
+  \ intervals:** `expert_heat_collection_interval` and\n   `algorithm_execution_interval` control how often expert load is\
+  \ sampled and how often\n   the rebalancing algorithm runs (vllm_ascend/eplb/eplb_updator.py:53,70). Shorter\n   intervals\
+  \ react faster to load changes but increase overhead.\n\n5. **Communication group:** When dynamic_eplb is enabled, an additional\
+  \ HCCL communication\n   group `_DYNAMIC_EPLB` is initialized (vllm_ascend/distributed/parallel_state.py:98-102)\n   for\
+  \ coordinating expert weight transfers across EP ranks.\n\nThe upstream vLLM EPLBConfig (vllm/config/parallel.py:79-103)\
+  \ also supports `use_async`, `policy`, `communicator`, `log_balancedness`, and `log_balancedness_interval` fields, but vllm-ascend's\
+  \ EplbConfig may have a different set of supported fields (see docs at user_guide/configuration/additional_config.md:139-148).\
+  \ The Ascend docs list: dynamic_eplb, expert_map_path, expert_heat_collection_interval, algorithm_execution_interval, expert_map_record_path,\
+  \ num_redundant_experts.\nPerformance impact is HIGH because EPLB directly affects MoE expert utilization balance, which\
+  \ determines whether some NPU ranks become stragglers (hurting throughput) or whether memory is wasted on underutilized\
+  \ experts. Dynamic EPLB adds runtime overhead but can significantly improve throughput under skewed token-to-expert distributions.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:48-49
+  context: EplbConfig constructed from additional_config dict
+- file: vllm_ascend/worker/model_runner_v1.py:465-476
+  context: v1 worker reads eplb_config to initialize dynamic EPLB process and updater
+- file: vllm_ascend/worker/v2/model_runner.py:71-72
+  context: v2 worker checks dynamic_eplb and raises NotImplementedError if enabled
+- file: vllm_ascend/distributed/parallel_state.py:98-102
+  context: Initializes _DYNAMIC_EPLB HCCL group when dynamic_eplb is True
+- file: vllm_ascend/eplb/core/eplb_utils.py:70-105
+  context: init_eplb_config reads expert_map_path, num_redundant_experts, generates placement
+- file: vllm_ascend/eplb/eplb_updator.py:32-70
+  context: EplbUpdator reads expert_heat_collection_interval, algorithm_execution_interval
+- file: vllm_ascend/models/deepseek_v4.py:262-268
+  context: DeepSeek V4 MoE layer reads num_redundant_experts to compute physical expert count
+- file: vllm/config/parallel.py:98-103
+  context: 'Upstream EPLBConfig validation: async only with default policy, log_balancedness_interval > 0'
+related_parameters:
+- name: --enable-eplb
+  relation: Must be True for eplb_config to take effect; eplb_config provides the detailed settings
+- name: --enable-expert-parallel (-ep)
+  relation: EPLB requires expert parallelism (ep_size > 1); asserted in vllm_ascend/eplb/core/eplb_utils.py:80
+- name: --data-parallel-size (-dp)
+  relation: EPLB config hash is validated across DP workers for consistency (vllm/v1/engine/utils.py:1259)
+- name: --expert-placement-strategy
+  relation: Alternative static placement strategy; EPLB overrides static placement when enabled
+constraints:
+- dynamic_eplb requires expert parallelism (ep_size > 1); it will assert-fail otherwise
+- dynamic_eplb is not supported by Ascend NPU model runner v2 (raises NotImplementedError)
+- When using async EPLB (upstream), only the default policy is supported
+- log_balancedness_interval must be greater than 0 when log_balancedness is enabled
+- All DP workers must have identical eplb_config for parameters affecting collective communication (e.g., log_balancedness)
+- eplb_config must be a valid JSON/dict that can be parsed into EPLBConfig fields
+tuning_advice:
+  summary: 'For MoE models on Ascend NPU v1 worker, enable dynamic_eplb with appropriate num_redundant_experts (2-8) to balance
+    expert load and improve throughput. Use static expert_map_path for production deployments with stable workloads. Disable
+    dynamic_eplb on v2 worker.
+
+    '
+  suggested_values:
+  - scenario: MoE model with skewed token distribution, v1 worker, throughput-critical
+    value: '{"dynamic_eplb": true, "num_redundant_experts": 4, "expert_heat_collection_interval": 200, "algorithm_execution_interval":
+      30}'
+    reason: 'Enables dynamic load balancing with 4 redundant experts to absorb load spikes. Collection interval of 200 steps
+      provides sufficient statistics without excessive overhead. Algorithm runs every 30 steps for responsive rebalancing.
+
+      '
+  - scenario: MoE model with stable/known workload, v1 worker, latency-sensitive
+    value: '{"dynamic_eplb": false, "expert_map_path": "/path/to/expert_map.pt"}'
+    reason: 'Uses a pre-computed static expert mapping to avoid runtime EPLB overhead. Eliminates background process CPU usage
+      and periodic weight-transfer latency.
+
+      '
+  - scenario: v2 worker (any MoE model)
+    value: '{}'
+    reason: 'dynamic_eplb is not supported on v2 worker. Use only static expert placement via --expert-placement-strategy
+      instead.
+
+      '
+  - scenario: Memory-constrained deployment
+    value: '{"dynamic_eplb": true, "num_redundant_experts": 2}'
+    reason: 'Minimizes additional memory from redundant experts while still providing some load-balancing benefit. Each redundant
+      expert adds ~1/ep_size of the expert weight memory per rank.
+
+      '
+  caveats:
+  - dynamic_eplb adds a background process that consumes CPU and periodically triggers D2D weight transfers, which can cause
+    latency spikes during rebalancing
+  - num_redundant_experts increases NPU memory usage proportionally; each redundant expert adds full expert weights that must
+    fit in device memory
+  - expert_heat_collection_interval controls how many forward steps of load data are collected before the algorithm runs;
+    too small values produce noisy statistics, too large values delay reaction to load changes
+  - algorithm_execution_interval is the minimum steps between rebalancing runs; setting it too low can cause frequent weight
+    transfers that hurt throughput
+  - vllm-ascend's EplbConfig may not support all upstream EPLBConfig fields (e.g., use_async, communicator); check vllm-ascend
+    docs for the supported subset
+  - When using data-parallel with MoE, all DP ranks must have identical eplb_config or a RuntimeError will be raised during
+    handshake
+  quick_guide: 'For v1 worker with MoE models, set dynamic_eplb=true with 2-8 redundant experts; for v2 worker, leave eplb_config
+    empty and use --expert-placement-strategy instead.
+
+    '
+analysis_date: '2026-07-06'

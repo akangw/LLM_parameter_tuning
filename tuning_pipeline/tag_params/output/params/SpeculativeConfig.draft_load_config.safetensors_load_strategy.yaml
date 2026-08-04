@@ -1,0 +1,116 @@
+name: SpeculativeConfig.draft_load_config.safetensors_load_strategy
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:63
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+value_type: str
+default: null
+valid_choices:
+- null
+- lazy
+- eager
+- prefetch
+- torchao
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This nested field selects the safetensors loading policy for the speculative draft model. The default uses
+  memory mapping and automatically starts page-cache prefetching for NFS or Lustre checkpoints only when their total size
+  is at most 90% of available host RAM. "lazy" suppresses that automatic network-filesystem prefetch; "eager" reads each complete
+  shard into CPU memory before yielding its tensors; and "prefetch" explicitly reads checkpoint blocks into the OS page cache
+  in a background thread pool. These choices can materially change draft-model initialization time, storage access patterns,
+  and transient host/page-cache memory, but they do not alter the computation graph or steady-state token throughput after
+  weights have loaded. "torchao" reconstructs serialized torchao tensor subclasses and is also selected internally for a compatible
+  serialized torchao checkpoint. The pinned Ascend proposer passes draft_load_config to the upstream model loader, so this
+  startup behavior applies on Ascend without an Ascend-specific strategy override.
+usage_locations:
+- file: vllm/config/load.py:63
+  context: Defines the default and documents lazy, eager, prefetch, and torchao loading behavior, including automatic prefetch
+    for network filesystems when the checkpoint fits the host-RAM threshold.
+- file: vllm/config/speculative.py:186
+  context: Declares draft_load_config on SpeculativeConfig and documents that the target model's load configuration is used
+    when no separate draft configuration is supplied.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Identifies draft_load_config as an internal field populated by vLLM rather than a supported user-facing key in
+    speculative_config.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads the complete draft_load_config and passes it to get_model while constructing the Ascend draft proposer.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config
+  relation: Parent internal load configuration; when it is absent, the target model's load configuration supplies the draft
+    loading policy.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: The strategy is consulted by the default safetensors loader and has no effect when another weight format or a
+    specialized loader path is selected.
+- name: SpeculativeConfig.draft_load_config.safetensors_prefetch_num_threads
+  relation: Controls the background prefetch worker count when explicit or automatic prefetching is active.
+- name: SpeculativeConfig.draft_load_config.safetensors_prefetch_block_size
+  relation: Controls the read block size used to populate the OS page cache during prefetching.
+- name: SpeculativeConfig.draft_model_config.quantization
+  relation: A compatible serialized torchao checkpoint causes the default loader to select the torchao strategy internally.
+constraints:
+- This field affects only the default safetensors loading path; non-safetensors formats and specialized loaders can bypass
+  it.
+- The default automatic prefetch recognizes NFS, NFS4, and Lustre and runs only when total checkpoint bytes are at most 90%
+  of available host RAM.
+- Explicit prefetch can still run when the checkpoint exceeds the 90% threshold, but vLLM warns that it may cause host out-of-memory
+  errors.
+- The eager strategy holds a complete safetensors shard in CPU memory while loading it and can raise peak host-memory use.
+- The torchao strategy requires a torchao-serialized safetensors checkpoint and torchao version 0.15.0 or newer in the pinned
+  loader implementation.
+- draft_load_config and this nested field are populated internally by vLLM and are not intended as user-provided keys in --speculative-config.
+tuning_advice:
+  summary: Leave this internal field at its inherited default for ordinary deployments. Framework integrators should choose
+    a non-default strategy only after identifying the draft checkpoint's storage and serialization, then compare cold-start
+    time and peak host memory with an empty page cache.
+  suggested_values:
+  - scenario: Local SSD or ordinary deployment
+    value: lazy
+    reason: Memory mapping loads tensors on demand and explicitly avoids network-filesystem auto-prefetch; on local storage
+      this is the documented efficient path with restrained transient CPU-memory use.
+  - scenario: NFS or Lustre checkpoint that comfortably fits available host RAM
+    value: prefetch
+    reason: Reading the shards into the OS page cache can reduce high-latency or random network reads during draft initialization;
+      the default None policy already selects this automatically when its filesystem and RAM checks pass.
+  - scenario: Network checkpoint where random mapped reads dominate startup and sufficient CPU RAM is available
+    value: eager
+    reason: Reading each whole shard before tensor iteration can speed initialization on a network filesystem at the cost
+      of higher peak host memory.
+  - scenario: Draft checkpoint serialized as torchao tensor subclasses
+    value: torchao
+    reason: This path reconstructs the tensor subclasses required by that checkpoint; the loader can select it automatically
+      when compatible torchao quantization metadata is present.
+  caveats:
+  - Measure model initialization or time to readiness, not steady-state decode throughput, because the strategy is exhausted
+    once draft weights are loaded.
+  - Page-cache occupancy is host memory pressure even though prefetch does not retain a separate Python copy of every shard.
+  - Explicit prefetch ignores the automatic fit gate after warning, so it is unsafe when checkpoint size approaches available
+    RAM.
+  - The internal nested field is not a supported speculative-config tuning knob for normal CLI users; a top-level target load
+    strategy is inherited when vLLM constructs the draft configuration.
+  quick_guide: Keep the inherited default. Use lazy to force memory-mapped access without auto-prefetch, prefetch for a network
+    checkpoint that fits comfortably in RAM, eager only when startup is I/O-bound and shard-sized CPU headroom is available,
+    and torchao only for its matching serialization. Benchmark with a cold filesystem cache and record peak host memory.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

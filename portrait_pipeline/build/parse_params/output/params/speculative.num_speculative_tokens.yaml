@@ -1,0 +1,122 @@
+name: speculative.num_speculative_tokens
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:734
+- vllm_ascend/attention/attention_v1.py:245
+- vllm_ascend/platform.py:208
+- vllm_ascend/worker/model_runner_v1.py:461
+- vllm_ascend/worker/pcp_utils.py:68
+value_type: int
+default: <computed>
+valid_choices: 1 to 15 (Ascend NPU hard limit); must be divisible by draft model n_predict if using MTP
+cli_example: '--speculative-config ''{"num_speculative_tokens": 4, "method": "eagle"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "This parameter directly controls the number of tokens the draft model predicts per decoding step. On Ascend\
+  \ NPU, it affects multiple performance-critical paths:\n1. **Decode threshold and attention kernel selection** (vllm_ascend/attention/attention_v1.py:245-251):\n\
+  \   The Ascend attention backend computes `decode_threshold = 1 + num_speculative_tokens`.\n   This threshold determines\
+  \ whether a request is treated as decode (query_len <= threshold)\n   or prefill. The `npu_fused_infer_attention_score`\
+  \ operator has a hard limit of 16 on\n   the TND layout, so `num_speculative_tokens` must be <= 15. Exceeding this causes\
+  \ an\n   assertion failure.\n\n2. **CUDA graph capture size** (vllm_ascend/platform.py:208-211):\n   The Ascend platform\
+  \ overrides the default CUDA graph capture upper bound to\n   `min(max_num_seqs * (1 + num_speculative_tokens), 512)`. Larger\
+  \ speculative token\n   counts increase the capture size, consuming more NPU memory but potentially improving\n   throughput\
+  \ by covering more batch sizes.\n\n3. **Input batch and block table sizing** (vllm_ascend/worker/model_runner_v1.py:508,\n\
+  \   vllm_ascend/worker/npu_input_batch.py:121): The `num_speculative_tokens` is passed\n   to `NPUInputBatch` and `MultiGroupBlockTable`,\
+  \ affecting the allocation of block\n   tables and sampling buffers. Larger values increase memory footprint.\n\n4. **PCP\
+  \ (Prefill-Chunked-Prefill) decode threshold** (vllm_ascend/worker/pcp_utils.py:68):\n   Same `decode_threshold = 1 + num_speculative_tokens`\
+  \ logic applies in PCP mode,\n   affecting how requests are split between prefill and decode phases.\n\n5. **Batch token\
+  \ validation** (vllm/engine/arg_utils.py:2016-2022): When LoRA is enabled,\n   `max_num_batched_tokens` must be >= `max_num_seqs\
+  \ * (num_speculative_tokens + 1)`,\n   otherwise a ValueError is raised.\n\n6. **MTP divisibility constraint** (vllm/config/speculative.py:728-736):\
+  \ For MTP draft\n   models with `n_predict`, `num_speculative_tokens` must be divisible by `n_predict`\n   to enable module\
+  \ reuse.\n\nHigher values increase the number of candidate tokens per step, potentially improving throughput if the draft\
+  \ model has high acceptance rates, but also increase memory usage and may reduce per-step latency due to larger attention\
+  \ computations.\n"
+usage_locations:
+- file: vllm_ascend/attention/attention_v1.py:245
+  context: Computes decode_threshold = 1 + num_speculative_tokens; asserts <= 16 for NPU attention operator limit
+- file: vllm_ascend/platform.py:208
+  context: 'Used to compute default CUDA graph capture upper bound: min(max_num_seqs * (1 + num_speculative_tokens), 512)'
+- file: vllm_ascend/worker/model_runner_v1.py:461
+  context: Sets decode_threshold for v1 model runner to distinguish decode vs prefill requests
+- file: vllm_ascend/worker/model_runner_v1.py:508
+  context: Passed to NPUInputBatch constructor for block table and sampling buffer allocation
+- file: vllm_ascend/worker/npu_input_batch.py:121
+  context: Passed to MultiGroupBlockTable for speculative-aware block table sizing
+- file: vllm_ascend/worker/pcp_utils.py:68
+  context: Sets decode_threshold in PCP mode for prefill/decode split decisions
+- file: vllm_ascend/_310p/model_runner_310p.py:78
+  context: '310P variant: passed to NPUInputBatch; ngram mode forces uniform_decode_query_len=1'
+- file: vllm_ascend/_310p/model_runner_310p.py:896
+  context: '310P variant: re-initializes input batch with num_speculative_tokens on kv cache reshape'
+- file: vllm/config/speculative.py:734
+  context: Validates divisibility by draft model n_predict for MTP; defaults to n_predict if not set
+- file: vllm/engine/arg_utils.py:2016
+  context: Validates max_num_batched_tokens >= max_num_seqs * (num_speculative_tokens + 1) when LoRA enabled
+- file: vllm/config/vllm.py:474
+  context: Property accessor returning num_speculative_tokens or 0 if speculative_config is None
+- file: vllm/config/vllm.py:1533
+  context: Upstream CUDA graph capture size computation using num_speculative_tokens (overridden by Ascend platform)
+related_parameters:
+- name: speculative_config.method
+  relation: Must be set to 'mtp', 'eagle', 'eagle3', 'ngram', or 'deepseek_mtp' to enable speculative decoding
+- name: speculative_config.draft_model_config
+  relation: Draft model's n_predict determines default and divisibility constraint for num_speculative_tokens
+- name: scheduler_config.max_num_seqs
+  relation: Combined with num_speculative_tokens to compute CUDA graph capture size and batch token validation
+- name: scheduler_config.max_num_batched_tokens
+  relation: Must be >= max_num_seqs * (num_speculative_tokens + 1) when LoRA is enabled
+- name: compilation_config.cudagraph_capture_sizes
+  relation: When using EAGLE, must be set to multiples of (num_speculative_tokens + 1) for fullgraph mode
+- name: speculative_config.disable_padded_drafter_batch
+  relation: Controls whether speculative batches can have variable-length sequences; affects MTP method
+constraints:
+- num_speculative_tokens must be <= 15 on Ascend NPU due to npu_fused_infer_attention_score TND layout limit of 16 (decode_threshold
+  = 1 + num_speculative_tokens <= 16)
+- When using MTP with a draft model that has n_predict, num_speculative_tokens must be divisible by n_predict
+- When LoRA is enabled, max_num_batched_tokens must be >= max_num_seqs * (num_speculative_tokens + 1)
+- num_speculative_tokens is required when a speculative model is provided and the draft model config does not define a default
+  (n_predict)
+- When using EAGLE with fullgraph CUDA graph mode, cudagraph_capture_sizes must be multiples of (num_speculative_tokens +
+  1)
+tuning_advice:
+  summary: Set num_speculative_tokens based on draft model acceptance rate and NPU memory budget; start with 1-4 for MTP,
+    3-5 for EAGLE, and increase only if acceptance rate justifies the memory and compute overhead.
+  suggested_values:
+  - scenario: DeepSeek-V3 MTP on Ascend NPU (general recommendation)
+    value: 1
+    reason: Documentation default for DeepSeek MTP; balances speculative gain with minimal memory overhead and avoids large
+      CUDA graph capture sizes
+  - scenario: EAGLE draft model on Ascend NPU (balanced throughput)
+    value: 4
+    reason: Documentation example value; provides good throughput improvement with manageable memory overhead; cudagraph_capture_sizes
+      should be [5, 10, 15, 20] for batch sizes 1-4
+  - scenario: High-acceptance-rate draft model with ample NPU memory
+    value: 5
+    reason: Higher speculation depth can improve throughput if draft model consistently predicts correctly; monitor acceptance
+      rate to ensure gains outweigh memory cost
+  - scenario: Memory-constrained deployment or low acceptance rate
+    value: 1
+    reason: Minimizes memory overhead from larger block tables and CUDA graph capture sizes; reduces wasted computation from
+      rejected tokens
+  caveats:
+  - 'Ascend NPU hard limit: num_speculative_tokens must be <= 15. The attention operator npu_fused_infer_attention_score uses
+    a TND layout with a maximum of 16 tokens per decode round (1 target + up to 15 speculative).'
+  - Higher num_speculative_tokens increases CUDA graph capture size (capped at 512), consuming more NPU memory. Monitor memory
+    usage when increasing this value.
+  - On 310P NPUs, ngram speculative decoding forces uniform_decode_query_len=1 for graph capture, which may interact with
+    num_speculative_tokens settings.
+  - EAGLE draft models require draft_tensor_parallel_size=1 (no tensor parallelism for the draft model), even if the target
+    model uses TP.
+  - When using fullgraph CUDA graph mode with EAGLE, cudagraph_capture_sizes must be explicitly set to multiples of (num_speculative_tokens
+    + 1) for each desired batch size.
+  - The actual throughput gain depends heavily on the draft model's acceptance rate. If acceptance rate is low, higher num_speculative_tokens
+    wastes computation and memory.
+  quick_guide: Start with num_speculative_tokens=1 for MTP or 4 for EAGLE; increase only if NPU memory permits and draft model
+    acceptance rate is high.
+analysis_date: '2026-07-06'

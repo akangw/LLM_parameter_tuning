@@ -1,0 +1,66 @@
+name: VLLM_HUMMING_MOE_GEMM_TYPE
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:1235
+- vllm/model_executor/layers/fused_moe/fused_humming_moe.py:45
+value_type: str
+default: auto
+valid_choices:
+- indexed
+- grouped
+- grouped_contiguous
+- auto
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls which GEMM (General Matrix Multiply) kernel type is used for the Hummingbird
+  MoE (Mixture of Experts) layer. The Hummingbird kernel is a GPU-optimized fused MoE implementation in vLLM upstream. The
+  parameter selects between "indexed" GEMM (using index-based gather/scatter operations) and "grouped_contiguous" GEMM (using
+  batched GEMM with contiguous memory layouts). The choice affects the efficiency of expert computation in MoE models. When
+  set to "auto" (the default, achieved by leaving the env var unset or empty), the code in fused_humming_moe.py:45-52 falls
+  back to "indexed" GEMM. This parameter is specific to the Hummingbird kernel and has no direct Ascend NPU counterpart —
+  vllm-ascend does not override or reference this parameter. On Ascend NPU, MoE layers typically use CANN-optimized operators
+  rather than the Hummingbird kernel, so this parameter may have limited or no effect on Ascend hardware unless the Hummingbird
+  kernel path is explicitly invoked for a compatible model.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/fused_humming_moe.py:45
+  context: Reads the env var and normalizes the value to select the GEMM kernel type for Hummingbird MoE.
+related_parameters:
+- name: VLLM_HUMMING_ONLINE_QUANT_CONFIG
+  relation: Related Hummingbird kernel parameter controlling online quantization configuration.
+- name: VLLM_HUMMING_INPUT_QUANT_CONFIG
+  relation: Related Hummingbird kernel parameter controlling input activation quantization.
+- name: VLLM_HUMMING_USE_F16_ACCUM
+  relation: Related Hummingbird kernel parameter controlling FP16 accumulator usage.
+constraints:
+- Only effective when the Hummingbird fused MoE kernel is used for MoE layers.
+- Valid string values are 'indexed', 'grouped', 'grouped_contiguous', or empty/unset (treated as 'auto' which defaults to
+  'indexed').
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter is unlikely to have any effect since MoE layers typically use CANN-native operators
+    rather than the GPU-specific Hummingbird kernel. Leave it unset (default "auto"/"indexed") unless you are explicitly using
+    the Hummingbird kernel path on Ascend.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU (MoE handled by CANN operators)
+    value: ''
+    reason: Leaving the env var unset defaults to 'auto' which selects 'indexed' GEMM. On Ascend, the Hummingbird kernel is
+      typically not invoked, so this setting has no practical impact.
+  - scenario: Explicitly using Hummingbird MoE kernel on GPU
+    value: indexed
+    reason: The default fallback in the code is 'indexed', which is the safer choice when the optimal type is unknown.
+  caveats:
+  - This parameter is specific to the Hummingbird fused MoE kernel, which is a GPU-oriented implementation. On Ascend NPU,
+    MoE computation is typically handled by CANN-optimized operators, so this env var likely has no effect.
+  - vllm-ascend does not reference or override this parameter, confirming it is not part of the Ascend execution path.
+  quick_guide: Leave unset on Ascend NPU; the Hummingbird kernel is GPU-specific and this parameter has no known effect on
+    Ascend hardware.
+analysis_date: '2026-07-06'

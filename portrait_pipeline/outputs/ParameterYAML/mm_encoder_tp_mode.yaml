@@ -1,0 +1,66 @@
+name: --mm-encoder-tp-mode
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:61
+- vllm/config/multimodal.py:145
+- vllm/config/model.py:638
+- vllm/engine/arg_utils.py:1196
+value_type: str
+default: weights
+valid_choices:
+- weights
+- data
+cli_example: --mm-encoder-tp-mode data
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: The pinned vLLM source defines weights and data modes. Weights mode shards each encoder layer's weights across
+  tensor-parallel ranks; data mode replicates the encoder weights and distributes batched encoder inputs across those ranks.
+  The current optimization guide states that avoiding per-layer all-reduce can improve throughput and TTFT by about 10% at
+  tensor_parallel_size=8, with a further reported benefit for encoders using hardware-unoptimized Conv3D operations. Data
+  mode increases memory consumption because every TP rank holds encoder weights. ModelConfig changes an unsupported data request
+  back to weights, so effects apply only to models that report encoder TP-data support.
+usage_locations:
+- file: vllm/config/multimodal.py:61
+  context: Defines MMEncoderTPMode as the weights and data string literals.
+- file: vllm/config/multimodal.py:145
+  context: Sets the weights default and documents weight sharding versus batched-input sharding.
+- file: vllm/config/model.py:638
+  context: Rejects data mode for models without multimodal encoder TP-data support and falls back to weights.
+- file: vllm/model_executor/models/interfaces.py:112
+  context: Declares supports_encoder_tp_data false by default; supported models opt in.
+- file: docs/configuration/optimization.md:218
+  context: Documents the throughput, TTFT, communication, and replicated-weight memory trade-off.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Data mode uses the tensor-parallel ranks as the effective batch-level data-parallel group.
+- name: --data-parallel-size
+  relation: This setting is independent of API request-level data parallelism controlled by data-parallel-size.
+- name: --mm-encoder-only
+  relation: Both settings configure the multimodal encoder; encoder-only mode is intended for disaggregated encoder processes.
+constraints:
+- Data mode is implemented per model and requires that the loaded model supports multimodal encoder TP-data.
+- Unsupported data-mode requests are changed to weights mode with a warning during ModelConfig initialization.
+- Replicating encoder weights in data mode consumes additional device memory and can cause OOM when memory headroom is small.
+tuning_advice:
+  summary: For a supported multimodal model using multiple TP ranks, benchmark data mode against the default; it trades encoder-weight
+    memory for less encoder communication and can improve throughput and TTFT.
+  suggested_values:
+  - scenario: Supported multimodal model with tensor parallelism and sufficient device-memory headroom
+    value: data
+    reason: Splits batched encoder inputs across TP ranks, avoiding the per-layer all-reduce described for weight sharding.
+  - scenario: Unsupported model or memory-constrained deployment
+    value: weights
+    reason: This is the default, avoids replicated encoder-weight memory, and is the effective mode after an unsupported data
+      request falls back.
+  caveats:
+  - The data-mode improvement is workload-, model-, and TP-size-dependent; measure end-to-end TTFT and throughput.
+  - Data mode is not API request-level data parallelism and does not change how the language decoder shards its weights.
+  - Data mode replicates multi-modal encoder weights on every TP rank, increasing memory use.
+  quick_guide: Use --mm-encoder-tp-mode data only after confirming model support and memory headroom; otherwise retain weights.
+analysis_date: '2026-07-27'

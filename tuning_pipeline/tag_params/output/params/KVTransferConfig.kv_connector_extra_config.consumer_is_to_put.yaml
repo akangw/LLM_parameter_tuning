@@ -1,0 +1,111 @@
+name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_put
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py
+- docs/source/user_guide/feature_guide/kv_pool.md
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '{"kv_connector": "AscendStoreConnector", "kv_role": "kv_consumer", "kv_connector_extra_config": {"consumer_is_to_put":
+  true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: For an AscendStoreConnector configured as kv_consumer, false suppresses save metadata, save completion waits,
+  delayed block freeing, sender-thread completion tracking, and creation of a sender thread used only for producer roles or
+  consumer puts. Setting true lets the Decode consumer enqueue its KV blocks for storage in the configured KV Pool backend
+  so that a Prefill node can reuse Decode-generated cache (the documented use case is MLA). This can reduce later prefill
+  computation when reuse is high, but it adds device-to-pool transfer and backend write traffic, consumes sender resources,
+  and can delay request completion and KV-block reclamation until stores finish. Consequently, write bandwidth and backend/network
+  latency can reduce decode throughput and increase tail latency, while delayed freeing can temporarily raise KV-cache pressure.
+  The net end-to-end effect depends on how often the stored prefixes are subsequently reused.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py
+  context: KVPoolScheduler.build_connector_meta sets force_skip_save for a consumer when the flag is false; when enabled it
+    emits save metadata for new and cached requests. request_finished and request_finished_all_groups may delay freeing blocks
+    while those saves complete.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py
+  context: KVPoolWorker initializes consumer-specific PP layer partitions and a KV sender when enabled, enqueues save requests,
+    waits for their queue to drain, and includes consumer sends in finished-request tracking.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py
+  context: AscendStoreConnector.wait_for_save bypasses consumer saves only when the flag is false; get_finished delegates
+    completion tracking to the worker.
+- file: docs/source/user_guide/feature_guide/kv_pool.md
+  context: Documents false as the default and describes enabling Decode-to-Prefill KV Pool storage for MLA, including PP configuration.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The behavior is implemented by AscendStoreConnector (and its legacy MooncakeConnectorStoreV1 alias); other connectors
+    need not honor this extra key.
+- name: KVTransferConfig.kv_role
+  relation: This switch changes behavior specifically for kv_consumer; producers and kv_both already take the save path.
+- name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_load
+  relation: Independently controls whether the consumer loads KV from the pool; it should be chosen as part of the same producer/consumer
+    cache-flow design.
+- name: KVTransferConfig.kv_connector_extra_config.backend
+  relation: Selects the storage backend whose bandwidth and latency determine the overhead of consumer puts.
+- name: KVTransferConfig.kv_connector_extra_config.prefill_pp_size
+  relation: Describes the Prefill pipeline-parallel width used to partition layers when a consumer writes cache for PP Prefill
+    nodes.
+- name: KVTransferConfig.kv_connector_extra_config.prefill_pp_layer_partition
+  relation: Optionally gives the per-stage layer counts for consumer puts; it must agree with prefill_pp_size and the model
+    layer count.
+- name: KVTransferConfig.kv_connector_extra_config.use_layerwise
+  relation: The layerwise save method unconditionally skips kv_consumer, so this consumer-put path is effective through the
+    non-layerwise save workflow.
+constraints:
+- Meaningful only for the vLLM Ascend AscendStore KV Pool path with kv_role set to kv_consumer; producer and kv_both roles
+  save independently of this flag.
+- The documented Decode-to-Prefill use case is for MLA models and requires a reachable, correctly configured KV Pool backend.
+- When Prefill uses pipeline parallelism, configure prefill_pp_size and optionally prefill_pp_layer_partition. An explicit
+  partition must contain prefill_pp_size integers whose sum equals the model's hidden-layer count.
+- The layerwise connector save path always returns early for kv_consumer, so consumer_is_to_put should be used with the non-layerwise
+  save path.
+tuning_advice:
+  summary: Keep false unless Decode-generated MLA KV entries will be reused by Prefill often enough to repay the extra store
+    traffic and delayed reclamation.
+  suggested_values:
+  - scenario: MLA disaggregated Prefill/Decode serving with repeated prefixes and a measured high hit rate for Decode-generated
+      cache
+    value: true
+    reason: Makes the Decode consumer publish its KV blocks, allowing later Prefill work to be avoided; validate the gain
+      against backend write latency and network utilization.
+  - scenario: Latency-sensitive Decode, low prefix reuse, constrained pool bandwidth, or deployments that do not need Decode-to-Prefill
+      cache reuse
+    value: false
+    reason: Preserves the default skip-save behavior, avoiding consumer sender work, store completion barriers, and delayed
+      KV-block freeing.
+  caveats:
+  - Do not assume enabling the flag helps merely because KV Pool is active; measure subsequent hits on cache written by Decode
+    nodes.
+  - Backend and network saturation can turn consumer puts into tail-latency spikes, and delayed block release can worsen pressure
+    near KV capacity.
+  - For PP Prefill, an invalid layer partition raises an initialization error; test the exact model layer count and partitioning
+    before deployment.
+  - Current source skips layerwise saves for every kv_consumer even when this flag is true.
+  quick_guide: Start with false. Test true only for the documented MLA Decode-to-Prefill reuse flow; retain it when end-to-end
+    latency or throughput improves without unacceptable KV-memory, network, or backend pressure.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

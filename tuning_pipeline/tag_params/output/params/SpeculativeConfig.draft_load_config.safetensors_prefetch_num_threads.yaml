@@ -1,0 +1,105 @@
+name: SpeculativeConfig.draft_load_config.safetensors_prefetch_num_threads
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:12
+- vllm/config/load.py:85
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+value_type: int
+default: 8
+valid_choices: '>= 1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This nested field sets the maximum number of worker threads used to read safetensors checkpoint shards into
+  the OS page cache while the speculative draft model is loaded. The pinned upstream default loader forwards it to the ordinary
+  safetensors iterator, which consumes it only when explicit prefetch is selected or when the null strategy automatically
+  enables prefetch for an NFS, NFS4, or Lustre checkpoint that passes the host-RAM fit check. More threads can overlap reads
+  from distinct shards and reduce an I/O-bound cold start when the storage can sustain the concurrency, but can instead create
+  storage contention, CPU scheduling overhead, and more simultaneous temporary read buffers. It affects draft-model initialization
+  latency and transient host memory/I/O pressure, not NPU model memory, the draft computation graph, or steady-state token
+  throughput. The pinned Ascend proposer passes the complete draft_load_config to the upstream model loader without overriding
+  this field, so the same behavior applies to Ascend speculative draft loading.
+usage_locations:
+- file: vllm/config/load.py:12
+  context: Defines the pinned default prefetch worker count as 8.
+- file: vllm/config/load.py:85
+  context: Defines the integer field with a minimum of one and documents it as the worker count for safetensors page-cache
+    prefetch.
+- file: vllm/config/speculative.py:186
+  context: Declares draft_load_config and states that the target model load configuration is used when a separate draft configuration
+    is absent.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Classifies draft_load_config as an internal field populated by vLLM rather than a supported user key in speculative_config.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads the speculative draft_load_config and passes it to get_model while constructing the Ascend draft proposer.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config.safetensors_load_strategy
+  relation: This worker count is consumed only when explicit or automatic page-cache prefetch is active in the ordinary safetensors
+    loading path.
+- name: SpeculativeConfig.draft_load_config.safetensors_prefetch_block_size
+  relation: Sets each worker's read size; together with the worker count it determines the temporary read buffers that can
+    be in flight.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: Non-safetensors and specialized loader paths can bypass the ordinary safetensors iterator that consumes this value.
+- name: SpeculativeConfig.draft_load_config.model_loader_extra_config
+  relation: Enabling the alternate multithreaded safetensors loader bypasses this page-cache prefetch setting in the pinned
+    upstream implementation.
+constraints:
+- The value must be an integer greater than or equal to 1; both LoadConfig validation and the prefetch helper enforce this.
+- The default is 8 worker threads.
+- The field has no effect unless page-cache prefetch is active in the ordinary safetensors iterator.
+- Prefetch work is distributed by checkpoint-file path across distributed ranks before each rank starts its own thread pool.
+- Effective parallelism cannot exceed the number of checkpoint files assigned to the rank.
+- More active workers can hold more block-sized temporary read buffers and issue more concurrent storage reads.
+- draft_load_config and this nested field are internal speculative-decoding configuration populated by vLLM, not supported
+  user-provided keys in --speculative-config.
+tuning_advice:
+  summary: Keep the inherited default of 8 unless cold-cache measurements on the draft checkpoint's actual storage show that
+    less or more read concurrency improves time to readiness.
+  suggested_values:
+  - scenario: Ordinary deployment or no storage-specific benchmark
+    value: 8
+    reason: This is the pinned-source default and avoids speculative tuning of a startup-only I/O control.
+  - scenario: Storage contention or transient host-memory pressure during draft prefetch
+    value: 4
+    reason: Fewer concurrent readers reduce simultaneous I/O requests and block-sized temporary buffers, though cold start
+      may become longer.
+  - scenario: Many-shard network checkpoint on storage proven to scale with additional parallel readers
+    value: 16
+    reason: More workers may reduce cold-start time when shard count and storage bandwidth permit, but the gain must be established
+      by measurement.
+  caveats:
+  - Measure draft-model initialization or time to readiness with a cold filesystem cache; this field does not tune request-time
+    latency or decode throughput.
+  - Approximate concurrent temporary read-buffer capacity scales with active workers times safetensors_prefetch_block_size.
+  - Thread count above the number of files assigned to a rank adds no file-level parallelism.
+  - Filesystem readahead, cache state, shard sizes, rank count, block size, and storage concurrency can dominate the result.
+  - Automatic prefetch runs only for recognized network filesystems when the checkpoint is at most 90% of available RAM; explicit
+    prefetch above that threshold only warns.
+  - The nested field is internal and normally inherits the target LoadConfig rather than being supplied through --speculative-config.
+  quick_guide: Keep 8. Reduce it only when concurrent prefetch causes measured contention or transient host-memory pressure,
+    and increase it only when cold-cache profiling proves that the storage and shard count benefit from more readers.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

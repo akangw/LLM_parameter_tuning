@@ -1,0 +1,68 @@
+name: --stream-interval
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/scheduler.py:151
+- vllm/engine/arg_utils.py:681
+- vllm/engine/arg_utils.py:1374
+- vllm/engine/arg_utils.py:1983
+- vllm/v1/engine/async_llm.py:141
+- vllm/v1/engine/llm_engine.py:99
+- vllm/v1/engine/output_processor.py:150
+- vllm/v1/engine/output_processor.py:182
+value_type: int
+default: '1'
+valid_choices: '>= 1'
+cli_example: --stream-interval 5
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls how many tokens are buffered before being sent to the client during streaming. The parameter is consumed
+  by OutputProcessor (v1 engine) and stored as `stream_interval` in RequestState. During output processing, tokens are accumulated
+  and only flushed to the client when the accumulated count reaches `stream_interval`. A value of 1 sends each token immediately
+  (lowest perceived latency but higher host CPU overhead per token). Larger values batch multiple tokens before sending, reducing
+  the number of IPC/network round-trips between the engine process and the API server, which can improve throughput under
+  high load by amortizing per-message overhead. This is purely a host-side batching optimization — it does not affect NPU
+  computation, scheduling, or memory usage. On Ascend NPU, the effect is identical to upstream GPU behavior since it operates
+  entirely in the output processing layer (Python-level), not in the model execution path.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/output_processor.py:182
+  context: Stored as `self.stream_interval` in RequestState; used to gate when accumulated tokens are flushed to the client
+    queue.
+- file: vllm/v1/engine/async_llm.py:141
+  context: Passed from SchedulerConfig to OutputProcessor constructor during AsyncLLM initialization.
+- file: vllm/v1/engine/llm_engine.py:99
+  context: Passed from SchedulerConfig to OutputProcessor constructor during LLMEngine initialization.
+- file: vllm/engine/arg_utils.py:1983
+  context: Passed to SchedulerConfig constructor during engine config creation.
+related_parameters: []
+constraints:
+- stream_interval must be an integer greater than or equal to 1.
+tuning_advice:
+  summary: Use the default value of 1 for low-latency streaming; increase to 5-10 only if host CPU overhead from per-token
+    IPC becomes a bottleneck under very high request rates.
+  suggested_values:
+  - scenario: Low-latency interactive applications (chatbots, real-time assistants)
+    value: '1'
+    reason: Sends each token immediately, minimizing time-to-first-token and perceived latency for end users.
+  - scenario: High-throughput batch serving where per-token IPC overhead is measurable
+    value: '5'
+    reason: Batches 5 tokens per flush, reducing host-side message overhead while still providing reasonably smooth streaming.
+  - scenario: Maximum throughput with streaming enabled but latency not critical
+    value: '10'
+    reason: Larger batching further amortizes IPC costs; suitable when clients can tolerate slight output burstiness.
+  caveats:
+  - This parameter only affects streaming (Server-Sent Events) output delivery — it has no effect on non-streaming requests
+    or on NPU-side computation.
+  - 'Larger values increase perceived output ''burstiness'': clients receive tokens in chunks rather than one-by-one, which
+    may feel less responsive in interactive use cases.'
+  - On Ascend NPU, there is no hardware-specific override or behavior change for this parameter; it operates identically to
+    upstream vLLM.
+  quick_guide: Keep at 1 for interactive use; raise to 5-10 only if host CPU profiling shows IPC overhead from per-token streaming
+    is a bottleneck.
+analysis_date: '2026-07-06'

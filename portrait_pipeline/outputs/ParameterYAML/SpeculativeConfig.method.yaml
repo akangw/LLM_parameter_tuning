@@ -1,0 +1,131 @@
+name: SpeculativeConfig.method
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:59
+- vllm/config/speculative.py:85
+- vllm/config/speculative.py:503
+- vllm_ascend/spec_decode/__init__.py:33
+- vllm_ascend/worker/model_runner_v1.py:570
+- docs/source/user_guide/feature_guide/speculative_decoding.md:1
+value_type: str
+default: null
+valid_choices:
+- ngram
+- ngram_gpu
+- suffix
+- medusa
+- mlp_speculator
+- draft_model
+- eagle
+- eagle3
+- extract_hidden_states
+- dflash
+- mtp
+- deepseek_mtp
+- mimo_mtp
+- mimo_v2_mtp
+- glm4_moe_mtp
+- glm4_moe_lite_mtp
+- glm_ocr_mtp
+- ernie_mtp
+- nemotron_h_mtp
+- exaone_moe_mtp
+- exaone4_5_mtp
+- qwen3_next_mtp
+- qwen3_5_mtp
+- longcat_flash_mtp
+- pangu_ultra_moe_mtp
+- step3p5_mtp
+- hy_v3_mtp
+- gemma4_mtp
+cli_example: --speculative-config '{"method":"mtp","num_speculative_tokens":2}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field selects the proposal algorithm used by speculative decoding. In upstream configuration, null is
+  normalized to ngram only for the legacy model values "ngram"/"[ngram]" and otherwise to draft_model; model metadata can
+  subsequently detect EAGLE, EAGLE3, DFlash, Medusa, MLP-speculator, or MTP. The choice determines whether proposals come
+  from prompt/history matching, an auxiliary draft model, EAGLE-family/MTP execution, or hidden state extraction. On Ascend,
+  get_spec_decode_method dispatches the effective value to distinct N-gram CPU/NPU, suffix, Medusa, EAGLE/MTP, DFlash, draft
+  model, or extraction proposer classes, and the model runner allocates a drafter and verifies 1 + num_speculative_tokens
+  tokens per decode step. Consequently the method changes proposal compute and token acceptance, inter-token latency and throughput,
+  and whether auxiliary model weights, KV state, hidden states, or lookup structures consume memory. The Ascend guide explicitly
+  describes speculative decoding as improving inter-token latency in memory-bound inference, while also documenting that extract_hidden_states
+  performs no actual speculation.
+usage_locations:
+- file: vllm/config/speculative.py:503
+  context: Normalizes a null method, converts legacy model-type-specific MTP names to mtp, supplies method-specific model
+    values, and auto-detects supported model-based methods.
+- file: vllm_ascend/spec_decode/__init__.py:33
+  context: Maps the effective method to the concrete Ascend proposer; eagle, eagle3, and mtp share AscendEagleProposer, while
+    lookup and draft-model methods use different implementations.
+- file: vllm_ascend/worker/model_runner_v1.py:570
+  context: Creates the selected drafter and sizes each speculative decode step as one target token plus num_speculative_tokens.
+- file: vllm_ascend/worker/model_runner_v1.py:1553
+  context: Runs the EAGLE-family/MTP or draft-model proposal path after target verification and rejection sampling.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md:1
+  context: Documents Ascend configurations and operational constraints for ngram, EAGLE/EAGLE3, MTP, suffix, and hidden-state
+    extraction.
+related_parameters:
+- name: SpeculativeConfig.model
+  relation: Identifies auxiliary weights and participates in automatic method detection; most model-based methods require
+    a compatible model.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Controls how many proposals the chosen method emits and how many tokens the target verifies per step.
+- name: SpeculativeConfig.prompt_lookup_min
+  relation: Sets the minimum matching window for ngram and ngram_gpu.
+- name: SpeculativeConfig.prompt_lookup_max
+  relation: Sets the maximum matching window for ngram and ngram_gpu.
+- name: SpeculativeConfig.draft_tensor_parallel_size
+  relation: Controls auxiliary-model parallelism for model-based proposers.
+- name: SpeculativeConfig.disable_padded_drafter_batch
+  relation: Changes drafter batching behavior, especially for Ascend MTP.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Ascend full-graph EAGLE verification requires capture sizes divisible by 1 + num_speculative_tokens for the intended
+    batch sizes.
+constraints:
+- If method is null, upstream normalizes it to ngram only when model is "ngram" or "[ngram]"; otherwise it initially becomes
+  draft_model.
+- With no model and a provided num_speculative_tokens, upstream accepts only mtp, ngram, ngram_gpu, suffix, or extract_hidden_states;
+  other methods raise because no speculative model was supplied.
+- Model-type-specific MTP names such as deepseek_mtp and qwen3_5_mtp are deprecated method spellings and are normalized to
+  mtp.
+- The pinned Ascend dispatcher directly supports ngram, ngram_gpu, suffix, medusa, eagle, eagle3, mtp, dflash, draft_model,
+  and extract_hidden_states; it has no mlp_speculator branch even though that value remains in the upstream declared type.
+- EAGLE draft models on Ascend require draft_tensor_parallel_size=1, and EAGLE3 draft models require method=eagle3.
+- extract_hidden_states is a data-collection mode rather than a performance speculation method and requires num_speculative_tokens=1
+  according to the Ascend guide.
+tuning_advice:
+  summary: Select the method by model compatibility and workload repetition, then benchmark accepted tokens per step and end-to-end
+    latency; the method name alone does not guarantee a speedup.
+  suggested_values:
+  - scenario: Compatible target model with native MTP layers on the pinned Ascend stack
+    value: mtp
+    reason: Ascend has a dedicated MTP/EAGLE-family execution path, and MTP can propose multiple tokens without loading an
+      unrelated small language model.
+  - scenario: Repetitive prompts or generated text without auxiliary weights
+    value: suffix
+    reason: Suffix decoding matches both prompt and generated history and adapts proposal length, avoiding auxiliary draft-model
+      weight memory.
+  - scenario: Prompt text contains reusable repeated n-grams
+    value: ngram
+    reason: The CPU N-gram proposer needs no draft model and is the documented Ascend prompt-lookup path.
+  - scenario: A validated EAGLE3 checkpoint is available for the target model
+    value: eagle3
+    reason: The Ascend implementation provides an EAGLE proposer and explicitly requires this method spelling for EAGLE3 models.
+  caveats:
+  - Speedup depends on proposal acceptance rate, output distribution, batch size, and proposer overhead; low acceptance can
+    make speculative decoding slower than ordinary decoding.
+  - Model-based methods add draft weights and runtime state, while lookup methods avoid that weight memory but help mainly
+    on repetitive content.
+  - Do not select an upstream-only spelling without checking the Ascend dispatcher; mlp_speculator is declared upstream but
+    is not dispatched by the pinned Ascend proposer factory.
+  - Null does not disable speculative decoding once a SpeculativeConfig exists; it is normalized, normally to draft_model.
+  quick_guide: Use mtp for a compatible native-MTP model, eagle3 with a matched EAGLE3 checkpoint, suffix/ngram for repetitive
+    workloads without auxiliary model memory, and compare against speculation disabled using production traffic.
+analysis_date: '2026-07-31'

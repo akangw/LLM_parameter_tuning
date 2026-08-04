@@ -1,0 +1,90 @@
+name: VLLM_ASCEND_BALANCE_SCHEDULING
+type: env
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:105
+- vllm_ascend/ascend_config.py:80
+- vllm_ascend/patch/__init__.py:80
+value_type: bool
+default: 'false'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, balance scheduling modifies the vLLM v1 scheduler behavior to separate prefill and decode requests
+  into distinct scheduling sessions, rather than processing them simultaneously in a single session (the default chunked-prefill
+  behavior). This is implemented via a monkey-patch in vllm_ascend/patch/platform/patch_balance_schedule.py that patches EngineCoreProc.run_engine_core
+  and the Scheduler class. The separation can improve output throughput and reduce TPOT (Time Per Output Token) in some scenarios,
+  but may degrade TTFT (Time To First Token). The feature is specifically noted as not recommended for PD-disaggregated (prefill-decode
+  separated) deployments.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:77-82
+  context: 'Reads the env var via _get_config_value and stores it as self.enable_balance_scheduling. Also checks for incompatibility
+    with profiling_chunk_config — raises ValueError if both are enabled simultaneously.
+
+    '
+- file: vllm_ascend/patch/__init__.py:70-84
+  context: 'Documents the monkey-patch that implements balance scheduling by patching EngineCoreProc.run_engine_core and the
+    Scheduler to separate prefill/decode scheduling.
+
+    '
+related_parameters:
+- name: enable_balance_scheduling
+  relation: 'The recommended replacement (via --additional-config ''{"enable_balance_scheduling": true}''). This env var is
+    deprecated in favor of the additional-config key.
+
+    '
+- name: profiling_chunk_config
+  relation: 'Mutually exclusive — cannot be enabled at the same time as balance scheduling. A ValueError is raised if both
+    are active.
+
+    '
+- name: enable_chunked_prefill
+  relation: 'Balance scheduling modifies the default chunked-prefill behavior in v1 scheduler by separating prefill and decode
+    into distinct scheduling sessions.
+
+    '
+constraints:
+- Cannot be enabled simultaneously with profiling_chunk_config — the server will raise a ValueError at startup.
+- Not recommended for PD-disaggregated (prefill-decode separated) deployment scenarios.
+tuning_advice:
+  summary: 'Enable balance scheduling to improve output throughput and reduce TPOT in v1 scheduler when TTFT degradation is
+    acceptable and PD-disaggregated mode is not in use.
+
+    '
+  suggested_values:
+  - scenario: High-throughput serving with v1 scheduler where TPOT is the primary concern
+    value: '1'
+    reason: 'Separates prefill and decode scheduling to avoid prefill requests blocking decode, improving output throughput
+      and reducing TPOT. Documented in DeepSeek-R1 tuning guide.
+
+      '
+  - scenario: Latency-sensitive applications where TTFT is critical
+    value: '0'
+    reason: 'Balance scheduling may degrade TTFT in some scenarios. Keep disabled (default) when time-to-first-token is the
+      primary optimization target.
+
+      '
+  - scenario: PD-disaggregated deployments
+    value: '0'
+    reason: 'Explicitly not recommended for PD-separated scenarios per vllm-ascend documentation.
+
+      '
+  caveats:
+  - TTFT may degrade when balance scheduling is enabled, as prefill requests may be delayed.
+  - 'This env var is deprecated — migrate to --additional-config ''{"enable_balance_scheduling": true}''.'
+  - Only affects v1 scheduler path; v2 scheduler behavior may differ.
+  - Cannot be used together with profiling_chunk_config (dynamic chunked pipeline parallel).
+  quick_guide: 'Set VLLM_ASCEND_BALANCE_SCHEDULING=1 to improve decode throughput at the cost of TTFT; migrate to --additional-config
+    ''{"enable_balance_scheduling": true}'' for future compatibility.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,171 @@
+# =============================================================================
+# Output Parameter YAML Schema Definition
+# =============================================================================
+# This file defines the schema for each parameter's output YAML.
+# It is read by schema.py to generate Pydantic validation models.
+# When modifying the output format, update this file and schema.py together.
+# =============================================================================
+
+# Each output YAML file must conform to this structure.
+# Fields marked with (auto) are auto-populated from parameters.json or grep.
+# Fields marked with (LLM) are filled by the LLM analysis.
+
+schema:
+  # ========== 基础信息（auto: 直接从 parameters.json 继承） ==========
+  name:
+    type: str
+    description: "参数名（原样保留）"
+    auto: true
+
+  type:
+    type: enum
+    values: ["cli", "env", "nested"]
+    description: "参数类型"
+    auto: true
+
+  category:
+    type: enum
+    values: ["scheduling", "memory", "parallelism", "communication", "quantization",
+             "compilation", "speculation", "kv_cache", "model", "observability",
+             "hardware", "other"]
+    description: "功能分类"
+    auto: true
+
+  scope:
+    type: enum
+    values: ["vllm", "vllm-ascend", "both"]
+    description: "参数来源"
+    auto: true
+
+  source_file:
+    type: list[str]
+    description: "源文件路径（相对 repo 根目录）: 行号"
+    auto: true
+
+  # ========== 参数元信息（LLM） ==========
+  value_type:
+    type: enum
+    values: ["int", "float", "bool", "str", "list[int]", "list[float]", "list[str]", "dict", "unknown"]
+    description: "参数值的 Python 类型"
+    required: true
+    llm: true
+
+  default:
+    type: any
+    description: "默认值（比 parameters.json 更精确）；'<computed>' 表示运行时确定"
+    required: true
+    llm: true
+
+  valid_choices:
+    type: any
+    description: "离散参数的可选值列表，或范围描述字符串；"
+    required: true
+    llm: true
+
+  cli_example:
+    type: str
+    description: "完整 CLI flag 示例（仅 cli 类型）；env/nested 类型填 null"
+    required: true
+    nullable: true
+    llm: true
+
+  deprecated:
+    type: bool
+    description: "是否已弃用"
+    default: false
+    llm: true
+
+
+  # ========== 性能影响分析（核心）（LLM） ==========
+  performance_impact:
+    type: enum
+    values: ["high", "medium", "low"]
+    description: "性能影响等级。high=直接影响吞吐/延迟/显存; medium=间接影响; low=轻微影响"
+    llm: true
+
+  performance_scope:
+    type: list[enum]
+    values: ["latency", "throughput", "memory"]
+    description: "影响范围（多选）"
+    llm: true
+
+  impact_detail:
+    type: str
+    description: "性能影响机制详解，需基于源码分析而非猜测。"
+    required: true
+    llm: true
+
+  # ========== 使用点分析（auto + LLM） ==========
+  usage_locations:
+    type: list[dict]
+    description: "主要使用/读取该参数的位置列表"
+    item_schema:
+      file:
+        type: str
+        description: "文件路径: 行号"
+      context:
+        type: str
+        description: "使用上下文简述"
+    llm: true
+
+  # ========== 参数间关系（LLM） ==========
+  related_parameters:
+    type: list[dict]
+    description: "存在语义关联的参数列表"
+    item_schema:
+      name:
+        type: str
+        description: "关联参数名（包括依赖和互斥等关系）"
+      relation:
+        type: str
+        description: "关系说明"
+    llm: true
+
+
+  # ========== 约束（LLM） ==========
+  constraints:
+    type: list[str]
+    description: "硬约束列表（每条一句自然语言）。违反会导致崩溃、抛异常或行为不可预期。来源：assert、raise、ValueError、Field(gt=)、条件分支中的提前返回/跳过。与 caveats 区分：constraints 是硬性限制，caveats 是经验性建议/性能陷阱。"
+    llm: true
+
+  # ========== 调优指导（LLM） ==========
+  tuning_advice:
+    type: dict
+    description: "调优建议"
+    item_schema:
+      summary:
+        type: str
+        description: "一句话调优总结"
+      suggested_values:
+        type: list[dict]
+        description: "不同场景下的推荐值"
+        item_schema:
+          scenario:
+            type: str
+            description: "适用场景描述"
+            required: true
+            nullable: false
+          value:
+            type: any
+            description: "推荐值（必填，不能为 null）"
+            required: true
+            nullable: false
+          reason:
+            type: str
+            description: "推荐理由（必填，不能为空字符串）"
+            required: true
+            nullable: false
+      caveats:
+        type: list[str]
+        description: "注意事项或已知陷阱"
+      quick_guide:
+        type: str
+        description: "一句话快速指引"
+    llm: true
+
+  # ========== 元数据（auto） ==========
+
+  analysis_date:
+    type: str
+    description: "分析日期 (YYYY-MM-DD)"
+    auto: true

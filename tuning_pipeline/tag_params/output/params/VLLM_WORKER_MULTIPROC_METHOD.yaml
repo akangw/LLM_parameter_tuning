@@ -1,0 +1,122 @@
+name: VLLM_WORKER_MULTIPROC_METHOD
+type: env
+category: parallelism
+scope: both
+source_file:
+- vllm/envs.py:65
+- vllm/envs.py:791
+- vllm/config/vllm.py:920
+- vllm/config/vllm.py:1168
+- docs/design/multiprocessing.md:31
+- docs/configuration/optimization.md:190
+- tests/e2e/conftest.py:242
+- examples/offline_inference_npu.py:24
+- docs/source/user_guide/feature_guide/large_scale_ep.md:140
+- docs/source/user_guide/feature_guide/large_scale_ep.md:206
+value_type: str
+default: fork
+valid_choices:
+- fork
+- spawn
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'VLLM_WORKER_MULTIPROC_METHOD selects the Python multiprocessing start method used for vLLM workers. The pinned
+  upstream definition accepts only fork and spawn and defaults to fork. Upstream''s multiprocessing design describes fork
+  as the faster method because it inherits the parent interpreter, while spawn starts a fresh interpreter and is more compatible
+  with accelerator and threaded dependencies. Consequently, the setting primarily changes worker and engine startup latency;
+  an incompatible choice can prevent workers from starting or leave startup hanging, eliminating useful throughput rather
+  than changing the steady-state token kernels. Current Ascend examples set spawn before constructing LLM, and the Ascend
+  E2E server harness explains that spawn is the safe choice when the parent might already have initialized the NPU. Ascend''s
+  documented large-scale expert-parallel external-DP launch recipe is a specific exception: both prefill and decoder templates
+  explicitly set fork together with VLLM_ASCEND_EXTERNAL_DP_LB_ENABLED=1. Upstream additionally rejects any value other than
+  spawn for torch_shm multimodal tensor IPC, warns that Whisper can hang with forked workers, and documents that Python-API
+  NUMA binding also requires spawn.'
+usage_locations:
+- file: vllm/envs.py:791
+  context: Defines the environment variable, its fork default, and the only accepted values, spawn and fork.
+- file: docs/design/multiprocessing.md:31
+  context: Explains the startup-speed and compatibility tradeoff between fork and spawn.
+- file: vllm/config/vllm.py:920
+  context: Rejects configurations using torch_shm multimodal tensor IPC unless the environment variable is explicitly spawn.
+- file: vllm/config/vllm.py:1168
+  context: Warns that Whisper has known issues with forked workers and may hang during startup.
+- file: docs/configuration/optimization.md:190
+  context: States that CLI use forces spawn and that Python-API NUMA binding also needs this variable set to spawn.
+- file: tests/e2e/conftest.py:242
+  context: Ascend's server harness selects spawn because its parent process might initialize the NPU before starting the server.
+- file: examples/offline_inference_npu.py:24
+  context: A representative Ascend offline inference example selects spawn before importing and constructing vLLM objects.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:140
+  context: The Ascend large-scale EP prefill-node external-DP launch template explicitly pairs fork with external DP load
+    balancing.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:206
+  context: The corresponding Ascend decoder-node external-DP launch template also explicitly selects fork.
+related_parameters:
+- name: VLLM_ASCEND_EXTERNAL_DP_LB_ENABLED
+  relation: Ascend's large-scale EP prefill and decoder launch templates enable this setting in the same environment that
+    selects fork.
+- name: mm_tensor_ipc
+  relation: The torch_shm choice requires VLLM_WORKER_MULTIPROC_METHOD=spawn; configuration validation otherwise raises ValueError.
+- name: numa_bind_nodes
+  relation: Upstream documentation says NUMA binding through the Python API requires the worker multiprocessing method to
+    be spawn.
+- name: numa_bind_cpus
+  relation: Like node binding, explicit CPU binding through the Python API depends on spawn worker creation.
+constraints:
+- Only the literal values fork and spawn are accepted by the pinned environment-variable parser.
+- Multimodal tensor IPC set to torch_shm requires the environment variable to be explicitly set to spawn.
+- WhisperForConditionalGeneration is known to have problems with forked workers and may hang during startup.
+- Spawn-based library entry points must protect process-creating code with an if __name__ == "__main__" guard to avoid recursive
+  execution.
+- Python-API NUMA binding requires spawn according to the pinned upstream optimization guide.
+tuning_advice:
+  summary: Use spawn for normal Ascend library and offline-inference deployments, especially when the parent may initialize
+    the NPU. Retain fork only for a launch topology that is verified to support it, including the pinned large-scale EP external-DP
+    recipe.
+  suggested_values:
+  - scenario: Standard Ascend offline inference or a parent process that may initialize the NPU before workers start
+    value: spawn
+    reason: Ascend's current examples and E2E server harness choose spawn, with the harness explicitly citing safe NPU initialization.
+  - scenario: Multimodal torch_shm IPC, Whisper, or Python-API NUMA binding
+    value: spawn
+    reason: The pinned upstream configuration requires it for torch_shm and recommends or documents it for Whisper and NUMA
+      binding.
+  - scenario: Ascend large-scale expert parallelism using the pinned external-DP prefill/decoder launch templates
+    value: fork
+    reason: Both documented templates explicitly set fork together with VLLM_ASCEND_EXTERNAL_DP_LB_ENABLED=1.
+  - scenario: Generic library use with no initialized accelerator state and no spawn-only feature
+    value: fork
+    reason: This is the pinned upstream default and has lower process-start overhead, provided the complete dependency stack
+      is fork-safe.
+  caveats:
+  - Spawn starts a fresh interpreter and re-imports the main module, so startup is slower and unguarded library scripts can
+    recurse.
+  - Fork inherits parent process state and is unsafe after incompatible accelerator or threaded libraries have initialized;
+    failures can appear as crashes or startup hangs.
+  - The Ascend large-scale EP recipe documents fork but does not state that fork is a universal recommendation for external
+    DP or quantify a performance gain.
+  - This setting affects process creation and compatibility; the pinned sources do not establish a direct steady-state token-throughput
+    improvement for either value.
+  quick_guide: Start with spawn on Ascend; use fork only when following a fork-specific verified recipe or when startup speed
+    matters and the parent and all dependencies are known to be fork-safe.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

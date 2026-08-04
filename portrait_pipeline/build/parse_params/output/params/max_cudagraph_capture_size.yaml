@@ -1,0 +1,99 @@
+name: --max-cudagraph-capture-size
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:666
+- vllm_ascend/platform.py:177
+- vllm_ascend/utils.py:595
+value_type: int
+default: <computed>
+valid_choices: positive integer, or null to auto-compute
+cli_example: --max-cudagraph-capture-size 512
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "This parameter sets the upper bound on the number of tokens for which CUDA graph (or NPU equivalent) capture\
+  \ is performed. On Ascend NPU, vllm-ascend overrides the upstream default computation: \"instead of `min(max_num_seqs *\
+  \ 2, 512)`, it uses `min(max_num_seqs *\" decode_query_len, 512)` where `decode_query_len = 1 + num_speculative_tokens`\
+  \ (see `_get_default_max_cudagraph_capture_size` in vllm_ascend/platform.py:177-211). This value directly controls: 1. The\
+  \ list of batch sizes for which execution graphs are pre-captured (generated as [1,2,4]\n   + multiples of 8 up to 256 +\
+  \ multiples of 16 up to this max).\n2. The pre-allocation of MoE token dispatch buffers in `token_dispatcher.py:131` — the\n\
+  \   `max_num_tokens` used for `global_bs` calculation comes from this parameter when\n   `cudagraph_capture_sizes` is set.\n\
+  3. The `mc2_tokens_capacity` in `ascend_forward_context.py:203` which controls memory\n   allocation for MC2 (multi-core\
+  \ communication) operations.\n4. The `decode_cudagraph_max_bs` in attention backends (gdn_attn.py:109, flashinfer.py:591)\n\
+  \   which caps the maximum batch size for full-cudagraph decode wrappers.\nA larger value captures more graph sizes, improving\
+  \ throughput for variable batch sizes but increasing startup time and memory consumption. A smaller value reduces startup\
+  \ overhead and memory but may cause more graph misses (falling back to eager execution), hurting throughput. On Ascend,\
+  \ the 512 cap is particularly important to avoid excessive graph capture time and memory pressure on NPU.\n"
+usage_locations:
+- file: vllm_ascend/platform.py:229
+  context: apply_config_platform_defaults injects Ascend-specific default max_cudagraph_capture_size
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:131
+  context: Used to compute max_num_tokens for MoE dispatch/combine buffer sizing
+- file: vllm_ascend/ascend_forward_context.py:203
+  context: Sets mc2_tokens_capacity for MC2 communication buffer allocation
+- file: vllm_ascend/utils.py:598
+  context: update_cudagraph_capture_sizes validates consistency with cudagraph_capture_sizes
+- file: vllm/config/vllm.py:1138
+  context: Set to 0 when enforce_eager disables cudagraph; used in _set_cudagraph_sizes
+- file: vllm/v1/attention/backends/gdn_attn.py:109
+  context: Caps decode_cudagraph_max_bs for GDN attention backend
+- file: vllm/v1/attention/backends/flashinfer.py:591
+  context: Caps decode_cudagraph_max_bs for FlashInfer attention backend
+- file: vllm/v1/attention/backends/flash_attn.py:355
+  context: Stored as max_cudagraph_size for FlashAttention backend scheduler metadata sizing
+related_parameters:
+- name: --cudagraph-capture-sizes
+  relation: If specified, max_cudagraph_capture_size must be consistent with the largest value in that list; otherwise it
+    is auto-set to that max
+- name: --max-num-seqs
+  relation: Ascend default is computed as min(max_num_seqs * decode_query_len, 512)
+- name: --speculative-config
+  relation: num_speculative_tokens increases decode_query_len, raising the default max capture size
+- name: --enforce-eager
+  relation: When enforce_eager is set, max_cudagraph_capture_size is forced to 0, disabling all cudagraph capture
+- name: --compilation-config
+  relation: 'Can be used to set max_cudagraph_capture_size via JSON, e.g. ''{"max_cudagraph_capture_size": N}'''
+constraints:
+- If both --max-cudagraph-capture-size and --cudagraph-capture-sizes are explicitly set, the max value must equal the largest
+  element in cudagraph_capture_sizes, otherwise a ValueError is raised
+- When --enforce-eager is enabled, max_cudagraph_capture_size is forced to 0 and cudagraph capture is disabled entirely
+tuning_advice:
+  summary: 'On Ascend NPU, the default is auto-computed as min(max_num_seqs * (1 + num_speculative_tokens), 512). For most
+    deployments the default is optimal; only adjust when you observe excessive startup time (reduce) or frequent graph misses
+    causing latency spikes (increase, up to 512).
+
+    '
+  suggested_values:
+  - scenario: Standard deployment with moderate concurrency (max_num_seqs <= 256)
+    value: <default>
+    reason: The Ascend auto-computed default (capped at 512) balances startup time and runtime throughput. No manual setting
+      needed.
+  - scenario: High concurrency with MTP speculative decoding and large EP (expert parallelism)
+    value: max_concurrency * (1 + num_speculative_tokens)
+    reason: Per vllm-ascend release notes, large EP configurations with MTP may cause graph capture buffer overflow. Explicitly
+      setting this value prevents the overflow.
+  - scenario: Memory-constrained deployment or fast startup required
+    value: '256'
+    reason: Reducing from the default 512 cap to 256 cuts the number of captured graph sizes roughly in half, reducing startup
+      time and memory while still covering most common batch sizes.
+  - scenario: Maximum throughput with variable batch sizes
+    value: '512'
+    reason: The maximum allowed value on Ascend. Captures graphs for all batch sizes up to 512, minimizing eager fallbacks
+      at the cost of increased startup time.
+  caveats:
+  - 'On Ascend NPU, the default computation differs from upstream vLLM: it uses `max_num_seqs * (1 + num_speculative_tokens)`
+    instead of `max_num_seqs * 2`, and the cap is always 512'
+  - Setting this value too high increases graph capture time linearly and consumes more NPU memory for cached graphs
+  - When using speculative decoding, the effective decode_query_len increases, which may push the auto-computed default higher
+    — ensure your max_num_seqs setting accounts for this
+  - This parameter is ignored (set to 0) when --enforce-eager is used, disabling all cudagraph benefits
+  - For MoE models with expert parallelism, this value directly affects the global_bs buffer size in token dispatch — setting
+    it too high wastes memory, too low may cause dispatch failures
+  quick_guide: Use the Ascend auto-computed default unless you hit MTP+EP buffer overflow (then set to max_concurrency * (1
+    + num_speculative_tokens)) or need faster startup (reduce to 256).
+analysis_date: '2026-07-06'

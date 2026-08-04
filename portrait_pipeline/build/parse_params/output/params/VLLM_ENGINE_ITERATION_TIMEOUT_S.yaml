@@ -1,0 +1,58 @@
+name: VLLM_ENGINE_ITERATION_TIMEOUT_S
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:661
+value_type: int
+default: '60'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable sets the timeout (in seconds) for each engine iteration in vLLM. It is used as the
+  timeout for `asyncio.wait_for()` when waiting for output tokens in realtime models (e.g., VoxtralRealtime). If an iteration
+  takes longer than this timeout, the engine will raise a `TimeoutError`, which can cause request failures. On Ascend NPU,
+  first-use JIT compilation or large model inference may cause iterations to exceed the default 60s, leading to premature
+  timeouts. Increasing this value prevents false-positive timeouts during compilation or slow inference, but does not directly
+  improve throughput or memory usage — it only affects reliability under high-latency conditions.
+
+  '
+usage_locations:
+- file: vllm/model_executor/models/voxtral_realtime.py:275
+  context: Used as timeout for asyncio.wait_for() when waiting for output tokens from input_stream.get()
+- file: tests/entrypoints/openai/chat_completion/test_video.py:47
+  context: Set to 300s for ROCm tests to handle slower video processing
+- file: tests/entrypoints/openai/chat_completion/test_vision.py:106
+  context: Set to 300s for ROCm tests to handle slower video processing
+- file: tests/entrypoints/openai/realtime/test_realtime_validation.py:22
+  context: Set to 600s for realtime tests to avoid deadlock from first-use JIT compilation
+related_parameters:
+- name: VLLM_ENGINE_READY_TIMEOUT_S
+  relation: Sibling timeout parameter for engine startup readiness; both control timeout behavior but at different lifecycle
+    stages
+constraints:
+- Must be a positive integer (seconds)
+tuning_advice:
+  summary: 'Increase this value on Ascend NPU if you encounter timeout errors during model loading, first inference, or large-batch
+    processing, especially with realtime models or when JIT compilation is enabled.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment on Ascend NPU
+    value: '60'
+    reason: The default 60s is sufficient for most stable inference workloads after warmup
+  - scenario: First-use with JIT compilation or large models on Ascend NPU
+    value: '300'
+    reason: First-use JIT compilation on Ascend NPU can take several minutes; 300s prevents false timeouts during warmup
+  - scenario: Realtime models (e.g., Voxtral) on Ascend NPU
+    value: '600'
+    reason: Realtime models may have longer iteration times due to audio processing; 600s avoids silent deadlocks in feed_tokens
+  caveats:
+  - This parameter does not improve throughput or latency — it only prevents premature timeout errors
+  - Setting this value too high may mask genuine hangs or deadlocks in the engine
+  - On Ascend NPU, first-use CANN graph compilation can cause iterations to exceed the default 60s timeout
+  quick_guide: Increase to 300-600s on Ascend NPU if you see timeout errors during model warmup or realtime inference
+analysis_date: '2026-07-06'

@@ -1,0 +1,64 @@
+name: --logits-processors
+type: cli
+category: other
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:832
+- vllm/config/model.py:304
+- vllm_ascend/worker/model_runner_v1.py:501
+value_type: list[str]
+default: 'null'
+valid_choices: Fully-qualified class names (e.g., 'mymodule:MyLogitsProcessor') or class definitions
+cli_example: --logits-processors mymodule:MyLogitsProcessor
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter injects custom logits processors that modify the raw logits tensor before sampling. On Ascend
+  NPU, the v1 worker (vllm_ascend/worker/model_runner_v1.py:501) passes logits_processors to build_logitsprocs(), which constructs
+  NPUInputBatch with logitsprocs_need_output_token_ids=True when processors are present. This triggers additional output_token_ids
+  tracking in the NPU input batch, adding minor overhead per decoding step. The processors themselves run on-device and modify
+  logits in-place (vllm_ascend/sample/rejection_sampler.py:148-150), which adds a small per-token computation cost proportional
+  to vocab_size. In v2 upstream (vllm/config/vllm.py:1881-1882), custom logits processors are explicitly unsupported and will
+  raise a ValueError, so this parameter has no effect in v2 mode. Overall, the performance impact is low because the overhead
+  is O(vocab_size) per token and only applies when processors are actually configured.
+
+  '
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:501
+  context: Passed to build_logitsprocs() to construct NPUInputBatch with logits processor support
+- file: vllm_ascend/sample/rejection_sampler.py:148
+  context: apply_logits_processors() modifies target_logits in-place during rejection sampling
+- file: vllm/config/model.py:304
+  context: Field definition in ModelConfig; stored as list of FQCN strings or class types
+- file: vllm/config/vllm.py:1881
+  context: 'V2 model runner validation: raises ValueError if logits_processors is set (unsupported)'
+related_parameters:
+- name: --speculative-config
+  relation: Custom logits processors are incompatible with speculative decoding in v1 upstream (STR_SPEC_DEC_REJECTS_LOGITSPROCS)
+- name: --pooler-config
+  relation: Custom logits processors are incompatible with pooling models (STR_POOLING_REJECTS_LOGITSPROCS)
+constraints:
+- Custom logits processors are not supported when using VLLM_USE_V2_MODEL_RUNNER (v2 worker mode)
+- Custom logits processors are not supported when speculative decoding is enabled
+- Custom logits processors are not supported with pooling models
+- Each processor must be a subclass of vllm.v1.sample.logits_processor.LogitsProcessor
+tuning_advice:
+  summary: Only enable custom logits processors when you need custom sampling logic; they add minor per-token overhead on
+    Ascend NPU.
+  suggested_values:
+  - scenario: Standard inference without custom sampling logic
+    value: null (do not set)
+    reason: Avoids unnecessary output_token_ids tracking and in-place logits modification overhead on NPU
+  - scenario: Custom sampling logic required (e.g., custom penalties, constraints)
+    value: mymodule:MyLogitsProcessor
+    reason: Enables custom logits processing; overhead is O(vocab_size) per token, acceptable for most use cases
+  caveats:
+  - On Ascend v1 worker, setting logits_processors triggers logitsprocs_need_output_token_ids=True, which adds minor memory
+    and compute overhead for tracking output token IDs
+  - Logits processors modify tensors in-place; ensure your processor implementation is efficient and does not allocate large
+    intermediate tensors
+  - Not compatible with v2 worker mode (VLLM_USE_V2_MODEL_RUNNER) — will raise ValueError
+  quick_guide: Leave unset unless you need custom sampling logic; avoid in v2 worker mode.
+analysis_date: '2026-07-06'

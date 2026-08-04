@@ -1,0 +1,64 @@
+name: VLLM_ASCEND_ENABLE_CONTEXT_PARALLEL
+type: env
+category: parallelism
+scope: vllm-ascend
+source_file:
+- tests/e2e/nightly/multi_node/external_dp/scripts/utils.py:177
+value_type: bool
+default: 'False'
+valid_choices:
+- '0'
+- '1'
+- 'false'
+- 'true'
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this flag activates context parallelism (CP) on Ascend NPUs, which partitions the long sequence
+  dimension across multiple devices during prefill. This reduces the per-device KV cache memory footprint for long-context
+  inference and can significantly improve prefill throughput by parallelizing attention computation. The flag maps to the
+  `enable_context_parallel` config key (bool, default False) in vllm-ascend''s additional configuration system. It is consumed
+  in test infrastructure to tag runs with the "context_parallel" feature label. The environment variable is deprecated in
+  favor of the config key `enable_context_parallel`, but both remain functional. Enabling CP changes the communication pattern
+  (introduces all-to-all or ring-style attention collectives via HCCL), which directly impacts latency, throughput, and memory
+  usage.
+
+  '
+usage_locations:
+- file: tests/e2e/nightly/multi_node/external_dp/scripts/utils.py:177
+  context: Feature extraction for test labeling; maps env var to 'context_parallel' feature tag.
+related_parameters:
+- name: enable_context_parallel
+  relation: Config key equivalent; the env var is deprecated in favor of this config option.
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: Both are Ascend-specific parallelism optimizations; may interact when combined.
+- name: enable_dsa_cp
+  relation: DSA-specific context parallelism for DeepSeek V3.2/V4; depends on FLASHCOMM1 being enabled.
+constraints: []
+tuning_advice:
+  summary: 'Enable context parallelism only when serving models with very long context lengths (e.g., >32K tokens) on multi-NPU
+    setups to reduce per-device KV cache memory pressure and accelerate prefill.
+
+    '
+  suggested_values:
+  - scenario: Long-context inference (>32K tokens) on multi-NPU nodes
+    value: '1'
+    reason: Partitions the sequence dimension to reduce per-device KV cache memory and parallelize prefill attention, improving
+      throughput and enabling larger batch sizes.
+  - scenario: Short-context or single-NPU inference
+    value: '0'
+    reason: Context parallelism introduces HCCL communication overhead that outweighs benefits for short sequences or single-device
+      deployments.
+  caveats:
+  - Context parallelism introduces additional HCCL communication collectives; ensure high-bandwidth NPU interconnects are
+    available.
+  - This environment variable is deprecated; prefer setting `enable_context_parallel` in the vllm-ascend config for future
+    compatibility.
+  - CP is most effective when combined with tensor parallelism; the optimal CP degree depends on model architecture and sequence
+    length.
+  quick_guide: Set to 1 for long-context (>32K) multi-NPU inference; leave disabled (0) otherwise.
+analysis_date: '2026-07-06'

@@ -1,0 +1,106 @@
+name: --enable-eplb
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1052
+- vllm/config/parallel.py:160
+- vllm_ascend/models/deepseek_v4.py:263
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: --enable-eplb
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'Enables Expert Parallelism Load Balancing (EPLB) for Mixture-of-Experts (MoE) layers. When enabled, EPLB dynamically
+  redistributes experts across EP ranks based on runtime load statistics, reducing token routing imbalance and improving throughput.
+  On Ascend NPU, vllm-ascend''s DeepSeek V4 model implementation reads this flag to configure FusedMoE with redundant experts
+  and logical-to-physical expert mapping, which directly affects computation distribution and all-to-all communication volume.
+  The parameter also controls whether the EPLB async balancing loop runs on the GPU worker, which periodically rebalances
+  experts and can trigger weight redistribution. Disabling EPLB on imbalanced MoE workloads can cause severe load skew, leaving
+  some NPUs idle while others are overloaded, significantly reducing throughput.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:160
+  context: Field definition with default False; docstring says "Enable expert parallelism load balancing for MoE layers."
+- file: vllm/config/parallel.py:446
+  context: 'Validation: raises ValueError if enable_eplb is True but platform is not CUDA-alike, or enable_expert_parallel
+    is False, or TP*DP <= 1.'
+- file: vllm_ascend/models/deepseek_v4.py:263
+  context: DeepSeek V4 MoE layer reads parallel_config.enable_eplb to configure FusedMoE with redundant experts.
+- file: vllm_ascend/models/deepseek_v4.py:328
+  context: Passes enable_eplb to FusedMoE constructor, enabling logical-to-physical expert mapping.
+- file: vllm/v1/worker/gpu/eplb_utils.py:48
+  context: EPLBController.prepare_load creates EplbState only when enable_eplb is True.
+- file: vllm/v1/worker/gpu/eplb_utils.py:89
+  context: EPLBController.maybe_register_model registers MoE model for EPLB only when enable_eplb is True.
+- file: vllm/v1/worker/gpu_model_runner.py:3166
+  context: eplb_step runs the async rebalancing loop only when enable_eplb is True.
+- file: vllm/v1/spec_decode/medusa.py:67
+  context: Asserts that EPLB is not enabled for Medusa speculative decoding with MoE draft models.
+- file: vllm/v1/engine/utils.py:1258
+  context: enable_eplb is included in the config hash for DP worker consistency validation.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Must be True for EPLB to work; EPLB is a load-balancing layer on top of expert parallelism.
+- name: --eplb-config
+  relation: Provides detailed EPLB configuration (num_redundant_experts, dynamic_eplb, log_balancedness, etc.).
+- name: --tensor-parallel-size
+  relation: EPLB requires TP * DP > 1; TP size affects the number of EP ranks available for expert distribution.
+- name: --data-parallel-size
+  relation: EPLB requires TP * DP > 1; DP size affects the number of EP ranks available for expert distribution.
+- name: --expert-placement-strategy
+  relation: Controls initial expert placement; EPLB can dynamically override this placement at runtime.
+constraints:
+- EPLB is only supported on CUDA-alike devices (CUDA or ROCm); Ascend NPU support is provided by vllm-ascend's DeepSeek V4
+  implementation.
+- --enable-expert-parallel must be True when --enable-eplb is True.
+- tensor_parallel_size * data_parallel_size must be greater than 1 when EPLB is enabled.
+- EPLB is not supported with Medusa speculative decoding when the draft model is MoE.
+- EPLB is not supported with Elastic EP when a draft model is used.
+- All DP workers must have identical enable_eplb and eplb_config settings for coordinated data-parallel deployments.
+tuning_advice:
+  summary: 'Enable EPLB for MoE models (e.g., DeepSeek V4) running on Ascend NPU with expert parallelism to improve load balance
+    and throughput; disable it only for single-rank deployments or when load is already perfectly balanced.
+
+    '
+  suggested_values:
+  - scenario: Multi-NPU MoE inference with expert parallelism (TP > 1 or DP > 1)
+    value: 'true'
+    reason: 'EPLB dynamically redistributes experts to balance token routing load across EP ranks, preventing NPU idle time
+      and improving overall throughput. vllm-ascend''s DeepSeek V4 implementation directly uses this flag to configure redundant
+      experts and logical-to-physical mapping, which is essential for efficient Ascend NPU utilization.
+
+      '
+  - scenario: Single-NPU deployment or TP=1 and DP=1
+    value: 'false'
+    reason: 'EPLB requires at least 2 EP ranks (TP*DP > 1) to redistribute experts. With a single rank, all experts are local
+      and load balancing has no effect. Enabling it would raise a ValueError.
+
+      '
+  - scenario: Using Medusa speculative decoding with MoE draft model
+    value: 'false'
+    reason: 'EPLB is explicitly not supported with Medusa when the draft model is MoE; enabling it would cause an assertion
+      error.
+
+      '
+  caveats:
+  - On Ascend NPU, EPLB support is currently implemented in vllm-ascend's DeepSeek V4 model path; other MoE models may not
+    have full EPLB integration.
+  - EPLB introduces runtime overhead for load statistics collection and expert redistribution; the async balancing loop runs
+    periodically and may cause brief latency spikes during rebalancing.
+  - The number of redundant experts (configured via --eplb-config num_redundant_experts) increases memory usage; tune this
+    value based on available NPU memory and load imbalance severity.
+  - EPLB configuration must be identical across all DP workers in coordinated data-parallel deployments, or a RuntimeError
+    will be raised.
+  quick_guide: 'For Ascend NPU MoE deployments with expert parallelism, set --enable-eplb and configure --eplb-config with
+    appropriate num_redundant_experts (e.g., 2-4) to improve load balance.
+
+    '
+analysis_date: '2026-07-06'

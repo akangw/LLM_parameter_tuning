@@ -1,0 +1,89 @@
+name: attention.disable_flashinfer_q_quantization
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/v1/attention/backends/flashinfer.py:640
+- vllm/v1/attention/backends/flashinfer.py:1322
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: --attention-config.disable_flashinfer_q_quantization true
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When using FP8 KV cache with the FlashInfer backend, this parameter controls whether the query tensor (Q)
+  is also quantized to FP8 before the attention computation. By default (false), Q is quantized to FP8 when KV cache is FP8
+  and TRTLLM attention is supported, which enables the use of faster FP8 TRTLLM attention kernels. Setting this to true forces
+  Q to remain in the model''s native dtype (e.g., BF16), which may cause a fallback to slower attention kernels. This affects
+  both prefill and decode attention paths. On Ascend NPU, the FlashInfer backend is not the primary attention backend (vllm-ascend
+  uses its own Ascend-specific backends), so this parameter has limited applicability unless explicitly using FlashInfer on
+  Ascend.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/backends/flashinfer.py:640-657
+  context: 'During FlashInfer backend initialization, determines self.q_data_type. If disable_flashinfer_q_quantization is
+    false and TRTLLM attention is supported, Q is quantized to match KV cache dtype (FP8); otherwise Q uses model dtype.
+
+    '
+- file: vllm/v1/attention/backends/flashinfer.py:1319-1323
+  context: 'In FlashInferImpl.__init__, sets self.supports_quant_query_input flag. When false, the attention metadata builder
+    will not pass FP8-quantized Q to the attention kernel, potentially using a slower code path.
+
+    '
+related_parameters:
+- name: attention.backend
+  relation: 'Only relevant when attention backend is FLASHINFER. Other backends (including Ascend-native backends) ignore
+    this parameter.
+
+    '
+- name: attention_config.use_trtllm_attention
+  relation: 'Q quantization to FP8 requires TRTLLM attention support. If TRTLLM attention is not available, Q quantization
+    is automatically disabled regardless of this flag.
+
+    '
+- name: kv_cache_dtype
+  relation: 'Q quantization to FP8 only applies when KV cache uses FP8 quantization. With other KV cache dtypes, this parameter
+    has no effect.
+
+    '
+constraints:
+- This parameter only takes effect when the attention backend is FLASHINFER.
+- Q quantization to FP8 requires both FP8 KV cache and TRTLLM attention kernel support.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has minimal impact as vllm-ascend uses its own attention backends rather than FlashInfer.
+    Leave at default (false) unless debugging attention precision issues with FlashInfer on Ascend.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with vllm-ascend native backends
+    value: 'false'
+    reason: 'vllm-ascend uses Ascend-specific attention backends (not FlashInfer), so this parameter has no effect. Default
+      value is appropriate.
+
+      '
+  - scenario: Debugging attention precision issues when using FlashInfer on Ascend
+    value: 'true'
+    reason: 'Disabling Q quantization keeps Q in higher precision (e.g., BF16), which can help isolate whether FP8 quantization
+      is causing numerical discrepancies in attention outputs.
+
+      '
+  caveats:
+  - 'This parameter is specific to the FlashInfer attention backend. vllm-ascend primarily uses Ascend-native attention implementations
+    (e.g., CANN-based), so this flag typically has no effect on Ascend NPU deployments.
+
+    '
+  - 'When FlashInfer is used on Ascend and this flag is set to true, attention computation may fall back to slower kernels,
+    increasing latency and reducing throughput.
+
+    '
+  quick_guide: 'Leave at default (false) on Ascend NPU — vllm-ascend uses its own attention backends and this FlashInfer-specific
+    flag has no effect in typical deployments.
+
+    '
+analysis_date: '2026-07-06'

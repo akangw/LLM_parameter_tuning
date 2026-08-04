@@ -1,0 +1,99 @@
+name: SpeculativeConfig.enforce_eager
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:76
+- vllm/config/speculative.py:533
+- vllm_ascend/spec_decode/llm_base_proposer.py:162
+- vllm_ascend/spec_decode/llm_base_proposer.py:394
+- vllm_ascend/spec_decode/llm_base_proposer.py:639
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: vllm serve <model> --speculative-config '{"method":"eagle3","model":"<draft-model>","num_speculative_tokens":3,"enforce_eager":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field controls eager versus ACL-graph execution for the Ascend speculative draft proposer, independently
+  of the target model's ModelConfig.enforce_eager. The proposer enables its graph path only when the runner supports ACL graphs
+  and this value is falsey. Setting true disables draft graph wrapping, capture, shape dispatch, and graph-specific padding/buffers,
+  trading lower graph memory and greater compatibility for higher per-step launch overhead. Because drafting runs repeatedly
+  during speculative decoding, the choice can materially affect end-to-end latency and throughput. In the pinned upstream
+  tree the field is defined and DeepSeek-V3.2 MTP can force it true, but the distinct runtime consumer is Ascend's proposer.
+usage_locations:
+- file: vllm/config/speculative.py:533
+  context: Automatically sets the field true for DeepSeek-V3.2 MTP because that draft path does not support graph execution.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:162
+  context: Enables the draft proposer's ACL-graph path only when the runner supports ACL graphs and speculative enforce_eager
+    is falsey.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:394
+  context: Wraps the merged draft step in ACLGraphWrapper for full graph mode only when the field permits graph use.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:639
+  context: Uses graph-shape dispatch and padded token counts for draft execution when graph use is enabled; eager mode keeps
+    the unpadded runtime token count.
+related_parameters:
+- name: ModelConfig.enforce_eager
+  relation: Controls eager execution for the target model; this nested field separately gates graph use by the speculative
+    draft proposer.
+- name: CompilationConfig.cudagraph_mode
+  relation: A compatible graph mode and runner support are still required; setting this field false cannot create a graph
+    path by itself.
+- name: SpeculativeConfig.method
+  relation: The Ascend consumer is the model-backed draft proposer used by methods such as EAGLE/EAGLE3 and MTP.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Determines how many draft steps are performed, affecting how strongly graph launch savings can influence speculative-decoding
+    performance.
+constraints:
+- Setting false only permits ACL graphs; runner._use_aclgraph() and a compatible compilation graph mode must also enable them.
+- In the pinned Ascend implementation, null and false have the same gating behavior because both are falsey in `not speculative_config.enforce_eager`.
+- DeepSeek-V3.2 MTP automatically changes the value to true because its draft CUDA/ACL-graph path is marked unsupported.
+- This field does not override ModelConfig.enforce_eager for the target model; it controls the speculative draft proposer
+  separately on Ascend.
+tuning_advice:
+  summary: Leave the field null or set false when the Ascend draft model is graph compatible; use true for a known draft-graph
+    incompatibility or while isolating speculative graph failures.
+  suggested_values:
+  - scenario: Graph-compatible Ascend EAGLE/EAGLE3 or MTP production serving
+    value: false
+    reason: Allows ACL-graph capture and dispatch for repeated draft steps when the runner and compilation mode support it,
+      normally reducing launch overhead.
+  - scenario: Draft graph failure, unsupported draft model, or debugging
+    value: true
+    reason: Forces the speculative proposer onto eager execution and avoids its graph wrapper, capture, dispatch, and graph-specific
+      padding path.
+  caveats:
+  - 'False is permission rather than a guarantee: graph execution also depends on runner capability and the effective compilation
+    graph mode.'
+  - True can lower graph-related memory and warm-up cost, but repeated eager draft steps can increase latency and reduce throughput.
+  - The best result depends on model, speculative-token count, request shapes, CANN version, and NPU hardware; benchmark end-to-end
+    acceptance and serving throughput on the deployment stack.
+  - The default null behaves like false in the pinned Ascend consumer rather than inheriting the target model's eager setting.
+  quick_guide: Start with null/false for production, verify that draft ACL graphs are actually active, and switch to true
+    only for compatibility or diagnosis.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output

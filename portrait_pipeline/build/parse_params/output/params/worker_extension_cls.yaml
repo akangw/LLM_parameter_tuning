@@ -1,0 +1,63 @@
+name: --worker-extension-cls
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1072
+- vllm/config/parallel.py:250
+value_type: str
+default: ''
+valid_choices: any fully qualified Python class name string
+cli_example: --worker-extension-cls my_package.worker_extensions.MyWorkerExtension
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter dynamically injects a user-defined extension class into the worker''s inheritance chain at
+  runtime (vllm/v1/worker/worker_base.py:253-272). The extension class can add new methods and attributes to the worker, which
+  are then callable via collective_rpc. Performance impact is indirect and entirely dependent on what the extension class
+  does — the parameter itself only controls whether and which extension is loaded. If the extension adds lightweight RPC methods
+  (e.g., custom metrics collection), overhead is negligible. If it adds heavy computation in hot paths (e.g., custom scoring
+  on every token), it could affect latency and throughput. No vllm-ascend override was found for this parameter; it passes
+  through to upstream vLLM worker initialization unchanged.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:635
+  context: Declared as a field in EngineArgs with default from ParallelConfig
+- file: vllm/engine/arg_utils.py:1072
+  context: Registered as a CLI argument in the parallel group
+- file: vllm/engine/arg_utils.py:1933
+  context: Passed to ParallelConfig constructor during config creation
+- file: vllm/config/parallel.py:250
+  context: Defined in ParallelConfig dataclass with default empty string
+- file: vllm/v1/worker/worker_base.py:253
+  context: Resolved and dynamically inherited into worker class at init time
+related_parameters:
+- name: --worker-cls
+  relation: Specifies the base worker class that the extension class extends
+constraints:
+- The value must be a fully qualified Python class name that can be resolved by resolve_obj_by_qualname
+- The extension class must not define any attributes or methods that conflict with existing attributes on the base worker
+  class (conflicts raise AssertionError)
+tuning_advice:
+  summary: 'Only set this parameter if you have a custom worker extension that adds performance-critical functionality. For
+    standard vLLM or vllm-ascend deployments, leave it empty.
+
+    '
+  suggested_values:
+  - scenario: Standard vLLM or vllm-ascend deployment without custom worker extensions
+    value: '''""'''
+    reason: No extension is needed; avoids unnecessary class resolution and inheritance overhead at worker startup
+  - scenario: Custom collective_rpc methods needed (e.g., custom scoring, dynamic config updates)
+    value: '''"your_package.YourWorkerExtension"'''
+    reason: Enables injection of custom methods callable via collective_rpc; ensure extension methods are lightweight to avoid
+      impacting inference latency
+  caveats:
+  - The extension class is dynamically added to the worker's MRO at runtime — any performance cost depends entirely on what
+    the extension methods do
+  - Attribute name conflicts between the extension and the base worker class will cause an AssertionError at startup
+  - This parameter has no effect if collective_rpc is not used
+  quick_guide: Leave empty unless you have a custom worker extension that adds RPC-callable methods
+analysis_date: '2026-07-06'

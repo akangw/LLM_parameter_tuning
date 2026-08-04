@@ -1,0 +1,68 @@
+name: --ignore-patterns
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:100
+- vllm/engine/arg_utils.py:584
+- vllm/engine/arg_utils.py:864
+value_type: list[str]
+default:
+- original/**/*
+valid_choices: list of glob patterns (strings)
+cli_example: --ignore-patterns original/**/* *.bin
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter controls which files are excluded when downloading model weights from HuggingFace Hub. It is
+  passed to `download_weights_from_hf()` in multiple model loaders (default_loader, bitsandbytes_loader, gguf_loader, runai_streamer_loader,
+  sharded_state_loader). The default value `["original/**/*"]` prevents downloading redundant copies of LLaMA checkpoints,
+  reducing disk usage and download time. On Ascend NPU, this parameter has no direct impact on runtime inference performance
+  (latency/throughput). It only affects the one-time model loading phase by reducing the amount of data downloaded and stored
+  on disk. Once the model is loaded into NPU memory, this parameter has no further effect. The vllm-ascend plugin does not
+  override or modify this parameter''s behavior.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/default_loader.py:168
+  context: Passed to download_weights_from_hf() when downloading safetensors/PyTorch weights
+- file: vllm/model_executor/model_loader/bitsandbytes_loader.py:110
+  context: Passed to download_weights_from_hf() for bitsandbytes quantized models
+- file: vllm/model_executor/model_loader/gguf_loader.py:69
+  context: Passed to download_gguf() for GGUF format models
+- file: vllm/model_executor/model_loader/runai_streamer_loader.py:66
+  context: Passed to download_weights_from_hf() for RunAI streamer loader
+- file: vllm/model_executor/model_loader/sharded_state_loader.py:104
+  context: Passed to download_weights_from_hf() for sharded state loader
+- file: vllm_ascend/tools/aisbench.py:329
+  context: Used as ignore_file_pattern in ModelScope snapshot_download (Ascend benchmark tool)
+related_parameters:
+- name: --load-format
+  relation: Determines which model loader is used, which in turn uses ignore_patterns for downloading
+- name: --download-dir
+  relation: Specifies the cache directory where filtered weights are downloaded
+constraints:
+- Must be a string or list of strings representing valid glob patterns
+tuning_advice:
+  summary: 'Keep the default value `["original/**/*"]` to avoid downloading redundant LLaMA checkpoint copies. Only add patterns
+    if you need to exclude additional files from the download to save disk space.
+
+    '
+  suggested_values:
+  - scenario: Default usage with LLaMA-based models
+    value:
+    - original/**/*
+    reason: Prevents downloading redundant original checkpoints, saving disk space without affecting model functionality
+  - scenario: Custom model with additional files to exclude
+    value:
+    - original/**/*
+    - '*.msgpack'
+    - '*.h5'
+    reason: Add patterns for non-weight files (e.g., msgpack, h5) to reduce download size and disk usage
+  caveats:
+  - This parameter only affects the model download phase, not runtime inference performance on Ascend NPU
+  - Excluding required weight files will cause model loading to fail with 'No model weights found'
+  - The vllm-ascend plugin does not override this parameter; behavior is identical to upstream vLLM
+  quick_guide: Use default `['original/**/*']` unless you need to exclude additional non-weight files from download
+analysis_date: '2026-07-06'

@@ -1,0 +1,77 @@
+name: --offload-num-in-group
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:62
+- vllm/engine/arg_utils.py:510
+- vllm/engine/arg_utils.py:1150
+- vllm/model_executor/offloader/base.py:151
+value_type: int
+default: 1
+valid_choices: integer >= 1 and <= offload_group_size
+cli_example: --offload-num-in-group 2
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'Controls how many layers within each offload group are moved from GPU to CPU memory when using the prefetch
+  offloading backend. Together with --offload-group-size, this determines the total fraction of layers offloaded (num_in_group
+  / group_size). A higher value reduces GPU memory usage but increases CPU-GPU data transfer volume per forward pass, which
+  can increase per-token latency. On Ascend NPU, the Host Device Data Transfer (HDT) bandwidth between CPU and NPU is a critical
+  bottleneck; offloading more layers amplifies this overhead. The parameter only takes effect when --offload-group-size >
+  0 (prefetch backend is active). In vllm-ascend, no override of this parameter was found — the upstream vLLM behavior applies
+  directly.
+
+  '
+usage_locations:
+- file: vllm/config/offload.py:62
+  context: Field definition with default=1, ge=1 constraint
+- file: vllm/config/offload.py:101
+  context: 'Validation: raises ValueError if offload_num_in_group > offload_group_size'
+- file: vllm/model_executor/offloader/base.py:151
+  context: Passed as num_in_group to PrefetchOffloader constructor
+- file: vllm/engine/arg_utils.py:510
+  context: EngineArgs field declaration with default from PrefetchOffloadConfig
+- file: vllm/engine/arg_utils.py:1150
+  context: CLI argument registration in OffloadConfig group
+related_parameters:
+- name: --offload-group-size
+  relation: Must be >= offload_num_in_group; together they define the offload ratio
+- name: --offload-prefetch-step
+  relation: Controls how many layers are prefetched ahead to hide transfer latency; higher values can mitigate the latency
+    cost of larger offload_num_in_group
+- name: --offload-backend
+  relation: Must be 'prefetch' or 'auto' (with offload_group_size > 0) for this parameter to take effect
+- name: --offload-params
+  relation: Selectively filters which parameter types are offloaded within each layer; can reduce transfer volume when offload_num_in_group
+    is high
+constraints:
+- offload_num_in_group must be >= 1
+- offload_num_in_group must be <= offload_group_size
+- offload_num_in_group only takes effect when offload_group_size > 0 (prefetch offloading is active)
+tuning_advice:
+  summary: Set offload_num_in_group to balance GPU memory savings against CPU-NPU transfer latency; start with 1 and increase
+    only if memory pressure persists.
+  suggested_values:
+  - scenario: Default / conservative offloading
+    value: 1
+    reason: Minimizes per-step transfer volume while still enabling the prefetch offloading mechanism; best for latency-sensitive
+      deployments.
+  - scenario: Moderate memory pressure
+    value: offload_group_size // 4
+    reason: Offloads ~25% of layers, providing meaningful memory reduction with manageable transfer overhead.
+  - scenario: Severe memory pressure (large models on NPU with limited HBM)
+    value: offload_group_size // 2
+    reason: Offloads ~50% of layers; significant memory savings but expect noticeable latency increase due to higher CPU-NPU
+      transfer volume.
+  caveats:
+  - On Ascend NPU, CPU-to-NPU transfer bandwidth is typically lower than GPU equivalents; higher offload_num_in_group values
+    will have a proportionally larger latency impact.
+  - Increasing offload_num_in_group without also increasing offload_prefetch_step may cause the NPU to stall waiting for layer
+    transfers.
+  - This parameter is ignored if offload_group_size is 0 (prefetch offloading disabled).
+  quick_guide: Start with offload_num_in_group=1; increase only if GPU memory is insufficient, and pair with higher offload_prefetch_step
+    to hide transfer latency.
+analysis_date: '2026-07-06'

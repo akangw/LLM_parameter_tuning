@@ -1,0 +1,104 @@
+name: CompilationConfig.backend
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:450
+- vllm/config/compilation.py:980
+- vllm/config/compilation.py:1008
+- vllm/config/vllm.py:956
+- vllm_ascend/platform.py:146
+- vllm_ascend/platform.py:498
+- vllm_ascend/compilation/compiler_interface.py:208
+value_type: str
+default: ''
+valid_choices:
+- ''
+- eager
+- inductor
+- a backend name registered with PyTorch
+- a fully qualified import path to a backend callable
+cli_example: -cc.backend=eager
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This value selects the callable used by torch.compile and therefore can replace optimized compiled execution
+  with eager graph execution or another compiler, directly changing steady-state latency, throughput, compilation warm-up,
+  and generated-kernel memory behavior. In compilation modes 1 and 2, init_backend returns a registered PyTorch backend or
+  resolves the supplied qualified name directly. In VLLM_COMPILE mode, the setting controls whether the vLLM backend uses
+  eager, Inductor, or an out-of-tree compiler and also changes default custom-op and IR-wrapping behavior. On Ascend, the
+  empty default is resolved through AscendPlatform.get_compile_backend to vllm_ascend.compilation.compiler_interface.AscendCompiler;
+  that compiler runs the Ascend fusion path and, when enabled, npugraph_ex compilation. The Ascend platform also installs
+  this compiler as the out-of-tree compiler and disables Inductor, so retaining the empty platform-selected default is the
+  supported performance path.
+usage_locations:
+- file: vllm/config/compilation.py:980
+  context: Validates VLLM_COMPILE backend selection; before platform default resolution, only the empty default, eager, and
+    inductor are accepted.
+- file: vllm/config/compilation.py:1008
+  context: Replaces the empty value with current_platform.get_compile_backend, then init_backend resolves registered or qualified
+    backends for stock compile modes and constructs VllmBackend for VLLM_COMPILE.
+- file: vllm/config/vllm.py:956
+  context: Treats eager as disabling Inductor optimizations and uses the resolved backend to choose IR wrapping and the default
+    custom-op policy.
+- file: vllm_ascend/platform.py:146
+  context: Defines the Ascend platform default as the qualified AscendCompiler class so graph-fusion compilation is used instead
+    of the former eager adapter.
+- file: vllm_ascend/platform.py:498
+  context: Installs AscendCompiler as the out-of-tree compiler and explicitly disables Inductor while configuring the effective
+    ACL-graph mode.
+- file: vllm_ascend/compilation/compiler_interface.py:208
+  context: AscendCompiler hashes compilation-affecting NPU options and dispatches graphs to npugraph_ex when enabled, otherwise
+    to the fusion-pass compiler.
+related_parameters:
+- name: CompilationConfig.mode
+  relation: Determines whether the backend is unused, invoked directly for stock torch.compile modes, or wrapped by the vLLM
+    compilation backend.
+- name: CompilationConfig.custom_ops
+  relation: Its automatic all/none policy depends on whether the effective backend is Inductor and compilation is enabled.
+- name: CompilationConfig.ir_enable_torch_wrap
+  relation: When unset, it is enabled only for the VLLM_COMPILE plus Inductor combination.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: Inductor graph partitioning requires an Inductor-compatible execution path; the Ascend platform disables Inductor.
+- name: AscendCompilationConfig.enable_npugraph_ex
+  relation: Controls whether the platform-selected AscendCompiler uses npugraph_ex or the graph-fusion fallback.
+constraints:
+- The value must be a string. Non-registered custom backends must be supplied as a fully qualified import path that resolves
+  to a callable.
+- In VLLM_COMPILE mode an explicitly supplied backend is limited to eager or inductor; the empty value is also accepted and
+  is resolved after validation to the current platform backend.
+- CompilationConfig.mode=NONE does not initialize a compile backend, so changing this value alone cannot enable compilation.
+- On Ascend, the platform sets use_inductor=false and installs AscendCompiler as its out-of-tree compiler; forcing inductor
+  conflicts with that platform-specific compilation design.
+tuning_advice:
+  summary: Keep the empty default so each platform selects its supported optimized compiler; use eager only as a diagnostic
+    or compatibility fallback.
+  suggested_values:
+  - scenario: Ascend production serving
+    value: ''
+    reason: The empty value resolves to AscendCompiler, enabling the plugin's graph fusion and optional npugraph_ex path while
+      preserving platform defaults.
+  - scenario: CUDA-alike production serving
+    value: ''
+    reason: The empty value selects the platform default, documented as Inductor on CUDA-alike platforms, and avoids hard-coding
+      a backend across hardware.
+  - scenario: Isolating a compiler correctness issue
+    value: eager
+    reason: Eager bypasses compiled optimization and is useful for confirming that a failure or numerical discrepancy originates
+      in compilation.
+  caveats:
+  - Eager commonly sacrifices optimized runtime latency and throughput; use it for diagnosis and benchmark before retaining
+    it in production.
+  - Compiler choice can trade longer first-run compilation and cache memory for better steady-state execution, so measure
+    both warm-up and steady-state behavior with representative shapes.
+  - A PyTorch-registered or qualified custom backend is directly supported in stock compile modes, but VLLM_COMPILE validates
+    explicit choices more narrowly.
+  - On Ascend, npugraph_ex availability and AscendCompilationConfig.enable_npugraph_ex determine whether AscendCompiler uses
+    npugraph_ex or its fusion-pass fallback.
+  quick_guide: Leave -cc.backend unset for normal operation. If compilation is suspected in a regression, compare the default
+    against -cc.backend=eager using the same compilation mode, warm-up, shapes, and concurrency, then restore the platform
+    default after diagnosis.
+analysis_date: '2026-07-30'

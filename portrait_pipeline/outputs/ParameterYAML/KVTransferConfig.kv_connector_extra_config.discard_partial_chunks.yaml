@@ -1,0 +1,108 @@
+name: KVTransferConfig.kv_connector_extra_config.discard_partial_chunks
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:107
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:643
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:671
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:269
+- docs/features/mooncake_store_connector_usage.md:144
+- vllm/config/kv_transfer.py:60
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_both","kv_connector_extra_config":{"discard_partial_chunks":false}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: AscendStore reads this connector-specific flag with a default of true. When true, the scheduler floors prompt
+  lookup length and each save length to the cache-transfer granularity, which is the least common multiple of the active KV-cache
+  group and cache-family granularities. ReqMeta creation then suppresses a save until the next complete boundary is reached.
+  This avoids transferring and retaining an incomplete tail of at most one granularity unit per request, reducing backend
+  I/O, lookup/store operations, and external-pool consumption, but that tail cannot be reused by a later matching request.
+  When false, lookup and save metadata retain the exact token length and the worker's token database emits a shortened final
+  range whose byte size is proportional to the partial token count. That can increase external-cache coverage and reduce recomputation
+  for reusable non-aligned prefixes, at the cost of extra transfer traffic, backend capacity, and request-store work. The
+  net latency and throughput effect therefore depends on prefix reuse, prompt-length alignment, transfer granularity, and
+  backend/network load. Upstream vLLM declares kv_connector_extra_config as a generic dictionary and documents the same key
+  for its Mooncake store connector, while the effective implementation analyzed here is the vllm-ascend AscendStore scheduler
+  and worker.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:107
+  context: Reads discard_partial_chunks from KVTransferConfig extra configuration and defaults it to true.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:224
+  context: Floors the external lookup length to cache-transfer granularity when enabled, so a partial prompt tail is not queried.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:388
+  context: Applies the flag to new, resumed, and chunked requests when deciding the last complete chunk and constructing save
+    metadata.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:643
+  context: ReqMeta.from_request_tracker floors the saved token count and skips sub-boundary saves when true; false preserves
+    the exact input length.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:292
+  context: Converts each emitted token range into an address and byte size proportional to end minus start, including a shortened
+    final range when partial chunks are retained.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:269
+  context: The non-layerwise sender creates keys and backend put buffers from token_len_chunk, so retaining a partial tail
+    adds real storage-transfer work.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:671
+  context: The layerwise retrieve and store paths likewise iterate over the metadata token length and can process a shortened
+    final range.
+- file: docs/features/mooncake_store_connector_usage.md:144
+  context: Pinned upstream documentation describes discard_partial_chunks as a boolean extra configuration and documents true
+    as the default.
+- file: vllm/config/kv_transfer.py:60
+  context: Upstream defines kv_connector_extra_config as the generic connector-specific configuration dictionary carrying
+    this key.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The behavior described here is implemented for vllm-ascend AscendStoreConnector; other connectors may ignore or
+    interpret the extra key differently.
+- name: CacheConfig.block_size
+  relation: KV-cache group block sizes contribute to cache-transfer granularity and therefore bound how many trailing tokens
+    this flag can omit.
+- name: CacheConfig.hash_block_size
+  relation: When configured, the hash block size contributes to AscendStore grouping and transfer-granularity calculations.
+- name: KVTransferConfig.kv_connector_extra_config.backend
+  relation: Selects the external store whose transfer latency, capacity, and operation overhead determine the cost of retaining
+    partial chunks.
+- name: KVTransferConfig.kv_connector_extra_config.load_async
+  relation: Controls whether cache loading can overlap computation, which can change how visible the additional partial-tail
+    transfer latency is.
+constraints:
+- The option is meaningful only when the selected connector consumes it; the pinned implementation is vllm-ascend AscendStoreConnector.
+- With true, only lengths below the complete cache-transfer boundary are omitted; complete chunks continue to be looked up
+  and saved.
+- Cache-transfer granularity can exceed a single model block for hybrid cache groups, cache-family alignment, and context-parallel
+  scaling, increasing the maximum omitted tail.
+- All producer and consumer instances sharing the external pool should use compatible chunking, hashing, model, and parallel
+  configuration so they generate mutually usable keys and ranges.
+tuning_advice:
+  summary: Keep the default true for predictable aligned transfers and lower external KV-pool overhead. Test false only when
+    non-aligned prompt tails are reused often enough for the added cache hits to outweigh extra store traffic and capacity.
+  suggested_values:
+  - scenario: General AscendStore deployment, constrained backend capacity or bandwidth, or low reuse of non-aligned prompt
+      tails
+    value: true
+    reason: Discards only the incomplete transfer tail while avoiding its backend put, lookup, and storage overhead.
+  - scenario: Workload with frequent repeated non-aligned prefixes and a measured miss or recomputation cost at the final
+      partial chunk
+    value: false
+    reason: Preserves the exact tail length so the partial range can be stored and queried; retain it only if end-to-end benchmarks
+      show a net gain.
+  caveats:
+  - No pinned-source benchmark establishes a universal latency or throughput advantage for either value.
+  - The benefit of false can disappear when prefixes are already aligned, partial tails are rarely reused, or the backend
+    is saturated.
+  - The cost of true grows with cache-transfer granularity because as many as granularity minus one trailing tokens can be
+    excluded from reuse.
+  - Benchmark the full prefill/decode topology and monitor external-pool bytes, transfer bandwidth, hit length, TTFT, throughput,
+    and tail latency.
+  quick_guide: Start with true. Compare false on representative non-aligned prefixes, and keep it only when higher external-cache
+    reuse improves end-to-end performance without unacceptable backend traffic or capacity growth.
+analysis_date: '2026-07-30'

@@ -1,0 +1,81 @@
+name: VLLM_ASCEND_APPLY_DSV4_PATCH
+type: env
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:114
+- vllm_ascend/patch/platform/__init__.py:49
+- vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:290
+- vllm_ascend/patch/platform/patch_speculative_config.py:15
+- docs/source/tutorials/models/DeepSeek-V4-Flash.md:143
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Setting this environment variable to 1 changes two runtime paths. The patched get_kv_cache_coordinator unconditionally
+  returns AscendHybridKVCacheCoordinator before the normal context-parallel, group-count, and prefix-caching checks. That
+  coordinator shares a BlockPool across per-group managers and implements DeepSeek-V4-aware effective block sizing and cache-hit
+  reconciliation, so it can materially change KV-cache capacity, reuse work, admission behavior, latency, and throughput.
+  The same flag also installs an hf_config_override that maps a deepseek_v4 speculative model to DeepSeekV4MTPModel. The pinned
+  DeepSeek V4 Flash deployment guide enables the flag for MTP serving.
+usage_locations:
+- file: vllm_ascend/envs.py:114
+  context: Parses the environment value through int and bool; the default string is 0.
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:290
+  context: Forces AscendHybridKVCacheCoordinator when enabled, bypassing the normal CP, cache-group-count, and prefix-caching
+    selection guards below it.
+- file: vllm_ascend/patch/platform/__init__.py:49
+  context: Conditionally imports the speculative-configuration monkey patch.
+- file: vllm_ascend/patch/platform/patch_speculative_config.py:15
+  context: Replaces SpeculativeConfig.hf_config_override and maps deepseek_v4 MTP configuration to DeepSeekV4MTPModel.
+- file: docs/source/tutorials/models/DeepSeek-V4-Flash.md:143
+  context: Enables the flag in a documented DeepSeek-V4-Flash MTP serving configuration.
+related_parameters:
+- name: --speculative-config
+  relation: The conditional config patch supplies the DeepSeek V4 MTP architecture used by speculative decoding.
+- name: enable_dsa_cp
+  relation: Documented DeepSeek V4 serving examples combine DSA context parallelism with this patch, and the coordinator scales
+    effective block sizes by DCP and PCP world sizes.
+- name: --enable-prefix-caching
+  relation: Without this flag, the Ascend hybrid coordinator is selected only for a context-parallel hybrid cache with prefix
+    caching; enabling the flag bypasses that prefix-caching guard.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Pinned DeepSeek V4 examples commonly enable FlashComm1 alongside this flag, but the source does not make it a
+    prerequisite.
+constraints:
+- Use 0 or 1; parsing applies int() before bool(), so non-integer strings fail during environment evaluation.
+- The forced coordinator asserts that the KV-cache configuration contains more than one attention group; enabling the flag
+  for a unitary cache configuration can fail initialization.
+- The implementation does not check the model name before forcing the coordinator; restrict use to a configuration validated
+  by the pinned DeepSeek V4 guidance.
+- Because the enabled branch occurs before the normal CP and prefix-caching guards, the flag can alter coordinator selection
+  even when context parallelism or prefix caching is disabled.
+tuning_advice:
+  summary: Enable the patch for pinned, documented DeepSeek V4 MTP deployments that need the custom hybrid KV-cache and speculative-config
+    behavior; otherwise retain the default and let the normal coordinator-selection logic run.
+  suggested_values:
+  - scenario: Documented DeepSeek V4 Flash or Pro MTP serving configuration
+    value: '1'
+    reason: Activates the custom multi-group KV-cache coordinator and the DeepSeekV4MTPModel speculative-config mapping used
+      by the pinned deployment recipes.
+  - scenario: Other models or an unverified KV-cache topology
+    value: '0'
+    reason: Preserves guarded coordinator selection and avoids forcing a hybrid coordinator onto an incompatible single-group
+      cache.
+  caveats:
+  - This is a compatibility patch, not a universally beneficial tuning switch; benchmark latency, throughput, and available
+    KV-cache capacity on the exact model and parallel topology.
+  - The enabled code path does not require CP or prefix caching and can therefore affect configurations more broadly than
+    the legacy profile suggested.
+  - FlashComm1 appears beside this flag in pinned recipes and tests, but no direct source dependency requires both variables.
+  quick_guide: Keep 0 by default; set 1 only for a verified DeepSeek V4 MTP recipe with a compatible multi-group KV-cache
+    configuration.
+analysis_date: '2026-07-28'

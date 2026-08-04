@@ -1,0 +1,113 @@
+name: KernelConfig.ir_op_priority.rms_norm
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/kernel.py:31
+- vllm/config/vllm.py:95
+- vllm/forward_context.py:325
+- docs/design/vllm_ir.md:95
+- vllm_ascend/ops/layernorm.py:63
+value_type: list[str]
+default: []
+valid_choices:
+- native
+- vllm_c
+- aiter
+- xpu_kernels
+- any provider registered for vllm.ir.ops.rms_norm on the active platform
+cli_example: --ir-op-priority.rms_norm=vllm_c,native
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This ordered list controls dispatch and lowering of the vLLM IR RMSNorm operation. During each forward-pass
+  context, vLLM imports the active platform''s IR kernels and installs this priority; dispatch selects the first listed provider
+  that supports the actual inputs. A specialized provider can reduce kernel-launch overhead and memory traffic for RMSNorm,
+  which is repeated throughout transformer layers, while choosing native lets Inductor optimize the operation. The selected
+  first provider also affects whether vLLM enables its norm-plus-quant fusion: a non-native RMSNorm provider activates that
+  fusion predicate even when the legacy rms_norm and quant_fp8 custom-op switches are inactive. Provider order and implementation
+  UUIDs enter KernelConfig''s compilation hash, so changing the list can invalidate and rebuild compiled artifacts. The declared
+  empty list is only a pre-default value; user entries are followed by unique active-platform defaults.'
+usage_locations:
+- file: vllm/config/kernel.py:31
+  context: Declares the ordered provider list and accepts either a list of strings or one comma-separated string.
+- file: vllm/config/kernel.py:37
+  context: Includes the configured priorities and selected implementation UUIDs in the compilation hash.
+- file: vllm/config/kernel.py:70
+  context: Imports platform IR kernels and applies the list to the registered rms_norm operation.
+- file: vllm/config/kernel.py:189
+  context: Appends missing platform-default providers after user-specified entries without duplicating providers.
+- file: vllm/forward_context.py:325
+  context: Activates the configured IR provider priorities for the duration of every model forward pass.
+- file: vllm/config/vllm.py:95
+  context: Enables norm-plus-quant graph fusion when the first RMSNorm provider is non-native or a relevant custom op is active.
+- file: docs/design/vllm_ir.md:95
+  context: Shows RMSNorm layers invoking the IR operation and documents first-compatible-provider dispatch and platform defaults.
+- file: vllm_ascend/ops/layernorm.py:63
+  context: Ascend overrides the RMSNorm forward path and directly calls NPU RMSNorm operators rather than dispatching through
+    this upstream IR priority.
+related_parameters:
+- name: KernelConfig.ir_op_priority.fused_add_rms_norm
+  relation: Selects providers for the residual-add RMSNorm IR operation under the same forward-pass context.
+- name: CompilationConfig.pass_config.fuse_norm_quant
+  relation: Its automatic optimization-level value is enabled when RMSNorm uses a non-native provider or a relevant custom
+    op is active.
+- name: VllmConfig.optimization_level
+  relation: Compilation mode influences upstream platform defaults, notably native under Inductor versus specialized kernels
+    in eager or Dynamo-only modes.
+constraints:
+- Every entry must be a string naming an implementation registered for vllm.ir.ops.rms_norm on the active platform.
+- Order is significant; dispatch tries providers from first to last and requires a compatible implementation.
+- Platform defaults are appended after user entries, so an empty declared value does not remain empty after platform-default
+  resolution.
+- Do not use CUDA, ROCm, or XPU provider names on unsupported hardware merely because they are documented for another platform.
+- The top-level ir_op_priority CLI setting and KernelConfig.ir_op_priority cannot both set this operation.
+tuning_advice:
+  summary: Keep the platform-resolved default unless profiling identifies normalization or an adjacent norm/quant pattern
+    as a bottleneck; benchmark only providers supported by the deployment hardware, shapes, dtype, and compilation mode.
+  suggested_values:
+  - scenario: CUDA with Inductor compilation
+    value:
+    - native
+    reason: This is the documented upstream default and allows Inductor to optimize the native operation.
+  - scenario: CUDA eager or Dynamo-only execution
+    value:
+    - vllm_c
+    - native
+    reason: Prefer the compiled vLLM kernel while retaining the documented native fallback.
+  - scenario: ROCm deployment with a validated AITER installation
+    value:
+    - aiter
+    - vllm_c
+    - native
+    reason: This is the documented ordering for trying the platform-specialized implementation before compiled-vLLM and native
+      fallbacks.
+  - scenario: XPU eager or Dynamo-only execution
+    value:
+    - xpu_kernels
+    - native
+    reason: This follows the documented XPU ordering and preserves native fallback.
+  - scenario: Ascend deployment
+    value: []
+    reason: The pinned Ascend plugin overrides RMSNorm execution with direct NPU operators, so retain platform resolution
+      instead of forcing foreign IR providers.
+  - scenario: Debugging provider-specific compilation or numerical behavior
+    value:
+    - native
+    reason: A native-first order isolates specialized-provider behavior, although it can reduce performance outside Inductor.
+  caveats:
+  - The source-level default is an empty list; the effective runtime value is computed by appending active-platform defaults.
+  - A registered provider can reject particular shapes or dtypes, so validation must cover the real model and workload.
+  - Changing the order changes the compilation hash and can cause compilation or cache warmup before steady-state measurements.
+  - Selecting a non-native first provider can change both the RMSNorm kernel and the automatic norm/quant fusion decision,
+    so benchmark end-to-end behavior rather than the isolated operator alone.
+  - The documented ROCm AITER ordering is described as future/currently CUDA-like in the pinned design document; verify the
+    effective logged priority on the deployed vLLM build.
+  - On the pinned Ascend plugin, the patched RMSNorm layer bypasses this upstream IR operation; direct NPU execution and Ascend
+    graph fusions are the relevant performance paths.
+  quick_guide: Use the active platform default; tune the first provider only with platform-valid kernels and measured end-to-end
+    gains.
+analysis_date: '2026-07-31'

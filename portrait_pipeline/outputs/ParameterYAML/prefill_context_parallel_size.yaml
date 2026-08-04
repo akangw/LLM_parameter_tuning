@@ -1,0 +1,96 @@
+name: --prefill-context-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:962
+- vllm/config/parallel.py:115
+- vllm/config/parallel.py:762
+- vllm/v1/kv_cache_interface.py:197
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:187
+- docs/source/user_guide/feature_guide/context_parallel.md:3
+value_type: int
+default: 1
+valid_choices: Positive integer; values greater than 1 enable prefill context parallelism and multiply the model world size.
+cli_example: --tensor-parallel-size 2 --prefill-context-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Prefill Context Parallelism (PCP) distributes long-sequence prefill work across additional ranks. Upstream
+  computes model world_size as pipeline_parallel_size times tensor_parallel_size times prefill_context_parallel_size (vllm/config/parallel.py:762),
+  so increasing PCP requires proportionally more devices. The Ascend guide describes PCP as amortizing long-context prefill
+  computation across query tokens to reduce time to first token (docs/source/user_guide/feature_guide/context_parallel.md:9).
+  Both upstream and the Ascend KV-cache implementation divide the locally sized maximum context by DCP times PCP, reducing
+  per-rank KV-cache capacity requirements (vllm/v1/kv_cache_interface.py:197 and vllm_ascend/patch/platform/patch_kv_cache_interface.py:187).
+  These benefits trade off against extra context-parallel communication and device cost. Ascend also expands max_num_batched_tokens
+  for PCP padding buffers, so the memory reduction is not the only memory effect (vllm_ascend/worker/model_runner_v1.py:258).
+usage_locations:
+- file: vllm/config/parallel.py:762
+  context: Multiplies PCP into model world_size together with pipeline and tensor parallel sizes.
+- file: vllm/v1/kv_cache_interface.py:197
+  context: Divides the local maximum context by the product of DCP and PCP when estimating KV-cache memory.
+- file: vllm/config/vllm.py:1862
+  context: Marks prefill context parallelism as unsupported by the upstream V2 model runner.
+- file: vllm_ascend/distributed/parallel_state.py:30
+  context: Includes PCP as a separate rank dimension when constructing Ascend parallel groups.
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:187
+  context: Applies the combined DCP and PCP shard count to Ascend compressed KV-cache memory sizing.
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:28
+  context: Multiplies scheduler block alignment by PCP and DCP and supports Ascend hybrid KV-cache groups.
+- file: vllm_ascend/worker/model_runner_v1.py:258
+  context: Adds PCP-dependent padding capacity to max_num_batched_tokens before initializing the v1 runner.
+- file: vllm_ascend/worker/v2/model_runner.py:64
+  context: Rejects PCP or DCP greater than one in the Ascend NPU model runner v2.
+- file: vllm_ascend/ascend_config.py:116
+  context: Under the FlashComm path, rounds max_num_batched_tokens up to a multiple of tensor-parallel size times PCP size.
+- file: docs/source/user_guide/feature_guide/context_parallel.md:3
+  context: Documents PCP as a long-sequence optimization and gives PCP=2 offline and serving examples.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: The required model world size is PP times TP times PCP; the documented PCP=2, TP=2 example uses four NPUs.
+- name: --decode-context-parallel-size
+  relation: DCP and PCP together determine the context-parallel KV-cache shard count, while only PCP multiplies model world
+    size.
+- name: --max-model-len
+  relation: KV-cache sizing divides the configured maximum context among the combined DCP and PCP ranks.
+- name: --max-num-batched-tokens
+  relation: Ascend adds PCP-dependent v1 padding and may round this value for FlashComm alignment.
+- name: --cp-kv-cache-interleave-size
+  relation: Ascend requires this to equal block_size when context parallelism is used with KV transfer.
+- name: --block-size
+  relation: Controls KV-cache block alignment and must match CP interleave size in Ascend KV-transfer scenarios.
+constraints:
+- Use a positive integer; 1 disables PCP and values greater than 1 create additional PCP ranks.
+- Model world_size equals pipeline_parallel_size times tensor_parallel_size times prefill_context_parallel_size, so enough
+  devices must be available (vllm/config/parallel.py:762).
+- Upstream V2 model runner does not support PCP greater than 1 (vllm/config/vllm.py:1862).
+- Ascend NPU model runner v2 does not support PCP greater than 1 (vllm_ascend/worker/v2/model_runner.py:64).
+- With Ascend KV transfer and combined PCP times DCP greater than 1, cp_kv_cache_interleave_size must equal block_size (vllm_ascend/platform.py:615).
+- Ascend Mooncake Hybrid Connector requires PCP times DCP to equal 1 (vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1081).
+- Ascend Mooncake Layerwise Connector requires PCP=1 on KV-consumer decoder nodes (vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:791).
+tuning_advice:
+  summary: Keep PCP at 1 for ordinary contexts. For long-prefill workloads on the v1 runner, start with PCP=2 when additional
+    devices are available, then compare TTFT, throughput, and per-rank KV-cache use against the default.
+  suggested_values:
+  - scenario: Long-context Ascend prefill on the v1 runner with spare NPUs.
+    value: 2
+    reason: This is the documented Ascend example and splits prefill work and per-rank context storage across two PCP ranks
+      while limiting added communication and device count.
+  - scenario: Contexts that already meet latency and memory targets, or deployments using a V2 model runner.
+    value: 1
+    reason: This avoids PCP communication and extra devices and is mandatory for both upstream and Ascend V2 model runners.
+  caveats:
+  - PCP increases the required model device count linearly; PCP=2 doubles model world size relative to the same PP and TP
+    settings.
+  - More PCP ranks can lower long-prefill TTFT and per-rank KV-cache sizing, but collective communication and topology can
+    offset those gains.
+  - Ascend v1 adds twice PCP size times max_num_seqs to max_num_batched_tokens for padding, which consumes additional buffer
+    capacity.
+  - PCP greater than 1 is unsupported by the upstream and Ascend V2 model runners at the pinned commits.
+  - KV-transfer connectors impose additional compatibility and block-interleave constraints.
+  quick_guide: Use --prefill-context-parallel-size 2 for a benchmarked long-context v1 deployment with enough devices; otherwise
+    retain 1.
+analysis_date: '2026-07-27'

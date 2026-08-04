@@ -1,0 +1,103 @@
+name: SpeculativeConfig.quantization
+type: nested
+category: quantization
+scope: both
+source_file:
+- vllm/config/speculative.py:101
+- vllm/config/speculative.py:536
+- vllm/config/speculative.py:624
+- vllm_ascend/platform.py:995
+- vllm_ascend/spec_decode/llm_base_proposer.py:217
+value_type: str
+default: null
+valid_choices:
+- ascend
+- compressed-tensors
+- fp8
+- deepseek_v4_fp8
+cli_example: --speculative-config '{"model":"org/draft-model","num_speculative_tokens":4,"quantization":"fp8"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Selects the quantization method used while constructing the auxiliary draft model for model-based speculative
+  decoding. Upstream passes the value to the draft ModelConfig; for same-model MTP, a null value is replaced by the target
+  model's quantization. Quantized draft weights can reduce device-memory use and memory bandwidth, but select different loading
+  and execution kernels and therefore can improve or degrade proposal latency and end-to-end throughput. In the pinned Ascend
+  plugin, platform configuration warns when this field is non-null and resets SpeculativeConfig.quantization to null, stating
+  that the main model's method is inherited. This reset occurs after upstream SpeculativeConfig construction has created draft_model_config,
+  and the Ascend proposer subsequently loads that draft_model_config; therefore users should not rely on the reset alone to
+  prove that an explicit value had no effect on the constructed drafter.
+usage_locations:
+- file: vllm/config/speculative.py:536
+  context: For same-model MTP, fills an unset draft quantization value from target_model_config.quantization so that an explicitly
+    quantized target and its draft layers use aligned precision.
+- file: vllm/config/speculative.py:624
+  context: Constructs the auxiliary draft ModelConfig and passes this field as its quantization argument; that ModelConfig
+    controls draft weight loading and quantized layer selection.
+- file: vllm_ascend/platform.py:995
+  context: Ascend's platform compatibility pass warns for a non-null speculative quantization value and resets the public
+    SpeculativeConfig field to null.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:217
+  context: Creates a draft vLLM configuration and loads the proposer model with speculative_config.draft_model_config, the
+    object constructed by upstream.
+related_parameters:
+- name: SpeculativeConfig.model
+  relation: Identifies the auxiliary checkpoint whose weight format must be compatible with this quantization method; the
+    field only applies to model-based speculation.
+- name: SpeculativeConfig.method
+  relation: Quantization is relevant for draft-model, EAGLE-family, and MTP paths that create a draft ModelConfig, not for
+    ngram or suffix lookup proposers.
+- name: ModelConfig.quantization
+  relation: Provides the target model's method and is inherited for same-model MTP when this field is unset.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Controls proposal work per decode step; evaluate it jointly with the cost and acceptance behavior of the quantized
+    drafter.
+- name: SpeculativeConfig.draft_tensor_parallel_size
+  relation: Changes draft-model distribution and memory per rank, so it affects the same latency, throughput, and capacity
+    tradeoff.
+constraints:
+- This field only takes effect when a model-based speculative method constructs an auxiliary draft ModelConfig; lookup-only
+  ngram and suffix methods do not use it.
+- The method must match the draft checkpoint's quantization metadata and must be supported by the active platform and draft-model
+  implementation.
+- On the pinned Ascend platform, executable quantization methods are restricted to ascend, compressed-tensors, fp8, and deepseek_v4_fp8.
+- For same-model MTP, null inherits target_model_config.quantization; null therefore does not necessarily mean that the draft
+  executes unquantized.
+- Ascend resets the public field after draft_model_config construction. Treat the warning as a request to omit the override,
+  and verify the resulting draft_model_config rather than assuming a late reset rewrote it.
+tuning_advice:
+  summary: Prefer checkpoint metadata or inherited target precision, then benchmark the full speculative pipeline. Optimize
+    for accepted tokens per unit time and peak device memory rather than the nominal bit width of the drafter.
+  suggested_values:
+  - scenario: Same-model MTP on Ascend
+    value: omit
+    reason: Upstream inherits the target ModelConfig quantization when this field is unset, and the Ascend compatibility pass
+      explicitly warns against a separate override.
+  - scenario: Unquantized auxiliary draft checkpoint
+    value: omit
+    reason: Null leaves the independently loaded draft checkpoint unforced and avoids selecting a quantization implementation
+      that does not match its weights.
+  - scenario: Independently quantized draft checkpoint on upstream vLLM
+    value: fp8
+    reason: Use an explicit method only when it matches the draft checkpoint and is supported on the target platform; FP8
+      is one concrete registered method whose memory and performance should be measured against the unquantized drafter.
+  - scenario: ModelSlim-generated draft checkpoint on supported Ascend hardware
+    value: ascend
+    reason: This is the Ascend plugin's checkpoint-specific method, but the pinned compatibility pass warns and clears the
+      public override, so startup logs and the constructed draft configuration must be checked before relying on it.
+  caveats:
+  - 'Smaller weights do not guarantee faster speculative decoding: dequantization, kernel coverage, batch shape, and lower
+    proposal acceptance can erase the bandwidth benefit.'
+  - Quantizing only the drafter reduces auxiliary weight memory, not target-model or KV-cache memory; measure peak device
+    memory for the complete engine.
+  - A draft checkpoint's quantization method may differ from the target model's, but both the checkpoint format and backend
+    implementation must support that pairing.
+  - Ascend's late public-field reset and its earlier upstream draft-model construction are distinct operations in the pinned
+    code; confirm effective precision from the loaded draft model rather than from SpeculativeConfig.quantization alone.
+  quick_guide: Omit the field for same-model MTP and unquantized drafters. For a separately quantized auxiliary checkpoint,
+    select its exact supported method, inspect startup configuration, and compare acceptance rate, latency, throughput, and
+    peak memory with the unquantized baseline.
+analysis_date: '2026-07-31'

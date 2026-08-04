@@ -1,0 +1,96 @@
+name: AttentionConfig.flash_attn_max_num_splits_for_cuda_graph
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/attention.py:31
+- vllm/v1/attention/backends/flash_attn.py:376
+- vllm/v1/attention/backends/mla/flashattn_mla.py:154
+- vllm_ascend/platform.py:1068
+value_type: int
+default: 32
+valid_choices: positive integer
+cli_example: -ac.flash_attn_max_num_splits_for_cuda_graph=32
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: In upstream vLLM this value caps the split count supplied to the FlashAttention 3 ahead-of-time decode scheduler
+  for standard and MLA attention during eligible full CUDA-graph runs. More than one split can improve decode parallelism
+  for some shapes, but the kernel allocates intermediate storage proportional to num_splits, num_heads, num_tokens, and head_size,
+  so a larger cap can increase capture-time and runtime memory requirements. The configured cap is used only for batches within
+  the maximum CUDA-graph capture size; outside that path, zero selects FlashAttention heuristics. On Ascend, CUDA-specific
+  split points do not apply and the platform resets every non-default value to 32, so this is not an effective Ascend tuning
+  control.
+usage_locations:
+- file: vllm/v1/attention/backends/flash_attn.py:376
+  context: Stores the configured cap when full CUDA graphs and the FlashAttention 3 AOT scheduler are active so sufficiently
+    large scheduler buffers can be prepared during capture.
+- file: vllm/v1/attention/backends/flash_attn.py:433
+  context: Uses the stored cap only for a full-CUDA-graph batch whose token count is within max_cudagraph_size, then passes
+    it to the FA3 scheduler; otherwise zero requests heuristic splitting.
+- file: vllm/v1/attention/backends/mla/flashattn_mla.py:154
+  context: Applies the same configured cap to FlashAttention MLA decode when full CUDA graphs and the FA3 AOT scheduler are
+    active.
+- file: vllm_ascend/platform.py:1068
+  context: Declares CUDA-graph split points inapplicable on Ascend and resets a non-32 value to the default during platform
+    configuration.
+related_parameters:
+- name: CompilationConfig.cudagraph_mode
+  relation: The value affects scheduling only when the selected mode enables full CUDA graphs.
+- name: CompilationConfig.max_cudagraph_capture_size
+  relation: The configured cap is selected only when the current token count is no greater than this capture-size boundary.
+- name: AttentionConfig.flash_attn_version
+  relation: The initialization path requires the FlashAttention 3 AOT scheduler; other FlashAttention scheduling paths do
+    not consume this cap.
+- name: VLLM_BATCH_INVARIANT
+  relation: When enabled, both standard and MLA FlashAttention paths force one split and override this parameter.
+constraints:
+- Use a positive integer; zero is the non-CUDA-graph heuristic sentinel in the backend and is documented there as incompatible
+  with CUDA graphs.
+- The parameter is effective only for FlashAttention 3 AOT decode scheduling under full CUDA graphs and eligible capture sizes.
+- Intermediate buffer size grows with the selected split count, so increasing the cap can raise GPU memory use.
+- On vllm-ascend any non-default value is ignored and reset to 32.
+tuning_advice:
+  summary: Leave the default unless measurements on an upstream CUDA GPU using FlashAttention 3 full CUDA graphs show a reason
+    to trade memory for a different decode split cap; do not tune it on Ascend.
+  suggested_values:
+  - scenario: Ascend NPU deployment
+    value: 32
+    reason: The Ascend platform enforces this default because CUDA-specific split points are not applicable.
+  - scenario: Upstream CUDA deployment without a measured split bottleneck
+    value: 32
+    reason: The default preserves the intended CUDA-graph-compatible upper bound without an unverified memory/latency tradeoff.
+  - scenario: Memory-constrained upstream CUDA deployment using FA3 full graphs
+    value: benchmark a smaller positive integer
+    reason: A lower cap can reduce split-proportional intermediate storage, but it can also limit scheduler parallelism and
+      hurt decode latency or throughput.
+  caveats:
+  - The effect is workload- and shape-dependent; benchmark decode latency, throughput, CUDA-graph capture behavior, and peak
+    memory together.
+  - Values above the splits actually selected by the scheduler may only reserve extra capacity and provide no speedup.
+  - VLLM_BATCH_INVARIANT forces one split regardless of this setting.
+  quick_guide: Keep 32 on Ascend and as the upstream baseline. On an upstream CUDA FA3 full-graph workload, test smaller positive
+    caps only when memory is constrained and retain a change only if end-to-end measurements improve.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

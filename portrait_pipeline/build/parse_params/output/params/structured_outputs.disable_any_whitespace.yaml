@@ -1,0 +1,59 @@
+name: structured_outputs.disable_any_whitespace
+type: nested
+category: other
+scope: vllm
+source_file:
+- vllm/v1/structured_output/backend_guidance.py:90
+- vllm/v1/structured_output/backend_xgrammar.py:38
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When set to `true`, this parameter forces the structured output backend (xgrammar or guidance) to generate
+  compact JSON without any whitespace characters between fields. This reduces the total number of tokens the model must generate
+  for a given JSON output, which can slightly improve throughput and reduce latency. When `false`, the model may insert optional
+  whitespace (spaces, newlines) between JSON elements, which is still valid JSON but consumes additional tokens. The effect
+  is limited to requests that use structured JSON output with the xgrammar or guidance backends; it has no effect on other
+  backends or on unstructured generation. On Ascend NPU, the token generation cost per step is the same as on GPU, so the
+  token savings translate directly to proportional latency/throughput improvements for structured output requests.
+
+  '
+usage_locations:
+- file: vllm/v1/structured_output/backend_guidance.py:90
+  context: Read from config and stored as instance attribute; passed to serialize_guidance_grammar() at line 109 to control
+    whitespace in grammar compilation.
+- file: vllm/v1/structured_output/backend_xgrammar.py:38
+  context: Read from config and stored as instance attribute; used during grammar compilation to control whitespace in xgrammar
+    backend.
+related_parameters:
+- name: structured_outputs.disable_additional_properties
+  relation: Companion parameter in the same config group; also affects JSON output format constraints.
+- name: structured_outputs.backend
+  relation: This parameter only takes effect when the backend is 'xgrammar' or 'guidance'.
+constraints:
+- This parameter is only supported for xgrammar and guidance backends; it has no effect on other structured output backends.
+tuning_advice:
+  summary: Enable this flag to reduce token count for structured JSON outputs, yielding minor throughput and latency gains
+    at the cost of less human-readable output.
+  suggested_values:
+  - scenario: Production serving where JSON outputs are consumed by machines and human readability is not required.
+    value: 'true'
+    reason: Eliminates unnecessary whitespace tokens, reducing per-request token count and improving throughput/latency proportionally.
+  - scenario: Debugging or development where human-readable JSON output is desired.
+    value: 'false'
+    reason: Allows the model to generate whitespace for formatting, making outputs easier to inspect.
+  caveats:
+  - The performance gain is proportional to the size of the JSON output; for very small JSON objects the token savings are
+    negligible.
+  - This parameter only affects requests using the xgrammar or guidance structured output backends.
+  - On Ascend NPU, the token-level performance characteristics are identical to GPU for this parameter — the benefit comes
+    purely from generating fewer tokens.
+  quick_guide: Set to true for machine-to-machine JSON APIs to save tokens; leave false for human-readable debug output.
+analysis_date: '2026-07-06'

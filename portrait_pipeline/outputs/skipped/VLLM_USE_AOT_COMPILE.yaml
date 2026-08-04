@@ -1,0 +1,8 @@
+name: VLLM_USE_AOT_COMPILE
+type: env
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, this environment variable is declared and parsed in vllm/envs.py, and its
+  parsed value only contributes to the computed default of VLLM_USE_MEGA_AOT_ARTIFACT. Neither flag has a runtime consumer
+  in the pinned tree, and the former compilation/decorator and wrapper consumers cited by the legacy profile are absent. The
+  pinned vLLM-Ascend repository has no references to VLLM_USE_AOT_COMPILE. Therefore changing it cannot select a current execution,
+  compilation, cache, latency, throughput, or memory path.

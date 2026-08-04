@@ -1,0 +1,66 @@
+name: compilation.pass_config.fuse_norm_quant
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/compilation/passes/pass_manager.py:154
+- vllm_ascend/user_guide/configuration/additional_config.md:134
+value_type: bool
+default: 'True'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this pass fuses the RMSNorm operation with the subsequent FP8 static quantization into a single
+  fused kernel (`torch.ops._C.fused_add_rms_norm_static_fp8_quant`). On Ascend NPU, this fusion eliminates an intermediate
+  memory round-trip and reduces kernel launch overhead, directly improving token generation latency and overall throughput
+  for FP8-quantized models. The vllm-ascend documentation explicitly lists this as an Ascend compilation config option defaulting
+  to True, indicating it is a first-class optimization for the Ascend backend. The upstream vLLM pass manager (pass_manager.py:154)
+  conditionally adds the RMSNormQuantFusionPass based on this flag, and the test in test_fusion.py:412 confirms it triggers
+  the fused op path. Disabling this pass forces separate RMSNorm and quantization kernels, increasing memory bandwidth pressure
+  and kernel launch count on the NPU.
+
+  '
+usage_locations:
+- file: vllm/compilation/passes/pass_manager.py:154
+  context: Controls whether RMSNormQuantFusionPass is added to the post-grad pass pipeline
+- file: tests/compile/passes/test_fusion.py:412
+  context: Test verifying that fuse_norm_quant=True triggers the fused RMSNorm+quant op
+- file: tests/compile/passes/distributed/test_sequence_parallelism.py:149
+  context: Test checking that fused_add_rms_norm_static_fp8_quant is used when fuse_norm_quant is enabled
+- file: tests/test_config.py:1168
+  context: Test verifying default value and auto-enablement based on custom_ops and ir_op_priority
+related_parameters:
+- name: compilation.pass_config.fuse_act_quant
+  relation: Companion fusion pass for activation quantization; often enabled together for FP8 models
+- name: compilation.custom_ops
+  relation: Enabling +rms_norm or +quant_fp8 custom ops can auto-enable fuse_norm_quant
+- name: kernel_config.ir_op_priority.rms_norm
+  relation: Setting rms_norm IR op priority to vllm_c auto-enables fuse_norm_quant
+constraints:
+- This pass is only effective when the model uses FP8 quantization (quant_fp8 must be enabled).
+- On Ascend NPU, this pass requires the CANN compiler to support the fused kernel; older CANN versions may not support it.
+tuning_advice:
+  summary: Keep enabled (default True) on Ascend NPU for FP8 models to reduce kernel launch overhead and memory bandwidth
+    usage.
+  suggested_values:
+  - scenario: FP8-quantized model inference on Ascend NPU
+    value: true
+    reason: Fuses RMSNorm and FP8 quantization into a single kernel, reducing memory round-trips and kernel launch overhead,
+      which improves latency and throughput.
+  - scenario: Non-FP8 models or debugging numerical issues
+    value: false
+    reason: The fusion pass has no effect on non-FP8 models; disabling it can help isolate numerical discrepancies during
+      debugging.
+  caveats:
+  - This pass is only beneficial for FP8-quantized models; for BF16/FP16 models it has no effect.
+  - On Ascend NPU, ensure the CANN version supports the fused kernel; very old versions may fall back to separate kernels
+    even with this flag enabled.
+  - The vllm-ascend documentation lists this under ascend_compilation_config with a default of True, confirming it is Ascend-optimized.
+  quick_guide: Keep fuse_norm_quant=True (default) on Ascend NPU for FP8 models to maximize throughput; disable only for debugging.
+analysis_date: '2026-07-06'

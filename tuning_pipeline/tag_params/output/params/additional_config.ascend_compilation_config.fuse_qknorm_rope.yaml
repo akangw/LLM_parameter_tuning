@@ -1,0 +1,89 @@
+name: additional_config.ascend_compilation_config.fuse_qknorm_rope
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:486
+- vllm_ascend/ascend_config.py:515
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+- vllm_ascend/compilation/passes/qknorm_rope_fusion_pass.py:187
+- vllm_ascend/device/device_op.py:734
+- vllm_ascend/ops/triton/linearnorm/split_qkv_rmsnorm_rope.py:261
+- docs/source/user_guide/configuration/additional_config.md:135
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"ascend_compilation_config":{"fuse_qknorm_rope":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When true, the Ascend graph-fusion manager constructs QKNormRopeFusionPass. For matching BF16 attention graphs,
+  that pass replaces QKV splitting, Q and K RMSNorm (with optional bias), and rotary embedding with the fused vllm.qkv_rmsnorm_rope
+  device operator. This can reduce separate operator work, launches, and intermediate traffic in every matching attention
+  layer, improving latency and throughput. When false, the pass is not registered and the original operations remain. The
+  effect is model- and graph-dependent: the current pass registers patterns only for BF16, head dimension 128, RMSNorm epsilon
+  1e-6 or 1e-5, and graphs that match its exact forms; otherwise enabling it has no runtime fusion benefit.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:515
+  context: AscendCompilationConfig stores the supplied boolean; its constructor default is true.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+  context: Reads the nested configuration with a true fallback and appends QKNormRopeFusionPass only when enabled.
+- file: vllm_ascend/compilation/passes/qknorm_rope_fusion_pass.py:187
+  context: Defines the pattern rewrite, its BF16/head-size/epsilon applicability checks, and replacement with DeviceOperator.split_qkv_rmsnorm_rope.
+- file: vllm_ascend/device/device_op.py:734
+  context: Dispatches the replacement to the registered fused qkv_rmsnorm_rope operator (or the A5 SIMT variant through the
+    device adaptor).
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: Sibling Ascend compilation setting controlling the npugraph_ex backend; this fusion is implemented as an Ascend
+    compilation pass.
+- name: additional_config.ascend_compilation_config.fuse_norm_quant
+  relation: Independent sibling graph-fusion toggle registered by the same pass manager.
+constraints:
+- The rewrite is Ascend-only and has no upstream vLLM counterpart at the pinned commit.
+- The current implementation registers patterns only for torch.bfloat16 attention, head size 128, and RMSNorm epsilon 1e-6
+  or 1e-5; it also requires a matching attention graph.
+- Ascend documentation says to set this false when Triton is not available because the fused operator implementation is under
+  the Ascend Triton operators package.
+tuning_advice:
+  summary: Keep the default enabled for supported production models and environments; turn it off when Triton is unavailable,
+    the graph is unsupported, or while isolating fusion-related correctness or compilation problems.
+  suggested_values:
+  - scenario: Supported BF16 model with head dimension 128 and Triton available
+    value: true
+    reason: Allows matching attention subgraphs to use the fused operator and capture its latency and throughput benefit.
+  - scenario: Triton is unavailable
+    value: false
+    reason: Matches the explicit Ascend configuration guidance and avoids relying on the Triton-backed fused operator.
+  - scenario: Diagnosing compilation, pattern-matching, or numerical issues
+    value: false
+    reason: Removes this rewrite from the pass list so the unfused graph can serve as a comparison baseline.
+  caveats:
+  - True only enables the pass; it does not guarantee a match or a speedup for a particular model.
+  - Unsupported dtype, missing Attention layers, or head dimension other than 128 results in no patterns being registered.
+  - Benchmark representative prompt lengths and batch sizes because the pinned source does not provide a universal speedup
+    figure.
+  quick_guide: Use true for supported production inference; use false without Triton or to compare against the unfused path.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

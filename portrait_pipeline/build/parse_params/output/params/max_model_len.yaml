@@ -1,0 +1,108 @@
+name: --max-model-len
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:189
+- vllm/engine/arg_utils.py:786
+- vllm_ascend/patch/platform/patch_balance_schedule.py:138
+- vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:47
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:188
+- vllm_ascend/patch/platform/patch_mamba_config.py:116
+- vllm_ascend/worker/block_table.py:168
+- vllm_ascend/worker/block_table.py:278
+value_type: int
+default: <computed>
+valid_choices: integer >= -1; supports human-readable suffixes (k/m/g/K/M/G); -1 or 'auto' for automatic derivation
+cli_example: --max-model-len 16384
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: "--max-model-len defines the maximum context length (prompt + output tokens) for a single request. On Ascend\
+  \ NPU, this parameter has a direct and multi-faceted performance impact:\n1. **KV cache memory allocation**: The KV cache\
+  \ size is proportional to max_model_len.\n   In vllm_ascend/patch/platform/patch_kv_cache_interface.py:188, max_model_len\
+  \ is used\n   to compute max_memory_usage_bytes for each KV cache group. When decode context parallelism\n   (DCP) or prefill\
+  \ context parallelism (PCP) is enabled (dcp_world_size * pcp_world_size > 1),\n   the effective per-rank max_model_len is\
+  \ divided by the total CP world size, reducing\n   per-device memory pressure. A larger max_model_len consumes more HBM\
+  \ for KV cache,\n   leaving less memory for model weights and activations, potentially causing OOM.\n\n2. **Block table\
+  \ sizing**: In vllm_ascend/worker/block_table.py:278-305, max_model_len\n   determines max_num_blocks_per_req (cdiv(max_model_len,\
+  \ block_size * total_cp_world_size)).\n   This directly controls the size of the block table tensor allocated per request,\n\
+  \   affecting both memory usage and the efficiency of slot mapping operations.\n\n3. **Scheduling constraints**: In vllm_ascend/patch/platform/patch_balance_schedule.py:138,\n\
+  \   max_model_len acts as a hard upper bound during scheduling — num_new_tokens is clamped\n   to max_model_len - 1 - request.num_computed_tokens.\
+  \ This prevents scheduling tokens\n   beyond the model's capacity and ensures spec decoding does not exceed position limits.\n\
+  \n4. **Mamba block size fallback**: In vllm_ascend/patch/platform/patch_mamba_config.py:116,\n   when prefix caching is\
+  \ disabled and mamba_cache_mode is not \"align\", mamba_block_size\n   falls back to max_model_len, meaning the entire sequence\
+  \ is treated as a single block.\n   This can significantly affect memory efficiency for hybrid Mamba models.\n\n5. **Throughput\
+  \ vs. memory tradeoff**: A larger max_model_len allows longer sequences\n   but reduces the number of concurrent requests\
+  \ that can fit in KV cache, lowering\n   throughput. Conversely, a smaller value increases concurrency but may cause requests\n\
+  \   to be rejected if they exceed the limit. The vllm-ascend documentation recommends\n   reducing --max-model-len (along\
+  \ with --max-num-seqs) as the first troubleshooting\n   step for OOM or unstable startup.\n"
+usage_locations:
+- file: vllm/config/model.py:189
+  context: Field definition with ge=-1 constraint; auto-derivation from model config if unspecified
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:188
+  context: Used to compute max_memory_usage_bytes for KV cache groups; divided by CP world size when DCP/PCP enabled
+- file: vllm_ascend/worker/block_table.py:278
+  context: Determines max_num_blocks_per_req for block table allocation
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:138
+  context: Clamps num_new_tokens during scheduling to prevent exceeding position limits
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:116
+  context: Falls back as mamba_block_size when prefix caching is disabled
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:47
+  context: Passed to AscendHybridKVCacheCoordinator for KV cache group management
+related_parameters:
+- name: --max-num-seqs
+  relation: Together with max_model_len determines total KV cache pressure; both should be reduced when OOM occurs
+- name: --gpu-memory-utilization
+  relation: Controls the fraction of HBM available for KV cache; higher utilization allows larger max_model_len
+- name: --max-num-batched-tokens
+  relation: The scheduler uses max_num_batched_tokens as a per-step token budget; max_model_len caps individual request length
+- name: --block-size
+  relation: max_model_len divided by block_size determines max_num_blocks_per_req
+- name: --enable-prefix-caching
+  relation: When disabled with hybrid Mamba models, mamba_block_size falls back to max_model_len
+constraints:
+- --max-model-len must be greater than or equal to -1 (where -1 or 'auto' triggers automatic derivation)
+- When DCP or PCP is enabled, the effective per-rank max_model_len is max_model_len divided by the total CP world size
+- In spec decoding, num_new_tokens is clamped to max_model_len - 1 - request.num_computed_tokens to prevent position overflow
+- For hybrid Mamba models with prefix caching disabled, mamba_block_size falls back to max_model_len, treating the entire
+  sequence as one block
+tuning_advice:
+  summary: 'Set --max-model-len to the smallest value that accommodates your expected (prompt + max_output) token length to
+    maximize KV cache availability and throughput. On Ascend NPU, start with 16384 for typical workloads and reduce if OOM
+    occurs.
+
+    '
+  suggested_values:
+  - scenario: Performance testing with ~3.5K input + ~1.5K output
+    value: '16384'
+    reason: Sufficient headroom for the combined sequence length without wasting KV cache memory; recommended by vllm-ascend
+      docs for DeepSeek-R1 and Kimi-K2.5
+  - scenario: Precision testing or long-context evaluation
+    value: '35000'
+    reason: Ensures the full model context window is available for accuracy benchmarks; recommended by vllm-ascend docs
+  - scenario: OOM or unstable startup on Ascend NPU
+    value: '8192'
+    reason: Reducing max_model_len is the first troubleshooting step per vllm-ascend docs; frees KV cache memory for model
+      weights and activations
+  - scenario: High-throughput serving with short prompts
+    value: '4096'
+    reason: Maximizes concurrent request capacity in KV cache; suitable for chat applications with brief exchanges
+  - scenario: Automatic derivation (default)
+    value: '-1'
+    reason: Lets vLLM automatically select the largest length that fits in available GPU memory; uses model's native max context
+      length if it fits
+  caveats:
+  - On Ascend NPU with DCP/PCP enabled, the effective per-device max_model_len is reduced by the CP world size, so you may
+    need to set a larger value than expected
+  - Setting --max-model-len too high reduces the number of concurrent requests that can be served, lowering overall throughput
+  - For hybrid Mamba models, when prefix caching is disabled, mamba_block_size falls back to max_model_len, which can cause
+    inefficient memory usage for long sequences
+  - The vllm-ascend balance scheduling feature (VLLM_ASCEND_BALANCE_SCHEDULING=1) interacts with max_model_len during token
+    budget clamping; test both settings together
+  quick_guide: Start with --max-model-len 16384 for typical Ascend NPU workloads; reduce to 8192 if OOM occurs; use -1 for
+    automatic derivation in memory-constrained scenarios
+analysis_date: '2026-07-06'

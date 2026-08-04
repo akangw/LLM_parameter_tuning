@@ -1,0 +1,117 @@
+name: CompilationConfig.use_inductor_graph_partition
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:643
+- vllm/config/compilation.py:960
+- vllm/config/compilation.py:1082
+- vllm/config/compilation.py:1237
+- vllm/config/vllm.py:177
+- vllm/v1/cudagraph_dispatcher.py:49
+- docs/design/cuda_graphs.md:226
+- vllm_ascend/platform.py:498
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: vllm serve <model> --compilation-config='{"use_inductor_graph_partition":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: Selects where vLLM partitions graph-unsafe operations for piecewise CUDA graph capture. With the effective
+  default false, non-empty splitting_ops are applied at Dynamo FX level before Inductor, so the resulting pieces can be compiled
+  and reused separately. With true, Inductor sees the full graph first, allowing whole-graph fusion and transformation passes,
+  then partitions at code-generation time around cudagraph-unsafe operations; N unsafe operations produce N+1 CUDA-graph-wrapped
+  partitions. This can preserve piecewise CUDA graph replay while enabling passes such as attention-quant fusion, sequence
+  parallelism, and AsyncTP that need full-graph visibility, materially changing steady-state latency and throughput. The tradeoff
+  is higher startup compilation latency because the whole graph is compiled and piecewise compilation artifacts cannot be
+  reused. The pinned vLLM Ascend plugin selects its own compiler and sets use_inductor=false, so this Inductor partition path
+  is not an Ascend performance control.
+usage_locations:
+- file: vllm/config/compilation.py:643
+  context: Declares the nullable input field and documents post-pass Inductor partitioning, N+1 partitions, and CUDA graph
+    wrapper behavior.
+- file: vllm/config/vllm.py:177
+  context: All optimization-level default maps resolve an unspecified value to false, including the default O2 level.
+- file: vllm/config/compilation.py:960
+  context: Rejects an enabled value unless the installed PyTorch version is at least 2.9.0.dev.
+- file: vllm/config/compilation.py:1082
+  context: Uses the flag while resolving splitting operations and compatibility with attention fusion, RoPE/KV-cache fusion,
+    sequence parallelism, and AsyncTP.
+- file: vllm/config/compilation.py:1237
+  context: Determines whether attention is compiled piecewise through Dynamo FX splitting or through the Inductor partition
+    path.
+- file: vllm/v1/cudagraph_dispatcher.py:49
+  context: Accepts Inductor partitioning as a way to satisfy the piecewise CUDA graph dispatcher's attention-splitting invariant.
+- file: docs/design/cuda_graphs.md:226
+  context: Describes the experimental full-graph-pass use case and the compilation-time cost from compiling the whole graph
+    without reusable piecewise artifacts.
+- file: vllm_ascend/platform.py:498
+  context: Installs the AscendCompiler and disables Inductor, making this upstream Inductor partition switch inapplicable
+    to the pinned NPU backend.
+related_parameters:
+- name: CompilationConfig.splitting_ops
+  relation: Supplies the graph-unsafe operator boundaries; false applies them as Dynamo FX split points, while true registers
+    them as post-pass Inductor partition rules.
+- name: CompilationConfig.cudagraph_mode
+  relation: The flag permits piecewise CUDA graph wrapping after full-graph compilation, while top-level full CUDA graph capture
+    ignores the internal partitions.
+- name: CompilationConfig.backend
+  relation: The Inductor partition path requires the inductor backend to classify attention as compiled piecewise.
+- name: CompilationConfig.mode
+  relation: Attention is considered compiled piecewise through this path only when compilation is enabled rather than NONE.
+- name: CompilationConfig.pass_config.fuse_attn_quant
+  relation: Enabling Inductor partitioning lets attention-quant fusion see the full graph without forcing splitting_ops empty
+    and changing piecewise capture to full capture.
+- name: CompilationConfig.pass_config.enable_sp
+  relation: Sequence parallelism needs full-graph visibility; Inductor partitioning avoids the fallback that clears split
+    points and disables piecewise CUDA graphs.
+- name: CompilationConfig.pass_config.fuse_gemm_comms
+  relation: AsyncTP has the same full-graph requirement as sequence parallelism and can coexist with piecewise capture through
+    post-pass partitioning.
+- name: CompilationConfig.pass_config.fuse_rope_kvcache
+  relation: Inductor partitioning lets the RoPE/KV-cache fusion remain enabled when the default split list would otherwise
+    hide KV-cache updates.
+constraints:
+- Enabling the flag requires PyTorch 2.9.0.dev or newer; older versions raise ValueError during CompilationConfig initialization.
+- The intended path requires the inductor backend and a compilation mode other than NONE; otherwise it does not make attention
+  compiled piecewise.
+- Piecewise CUDA graph modes must still have attention compiled piecewise, either through effective splitting_ops or this
+  Inductor path, or CudagraphDispatcher initialization asserts.
+- The operators in splitting_ops must be valid graph boundaries; Inductor partitioning does not make an inherently graph-unsafe
+  operator safe.
+- The pinned vLLM Ascend backend installs AscendCompiler and disables Inductor, so this option should remain false for NPU
+  serving.
+tuning_advice:
+  summary: Keep the effective default false for normal serving; test true only on PyTorch 2.9+ when a measured full-graph
+    compiler pass must coexist with piecewise CUDA graph capture.
+  suggested_values:
+  - scenario: Standard vLLM serving without a demonstrated full-graph-pass limitation
+    value: false
+    reason: Dynamo-level pieces retain the established compilation path and reusable piecewise artifacts while avoiding the
+      experimental whole-graph compilation cost.
+  - scenario: PyTorch 2.9+ CUDA serving using attention fusion, sequence parallelism, or AsyncTP together with piecewise CUDA
+      graphs
+    value: true
+    reason: Inductor can run full-graph passes before splitting graph-unsafe operations, preserving both cross-operator optimization
+      visibility and piecewise replay.
+  - scenario: vLLM Ascend NPU serving
+    value: false
+    reason: The pinned plugin uses AscendCompiler and explicitly disables Inductor, so this switch does not select its ACL
+      graph partition strategy.
+  caveats:
+  - True increases startup compilation time because Inductor compiles the whole graph and cannot reuse independently compiled
+    piecewise artifacts.
+  - This path is documented as experimental; benchmark warmed-up request latency and throughput as well as startup time on
+    the exact model and PyTorch build.
+  - A workload may gain from newly enabled full-graph fusions yet regress from longer compilation or different partition/wrapper
+    structure; the flag is not universally faster.
+  - Full CUDA graph capture remains a separate outer wrapper and ignores internal Inductor partitioning, so true is mainly
+    relevant to piecewise capture and full-graph compiler passes.
+  quick_guide: Start with false. On PyTorch 2.9+ CUDA, compare true only when full-graph passes are blocked by Dynamo splitting,
+    and keep it only if end-to-end startup, warmed-up latency, and throughput improve for the target workload.
+analysis_date: '2026-07-30'

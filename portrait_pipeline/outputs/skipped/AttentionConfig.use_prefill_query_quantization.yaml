@@ -1,0 +1,6 @@
+name: AttentionConfig.use_prefill_query_quantization
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source this field is declared but has no runtime consumer, so changing it does not
+  quantize prefill queries or affect latency, throughput, or memory. The pinned vLLM Ascend source likewise neither inspects
+  this field nor connects it to its independently implemented DSA query-quantization operations.

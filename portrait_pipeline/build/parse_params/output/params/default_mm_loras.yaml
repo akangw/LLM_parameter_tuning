@@ -1,0 +1,82 @@
+name: --default-mm-loras
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1260
+- vllm/config/lora.py:52
+value_type: dict
+default: 'null'
+valid_choices: dict[str, str] | None
+cli_example: '--default-mm-loras ''{"image": "/path/to/image_lora"}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls automatic LoRA adapter selection for multimodal models. When a request contains a
+  specific modality (e.g., image, audio), the corresponding LoRA adapter is automatically applied without the client explicitly
+  specifying it. The performance impact is indirect and minor: "it affects which LoRA weights are" loaded and applied during
+  inference. On Ascend NPU, LoRA computation follows the same code path as explicitly requested LoRAs — the parameter only
+  changes the selection logic, not the computation itself. The primary effect is on model behavior correctness rather than
+  raw performance. However, if this parameter causes a LoRA to be applied where none would otherwise be used, it adds the
+  computational overhead of LoRA matrix operations (typically small relative to the base model). Conversely, if it avoids
+  loading unnecessary adapters, it may slightly reduce memory pressure. The parameter is only relevant when --enable-lora
+  is also set and the model is multimodal.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:573
+  context: 'Field declaration in EngineArgs: default_mm_loras: dict[str, str] | None'
+- file: vllm/engine/arg_utils.py:1986-1990
+  context: 'Validation: raises ValueError if default_mm_loras is set for non-multimodal model'
+- file: vllm/engine/arg_utils.py:1992-2005
+  context: Passed to LoRAConfig constructor during engine initialization
+- file: vllm/config/lora.py:52-61
+  context: LoRAConfig field definition with docstring explaining modality-to-LoRA mapping
+- file: vllm/entrypoints/llm.py:594-621
+  context: 'Offline mode: _resolve_mm_lora checks prompt modalities against default_mm_loras'
+- file: vllm/entrypoints/openai/api_server.py:369-375
+  context: 'Server startup: merges default_mm_loras into static lora_modules'
+- file: vllm/entrypoints/openai/engine/serving.py:451-472
+  context: _get_active_default_mm_loras matches request message types to registered LoRAs
+- file: vllm/entrypoints/openai/engine/serving.py:474-493
+  context: _maybe_get_adapters uses default_mm_loras when supports_default_mm_loras=True
+- file: vllm/entrypoints/openai/chat_completion/serving.py:270
+  context: Chat completion calls _maybe_get_adapters with supports_default_mm_loras=True
+- file: vllm/entrypoints/openai/chat_completion/batch_serving.py:144
+  context: Batch chat completion also enables default_mm_loras support
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for --default-mm-loras to have any effect
+- name: --lora-modules
+  relation: Default mm loras are merged into the static lora_modules list at server startup
+- name: --max-loras
+  relation: Default mm loras count toward the max_loras limit when active
+constraints:
+- --default-mm-loras can only be used with multimodal models; setting it for a non-multimodal model raises a ValueError
+- Only one default modality LoRA can be active per request; if a prompt contains multiple modalities with registered default
+  LoRAs, none will be applied
+- Currently only supported for chat completions in online serving mode
+tuning_advice:
+  summary: 'Use --default-mm-loras only when your multimodal model always requires a specific LoRA adapter for certain modalities.
+    This avoids clients needing to specify the LoRA in every request, but has negligible direct performance impact on Ascend
+    NPU.
+
+    '
+  suggested_values:
+  - scenario: Multimodal model where image inputs always need a specific LoRA
+    value: '{"image": "/path/to/image_lora"}'
+    reason: Automatically applies the image LoRA without client-side specification, reducing API complexity
+  - scenario: No modality-specific LoRA requirement
+    value: 'null'
+    reason: Default; avoids unnecessary LoRA loading and keeps request routing simple
+  caveats:
+  - On Ascend NPU, LoRA computation overhead is the same whether the adapter is selected via --default-mm-loras or explicitly
+    by the client — this parameter does not change the NPU kernel execution
+  - If multiple modalities in a single prompt each have a default LoRA, none will be applied due to the single-LoRA-per-request
+    limitation
+  - This parameter is only active for chat completions in online serving; other endpoints and offline mode have separate resolution
+    logic
+  quick_guide: Set only if your multimodal model always needs a LoRA for a specific modality; otherwise leave as null.
+analysis_date: '2026-07-06'

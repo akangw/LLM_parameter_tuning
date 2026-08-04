@@ -1,0 +1,76 @@
+name: --override-attention-dtype
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/model.py:302
+- vllm/engine/arg_utils.py:651
+- vllm/engine/arg_utils.py:829
+value_type: str
+default: null
+valid_choices: any valid torch dtype string (e.g., 'float16', 'bfloat16', 'float32')
+cli_example: --override-attention-dtype float16
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter overrides the data type used for attention computation, which is normally inferred from the
+  model''s configuration. On Ascend NPU, the attention dtype affects: 1) Memory usage of attention intermediate tensors (Q,
+  K, V projections and softmax outputs). 2) Whether FlashAttention or other optimized attention kernels can be selected —
+  some kernels only support specific dtypes (e.g., float16 or bfloat16). 3) Numerical precision of attention scores, which
+  can indirectly affect output quality but not directly throughput/latency in a significant way.
+
+  The parameter is listed in `ignored_factors` in `ModelConfig.compute_hash` (vllm/config/model.py:373), meaning changing
+  it does NOT invalidate the model cache hash. This confirms it is a runtime precision override rather than a structural model
+  change.
+
+  No vllm-ascend specific override or special handling was found for this parameter in the provided context. It is passed
+  through to the model configuration and used by attention backends during initialization. The actual performance impact depends
+  on whether the Ascend attention backend (e.g., torch_npu-based FlashAttention) supports the chosen dtype natively — if not,
+  it may fall back to a slower generic implementation or cause errors.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:302
+  context: Field definition in ModelConfig dataclass with default None
+- file: vllm/engine/arg_utils.py:651
+  context: EngineArgs attribute declaration, mapped from ModelConfig
+- file: vllm/engine/arg_utils.py:829
+  context: CLI argument registration in add_cli_args under ModelConfig group
+- file: vllm/engine/arg_utils.py:1565
+  context: Passed to ModelConfig constructor during engine initialization
+related_parameters:
+- name: --dtype
+  relation: Sets the base model dtype; --override-attention-dtype overrides only the attention subset
+- name: --attention-backend
+  relation: The attention backend must support the overridden dtype, otherwise it may fall back or error
+- name: --kv-cache-dtype
+  relation: KV cache dtype is separate but should be compatible with attention dtype for consistency
+constraints:
+- Must be a valid PyTorch dtype string (e.g., 'float16', 'bfloat16', 'float32') or None.
+- The chosen dtype must be supported by the selected attention backend on Ascend NPU.
+tuning_advice:
+  summary: Leave as default (None) unless you have a specific need to force attention precision; on Ascend NPU, float16 is
+    generally optimal.
+  suggested_values:
+  - scenario: Default behavior (auto-inference from model config)
+    value: null
+    reason: Allows vLLM to automatically select the attention dtype based on the model's configuration, which is typically
+      optimal and avoids compatibility issues with Ascend attention kernels.
+  - scenario: Reducing memory usage on Ascend NPU when model uses float32 attention by default
+    value: '''float16'''
+    reason: Forces attention to use half precision, reducing memory footprint of attention intermediates. Ascend NPUs have
+      native float16 support in their attention kernels.
+  - scenario: Debugging numerical precision issues in attention
+    value: '''float32'''
+    reason: Forces full precision attention computation at the cost of higher memory usage and potentially slower execution
+      on Ascend NPU.
+  caveats:
+  - On Ascend NPU, not all attention backends support all dtypes — forcing an unsupported dtype may cause runtime errors or
+    silent fallback to slower implementations.
+  - This parameter only affects attention computation, not the KV cache dtype (controlled separately by --kv-cache-dtype).
+  - Changing this value does not invalidate the model cache hash, so it can be toggled without triggering model recompilation.
+  quick_guide: Use default (None) for automatic dtype selection; only override to float16 if you need to reduce attention
+    memory on Ascend NPU.
+analysis_date: '2026-07-06'

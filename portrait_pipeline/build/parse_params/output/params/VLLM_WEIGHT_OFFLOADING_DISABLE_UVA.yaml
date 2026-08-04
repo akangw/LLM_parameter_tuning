@@ -1,0 +1,71 @@
+name: VLLM_WEIGHT_OFFLOADING_DISABLE_UVA
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:1729
+- vllm/envs.py:255
+- vllm/model_executor/offloader/uva.py:48
+value_type: bool
+default: false
+valid_choices:
+- 0 (false)
+- 1 (true)
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether Unified Virtual Addressing (UVA) is used for CPU weight offloading.
+  When set to 0 (default), UVA is enabled, allowing the GPU/NPU to directly access CPU-pinned memory via the system''s unified
+  virtual address space. This enables CUDA graphs (or NPU graphs) to be used alongside CPU offloading, which significantly
+  improves throughput and reduces launch overhead. When set to 1, UVA is disabled, and the offloader falls back to a functional_call-based
+  approach that moves parameters on-demand. This fallback path is incompatible with CUDA/NPU graphs, forcing eager execution
+  mode (--enforce-eager), which degrades throughput and increases latency. On Ascend NPU, the same mechanism applies: disabling
+  UVA prevents graph capture and forces eager execution, directly impacting performance. The parameter is read in vllm/model_executor/offloader/uva.py:48
+  to determine the offloading strategy.
+
+  '
+usage_locations:
+- file: vllm/model_executor/offloader/uva.py:48
+  context: 'Determines whether UVA offloading is used: checks is_uva_available() AND not VLLM_WEIGHT_OFFLOADING_DISABLE_UVA'
+- file: vllm/envs.py:255
+  context: Declared as environment variable with default False in EnvironmentVariables class
+- file: tests/basic_correctness/test_cpu_offload.py:14
+  context: 'Test parameter: when disable_uva is True, --enforce-eager is appended to args'
+related_parameters:
+- name: VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY
+  relation: Sibling parameter that disables PyTorch pin memory for CPU offloading; both affect the CPU offloading path
+- name: --cpu-offload-gb
+  relation: CLI flag that enables CPU weight offloading; VLLM_WEIGHT_OFFLOADING_DISABLE_UVA only has effect when CPU offloading
+    is active
+- name: --enforce-eager
+  relation: Must be set when UVA is disabled, as CUDA/NPU graphs are incompatible with the fallback offloading path
+constraints:
+- Disabling UVA (setting to 1) requires --enforce-eager to be set, as CUDA/NPU graphs are incompatible with the functional_call-based
+  fallback offloading path.
+- This parameter only has effect when CPU offloading is enabled via --cpu-offload-gb.
+tuning_advice:
+  summary: Keep UVA enabled (default 0) for best performance on Ascend NPU; only disable if encountering UVA-specific compatibility
+    issues.
+  suggested_values:
+  - scenario: Normal operation with CPU offloading on Ascend NPU
+    value: 0 (default, UVA enabled)
+    reason: UVA enables NPU graph capture alongside CPU offloading, which is critical for throughput and latency. Disabling
+      UVA forces eager execution, significantly degrading performance.
+  - scenario: Debugging or compatibility issues with UVA on Ascend NPU
+    value: 1 (UVA disabled)
+    reason: If UVA is not supported or causes errors on a specific Ascend NPU setup, disabling it allows CPU offloading to
+      function via the fallback path, at the cost of requiring --enforce-eager and losing graph optimization benefits.
+  caveats:
+  - Disabling UVA forces eager execution mode, which disables NPU graph capture and significantly reduces throughput on Ascend
+    NPU.
+  - The UVA mechanism relies on system-level unified virtual addressing support; on Ascend NPU, this depends on the CANN driver
+    and hardware capabilities.
+  - When UVA is disabled, parameters are moved on-demand via functional_call, which adds per-step overhead compared to direct
+    UVA access.
+  quick_guide: Leave at default (0) to enable UVA and NPU graphs with CPU offloading; only set to 1 if UVA causes errors,
+    and pair with --enforce-eager.
+analysis_date: '2026-07-06'

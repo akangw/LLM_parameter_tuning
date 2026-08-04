@@ -1,0 +1,98 @@
+name: VLLM_CACHE_ROOT
+type: env
+category: compilation
+scope: both
+source_file:
+- vllm/envs.py:572
+- vllm/model_executor/models/registry.py:806
+- docs/design/torch_compile.md:15
+- docs/usage/security.md:320
+- vllm_ascend/compilation/compiler_interface.py:227
+value_type: str
+default: ${XDG_CACHE_HOME:-~/.cache}/vllm
+valid_choices: Any filesystem path usable by the vLLM process.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+impact_detail: 'VLLM_CACHE_ROOT selects the base directory used by current upstream vLLM for its torch.compile artifacts,
+  lazy model-registry metadata, GPU peer-access probe results, and DeepGEMM cache. The compile wrapper derives a hashed VLLM_CACHE_ROOT/torch_compile_cache
+  directory when compilation_config.cache_dir is unset; a warm compatible cache can bypass compilation and reduce engine startup
+  latency, while an empty, ephemeral, or unavailable cache requires compilation again. This also applies on Ascend: vllm-ascend''s
+  AscendCompiler receives that upstream cache directory, and when npugraph_ex is enabled it saves generated graph code below
+  the directory and reloads it on a later cache hit; a missing saved file falls back to compilation. The parameter changes
+  persistent disk placement and cold/warm startup behavior, not steady-state request execution after initialization. In the
+  pinned runtime definitions, VLLM_ASSETS_CACHE and VLLM_XLA_CACHE_PATH compute independent defaults from the platform cache
+  root, so explicitly changing only VLLM_CACHE_ROOT does not relocate those two caches despite broader wording in the security
+  guide.'
+usage_locations:
+- file: vllm/envs.py:572
+  context: Reads the environment variable, expands a leading home-directory marker, and otherwise defaults to get_default_cache_root()/vllm.
+- file: docs/design/torch_compile.md:15
+  context: Shows the hashed torch_compile_cache directory selected during startup and explains that reusing it avoids compilation
+    work on later starts.
+- file: vllm/model_executor/models/registry.py:806
+  context: Places lazy model-class metadata below VLLM_CACHE_ROOT/modelinfos; a valid hit avoids inspecting the class in a
+    subprocess.
+- file: vllm_ascend/compilation/compiler_interface.py:227
+  context: Receives the cache directory from the upstream compilation manager and records whether caching is disabled.
+- file: vllm_ascend/compilation/compiler_interface.py:260
+  context: Supplies the directory to the npugraph_ex compilation path only when that backend is enabled and compilation caching
+    is not disabled.
+- file: vllm_ascend/compilation/compiler_interface.py:319
+  context: Recompiles and can repopulate an Ascend graph entry when the expected npugraph_ex cache file is absent.
+- file: docs/usage/security.md:332
+  context: Requires restrictive permissions and trusted storage for cache contents.
+related_parameters:
+- name: compilation_config.cache_dir
+  relation: An explicit compile cache_dir replaces the automatically derived directory below VLLM_CACHE_ROOT for torch.compile
+    artifacts.
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: Disables vLLM compilation-cache reuse, removing the main startup-latency benefit of placing VLLM_CACHE_ROOT on
+    persistent storage.
+- name: XDG_CACHE_HOME
+  relation: Supplies the platform cache base used when VLLM_CACHE_ROOT is unset.
+- name: VLLM_ASSETS_CACHE
+  relation: Controls downloaded-asset placement independently; in the pinned runtime code its default is not derived from
+    an explicit VLLM_CACHE_ROOT value.
+- name: VLLM_XLA_CACHE_PATH
+  relation: Controls the XLA persistent cache independently; in the pinned runtime code its default is not derived from an
+    explicit VLLM_CACHE_ROOT value.
+constraints:
+- The process must be able to create and write the selected directory and its subdirectories; otherwise individual cache users
+  may fail or fall back.
+- Cache contents must come from a trusted source and the directory should not be writable by untrusted users.
+- Persistent storage needs enough free space for compiled artifacts and other cache entries; the parameter itself does not
+  impose a size limit or cleanup policy.
+- Reuse requires compatible cache keys and artifacts; configuration, software, compiler, or relevant source changes can select
+  a different hashed entry.
+tuning_advice:
+  summary: Put VLLM_CACHE_ROOT on persistent, trusted, writable local storage when warm restart time matters; retain the computed
+    default when it already has those properties.
+  suggested_values:
+  - scenario: Production Ascend deployment with repeated engine or container restarts
+    value: /var/cache/vllm
+    reason: A persistent host-mounted directory preserves compatible upstream and Ascend compilation artifacts across restarts,
+      allowing cache hits to reduce subsequent startup latency.
+  - scenario: Single-user host whose default home cache is persistent and fast
+    value: ${XDG_CACHE_HOME:-~/.cache}/vllm
+    reason: The computed default requires no override and supports the same cache reuse when the home or XDG cache directory
+      persists.
+  - scenario: Cold-start benchmark or deliberate cache-isolation test
+    value: /tmp/vllm-cache-isolated
+    reason: A fresh task-specific directory prevents old artifacts from converting a cold-start measurement into a warm-cache
+      measurement.
+  caveats:
+  - Fast storage alone does not improve steady-state token latency or throughput; the primary effect is whether initialization
+    can reuse valid artifacts.
+  - Setting VLLM_DISABLE_COMPILE_CACHE or an explicit compilation_config.cache_dir bypasses the principal compile-cache use
+    of this root.
+  - On Ascend, the source-backed npugraph_ex graph cache is active only when enable_npugraph_ex is enabled, and graphs containing
+    Triton wrapper calls are deliberately not saved because their kernel indices are process-local.
+  - Do not use one writable cache shared with untrusted users or import untrusted compiled cache content; compiled artifacts
+    are security-sensitive.
+  - Explicitly overriding VLLM_CACHE_ROOT does not, in the pinned runtime, automatically move VLLM_ASSETS_CACHE or VLLM_XLA_CACHE_PATH.
+  quick_guide: Use a persistent trusted local directory for warm restarts; use a fresh isolated directory only when a true
+    cold start is intentional.
+analysis_date: '2026-07-28'

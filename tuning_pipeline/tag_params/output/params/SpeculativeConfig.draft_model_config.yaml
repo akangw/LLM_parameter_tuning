@@ -1,0 +1,114 @@
+name: SpeculativeConfig.draft_model_config
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/speculative.py:160
+value_type: unknown
+default: null
+valid_choices: Internally generated ModelConfig; derived from SpeculativeConfig.method, model, and the target model configuration
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This is an internal, post-initialization ModelConfig rather than a direct user input. In vllm/config/speculative.py,
+  ngram drafting aliases it to the target ModelConfig, extract_hidden_states copies the target config and replaces its HF
+  config, and model-based methods construct a separate ModelConfig for the drafter. Its resolved architecture, layer count,
+  hidden size, quantization, and maximum model length therefore determine the extra model weights, activations, KV-cache resources,
+  and draft-forward work incurred by speculative decoding. Ascend gives these consequences additional weight: AscendSpecDecodeBaseProposer
+  passes this object to get_model when loading the draft model; graph resource sizing adds the draft model''s hidden-layer
+  count; Mooncake KV transfer derives the number of draft KV layers from it; and platform validation reads its MLA and attention-head
+  properties for decode-context parallelism. The object can improve end-to-end throughput only when the draft model is cheap
+  enough and accurate enough for accepted tokens to repay that extra work.'
+usage_locations:
+- file: vllm/config/speculative.py:587
+  context: Resolves the internal object by aliasing, copying, or constructing a ModelConfig according to the speculative method.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:222
+  context: Passes the resolved draft ModelConfig to get_model, making its architecture and quantization control draft-model
+    loading and execution.
+- file: vllm_ascend/utils.py:677
+  context: Adds the draft model's total hidden-layer count to graph-resource sizing.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:477
+  context: Uses the draft HF configuration to determine draft KV layers transferred by Mooncake; MTP is handled as one shared
+    KV layer.
+- file: vllm_ascend/platform.py:319
+  context: Uses MLA and attention-head metadata from the draft model when validating decode-context parallel sharding.
+- file: vllm_ascend/models/deepseek_v4_mtp.py:60
+  context: Reads the resolved draft HF configuration to size and construct DeepSeek V4 MTP components.
+related_parameters:
+- name: SpeculativeConfig.model
+  relation: Selects the draft checkpoint from which a separate draft ModelConfig is constructed.
+- name: SpeculativeConfig.method
+  relation: Determines whether the field aliases the target config, copies it, remains absent for suffix decoding, or represents
+    a separate draft model.
+- name: SpeculativeConfig.quantization
+  relation: Supplies the quantization mode used when constructing a separate draft ModelConfig and changes draft compute and
+    weight memory.
+- name: SpeculativeConfig.max_model_len
+  relation: Can cap the resolved draft model maximum length and its associated cache requirements.
+- name: SpeculativeConfig.draft_tensor_parallel_size
+  relation: Is validated against the resolved draft architecture and controls how draft compute and memory are sharded.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Multiplies or structures draft work, so the resolved model cost must be considered together with the number of
+    proposed tokens.
+constraints:
+- The field is generated during SpeculativeConfig post-initialization and should not be treated as an independently user-settable
+  tuning knob.
+- Ngram and extract_hidden_states reuse target-model properties; suffix decoding does not require a draft ModelConfig; model-based
+  methods require a supported draft architecture.
+- A separate draft model must have a vocabulary size compatible with the target model and must verify successfully with its
+  resolved draft parallel configuration.
+- On Ascend, GQA or MQA draft models used with decode-context parallelism must satisfy the draft tensor-parallel and KV-head
+  sharding limits; MLA drafts bypass that rule.
+tuning_advice:
+  summary: Tune the user-facing speculative model, method, quantization, maximum length, and draft parallelism that produce
+    this object. Prefer the smallest compatible drafter that preserves a high acceptance rate; do not inject a draft_model_config
+    directly.
+  suggested_values:
+  - scenario: Model-native MTP is available on Ascend
+    value: Select method=mtp and use the target model's supported MTP configuration
+    reason: MTP avoids a conventional external draft checkpoint and Ascend's Mooncake path transfers one shared draft KV layer,
+      often reducing draft memory and transfer cost relative to a multi-layer external drafter.
+  - scenario: Using an external EAGLE or draft-model checkpoint
+    value: Choose the smallest compatible checkpoint and quantization that maintains measured acceptance
+    reason: Smaller hidden size, fewer layers, and lower-bit weights reduce draft latency and memory, but an inaccurate drafter
+      can erase speculative throughput gains through rejection.
+  - scenario: Prompt repetition is strong and no neural drafter is needed
+    value: Select method=ngram or method=suffix instead of constructing a separate draft model
+    reason: These methods avoid loading separate draft-model weights, trading neural draft quality for lower model memory
+      and draft compute.
+  caveats:
+  - The best draft model is workload-dependent; benchmark acceptance length and end-to-end tokens per second together rather
+    than minimizing draft latency alone.
+  - Ngram aliases this field to the target ModelConfig for metadata, so a non-null value does not always mean a second neural
+    model is loaded.
+  - Extract-hidden-states copies the target configuration and changes its HF configuration, so its costs and graph shape differ
+    from an external draft checkpoint.
+  - Larger or MoE draft configurations can increase Ascend graph resources, model memory, and KV-transfer work even when speculative
+    acceptance improves.
+  quick_guide: Choose the speculative method first, then benchmark a small compatible drafter and quantization. Keep it only
+    when accepted-token savings exceed draft-forward, graph-resource, memory, and KV-transfer overhead.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output

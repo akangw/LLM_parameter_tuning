@@ -1,0 +1,82 @@
+name: VLLM_ENABLE_V1_MULTIPROCESSING
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1112
+- vllm/config/parallel.py:827
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: For the synchronous V1 LLMEngine, this variable selects whether the engine core runs in a background process
+  or in the caller's process. The default value 1 passes multiprocess_mode=true and selects SyncMPClient, whose engine core
+  is a separate process communicating with the frontend; 0 selects InprocClient and steps the engine core in-process. That
+  process boundary changes IPC and process overhead, opportunities for frontend and engine work to proceed independently,
+  and host-memory footprint, so latency and throughput can change with workload. Disabling it also makes offline scheduling
+  deterministic and exposes model state in the caller process, but allows vLLM seed initialization to alter the caller's random
+  state. The pinned vllm-ascend source does not override or directly read this variable, so Ascend synchronous LLM use inherits
+  the upstream behavior; source inspection does not establish a universal faster setting or a distinct NPU-memory effect.
+usage_locations:
+- file: vllm/config/parallel.py:827
+  context: external_launcher forces the environment variable to 0 before engine initialization.
+- file: vllm/engine/arg_utils.py:1502
+  context: Warns that disabling multiprocessing can affect the launching Python process's random state.
+- file: docs/usage/reproducibility.md:6
+  context: Documents value 0 as the offline deterministic-scheduling option.
+- file: docs/usage/troubleshooting.md:63
+  context: Documents disabling multiprocessing to keep the scheduler in-process for debugging.
+related_parameters:
+- name: --distributed-executor-backend
+  relation: external_launcher automatically sets VLLM_ENABLE_V1_MULTIPROCESSING to 0.
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Controls the multiprocessing start method used by vLLM-created worker processes, while this variable controls
+    the synchronous V1 engine-core process boundary.
+- name: --seed
+  relation: With value 0, worker seed initialization occurs in-process and can change the caller's random state.
+- name: --enable-batch-invariance
+  relation: Batch invariance is the documented alternative for scheduling-insensitive output, including online mode where
+    this environment variable does not select the AsyncLLM client.
+constraints:
+- The value is parsed with int() and then bool(); use 0 for false and 1 for true, and set it before constructing the engine.
+- The external_launcher distributed executor forces the value to 0.
+- ExecutorWithExternalLauncher requires the value to be 0 and raises an assertion error otherwise.
+- AsyncLLM constructs an asynchronous multiprocessing client directly, so this switch is a synchronous LLMEngine control and
+  is not the online reproducibility mechanism.
+tuning_advice:
+  summary: Keep 1 for ordinary synchronous V1 LLM use unless deterministic offline scheduling, external-launcher compatibility,
+    in-process debugging, or direct model access requires 0. Benchmark both only when the application can safely use either
+    process architecture.
+  suggested_values:
+  - scenario: Normal synchronous offline or embedded Ascend inference
+    value: '1'
+    reason: This is the supported default and isolates the engine core in its own process.
+  - scenario: Deterministic offline scheduling
+    value: '0'
+    reason: The reproducibility guide identifies in-process scheduling as the deterministic offline option.
+  - scenario: torchrun-compatible external launcher
+    value: '0'
+    reason: external_launcher forces this value and its uniprocess executor asserts that multiprocessing is disabled.
+  - scenario: Debugging the scheduler with standard pdb or accessing the in-process model
+    value: '0'
+    reason: InprocClient keeps the engine core in the caller, which the troubleshooting and layerwise-reload documentation
+      require for these workflows.
+  caveats:
+  - Value 0 lets vLLM seed initialization change the random state of the Python process that constructs LLM.
+  - Value 1 introduces a child process and IPC; value 0 puts engine execution in the caller, so the best latency, throughput,
+    and host-memory tradeoff is workload dependent.
+  - This variable does not replace batch invariance for online reproducibility because AsyncLLM creates its multiprocessing
+    client directly.
+  - The Ascend plugin has no pinned override for this variable; validate application lifecycle, multiprocessing compatibility,
+    and performance on the target NPU deployment.
+  quick_guide: Use 1 normally; use 0 for deterministic synchronous offline inference, external_launcher, or deliberate in-process
+    debugging and model access.
+analysis_date: '2026-07-28'

@@ -1,0 +1,54 @@
+name: pooler.logit_mean
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/model_executor/layers/pooler/seqwise/poolers.py:122
+- vllm/model_executor/layers/pooler/tokwise/poolers.py:131
+- vllm/model_executor/models/config.py:277
+value_type: float
+default: None
+valid_choices: any float or None
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter is a calibration constant subtracted from classification logits before activation, as part
+  of Platt scaling: activation((logit - logit_mean) / logit_sigma). It is used in ClassifierPoolerHead and TokenClassifierPoolerHead
+  during the forward pass for embedding/classification models. The subtraction is a simple element-wise operation with negligible
+  computational cost compared to the model backbone. It does not affect memory allocation, batch size, or parallelism. On
+  Ascend NPU, this is a trivial scalar operation on the output tensor and has no measurable impact on throughput or memory.
+  The parameter is purely a model accuracy/calibration setting, not a performance tuning knob.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/pooler/seqwise/poolers.py:122
+  context: Passed to ClassifierPoolerHead constructor for sequence classification pooling
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:131
+  context: Passed to TokenClassifierPoolerHead constructor for token classification pooling
+- file: vllm/model_executor/models/config.py:277
+  context: JinaVLForSequenceClassificationConfig sets default logit_mean=2.65 if None
+related_parameters:
+- name: pooler.logit_sigma
+  relation: Together with logit_mean, forms the Platt scaling calibration pair (shift and scale)
+- name: pooler.activation
+  relation: The activation function applied after the (logit - logit_mean) / logit_sigma transformation
+constraints: []
+tuning_advice:
+  summary: 'This is a model calibration parameter, not a performance tuning knob. Set it based on your model''s calibration
+    requirements, not for throughput or latency optimization.
+
+    '
+  suggested_values:
+  - scenario: Using Jina V2 reranker or similar models with known calibration constants
+    value: '2.65'
+    reason: JinaVLForSequenceClassificationConfig hardcodes this default when logit_mean is None
+  - scenario: General embedding/classification models without specific calibration needs
+    value: None
+    reason: Default behavior; no shift applied to logits before activation
+  caveats:
+  - This parameter has no Ascend-specific behavior or override in vllm-ascend
+  - Changing this value affects model output quality, not inference speed
+  quick_guide: Leave as None unless your model documentation specifies a calibration mean value
+analysis_date: '2026-07-06'

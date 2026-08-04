@@ -1,0 +1,71 @@
+name: VLLM_USE_TRITON_AWQ
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:962
+- vllm/envs.py:104
+value_type: bool
+default: false
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, VLLM_USE_TRITON_AWQ switches AWQ (Activation-aware Weight Quantization) dequantization and GEMM
+  operations from the default C++ CUDA kernels (torch.ops._C.awq_dequantize / torch.ops._C.awq_gemm) to Triton-based implementations
+  (awq_dequantize_triton / awq_gemm_triton). On Ascend NPU, this parameter has limited relevance because: "(1) Ascend NPUs
+  do not natively support CUDA kernels, so the default" C++ path is already non-functional; (2) vllm-ascend does not override
+  or reference this parameter anywhere in its codebase; (3) AWQ quantization on Ascend is handled through CANN''s own quantization
+  pipeline (e.g., via torch_npu or Ascend-specific quantization backends), not through vLLM''s CUDA AWQ kernels. The Triton
+  AWQ kernels are designed for GPU backends (CUDA/ROCm) and would require a Triton backend for Ascend (e.g., torch_npu Triton
+  support) to function. Without explicit Ascend adaptation, this parameter has no effect on Ascend NPU runtime performance.
+  On ROCm platforms, this parameter is automatically enabled when AWQ quantization is detected (vllm/platforms/rocm.py:771-776),
+  but no equivalent logic exists for Ascend.
+
+  '
+usage_locations:
+- file: vllm/_custom_ops.py:662
+  context: awq_dequantize function checks VLLM_USE_TRITON_AWQ to select between Triton and C++ CUDA dequantization kernels
+- file: vllm/_custom_ops.py:695
+  context: awq_gemm function checks VLLM_USE_TRITON_AWQ to select between Triton and C++ CUDA GEMM kernels
+- file: vllm/platforms/rocm.py:771
+  context: ROCm platform auto-enables VLLM_USE_TRITON_AWQ when AWQ quantization is used
+- file: vllm/usage/usage_lib.py:41
+  context: Collected as part of anonymous usage statistics
+related_parameters:
+- name: VLLM_DISABLED_KERNELS
+  relation: Both affect quantization kernel selection; VLLM_DISABLED_KERNELS can disable specific kernels including AWQ-related
+    ones
+constraints: []
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has no effect on AWQ performance. AWQ quantization on Ascend is managed through
+    CANN''s native quantization pipeline, not through vLLM''s CUDA/Triton AWQ kernels. Leave this parameter at its default
+    (disabled) on Ascend.
+
+    '
+  suggested_values:
+  - scenario: Running AWQ-quantized models on Ascend NPU
+    value: '0'
+    reason: 'Ascend NPU does not use vLLM''s CUDA or Triton AWQ kernels. AWQ models on Ascend are handled through CANN''s
+      own quantization support. Setting this to 1 would attempt to use Triton kernels that lack Ascend backend support, potentially
+      causing errors or fallback behavior with no performance benefit.
+
+      '
+  caveats:
+  - 'This parameter is designed for CUDA/ROCm GPU backends. On ROCm, it is auto-enabled when AWQ is detected. No equivalent
+    auto-enable logic exists for Ascend NPU.
+
+    '
+  - 'vllm-ascend does not reference or override this parameter. AWQ quantization on Ascend relies on CANN''s native quantization
+    infrastructure, which operates independently of this flag.
+
+    '
+  quick_guide: 'Leave at default (0) on Ascend NPU — AWQ quantization is handled by CANN, not by vLLM''s Triton/CUDA AWQ kernels.
+
+    '
+analysis_date: '2026-07-06'

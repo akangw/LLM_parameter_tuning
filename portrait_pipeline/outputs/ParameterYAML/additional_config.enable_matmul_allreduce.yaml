@@ -1,0 +1,88 @@
+name: additional_config.enable_matmul_allreduce
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:140
+- vllm_ascend/ops/linear_op.py:385
+- vllm_ascend/ops/linear_op.py:672
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"enable_matmul_allreduce": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When true, vllm-ascend selects MatmulAllreduceRowParallelOp for row-parallel linear layers. When the layer
+  reduces its result and the tensor-parallel group has more than one rank, that operator calls torch_npu.npu_mm_all_reduce_base
+  to fuse the local matrix multiplication and HCCL all-reduce instead of executing them separately. This can reduce exposed
+  tensor-parallel communication latency and improve throughput. The current selection is not explicitly limited to prefill:
+  it is applied through the general row-parallel-op selection path. With TP=1, or for a row-parallel layer that does not reduce
+  its result, the implementation falls back to the ordinary local linear computation. Ascend''s source comment states that
+  the feature is supported on A2 and performs better in eager mode, so gains are hardware-, execution-mode-, model-shape-,
+  and workload-dependent.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:140
+  context: Reads enable_matmul_allreduce from VllmConfig.additional_config, with the deprecated VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE
+    environment variable used only as a fallback when the nested key is absent.
+- file: vllm_ascend/utils.py:982
+  context: matmul_allreduce_enable exposes the resolved AscendConfig boolean to the linear-operator selection logic.
+- file: vllm_ascend/ops/linear_op.py:385
+  context: MatmulAllreduceRowParallelOp invokes npu_mm_all_reduce_base when reduce_results is enabled and the tensor-parallel
+    group size exceeds one; otherwise it uses the normal quant_method linear implementation.
+- file: vllm_ascend/ops/linear_op.py:655
+  context: The row-parallel factory selects MatmulAllreduceRowParallelOp whenever this flag is true, before the FlashComm2
+    and sequence-parallel branches.
+- file: vllm_ascend/batch_invariant.py:76
+  context: Batch-invariant mode forcibly changes the resolved setting to false to preserve deterministic execution.
+- file: vllm/engine/arg_utils.py:1435
+  context: Upstream vLLM exposes --additional-config; the opaque platform-specific dictionary is passed into VllmConfig for
+    vllm-ascend to interpret.
+related_parameters:
+- name: tensor_parallel_size
+  relation: The fused matmul-all-reduce call is taken only when the TP group contains more than one rank; TP=1 has no all-reduce
+    to fuse.
+- name: enforce_eager
+  relation: The Ascend environment-variable definition documents better performance for this optimization in eager mode.
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: Both alter row-parallel communication. The current factory checks enable_matmul_allreduce first, so this setting
+    takes precedence over the FlashComm2 row-op branch when both are enabled.
+- name: VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE
+  relation: Deprecated environment-variable fallback. The nested additional_config key takes precedence when both are present.
+constraints:
+- The source documents support on Ascend A2; do not assume support or a performance gain on other Ascend device generations
+  without validation.
+- Tensor parallelism must use more than one rank, and the row-parallel layer must reduce its result, for the fused npu_mm_all_reduce_base
+  branch to run.
+- Batch-invariant mode disables this optimization regardless of the original configured value.
+tuning_advice:
+  summary: Benchmark true on Ascend A2 deployments with TP>1, preferably in eager mode, and retain it only when fused row-parallel
+    communication improves the target latency or throughput metric.
+  suggested_values:
+  - scenario: Ascend A2, tensor_parallel_size greater than 1, eager execution
+    value: true
+    reason: This is the source-documented target configuration and allows eligible row-parallel layers to fuse matrix multiplication
+      with all-reduce, reducing exposed communication overhead.
+  - scenario: Single-NPU or tensor_parallel_size equal to 1
+    value: false
+    reason: The fused branch requires a TP group larger than one; there is no cross-rank all-reduce to optimize at TP=1.
+  - scenario: Non-A2 hardware, graph execution, or batch-invariant mode
+    value: false
+    reason: A2 is the documented supported device and eager mode is documented as faster; batch-invariant mode overrides the
+      setting to false in code.
+  caveats:
+  - The current implementation is selected for general row-parallel layers; it is not explicitly restricted to prefill despite
+    older profile wording.
+  - Enabling this setting takes priority over the FlashComm2 and sequence-parallel row-op branches, so test combinations rather
+    than assuming their benefits compose.
+  - Benefit depends on tensor shapes, TP degree, HCCL behavior, and the share of time spent in eligible row-parallel reductions;
+    compare end-to-end TTFT, inter-token latency, and throughput with identical workloads.
+  - Prefer the nested key because the environment-variable fallback is deprecated and logs that it will be removed in a future
+    release.
+  quick_guide: 'Use --additional-config ''{"enable_matmul_allreduce": true}'' on Ascend A2 with TP>1, benchmark against false
+    in eager mode, and leave it false for TP=1, batch-invariant runs, or unvalidated hardware/mode combinations.'
+analysis_date: '2026-08-02'

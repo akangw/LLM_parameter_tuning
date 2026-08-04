@@ -1,0 +1,68 @@
+name: additional_config.ascend_fusion_config
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:42
+- vllm_ascend/platform.py:412
+value_type: dict
+default: '{}'
+valid_choices: dict with keys matching AscendFusionConfig fields
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This nested configuration controls Ascend NPU operator fusion via the AscendFusionConfig class (instantiated
+  at vllm_ascend/ascend_config.py:43). The fusion config is passed directly to the CANN compiler through the Ascend platform
+  initialization path (vllm_ascend/platform.py:412), where it is merged into vllm_config.additional_config and subsequently
+  consumed by the NPU graph compiler. Operator fusion reduces kernel launch overhead and intermediate memory traffic on the
+  Da Vinci architecture by combining multiple operations (e.g., activation functions with matrix multiplies, normalization
+  with subsequent ops) into single NPU kernels. This directly affects end-to-end latency, throughput, and peak memory usage.
+  The specific fusion patterns enabled depend on the keys and values within this dict, which map to AscendFusionConfig attributes
+  controlling which CANN fusion passes are active.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:42-43
+  context: AscendConfig.__init__ reads ascend_fusion_config from additional_config and instantiates AscendFusionConfig
+- file: vllm_ascend/platform.py:410-414
+  context: Platform initialization merges ascend_fusion_config into vllm_config.additional_config for CANN compiler consumption
+related_parameters:
+- name: additional_config.ascend_compilation_config
+  relation: Sibling config under additional_config; compilation config controls graph-level compilation while fusion config
+    controls operator-level fusion
+- name: additional_config.xlite_graph_config
+  relation: Sibling config; xlite graph mode may interact with fusion passes — full mode disables ACLGraph (platform.py:428-429)
+- name: model_config.enforce_eager
+  relation: When xlite full mode is enabled, enforce_eager is forced to True, which may bypass some fusion optimizations
+constraints:
+- ascend_fusion_config must be a dict whose keys correspond to valid AscendFusionConfig attributes
+tuning_advice:
+  summary: 'Enable operator fusion to reduce kernel launch overhead and memory bandwidth usage on Ascend NPU; specific fusion
+    patterns should be tuned based on model architecture and CANN version.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment
+    value: '{}'
+    reason: Empty dict uses AscendFusionConfig defaults, which enable a safe set of fusion patterns validated by the vllm-ascend
+      team
+  - scenario: Maximum throughput optimization for transformer models
+    value: Enable gelu/silu activation fusion and layernorm fusion patterns
+    reason: Fusing activation functions with preceding linear layers eliminates intermediate tensor allocations and reduces
+      kernel launch count, improving throughput on Da Vinci NPUs
+  - scenario: Memory-constrained deployment
+    value: Disable memory-intensive fusion patterns
+    reason: Some fusion patterns may increase peak memory usage by materializing larger intermediate tensors; disabling them
+      can reduce memory pressure at the cost of slightly higher latency
+  caveats:
+  - Fusion behavior depends on the CANN version installed — newer CANN versions support more aggressive fusion patterns
+  - Some fusion patterns may conflict with xlite_graph_config full mode, which forces enforce_eager and disables ACLGraph
+  - Incorrect fusion settings can cause compilation failures or numerical instability; test thoroughly when enabling non-default
+    patterns
+  quick_guide: Start with the default empty dict; enable specific fusion patterns incrementally and benchmark each change
+    on your target model and CANN version
+analysis_date: '2026-07-06'

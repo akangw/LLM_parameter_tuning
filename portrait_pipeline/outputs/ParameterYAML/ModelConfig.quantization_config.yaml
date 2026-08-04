@@ -1,0 +1,126 @@
+name: ModelConfig.quantization_config
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/model.py:209
+- vllm/config/quantization.py:12
+- vllm/config/quantization.py:31
+- vllm/config/quantization.py:65
+- vllm/config/vllm.py:525
+- docs/features/quantization/online.md:1
+- vllm_ascend/platform.py:118
+value_type: dict
+default: null
+valid_choices:
+  global_scheme:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  - null
+  linear_scheme_override:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  - null
+  moe_scheme_override:
+  - fp8_per_tensor
+  - fp8_per_block
+  - int8_per_channel_weight_only
+  - mxfp8
+  - null
+  ignore: list[str]
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This ModelConfig field carries the resolved fine-grained recipe for upstream online quantization. When ModelConfig.quantization
+  selects "online" or an OnlineQuantScheme alias, the loader constructs OnlineQuantizationConfig from this object. That configuration
+  selects load-time conversion and runtime methods for supported LinearBase and FusedMoE layers, including per-layer-family
+  schemes and exclusions. It therefore changes resident weight memory, memory bandwidth, arithmetic kernels, model-load cost,
+  latency, and throughput. A checkpoint-provided Hugging Face quantization_config is a separate input and cannot be combined
+  with this field. Ascend takes precedence for NPU behavior: its pinned platform support list excludes "online" and all four
+  upstream online scheme aliases, so this field is not a supported NPU tuning path there.'
+usage_locations:
+- file: vllm/config/model.py:209
+  context: Declares the resolved online-quantization arguments stored in ModelConfig.
+- file: vllm/config/vllm.py:525
+  context: Builds and validates the runtime QuantizationConfig when ModelConfig.quantization is set.
+- file: vllm/config/quantization.py:31
+  context: Defines the global scheme, Linear and MoE overrides, ignore patterns, and string-to-enum coercion used by the runtime
+    online quantizer.
+- file: vllm/config/quantization.py:65
+  context: Resolves scheme aliases, enforces compatibility with ModelConfig.quantization, and converts public dictionary input
+    into OnlineQuantizationConfigArgs.
+- file: docs/features/quantization/online.md:43
+  context: Documents load-time weight conversion, dynamic activation scaling, mixed dense and MoE recipes, and layer exclusion
+    syntax.
+- file: vllm_ascend/platform.py:118
+  context: Defines the NPU-supported quantization methods; it excludes upstream online quantization and its scheme aliases.
+related_parameters:
+- name: ModelConfig.quantization
+  relation: Must select "online" or one of the four online scheme aliases for this field to be consumed; the EngineArgs path
+    also uses an alias to fill or constrain global_scheme.
+- name: ModelConfig.dtype
+  relation: OnlineQuantizationConfig supports only torch.bfloat16 and torch.half activation/model dtypes and VllmConfig validates
+    this before loading.
+- name: EngineArgs.quantization_config
+  relation: The normal public construction path resolves a dictionary into OnlineQuantizationConfigArgs before passing it
+    into ModelConfig.
+- name: ModelConfig.hf_overrides
+  relation: Checkpoint quantization configuration supplied through supported hf_overrides keys is mutually exclusive with
+    this online configuration.
+constraints:
+- The normal EngineArgs path accepts a dictionary and resolves it before ModelConfig construction; the loader asserts that
+  a non-null ModelConfig.quantization_config is OnlineQuantizationConfigArgs, so direct ModelConfig callers should pass that
+  resolved object.
+- At least one of global_scheme, linear_scheme_override, or moe_scheme_override must be set; otherwise OnlineQuantizationConfig
+  raises ValueError.
+- Scheme fields accept only fp8_per_tensor, fp8_per_block, int8_per_channel_weight_only, or mxfp8. When quantization is a
+  scheme alias, global_scheme is filled when absent and must match when present.
+- A non-null field is valid only with quantization equal to "online" or an online scheme alias in the EngineArgs resolution
+  path.
+- The checkpoint must not already contain quantization_config metadata, compression_config metadata, or a supported quantization
+  configuration supplied by hf_overrides; combining those inputs with online quantization raises ValueError.
+- Ignore entries use exact layer names or re:-prefixed regex patterns. For fused layers, patterns must match the unfused shard
+  names rather than only the fused name.
+- Upstream online quantization requires BF16 or FP16 and reports minimum CUDA capability 7.5; individual schemes can impose
+  stricter requirements, including SM 100 or newer for MXFP8 W8A8.
+- The pinned vllm-ascend platform supports only ascend, compressed-tensors, fp8, and deepseek_v4_fp8 methods; it rejects this
+  upstream online configuration path.
+tuning_advice:
+  summary: On supported upstream GPU hardware, start with a single scheme alias and let EngineArgs create this ModelConfig
+    object. Add explicit overrides or ignore patterns only after a uniform baseline, and measure accuracy, load time, steady-state
+    latency, throughput, and peak device memory.
+  suggested_values:
+  - scenario: Uniform per-tensor FP8 online quantization on supported upstream GPU hardware
+    value:
+      global_scheme: fp8_per_tensor
+    reason: Provides the simplest documented baseline across supported dense and MoE layers.
+  - scenario: Per-tensor FP8 generally with per-block FP8 for MoE experts
+    value:
+      global_scheme: fp8_per_tensor
+      moe_scheme_override: fp8_per_block
+    reason: Uses the explicit layer-family override while preserving a uniform dense-layer baseline.
+  - scenario: Preserve selected accuracy-sensitive projections
+    value:
+      global_scheme: fp8_per_tensor
+      ignore:
+      - re:.*[qkv]_proj
+    reason: Keeps matching projection shards at original precision, trading some memory and bandwidth savings for an accuracy
+      safeguard.
+  caveats:
+  - Lower nominal precision does not guarantee lower end-to-end latency; dynamic scaling, kernel availability, request shapes,
+    and hardware generation can dominate.
+  - Online weight conversion adds startup work, so evaluate model-load time separately from steady-state serving.
+  - Overrides and ignored layers reduce or redistribute memory savings; measure actual peak device memory.
+  - 'Do not apply these GPU recipes on Ascend: the pinned NPU platform rejects the online method and aliases even though similarly
+    named checkpoint quantization methods exist.'
+  quick_guide: Use an upstream online scheme alias for the first benchmark, add this nested object only for overrides or exclusions,
+    keep global_scheme consistent with the alias, and do not use it on the pinned Ascend backend.
+analysis_date: '2026-07-31'

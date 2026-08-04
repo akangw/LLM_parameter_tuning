@@ -1,0 +1,7 @@
+name: VLLM_ELASTIC_EP_SCALE_UP_LAUNCH
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this internal environment variable is declared and parsed in vllm/envs.py, but there
+  is no current runtime consumer of VLLM_ELASTIC_EP_SCALE_UP_LAUNCH anywhere else in the repository. The pinned vLLM Ascend
+  source likewise has no definition, override, or consumer for it. The legacy elastic-EP scale-up behavior is therefore not
+  present at the pinned commits, so changing this variable cannot affect current Ascend latency, throughput, or memory.

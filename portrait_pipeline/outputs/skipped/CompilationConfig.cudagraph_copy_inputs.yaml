@@ -1,0 +1,6 @@
+name: CompilationConfig.cudagraph_copy_inputs
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source, this field is only declared and linked from the CompilationConfig docstring; no executable
+  code reads it. The pinned vLLM-Ascend source contains no occurrence of the field. Therefore changing it has no current latency,
+  throughput, or memory effect despite the declaration's description of intended PIECEWISE CUDA-graph input copying.

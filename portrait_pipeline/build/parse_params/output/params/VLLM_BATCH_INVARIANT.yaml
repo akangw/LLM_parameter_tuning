@@ -1,0 +1,155 @@
+name: VLLM_BATCH_INVARIANT
+type: env
+category: other
+scope: both
+source_file:
+- vllm/envs.py:528
+- vllm_ascend/batch_invariant.py:135
+- vllm_ascend/ascend_config.py:225
+- vllm_ascend/utils.py:374
+- vllm_ascend/sample/sampler.py:135
+- vllm_ascend/_310p/sample/sampler.py:63
+- vllm/config/parallel.py:919
+- vllm/config/vllm.py:1269
+- vllm/v1/attention/backends/flash_attn.py:414
+- vllm/v1/attention/backends/flash_attn.py:445
+- vllm/v1/attention/backends/flashinfer.py:560
+- vllm/v1/attention/backends/flashinfer.py:751
+- vllm/v1/attention/backends/flex_attention.py:1173
+- vllm/v1/attention/backends/mla/flashattn_mla.py:157
+- vllm/v1/attention/backends/fa_utils.py:144
+value_type: bool
+default: 'False'
+valid_choices:
+- '''0 (disabled)'''
+- '''1 (enabled)'''
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When VLLM_BATCH_INVARIANT=1, vLLM and vllm-ascend enforce deterministic computation regardless of batch composition.
+  This triggers a cascade of changes across multiple subsystems that collectively reduce performance but guarantee bitwise
+  reproducibility:
+
+  1. **Custom all-reduce disabled** (vllm/config/parallel.py:919): `disable_custom_all_reduce` is forced to True, falling
+  back to standard NCCL/HCCL all-reduce which is slower than custom all-reduce kernels.
+
+  2. **Cascade attention disabled** (vllm/config/vllm.py:1269-1272): `disable_cascade_attn` is forced to True, preventing
+  the use of cascade attention optimizations that improve throughput for mixed-length batches.
+
+  3. **FlashAttention version downgrade** (vllm/v1/attention/backends/fa_utils.py:144): FA4 is downgraded to FA2 because FA4
+  uses batch-shape-dependent scheduling heuristics that break batch invariance.
+
+  4. **AOT scheduling disabled** (vllm/v1/attention/backends/flash_attn.py:414): Ahead-of-time scheduling is disabled because
+  the schedule varies with max_seqlen_q/k, forcing runtime scheduling which adds overhead.
+
+  5. **FlashAttention max_num_splits forced to 1** (vllm/v1/attention/backends/flash_attn.py:445, vllm/v1/attention/backends/mla/flashattn_mla.py:157):
+  Prevents split-kernel execution that improves throughput for long sequences.
+
+  6. **FlashInfer fixed split sizes** (vllm/v1/attention/backends/flashinfer.py:560-567): Decode split size fixed to 2048,
+  prefill split size fixed to 4096, and split-kv disabled. Larger workspace buffer allocated (vllm/v1/attention/backends/flashinfer.py:751-752).
+
+  7. **FlexAttention kernel options** (vllm/v1/attention/backends/flex_attention.py:1173-1177): BLOCK_M and BLOCK_N forced
+  to 16 with IS_DIVISIBLE=False, reducing kernel efficiency.
+
+  8. **Ascend-specific: custom ops disabled** (vllm_ascend/utils.py:374): All custom Ascend operators are disabled, falling
+  back to generic implementations.
+
+  9. **Ascend-specific: async exponential disabled** (vllm_ascend/ascend_config.py:225): The async exponential sampling optimization
+  is disabled because it makes batch_invariant mode non-functional.
+
+  10. **Ascend-specific: sampler fallback** (vllm_ascend/sample/sampler.py:135, vllm_ascend/_310p/sample/sampler.py:63): Ascend-optimized
+  sampling kernels are bypassed in favor of vLLM''s upstream implementation.
+
+  The net effect is significantly reduced throughput and increased latency, with potentially higher memory usage due to larger
+  workspace buffers. This mode should only be used for debugging or when deterministic results are strictly required.
+
+  '
+usage_locations:
+- file: vllm_ascend/batch_invariant.py:135
+  context: Entry point that initializes batch-invariant mode on Ascend NPU
+- file: vllm_ascend/ascend_config.py:225
+  context: Disables async exponential sampling when batch_invariant is enabled
+- file: vllm_ascend/utils.py:374
+  context: Disables all custom Ascend operators when batch_invariant is enabled
+- file: vllm_ascend/sample/sampler.py:135
+  context: Falls back to upstream sampler implementation
+- file: vllm_ascend/_310p/sample/sampler.py:63
+  context: Falls back to upstream sampler on 310P Ascend chips
+- file: vllm/config/parallel.py:919
+  context: Disables custom all-reduce
+- file: vllm/config/vllm.py:1269
+  context: Disables cascade attention
+- file: vllm/v1/attention/backends/flash_attn.py:414
+  context: Disables AOT scheduling in FlashAttention metadata builder
+- file: vllm/v1/attention/backends/flash_attn.py:445
+  context: Forces max_num_splits to 1
+- file: vllm/v1/attention/backends/flashinfer.py:560
+  context: Sets fixed split sizes and disables split-kv in FlashInfer
+- file: vllm/v1/attention/backends/flashinfer.py:751
+  context: Allocates larger workspace buffer
+- file: vllm/v1/attention/backends/flex_attention.py:1173
+  context: Forces fixed kernel block sizes
+- file: vllm/v1/attention/backends/mla/flashattn_mla.py:157
+  context: Forces max_num_splits to 1 for MLA attention
+- file: vllm/v1/attention/backends/fa_utils.py:144
+  context: Downgrades FA4 to FA2
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_NZ
+  relation: When batch_invariant is enabled, async exponential is disabled which affects NZ mode behavior
+- name: enable_async_exponential
+  relation: Automatically disabled when VLLM_BATCH_INVARIANT is enabled
+- name: disable_custom_all_reduce
+  relation: Forced to True when VLLM_BATCH_INVARIANT is enabled
+- name: disable_cascade_attn
+  relation: Forced to True when VLLM_BATCH_INVARIANT is enabled
+- name: attention_backend
+  relation: FA3 requires VLLM_BATCH_INVARIANT=1 on Ascend
+constraints:
+- VLLM_BATCH_INVARIANT=1 requires Triton or AscendC batch-invariant ops to be available on Ascend NPU; otherwise initialization
+  is skipped with a warning
+- VLLM_BATCH_INVARIANT=1 is required to use FlashAttention 3 (FA3) backend on Ascend NPU
+- On NVIDIA GPUs, VLLM_BATCH_INVARIANT=1 requires compute capability >= 9.0 (SM90+)
+tuning_advice:
+  summary: 'Only enable VLLM_BATCH_INVARIANT=1 when deterministic results across different batch sizes are strictly required
+    (e.g., debugging, reproducibility testing). For production serving on Ascend NPU, keep it disabled (default) to maximize
+    throughput and minimize latency.
+
+    '
+  suggested_values:
+  - scenario: Production serving on Ascend NPU (default)
+    value: '0'
+    reason: 'Maximizes throughput and minimizes latency by allowing all optimizations: custom all-reduce, cascade attention,
+      FA4, AOT scheduling, split-kernel execution, Ascend custom ops, and async exponential sampling.
+
+      '
+  - scenario: Debugging or reproducibility testing requiring deterministic output
+    value: '1'
+    reason: 'Ensures identical logprobs and generated tokens regardless of batch composition. Required for FlashAttention
+      3 (FA3) backend on Ascend NPU.
+
+      '
+  - scenario: Using FlashAttention 3 (FA3) on Ascend NPU
+    value: '1'
+    reason: 'FA3 backend on Ascend NPU requires batch invariant mode to be enabled. This is a hard requirement documented
+      in vllm-ascend flash_attention guide.
+
+      '
+  caveats:
+  - Enabling batch invariance disables custom all-reduce, which can significantly reduce multi-GPU throughput on Ascend NPU
+  - Cascade attention is disabled, reducing efficiency for mixed-length batches
+  - FlashAttention is downgraded from FA4 to FA2, losing performance optimizations
+  - AOT scheduling is disabled, adding runtime scheduling overhead
+  - Split-kernel execution is disabled, reducing throughput for long sequences
+  - All Ascend custom operators are disabled, falling back to slower generic implementations
+  - Async exponential sampling is disabled, increasing sampling latency
+  - FlashInfer uses larger workspace buffers, increasing memory usage
+  - On Ascend 310P chips, the optimized sampling path is bypassed entirely
+  - If Triton or AscendC batch-invariant ops are not available, the mode silently fails to initialize
+  quick_guide: 'Set VLLM_BATCH_INVARIANT=1 only for debugging or FA3; keep it 0 for production Ascend serving.
+
+    '
+analysis_date: '2026-07-06'

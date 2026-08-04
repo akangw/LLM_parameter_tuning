@@ -1,0 +1,119 @@
+name: additional_config.eplb_config.expert_heat_collection_interval
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:632
+- vllm_ascend/ascend_config.py:670
+- vllm_ascend/worker/model_runner_v1.py:466
+- vllm_ascend/eplb/eplb_updator.py:53
+- vllm_ascend/eplb/eplb_updator.py:76
+- vllm_ascend/eplb/eplb_updator.py:125
+- vllm_ascend/ops/fused_moe/fused_moe.py:435
+- vllm_ascend/ops/fused_moe/fused_moe.py:692
+- docs/source/user_guide/configuration/additional_config.md:145
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:30
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:79
+value_type: int
+default: 400
+valid_choices: integer greater than or equal to 0 according to current validation; use a positive value for a functioning
+  dynamic-EPLB cycle
+cli_example: DYNAMIC_EPLB=true vllm serve <model> --enable-expert-parallel --additional-config '{"eplb_config":{"dynamic_eplb":true,"expert_heat_collection_interval":400}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only field sets the number of forward iterations before the dynamic-EPLB updater gathers accumulated
+  per-expert load and wakes its CPU placement process. It also contributes to the complete balancing-cycle length together
+  with algorithm_execution_interval and the number of MoE layers. Increasing it gives the planner a longer and potentially
+  more stable load-observation window and makes all-gather, planning, and expert redistribution less frequent, but it delays
+  correction of a changed or imbalanced routing pattern and can therefore prolong straggler latency and reduce throughput.
+  Decreasing it reacts sooner but repeats balancing overhead more often and may base placement on less representative traffic.
+  For policy 3, the value is additionally the first dimension of an int32 per-iteration load-history tensor allocated in every
+  applicable fused MoE layer, so its device-memory cost grows linearly with the interval and local expert count. Policies
+  0, 1, and 2 use a fixed one-dimensional int64 load accumulator instead. The pinned upstream vLLM repository has a distinct
+  EPLBConfig based on window_size and step_interval and contains no expert_heat_collection_interval counterpart.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:632
+  context: Defines the default as 400; the validator later requires an integer and rejects values below zero.
+- file: vllm_ascend/worker/model_runner_v1.py:466
+  context: Creates the EPLB process and updater only in the dynamic-EPLB branch, which gates this interval's runtime effect.
+- file: vllm_ascend/eplb/eplb_updator.py:53
+  context: Copies the configured value into the per-forward updater state machine.
+- file: vllm_ascend/eplb/eplb_updator.py:76
+  context: Uses the interval to schedule planner wake-up, planner-result consumption, layer-by-layer weight updates, load
+    clearing, and cycle reset.
+- file: vllm_ascend/eplb/eplb_updator.py:125
+  context: At the interval boundary, gathers accumulated MoE load across the dynamic-EPLB communication group and wakes the
+    placement subprocess.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:435
+  context: Under policy 3, uses the interval as the row count of each layer's int32 per-iteration load-history tensor.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:692
+  context: Accumulates routed token counts into the ordinary load vector or the policy-3 per-iteration history consumed at
+    the collection boundary.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:79
+  context: Recommends 400 or more for stable workloads and 100 to 200 for fluctuating traffic; the dynamic policy-2 example
+    uses 600.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must activate dynamic EPLB for this interval to drive the live balancing state machine; setting expert_map_record_path
+    also forces dynamic_eplb true.
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Begins after the collection boundary and provides the CPU planner's overlap window; together the two intervals
+    determine when updated placement is consumed and contribute to cycle length.
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Policy 3 changes the interval from only a scheduling and observation-window control into the row count of per-layer
+    load-history buffers.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Determines the extra expert copies that the planner can redistribute after collecting heat over this interval.
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: Forces dynamic collection on and exports the calculated expert map when the interval, planner window, and layer-update
+    portion of a cycle complete.
+- name: DYNAMIC_EPLB
+  relation: Must be true or 1 at process startup, unless EXPERT_MAP_RECORD=true supplies the alternative environment gate,
+    when dynamic_eplb is enabled.
+constraints:
+- The value must be an integer; booleans also pass the current Python isinstance(value, int) validation.
+- The current validator accepts zero and rejects negative values, despite its error text saying the value must be greater
+  than zero.
+- Use a positive value in practice. With zero, the updater's wake condition compares the iteration counter to -1 and never
+  starts the planner, while a later blocking result read may still be reached.
+- The interval has a runtime effect only when dynamic EPLB or the expert-map recording workflow creates and drives the EPLB
+  updater.
+- Dynamic EPLB requires the environment gate, expert-parallel MoE execution on the supported Ascend v1 model runner, and a
+  compatible model and quantization path.
+- For policy 3, load-history allocation per applicable MoE layer is expert_heat_collection_interval times local_num_experts
+  int32 elements, plus a device counter.
+tuning_advice:
+  summary: Start from a documented configuration, then balance reaction speed against observation quality and redistribution
+    frequency using representative routing patterns; also budget policy-3 load-history memory.
+  suggested_values:
+  - scenario: Default or static expert-map recording workflow
+    value: 400
+    reason: This is the code default and the value shown in the pinned guide's static recording example.
+  - scenario: Current documented dynamic SwiftBalancer policy-2 deployment
+    value: 600
+    reason: The pinned Ascend guide uses 600 together with algorithm_execution_interval=50 in its recommended dynamic policy-2
+      example.
+  - scenario: Fluctuating traffic that needs faster imbalance detection
+    value: 100-200
+    reason: This is the guide's stated lower range for changing workloads, but it should be retained only if measured throughput
+      and latency improve after the increased balancing frequency.
+  caveats:
+  - Forward iterations are not wall-clock time, so the same interval covers different durations as batch shapes, model latency,
+    and serving load change.
+  - A longer window can smooth transient routing noise but preserves a harmful placement longer when expert demand shifts.
+  - A shorter window increases the frequency of cross-rank load gathering, CPU planning, and expert-weight redistribution;
+    it does not guarantee better latency.
+  - Tune jointly with algorithm_execution_interval and the number of MoE layers because the state machine resets after their
+    sum, and ensure the CPU planner finishes before its blocking result-read boundary.
+  - Under policy 3, increasing the interval also increases persistent NPU load-history memory in every applicable fused MoE
+    layer; this memory scaling does not apply to policies 0 through 2.
+  - The documented values are starting points rather than workload-independent optima; compare TTFT, TPOT, throughput, expert
+    balance, and device-memory headroom on representative requests.
+  quick_guide: Use 400 for the default or static recording path, use the guide's 600/50 pair for an initial dynamic policy-2
+    run, and test 100 to 200 only for rapidly changing traffic; keep the value that wins end-to-end benchmarks and check memory
+    separately for policy 3.
+analysis_date: '2026-08-01'

@@ -1,0 +1,79 @@
+name: --media-io-kwargs
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:110
+- vllm/engine/arg_utils.py:1177
+- vllm/entrypoints/chat_utils.py:547
+- vllm/entrypoints/openai/chat_completion/protocol.py:309
+value_type: dict
+default: '{}'
+valid_choices: dict[str, dict[str, Any]] keyed by modality (e.g., 'video', 'image')
+cli_example: '--media-io-kwargs ''{"video": {"num_frames": 40}}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter controls how media inputs (images, videos) are processed before being fed into the multimodal\
+  \ model. The key performance-relevant sub-parameter is `num_frames` for video modality, which directly determines: 1) The\
+  \ number of video frames extracted and encoded by the vision encoder — more frames means more encoder computation,\n   increasing\
+  \ time-to-first-token (TTL) latency and reducing throughput.\n2) The number of visual tokens injected into the LLM's KV\
+  \ cache — more frames means more visual tokens,\n   consuming more KV cache memory and potentially causing preemption or\
+  \ OOM under high concurrency.\n3) For models with unified vision_chunk modality (e.g., Qwen2-VL), the `media_io_kwargs`\
+  \ are passed through\n   `BaseMultiModalItemTracker` (vllm/entrypoints/chat_utils.py:547) and used during media IO connector\
+  \ processing.\nOn Ascend NPU, the vision encoder typically runs on NPU as well, so the computational cost of processing\
+  \ more frames scales with NPU compute. Reducing `num_frames` is the most direct way to trade off video understanding quality\
+  \ for lower latency and higher throughput. The parameter can also be set per-request via the OpenAI-compatible API (vllm/entrypoints/openai/chat_completion/protocol.py:309),\
+  \ allowing dynamic quality/performance tradeoffs.\n"
+usage_locations:
+- file: vllm/config/multimodal.py:110
+  context: Field definition in MultiModalConfig — default is empty dict, accepts modality-keyed kwargs
+- file: vllm/engine/arg_utils.py:1177
+  context: CLI argument registration under MultiModalConfig group
+- file: vllm/engine/arg_utils.py:540
+  context: EngineArgs field declaration with type dict[str, dict[str, Any]]
+- file: vllm/engine/arg_utils.py:1546
+  context: Passed to ModelConfig constructor during engine creation
+- file: vllm/config/model.py:326
+  context: ModelConfig InitVar — passed through to MultiModalConfig
+- file: vllm/entrypoints/chat_utils.py:547
+  context: BaseMultiModalItemTracker stores media_io_kwargs for use during media processing
+- file: vllm/entrypoints/openai/chat_completion/protocol.py:309
+  context: Per-request field in ChatCompletionRequest — merged with engine-level kwargs
+- file: vllm_ascend/patch/platform/patch_deepseek_v4_thinking.py:68
+  context: Ascend patch for DeepSeek-V4 thinking — media_io_kwargs passed through ChatParams unchanged
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Controls the maximum number of media items per prompt; media_io_kwargs controls how each item is processed
+- name: --mm-processor-kwargs
+  relation: Similar pattern — passes additional kwargs to the HF processor; media_io_kwargs targets media IO connectors specifically
+- name: --mm-processor-cache-gb
+  relation: Caches processed media inputs; larger num_frames increases cache entry size, making cache sizing more important
+- name: --video-pruning-rate
+  relation: Alternative way to reduce video frames via pruning; media_io_kwargs num_frames sets the initial extraction count
+constraints:
+- Must be a valid JSON dict with modality keys (e.g., 'video', 'image') mapping to dicts of kwargs
+- The specific kwargs available depend on the model's media IO connector implementation
+- Per-request media_io_kwargs are merged with engine-level media_io_kwargs; request-level values take precedence
+tuning_advice:
+  summary: Reduce video num_frames to lower vision encoder latency and KV cache memory usage on Ascend NPU
+  suggested_values:
+  - scenario: High-throughput video serving with acceptable quality loss
+    value: '{"video": {"num_frames": 8}}'
+    reason: Minimizes vision encoder compute and visual token count; suitable when temporal detail is not critical
+  - scenario: Balanced quality and performance
+    value: '{"video": {"num_frames": 16}}'
+    reason: Common default for many video models; provides reasonable temporal coverage without excessive overhead
+  - scenario: Maximum video understanding quality (low throughput acceptable)
+    value: '{"video": {"num_frames": 32}}'
+    reason: Captures more temporal information; expect 2-4x higher TTL latency and visual token memory vs 8 frames
+  caveats:
+  - On Ascend NPU, the vision encoder runs on NPU — more frames linearly increases NPU compute time for encoding
+  - More visual tokens from additional frames consume KV cache memory, which is especially limited on NPU compared to GPU
+  - The actual effect of num_frames depends on the model's media IO connector — some models may ignore or clamp this value
+  - Per-request media_io_kwargs override engine-level settings, allowing dynamic quality adjustments per client
+  quick_guide: For Ascend NPU video serving, start with num_frames=16 and reduce to 8 if latency or memory pressure is observed
+analysis_date: '2026-07-06'

@@ -1,0 +1,67 @@
+name: --disable-custom-all-reduce
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1067
+- vllm/config/parallel.py:190
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --disable-custom-all-reduce
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This flag controls whether vLLM uses its custom all-reduce kernel (optimized for tensor-parallel communication)
+  or falls back to the standard NCCL all-reduce. On Ascend NPU, the custom all-reduce kernel is NOT available — vllm-ascend
+  uses HCCL (Huawei Collective Communication Library) for all collective operations. Setting this flag to True forces the
+  system to use the default communication backend (HCCL on Ascend), which is the only valid path. Setting it to False (the
+  upstream default) would attempt to use the custom all-reduce kernel that does not exist on Ascend, potentially causing errors
+  or falling back to HCCL anyway. The flag is read in vllm/v1/worker/gpu_worker.py:1134 where `set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)`
+  is called during distributed environment initialization. On Ascend, the custom all-reduce path is not implemented, so this
+  flag has no practical effect on communication performance — HCCL is always used. However, it is listed in the "ignored factors"
+  for data-parallel hash computation (vllm/config/parallel.py:735), meaning it does not affect DP group formation. For CPU
+  workers (vllm/v1/worker/cpu_worker.py:86), this flag is forcibly set to True since custom all-reduce is GPU/NPU-specific.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_worker.py:1134
+  context: 'Called during distributed environment init: set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)'
+- file: vllm/v1/worker/cpu_worker.py:86
+  context: CPU worker forcibly sets disable_custom_all_reduce = True
+- file: vllm/config/speculative.py:915
+  context: Copied to draft model parallel config for speculative decoding
+- file: vllm/config/parallel.py:735
+  context: Listed in ignored_factors for data-parallel hash computation
+- file: vllm/v1/utils.py:407
+  context: Reported in usage telemetry
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Custom all-reduce is only relevant when tensor_parallel_size > 1
+- name: --distributed-executor-backend
+  relation: The communication backend (nccl/hccl) is used when custom all-reduce is disabled
+constraints:
+- On Ascend NPU, the custom all-reduce kernel is not available; HCCL is always used for collective communication regardless
+  of this flag.
+- CPU workers always have disable_custom_all_reduce set to True.
+tuning_advice:
+  summary: On Ascend NPU, this flag has no effect — HCCL is always used for all-reduce. Leave at default or set to True for
+    clarity.
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: 'True'
+    reason: The custom all-reduce kernel does not exist on Ascend; HCCL is the only available all-reduce backend. Setting
+      to True makes the fallback explicit.
+  - scenario: CPU-only workers
+    value: 'True'
+    reason: CPU workers forcibly enable this flag since custom all-reduce is GPU/NPU-specific.
+  caveats:
+  - Setting this flag to False on Ascend does not enable any custom kernel — it will either error out or silently fall back
+    to HCCL.
+  - This flag is ignored for data-parallel hash computation, so changing it does not affect DP group formation.
+  quick_guide: On Ascend NPU, always use --disable-custom-all-reduce (or omit it, as HCCL is the only backend).
+analysis_date: '2026-07-06'

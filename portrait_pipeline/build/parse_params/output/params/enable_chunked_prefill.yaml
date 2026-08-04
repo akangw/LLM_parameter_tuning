@@ -1,0 +1,124 @@
+name: --enable-chunked-prefill
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:84
+- vllm/engine/arg_utils.py:586
+- vllm/engine/arg_utils.py:1350
+- vllm_ascend/platform.py:605
+- vllm_ascend/attention/attention_v1.py:256
+- vllm_ascend/attention/mla_v1.py:258
+- vllm_ascend/worker/model_runner_v1.py:1342
+- vllm_ascend/worker/v2/attn_utils.py:180
+value_type: bool
+default: None
+valid_choices: true, false
+cli_example: --enable-chunked-prefill
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "Chunked prefill is a critical scheduling feature that splits long prefill requests into smaller chunks, interleaving\
+  \ them with decode requests. On Ascend NPU, this parameter directly controls the attention state selection in both v1 and\
+  \ v2 worker paths:\n- \"In v1 worker (vllm_ascend/worker/model_runner_v1.py:1342), when enable_chunked_prefill\"\n  is True,\
+  \ the attention state is set to AscendAttentionState.ChunkedPrefill, which\n  triggers the splitfuse attention path optimized\
+  \ for mixed prefill-decode batches.\n\n- \"In v2 worker (vllm_ascend/worker/v2/attn_utils.py:180), the same logic applies:\"\
+  \n  enable_chunked_prefill=True routes to AscendAttentionState.ChunkedPrefill.\n\n- \"In the Ascend attention backends (vllm_ascend/attention/attention_v1.py:256\
+  \ and\"\n  vllm_ascend/attention/mla_v1.py:258), the chunked_prefill_enabled flag is read from\n  scheduler_config and used\
+  \ to configure attention metadata building.\n\n- \"vllm-ascend silently forces enable_chunked_prefill=True when SLO_limits_for_dynamic_batch\"\
+  \n  is set (vllm_ascend/platform.py:605), overriding any user setting.\n\n- \"In all Ascend scheduler variants (balance_schedule,\
+  \ recompute_scheduler,\"\n  scheduler_dynamic_batch, scheduler_profiling_chunk), when enable_chunked_prefill is\n  False\
+  \ and a request's remaining tokens exceed the token budget, scheduling stops\n  immediately — meaning long prompts cannot\
+  \ be partially processed and must wait for\n  sufficient budget, causing head-of-line blocking and increased latency.\n\n\
+  - \"Dynamic Chunked Pipeline Parallel (profiling_chunk_config) requires\"\n  enable_chunked_prefill=True as a hard prerequisite\
+  \ (documented in\n  user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:143).\n\n- \"For encoder-decoder models,\
+  \ chunked prefill is forcibly disabled upstream\"\n  (vllm/config/scheduler.py:228).\n\n- \"For models without KV cache\
+  \ (e.g., encoder-only), chunked prefill is automatically\"\n  disabled with a warning (vllm/v1/engine/core.py:137-139).\n\
+  \nEnabling chunked prefill improves throughput by allowing the scheduler to pack decode tokens alongside partial prefill\
+  \ chunks, maximizing NPU utilization. It reduces time-to-first-token (TTFT) latency for later requests by preventing long\
+  \ prefills from monopolizing the batch. The tradeoff is slightly increased per-iteration overhead from the splitfuse attention\
+  \ path and potential memory overhead from maintaining partial prefill state.\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:1342
+  context: 'v1 worker: selects AscendAttentionState.ChunkedPrefill when enable_chunked_prefill is True'
+- file: vllm_ascend/worker/v2/attn_utils.py:180
+  context: 'v2 worker: selects AscendAttentionState.ChunkedPrefill when enable_chunked_prefill is True'
+- file: vllm_ascend/attention/attention_v1.py:256
+  context: 'v1 attention backend: reads chunked_prefill_enabled for metadata building'
+- file: vllm_ascend/attention/mla_v1.py:258
+  context: 'v1 MLA attention backend: reads chunked_prefill_enabled for metadata building'
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:407
+  context: 'Balance scheduler: when disabled, stops scheduling if num_new_tokens > token_budget'
+- file: vllm_ascend/core/recompute_scheduler.py:542
+  context: 'Recompute scheduler: when disabled, stops scheduling if num_new_tokens > token_budget'
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:403
+  context: 'Dynamic batch scheduler: when disabled, skips request if num_new_tokens > token_budget'
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:538
+  context: 'Profiling chunk scheduler: when disabled, stops scheduling if num_new_tokens > token_budget'
+- file: vllm_ascend/platform.py:605
+  context: Forces enable_chunked_prefill=True when SLO_limits_for_dynamic_batch is set
+- file: vllm/config/scheduler.py:228
+  context: Forcibly disables for encoder-decoder models
+- file: vllm/v1/engine/core.py:137
+  context: Auto-disables for models without KV cache
+related_parameters:
+- name: --max-num-batched-tokens
+  relation: Chunked prefill splits prompts into chunks bounded by max_num_batched_tokens minus decode tokens
+- name: --max-num-partial-prefills
+  relation: Controls how many sequences can be partially prefilled concurrently when chunked prefill is enabled
+- name: --max-long-partial-prefills
+  relation: Limits concurrent long prompts being chunked; only meaningful with chunked prefill enabled
+- name: --long-prefill-token-threshold
+  relation: Defines what constitutes a long prefill for chunked prefill scheduling priority
+- name: --pipeline-parallel-size
+  relation: Dynamic Chunked Pipeline Parallel requires both pipeline-parallel-size > 1 and enable-chunked-prefill
+- name: VLLM_ASCEND_BALANCE_SCHEDULING
+  relation: Incompatible with Dynamic Chunked Pipeline Parallel which requires chunked prefill
+- name: --additional-config (profiling_chunk_config)
+  relation: Dynamic Chunked Pipeline Parallel requires enable-chunked-prefill as a hard prerequisite
+constraints:
+- Encoder-decoder models do not support chunked prefill; it is forcibly disabled.
+- Models without KV cache (e.g., encoder-only) do not support chunked prefill; it is auto-disabled with a warning.
+- Dynamic Chunked Pipeline Parallel (profiling_chunk_config.enabled=true) requires --enable-chunked-prefill.
+- Dynamic Chunked Pipeline Parallel requires --pipeline-parallel-size > 1.
+- Dynamic Chunked Pipeline Parallel is incompatible with VLLM_ASCEND_BALANCE_SCHEDULING.
+- When SLO_limits_for_dynamic_batch is set, vllm-ascend silently forces enable_chunked_prefill=True, overriding any user setting.
+tuning_advice:
+  summary: Enable chunked prefill on Ascend NPU for all workloads except encoder-decoder models to maximize throughput and
+    reduce tail latency.
+  suggested_values:
+  - scenario: General LLM serving on Ascend NPU (v1 or v2 worker)
+    value: true
+    reason: Enables splitfuse attention path on Ascend, allowing interleaved prefill-decode scheduling that maximizes NPU
+      utilization and prevents head-of-line blocking from long prompts.
+  - scenario: Encoder-decoder models
+    value: false
+    reason: Chunked prefill is forcibly disabled upstream for encoder-decoder models; setting it true has no effect.
+  - scenario: Dynamic Chunked Pipeline Parallel with pipeline-parallel-size > 1
+    value: true
+    reason: This feature requires chunked prefill as a hard prerequisite; the profiling-based chunk sizing depends on it.
+  - scenario: SLO-based dynamic batching (SLO_limits_for_dynamic_batch set)
+    value: true
+    reason: vllm-ascend forces this to True automatically; the dynamic batch scheduler requires chunked prefill for proper
+      operation.
+  - scenario: Pure decode-only serving with no prefill requests
+    value: false
+    reason: If all requests are decode-only (e.g., continuation serving), chunked prefill adds unnecessary overhead to the
+      attention state selection logic.
+  caveats:
+  - When enable_chunked_prefill=False and a prompt exceeds the available token budget, the scheduler stops processing that
+    request entirely, causing head-of-line blocking and increased TTFT for all queued requests.
+  - vllm-ascend silently overrides this to True when SLO_limits_for_dynamic_batch is configured — user settings are ignored
+    in that case.
+  - The splitfuse attention path (ChunkedPrefill state) on Ascend NPU has different performance characteristics than the pure
+    PrefillNoCache or DecodeOnly paths; test with your specific model and batch sizes.
+  - 'Chunked prefill interacts with --max-num-batched-tokens: the effective chunk size is max_num_batched_tokens minus tokens
+    already allocated to decode requests in the batch.'
+  - For pooling models, chunked prefill requires explicit enabling and uses hidden_states_cache to accumulate partial results
+    across chunks.
+  quick_guide: Always enable --enable-chunked-prefill on Ascend NPU for production LLM serving; disable only for encoder-decoder
+    models or pure decode-only workloads.
+analysis_date: '2026-07-06'

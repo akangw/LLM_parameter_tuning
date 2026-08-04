@@ -1,0 +1,53 @@
+name: compilation.cudagraph_num_of_warmups
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:1141
+- vllm_ascend/platform.py:442
+- vllm/v1/worker/gpu_model_runner.py:6259
+value_type: int
+default: '1'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls how many dummy forward passes are executed before CUDA graph (or ACLGraph on Ascend)
+  capture begins. During warmup runs, the model runs in eager mode to stabilize memory allocations and kernel launch overheads.
+  Only after warmup is the graph captured and reused for subsequent runs. On Ascend NPU, vllm-ascend hardcodes this value
+  to 1 in platform.py:442, overriding any user configuration. The warmup itself adds a small one-time overhead during engine
+  startup (typically a few seconds), but has no effect on steady-state throughput or latency. Since the value is forced to
+  1 on Ascend, users cannot tune it — the performance impact is limited to the fixed startup cost.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:442
+  context: Hardcodes cudagraph_num_of_warmups to 1 for all Ascend NPU runs, overriding user config
+- file: vllm/config/vllm.py:1141
+  context: Sets cudagraph_num_of_warmups to 1 when CUDA graph mode is not NONE (upstream default)
+- file: vllm/v1/worker/gpu_model_runner.py:6259
+  context: Reads the value in _warmup_and_capture to determine number of warmup iterations before graph capture
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: Warmup only occurs when cudagraph_mode is not NONE; if NONE, this parameter is irrelevant
+- name: model_config.enforce_eager
+  relation: When enforce_eager is True, cudagraph_mode is forced to NONE, making warmups unnecessary
+- name: ascend_config.xlite_graph_config.enabled
+  relation: When xlite full mode is enabled, cudagraph_mode is forced to NONE, skipping warmups entirely
+constraints:
+- Must be a positive integer (>= 1)
+- On Ascend NPU, the value is always overridden to 1 by vllm-ascend regardless of user configuration
+tuning_advice:
+  summary: On Ascend NPU, this parameter is hardcoded to 1 and requires no tuning
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: '1'
+    reason: vllm-ascend forces this value to 1; any user-specified value is ignored
+  caveats:
+  - Do not attempt to increase this value on Ascend — it will be silently overridden to 1
+  - The single warmup run is sufficient for Ascend NPU graph capture stability
+  quick_guide: No tuning needed — vllm-ascend hardcodes this to 1 for all Ascend deployments
+analysis_date: '2026-07-06'

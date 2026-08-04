@@ -1,0 +1,82 @@
+name: --mm-encoder-only
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:139
+- vllm/engine/arg_utils.py:1193
+- vllm/engine/arg_utils.py:551
+- vllm/config/model.py:331
+- vllm/config/model.py:456
+- vllm/v1/worker/gpu_model_runner.py:5373
+- vllm/v1/worker/gpu_model_runner.py:5711
+- vllm/model_executor/models/interfaces.py:241
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --mm-encoder-only
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, this flag causes vLLM to skip the entire language model (LLM) component and run only the multimodal
+  encoder. This is designed for disaggregated serving architectures where the encoder and decoder run on separate processes.
+  On Ascend NPU, the performance impact is dramatic: "the language model (which dominates both compute" and memory) is completely
+  bypassed. In v1 worker, the dummy run for CUDA graph capture returns immediately without executing any LM operations (vllm/v1/worker/gpu_model_runner.py:5373-5376),
+  and the dummy sampler run also short-circuits (vllm/v1/worker/gpu_model_runner.py:5711-5713). During model initialization,
+  language model layers are replaced with StageMissingLayer placeholders via no_init_weights context manager (vllm/model_executor/models/interfaces.py:241-242),
+  which means those layers are never materialized on the NPU. This drastically reduces NPU memory consumption and eliminates
+  all LM computation, making the process a pure encoder that only handles multimodal feature extraction. The encoder output
+  is typically transferred to a separate decoder process via IPC or network. This parameter is mutually exclusive with normal
+  end-to-end inference — it fundamentally changes the process role from full model server to encoder-only server.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_model_runner.py:5373
+  context: 'Dummy run short-circuit: if mm_encoder_only, skip LM execution and return empty tensors'
+- file: vllm/v1/worker/gpu_model_runner.py:5711
+  context: 'Dummy sampler run short-circuit: if mm_encoder_only, skip sampler entirely'
+- file: vllm/model_executor/models/interfaces.py:241
+  context: 'Model initialization: replace language model layers with StageMissingLayer placeholders when mm_encoder_only is
+    true'
+- file: vllm/config/multimodal.py:139
+  context: Field definition with docstring explaining disaggregated Encoder process usage
+related_parameters:
+- name: --language-model-only
+  relation: 'Inverse relationship: --language-model-only skips the multimodal encoder and runs only the language model, while
+    --mm-encoder-only skips the language model and runs only the encoder'
+- name: --mm-encoder-tp-mode
+  relation: When --mm-encoder-only is enabled, --mm-encoder-tp-mode controls how tensor parallelism is applied to the encoder
+    (weights vs data parallelism)
+- name: --enable-mm-embeds
+  relation: When --mm-encoder-only is enabled, the encoder output (multimodal embeddings) must be transferred to a decoder
+    process; --enable-mm-embeds may be relevant on the decoder side
+constraints:
+- This flag is only valid in a disaggregated Encoder process; using it in a normal end-to-end inference server will cause
+  the language model to be skipped and no text output will be generated
+- The encoder-only process must be paired with a separate decoder process that receives the encoder outputs
+tuning_advice:
+  summary: Enable only when deploying a disaggregated encoder-decoder architecture on Ascend NPU; otherwise leave disabled
+    (default false)
+  suggested_values:
+  - scenario: Disaggregated serving with separate encoder and decoder processes on Ascend NPU
+    value: true
+    reason: Reduces NPU memory usage by skipping all language model layers and eliminates LM computation, allowing the encoder
+      process to focus solely on multimodal feature extraction
+  - scenario: Normal end-to-end multimodal inference (single process or non-disaggregated deployment)
+    value: false
+    reason: The language model must be present to generate text output; enabling this flag would prevent any text generation
+  caveats:
+  - On Ascend NPU, the encoder-only process still consumes NPU memory for the multimodal encoder weights and activations —
+    ensure sufficient NPU memory for the encoder model
+  - The encoder output must be transferred to the decoder process; this introduces communication overhead that may offset
+    some of the latency benefits if not properly optimized
+  - vllm-ascend does not override or modify this parameter, but the underlying CANN compiler and HCCL communication for encoder-decoder
+    transfer may have Ascend-specific performance characteristics
+  quick_guide: Set --mm-encoder-only only for disaggregated encoder processes on Ascend NPU; for normal inference, leave it
+    at the default false
+analysis_date: '2026-07-06'

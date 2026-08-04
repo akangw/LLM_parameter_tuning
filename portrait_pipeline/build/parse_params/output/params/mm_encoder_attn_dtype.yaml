@@ -1,0 +1,70 @@
+name: --mm-encoder-attn-dtype
+type: cli
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:162
+- vllm/engine/arg_utils.py:1203
+- vllm/config/model.py:334
+value_type: str
+default: 'null'
+valid_choices: '[''fp8'', null]'
+cli_example: --mm-encoder-attn-dtype fp8
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls whether the ViT (Vision Transformer) encoder attention layers use FP8 quantization.
+  When set to "fp8", it enables the FlashInfer cuDNN FP8 prefill attention backend, which quantizes Q/K/V tensors to FP8 before
+  the attention computation. This reduces memory bandwidth pressure and speeds up attention computation on hardware with native
+  FP8 support. On Ascend NPU, the critical constraint is that the FlashInfer cuDNN backend is required — this backend is CUDA-specific
+  and NOT available on Ascend. The code in vllm/model_executor/layers/attention/mm_encoder_attention.py:396 explicitly checks
+  `is_flashinfer_cudnn_fp8_prefill_attn_supported()` and raises a ValueError if the platform does not support it. Since Ascend
+  NPU does not have cuDNN or FlashInfer cuDNN backend, setting this parameter to "fp8" on Ascend will cause a runtime error.
+  When left as null (default), the encoder attention uses the standard dtype (typically bfloat16 or float16), which is the
+  only viable path on Ascend. The parameter has no Ascend-specific override in vllm-ascend, meaning the upstream behavior
+  applies directly — and it is incompatible with Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/attention/mm_encoder_attention.py:392
+  context: Checks if mm_encoder_attn_dtype == 'fp8' to initialize FP8 attention state; raises ValueError if platform lacks
+    FlashInfer cuDNN FP8 support
+- file: vllm/model_executor/models/vision.py:137
+  context: Checks mm_encoder_attn_dtype to determine if FP8 padding is needed for head_dim alignment
+- file: vllm/config/multimodal.py:256
+  context: Validates that mm_encoder_fp8_scale_path and mm_encoder_fp8_scale_save_path are only set when mm_encoder_attn_dtype
+    is 'fp8'
+related_parameters:
+- name: --mm-encoder-fp8-scale-path
+  relation: Only valid when mm_encoder_attn_dtype is 'fp8'; provides static per-layer FP8 scales
+- name: --mm-encoder-fp8-scale-save-path
+  relation: Only valid when mm_encoder_attn_dtype is 'fp8' and no scale path is provided; saves dynamically calibrated scales
+- name: --mm-encoder-fp8-scale-save-margin
+  relation: Safety margin for auto-saved FP8 scales; only used with dynamic FP8 scaling
+- name: --mm-encoder-attn-backend
+  relation: Specifies the attention backend for the ViT encoder; FP8 requires FlashInfer cuDNN backend
+constraints:
+- Setting mm_encoder_attn_dtype to 'fp8' requires the FlashInfer cuDNN backend with cuDNN >= 9.17.1 on a GPU with native FP8
+  support — this is NOT available on Ascend NPU
+- mm_encoder_fp8_scale_path and mm_encoder_fp8_scale_save_path require mm_encoder_attn_dtype to be 'fp8'
+- mm_encoder_fp8_scale_save_path cannot be used together with mm_encoder_fp8_scale_path
+tuning_advice:
+  summary: Do NOT set this parameter on Ascend NPU — the FP8 path requires CUDA-specific FlashInfer cuDNN backend and will
+    raise a runtime error
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: null (do not set)
+    reason: The FP8 ViT encoder attention path depends on FlashInfer cuDNN backend which is CUDA-only and unavailable on Ascend
+      NPU; setting to 'fp8' causes a ValueError at runtime
+  caveats:
+  - 'Setting --mm-encoder-attn-dtype fp8 on Ascend NPU will cause a ValueError: ''mm_encoder_attn_dtype=''fp8'' requires the
+    FlashInfer cuDNN backend with cuDNN >= 9.17.1 on a GPU with native FP8 support'''
+  - There is no vllm-ascend override or Ascend-native FP8 attention path for ViT encoders — the parameter behaves exactly
+    as upstream
+  - For multimodal models on Ascend, the ViT encoder attention will use the default model dtype (typically bfloat16) without
+    any quantization
+  quick_guide: Leave --mm-encoder-attn-dtype unset on Ascend NPU; the FP8 path is CUDA-only and will crash
+analysis_date: '2026-07-06'

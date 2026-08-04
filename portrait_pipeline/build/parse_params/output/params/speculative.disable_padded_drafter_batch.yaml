@@ -1,0 +1,104 @@
+name: speculative.disable_padded_drafter_batch
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/vllm.py:835
+- vllm/config/vllm.py:869
+- vllm/v1/spec_decode/extract_hidden_states.py:31
+- vllm/v1/spec_decode/llm_base_proposer.py:284
+- vllm_ascend/worker/model_runner_v1.py:1557
+- vllm_ascend/worker/model_runner_v1.py:1636
+- vllm_ascend/attention/dsa_v1.py:1343
+- vllm_ascend/attention/mla_v1.py:539
+- vllm_ascend/attention/mla_v1.py:603
+value_type: bool
+default: 'False'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: "This parameter controls whether the speculative decoding drafter batch uses padding to equalize sequence lengths.\
+  \ When False (default), all sequences in the drafter batch are padded to the same length, enabling batched GPU execution\
+  \ with uniform tensor shapes. When True, padding is disabled, allowing sequences of different lengths in the same batch\
+  \ — this avoids wasted computation on padding tokens but requires attention backends that support variable-length sequences.\n\
+  On Ascend NPU, the impact is twofold: 1. Compute efficiency: Padded batches waste NPU cycles on padding tokens.\n   Disabling\
+  \ padding eliminates this waste, potentially improving throughput\n   for workloads with highly variable sequence lengths.\n\
+  2. Memory and graph capture: When disable_padded_drafter_batch=True and\n   graph_pad_size > num_reqs, the attention metadata\
+  \ builders (DSA v1, MLA\n   v1) adjust block_table sizes and pad actual_seq_lengths_q to match\n   graph_pad_size. This\
+  \ affects memory allocation and CUDA graph capture\n   shapes, which can impact both memory usage and launch overhead.\n\
+  \nThe parameter is only effective for EAGLE/MTP speculative decoding methods. It is incompatible with async scheduling (async_scheduling\
+  \ is force-disabled when this is True). It is also incompatible with draft_model/parallel drafting proposers and the extract_hidden_states\
+  \ method, which raise errors if this is enabled.\nIn vllm-ascend v1 worker, the parameter gates two distinct code paths:\
+  \ - When False: \"uses prepare_next_token_ids_padded (GPU tensor path) and\"\n  prepare_inputs_padded for the drafter.\n\
+  - When True: \"uses prepare_next_token_ids_cpu (CPU list path) and\"\n  prepare_inputs for the drafter, with different metadata\
+  \ handling.\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:1557
+  context: Gates between padded (GPU tensor) and unpadded (CPU list) drafter batch paths for EAGLE/draft_model methods
+- file: vllm_ascend/worker/model_runner_v1.py:1636
+  context: Controls whether to use prepare_inputs (unpadded) or prepare_inputs_padded for drafter input preparation
+- file: vllm_ascend/attention/dsa_v1.py:1343
+  context: Affects block_table_size calculation in DSA attention metadata builder when graph_pad_size > num_reqs
+- file: vllm_ascend/attention/mla_v1.py:539
+  context: Affects block_table_size in MLA prefill metadata builder when graph_pad_size > num_reqs
+- file: vllm_ascend/attention/mla_v1.py:603
+  context: Controls padding of block_table and actual_seq_lengths_q in MLA decode metadata builder for graph capture
+- file: vllm/config/vllm.py:835
+  context: Raises ValueError if async_scheduling is enabled with disable_padded_drafter_batch=True
+- file: vllm/config/vllm.py:869
+  context: Force-disables async_scheduling with a warning when disable_padded_drafter_batch=True
+- file: vllm/v1/spec_decode/extract_hidden_states.py:31
+  context: Raises ValueError — extract_hidden_states method does not support unpadded drafter batches
+- file: vllm/v1/spec_decode/llm_base_proposer.py:284
+  context: Raises NotImplementedError — draft_model and parallel drafting proposers require padded batches
+related_parameters:
+- name: speculative_config.method
+  relation: Only effective for EAGLE/MTP methods; incompatible with extract_hidden_states, draft_model, and parallel drafting
+- name: scheduler_config.async_scheduling
+  relation: Mutually exclusive — async_scheduling is force-disabled when disable_padded_drafter_batch=True
+- name: compilation_config.cudagraph_mode
+  relation: Interacts with graph_pad_size in attention metadata builders when unpadded batches are used
+- name: speculative_config.num_speculative_tokens
+  relation: Affects the shape of padded/unpadded drafter batches and the number of tokens processed per step
+constraints:
+- disable_padded_drafter_batch=True is incompatible with async_scheduling — async_scheduling will be automatically disabled
+- disable_padded_drafter_batch=True is not supported with the extract_hidden_states speculative decoding method
+- disable_padded_drafter_batch=True is not supported with draft_model or parallel drafting proposers
+- disable_padded_drafter_batch=True requires attention backends that support variable-length sequences
+tuning_advice:
+  summary: 'Keep disable_padded_drafter_batch=False (default) for most Ascend deployments; only enable it for EAGLE/MTP speculative
+    decoding with highly variable sequence lengths and when async_scheduling is not needed.
+
+    '
+  suggested_values:
+  - scenario: Default / general EAGLE/MTP speculative decoding on Ascend
+    value: false
+    reason: 'Padded batches ensure compatibility with all Ascend attention backends (DSA, MLA) and async scheduling. The overhead
+      of padding is typically small compared to the stability and compatibility benefits.
+
+      '
+  - scenario: EAGLE/MTP speculative decoding with highly variable prompt lengths and no async scheduling
+    value: true
+    reason: 'Eliminates wasted NPU computation on padding tokens, potentially improving throughput when sequence lengths vary
+      significantly across requests. Only use with attention backends that support variable-length sequences and when async_scheduling
+      is not required.
+
+      '
+  caveats:
+  - Enabling this parameter force-disables async_scheduling, which may reduce overall throughput in some workloads
+  - On Ascend NPU with graph capture (cudagraph_mode), unpadded batches interact with graph_pad_size and may require tuning
+    of capture sizes
+  - The unpadded path uses CPU-side token lists (prepare_next_token_ids_cpu), which may introduce additional CPU-GPU synchronization
+    overhead
+  - MTP-fullgraph mode is incompatible with PCP (Prefill Context Parallelism) when using unpadded batches — see code comments
+    in mla_v1.py
+  - Only affects EAGLE and MTP speculative decoding methods; has no effect on other speculation methods
+  quick_guide: Keep default False for stability; only set True for EAGLE/MTP with variable-length prompts when async_scheduling
+    is not needed
+analysis_date: '2026-07-06'

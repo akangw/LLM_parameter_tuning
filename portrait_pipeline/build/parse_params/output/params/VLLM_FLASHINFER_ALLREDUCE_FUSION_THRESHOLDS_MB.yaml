@@ -1,0 +1,49 @@
+name: VLLM_FLASHINFER_ALLREDUCE_FUSION_THRESHOLDS_MB
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1412
+value_type: dict
+default: '{}'
+valid_choices: JSON object mapping world_size (int) to max_size_mb (float)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls the threshold (in MB) below which FlashInfer''s fused allreduce kernel
+  is used instead of a separate allreduce operation during tensor-parallel communication. The fused kernel combines the allreduce
+  with the preceding operation (e.g., a GEMM), reducing kernel launch overhead for small tensors. The default empty dict `{}`
+  triggers built-in fallback thresholds: world size 2 → 64 MB, world size 4 → 1 MB, all other world sizes → 0.5 MB. On Ascend
+  NPU, FlashInfer is a CUDA-centric library and its fused allreduce kernels are NOT available. The vllm-ascend plugin uses
+  HCCL-based communication (via `VLLM_ASCEND_ENABLE_FLASHCOMM1` or native HCCL allreduce) instead. As a result, this parameter
+  has no direct effect on Ascend hardware — the FlashInfer allreduce code path is never entered. However, if a user sets this
+  variable expecting Ascend-specific behavior, it will be silently ignored, which could lead to confusion during cross-platform
+  tuning.
+
+  '
+usage_locations: []
+related_parameters:
+- name: VLLM_FLASHINFER_ALLREDUCE_BACKEND
+  relation: Selects the FlashInfer fused allreduce backend (auto/trtllm/mnnvl); this threshold parameter only takes effect
+    when that backend is active.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Ascend-specific alternative for optimized allreduce communication; replaces FlashInfer-based allreduce on NPU.
+constraints: []
+tuning_advice:
+  summary: 'This parameter is CUDA/FlashInfer-specific and has no effect on Ascend NPU. Leave it unset (default `{}`) on Ascend
+    deployments.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: '{}'
+    reason: FlashInfer fused allreduce is not available on Ascend; setting this variable has no effect and may cause confusion.
+  caveats:
+  - This parameter only affects FlashInfer-based allreduce, which is not used on Ascend NPU. Tuning it will not change Ascend
+    communication performance.
+  - For Ascend communication optimization, use `VLLM_ASCEND_ENABLE_FLASHCOMM1` or HCCL environment variables instead.
+  quick_guide: Leave unset on Ascend; use VLLM_ASCEND_ENABLE_FLASHCOMM1 for NPU communication tuning.
+analysis_date: '2026-07-06'

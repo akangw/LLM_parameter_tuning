@@ -1,0 +1,56 @@
+name: VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:1436
+value_type: int
+default: '300'
+valid_choices: positive integer (seconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable sets the timeout (in seconds) for `execute_model` and `sample_tokens` RPC calls
+  in the v1 multiprocessing executor. It is passed as the `timeout` argument to `collective_rpc` in `vllm/v1/executor/multiproc_executor.py`
+  (lines 314 and 326). The timeout only applies when tensor parallelism (TP) > 1, as stated in the source comment at `vllm/envs.py:1434-1435`.
+  On Ascend NPU, if a model forward pass takes longer than this timeout due to large batch sizes, long sequences, or NPU-specific
+  compilation/execution delays, the RPC call will raise a timeout exception, causing the request to fail. This does not directly
+  affect throughput or memory usage under normal operation, but an inappropriately low value can cause spurious failures under
+  load, indirectly reducing effective throughput. No vllm-ascend override or Ascend-specific behavior was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/v1/executor/multiproc_executor.py:314
+  context: Passed as timeout to collective_rpc for execute_model calls
+- file: vllm/v1/executor/multiproc_executor.py:326
+  context: Passed as timeout to collective_rpc for sample_tokens calls
+related_parameters:
+- name: VLLM_ENGINE_ITERATION_TIMEOUT_S
+  relation: Another timeout parameter for engine iteration; both guard against hangs but at different levels
+constraints:
+- Only applies when tensor parallelism (TP) > 1; has no effect for single-GPU deployments
+- Must be a positive integer representing seconds
+tuning_advice:
+  summary: 'Increase this timeout if you experience `TimeoutError` during model execution on Ascend NPU with TP > 1, especially
+    with large models or long sequences.
+
+    '
+  suggested_values:
+  - scenario: Default usage with moderate model sizes and sequence lengths
+    value: '300'
+    reason: The default 300 seconds is sufficient for most inference workloads
+  - scenario: Large models (70B+) or very long sequences on Ascend NPU with TP > 1
+    value: '600'
+    reason: Ascend NPU graph compilation or large batch execution may occasionally exceed 300 seconds; doubling the timeout
+      prevents spurious failures
+  - scenario: Debugging or profiling sessions where execution may be intentionally slow
+    value: '3600'
+    reason: Prevents timeout during long-running debug or profile runs
+  caveats:
+  - This timeout only guards RPC calls in the v1 multiprocessing executor; it does not apply to v2 or single-process executors
+  - Setting the timeout too high may mask genuine hangs, delaying error detection
+  - No Ascend-specific override exists; the same timeout applies to both GPU and NPU backends
+  quick_guide: Keep the default 300s unless you see TimeoutError on Ascend NPU with TP > 1, then increase to 600s
+analysis_date: '2026-07-06'

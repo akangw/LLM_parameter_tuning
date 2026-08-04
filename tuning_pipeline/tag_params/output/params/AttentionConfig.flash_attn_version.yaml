@@ -1,0 +1,109 @@
+name: AttentionConfig.flash_attn_version
+type: nested
+category: other
+scope: both
+source_file:
+- vllm/config/attention.py:23
+- vllm/v1/attention/backends/fa_utils.py:56
+- vllm/v1/attention/backends/flash_attn.py:637
+- vllm/engine/arg_utils.py:2041
+- docs/design/attention_backends.md:188
+- vllm_ascend/platform.py:1046
+value_type: int
+default: null
+valid_choices:
+- 2
+- 3
+- 4
+cli_example: --attention-config.flash_attn_version=3
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: For the upstream FLASH_ATTN backend, this parameter overrides the hardware-aware FlashAttention kernel generation
+  selected by get_flash_attn_version. The default path prefers FA3 on supported SM90 GPUs, FA4 on supported SM100 GPUs, and
+  FA2 otherwise. The resolved version is passed into the main attention and cascade attention calls, and version checks also
+  change CUDA-graph support, FA3 ahead-of-time decode scheduling, FP8 KV-cache support, sink support, and per-head quantization
+  support. Forcing a different supported generation can therefore materially change prefill/decode latency and throughput,
+  but the best result depends on GPU architecture, model features, and batch shape. On Ascend, the platform resets every explicit
+  value to null because its plugin manages its own attention backend, so this setting has no direct performance effect there.
+usage_locations:
+- file: vllm/v1/attention/backends/fa_utils.py:77
+  context: Selects FA3 on supported SM90, FA4 on supported SM100, or FA2 otherwise, applies the configured override, then
+    enforces architecture and feature compatibility fallbacks.
+- file: vllm/v1/attention/backends/flash_attn.py:637
+  context: Resolves and stores the version for a FlashAttention implementation using the layer's ALiBi and head-size requirements.
+- file: vllm/v1/attention/backends/flash_attn.py:810
+  context: Passes the resolved version into the core attention kernel; the same version is also supplied to the cascade-attention
+    path.
+- file: vllm/engine/arg_utils.py:2041
+  context: Forces FA2 for TurboQuant cache dtypes when the value is unset or requests FA3/FA4 because TurboQuant is not yet
+    compatible with those versions.
+- file: vllm_ascend/platform.py:1046
+  context: Ignores any explicit version and resets it to null because Ascend uses its own attention-backend logic.
+related_parameters:
+- name: AttentionConfig.backend
+  relation: flash_attn_version is valid only when the FLASH_ATTN backend is selected.
+- name: AttentionConfig.flash_attn_max_num_splits_for_cuda_graph
+  relation: Its split cap is consumed by the FA3 ahead-of-time decode scheduler under eligible full CUDA graphs.
+- name: VLLM_BATCH_INVARIANT
+  relation: Batch invariance rejects FA4's batch-shape-dependent scheduling and falls back to FA2.
+- name: CacheConfig.cache_dtype
+  relation: TurboQuant cache dtypes force this setting to FA2, while FP8 KV-cache support is version- and architecture-dependent.
+constraints:
+- This parameter is effective only with the upstream FLASH_ATTN backend; leave it unset for other attention backends.
+- Ascend ignores explicit values and resets the field to null, so use the Ascend plugin's supported attention configuration
+  instead.
+- XPU always resolves FA2 and ROCm bypasses the vllm_flash_attn version argument, before this configuration override is consulted.
+- The requested version must be supported by the installed vllm_flash_attn package and device; unsupported final selections
+  fail validation in get_flash_attn_version.
+- FA3 is rejected on Blackwell and FA3/FA4 are rejected with ALiBi; these combinations fall back to FA4 or FA2 as implemented.
+- FA4 falls back to FA2 when batch invariance is enabled and on Blackwell for head sizes above 128 except the supported 192-dimensional
+  MLA case.
+- TurboQuant cache dtypes override null, 3, or 4 to FA2.
+tuning_advice:
+  summary: Keep automatic selection as the baseline. Force a version only on upstream CUDA after confirming compatibility
+    and benchmarking the exact model, sequence lengths, and concurrency; do not tune this parameter on Ascend.
+  suggested_values:
+  - scenario: General upstream CUDA deployment
+    value: <unset>
+    reason: 'Automatic selection follows current architecture support: FA3 on supported Hopper, FA4 on supported Blackwell,
+      and FA2 otherwise, while retaining the source''s compatibility fallbacks.'
+  - scenario: TurboQuant KV-cache deployment
+    value: 2
+    reason: Current argument processing requires FA2 because TurboQuant is not yet compatible with FA3 or FA4.
+  - scenario: Controlled upstream CUDA comparison
+    value: 2, 3, or 4 as supported
+    reason: An explicit version is useful for an architecture-compatible benchmark or regression isolation, but should be
+      retained only when end-to-end latency or throughput improves.
+  - scenario: Ascend NPU deployment
+    value: <unset>
+    reason: The Ascend platform discards explicit version values and manages its own attention backend.
+  caveats:
+  - A forced version can be silently replaced by a compatibility fallback, so confirm the runtime log reporting the version
+    actually used.
+  - Version support differs across GPU architectures, ALiBi and sink usage, head dimensions, KV-cache dtypes, and batch-invariant
+    mode.
+  - FA2, FA3, and FA4 differ in graph and scheduling paths; benchmark both prefill and decode at representative batch shapes
+    rather than extrapolating from a single microbenchmark.
+  quick_guide: Start unset. Verify the logged automatically selected version, then compare only compatible alternatives on
+    upstream CUDA and keep a forced value only for a repeatable end-to-end gain. Leave it unset on Ascend.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - high_concurrency

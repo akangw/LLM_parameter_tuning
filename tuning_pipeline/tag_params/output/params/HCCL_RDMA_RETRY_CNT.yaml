@@ -1,0 +1,121 @@
+name: HCCL_RDMA_RETRY_CNT
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/utils/utils.py:56
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1568
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1376
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1059
+- docs/source/user_guide/feature_guide/kv_pool.md:245
+value_type: int
+default: 7
+valid_choices: A string accepted by Python int(); use a positive integer retry count.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'In the Ascend Mooncake KV-transfer path, get_transfer_timeout_value() parses HCCL_RDMA_RETRY_CNT as an integer
+  only when ASCEND_TRANSFER_TIMEOUT is empty or unset. It computes the timeout installed as ASCEND_TRANSFER_TIMEOUT as int((4.096
+  * (2 ** HCCL_RDMA_TIMEOUT)) * HCCL_RDMA_RETRY_CNT // 1000 + 3000). With the pinned defaults HCCL_RDMA_TIMEOUT=20 and HCCL_RDMA_RETRY_CNT=7,
+  the exact result is 33064 ms. Standard, hybrid, and layerwise Ascend Mooncake connector workers perform this calculation
+  during initialization. Raising the retry count linearly lengthens the time allowed for RDMA retries, which can avoid timeout
+  failures and lost throughput during impaired transfers, but it also delays failure detection and increases tail latency
+  when a transfer cannot complete. Upstream vLLM has no reference to this Ascend-specific environment variable.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/utils/utils.py:56
+  context: 'Parses the environment value and multiplies it into the fallback Mooncake KV-transfer timeout.
+
+    '
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1568
+  context: 'A standard Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+
+    '
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1376
+  context: 'A hybrid Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+
+    '
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1059
+  context: 'A layerwise Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+
+    '
+- file: docs/source/user_guide/feature_guide/kv_pool.md:245
+  context: 'Documents the RDMA timeout basis, the default retry count of seven, and the transfer-timeout lower-bound relationship.
+
+    '
+related_parameters:
+- name: HCCL_RDMA_TIMEOUT
+  relation: 'Supplies the exponential RDMA timeout term multiplied by HCCL_RDMA_RETRY_CNT; it also affects HCCL collective
+    communication.
+
+    '
+- name: ASCEND_TRANSFER_TIMEOUT
+  relation: 'Any non-empty explicit value bypasses HCCL_RDMA_RETRY_CNT and the entire fallback calculation.
+
+    '
+- name: default_kv_lease_ttl
+  relation: 'The KV Pool guide requires this Mooncake lease TTL to exceed ASCEND_TRANSFER_TIMEOUT.
+
+    '
+constraints:
+- 'The value must be parseable by Python int() or Mooncake connector-worker initialization raises ValueError.
+
+  '
+- 'HCCL_RDMA_RETRY_CNT has no effect when ASCEND_TRANSFER_TIMEOUT is set to a non-empty value.
+
+  '
+- 'The parameter is consumed only while initializing the Ascend standard, hybrid, or layerwise Mooncake KV-transfer connector
+  workers.
+
+  '
+tuning_advice:
+  summary: 'Keep the default retry count of 7 unless observed KV-transfer failures justify changing the derived timeout, and
+    coordinate any change with HCCL_RDMA_TIMEOUT and the Mooncake KV lease TTL.
+
+    '
+  suggested_values:
+  - scenario: Default Mooncake KV transfer with no explicit ASCEND_TRANSFER_TIMEOUT
+    value: 7
+    reason: 'This is the pinned source default and the retry count used by the KV Pool guide''s documented RDMA timeout relationship.
+
+      '
+  caveats:
+  - 'Source code does not enforce positivity; zero or negative integers are accepted but produce a fallback that does not
+    represent a useful positive retry budget.
+
+    '
+  - 'At the default HCCL_RDMA_TIMEOUT=20, each additional retry adds roughly 4295 ms to the computed transfer timeout, so
+    large counts can sharply increase failed-request tail latency.
+
+    '
+  - 'An explicit ASCEND_TRANSFER_TIMEOUT completely masks this setting.
+
+    '
+  - 'Keep default_kv_lease_ttl above the resulting ASCEND_TRANSFER_TIMEOUT so the KV lease cannot expire before the transfer
+    timeout.
+
+    '
+  quick_guide: 'Use 7 by default; before changing it, verify ASCEND_TRANSFER_TIMEOUT is unset, calculate the resulting timeout,
+    and keep default_kv_lease_ttl above that value.
+
+    '
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

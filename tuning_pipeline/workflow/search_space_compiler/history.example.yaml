@@ -1,0 +1,35 @@
+schema_version: 1
+session_id: completed_session_example
+trials:
+  - trial_id: baseline
+    params:
+      max_num_batched_tokens: 4096
+      gpu_memory_utilization: 0.93
+    status: success
+    metrics:
+      total_token_throughput: 1800
+      median_ttft: 20000
+      median_tpot: 70
+      failed_requests: 0
+
+  - trial_id: candidate_1
+    params:
+      max_num_batched_tokens: 8192
+      gpu_memory_utilization: 0.93
+    status: success
+    metrics:
+      total_token_throughput: 1900
+      median_ttft: 21000
+      median_tpot: 68
+      failed_requests: 0
+
+  - trial_id: candidate_2
+    params:
+      max_num_batched_tokens: 16384
+      gpu_memory_utilization: 0.93
+    status: failure
+    failure_classification: parameter_oom
+    # Existing history_input.json should instead retain its native
+    # failure_decision.classification and failure_decision.changes fields.
+    attributed_parameters: [max_num_batched_tokens]
+    metrics: {}

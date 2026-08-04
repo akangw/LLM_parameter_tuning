@@ -1,0 +1,89 @@
+name: VLLM_MM_HASHER_ALGORITHM
+type: env
+category: other
+scope: both
+source_file:
+- vllm/envs.py:879
+- vllm/model_executor/models/transformers/multimodal.py:254
+- vllm_ascend/worker/pcp_utils.py:276
+value_type: str
+default: blake3
+valid_choices:
+- blake3
+- sha256
+- sha512
+cli_example: VLLM_MM_HASHER_ALGORITHM=sha256 vllm serve <model>
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: Selects the CPU-side digest implementation used by MultiModalHasher.hash_kwargs. The pinned upstream hasher
+  reads this environment variable, constructs BLAKE3, SHA-256, or SHA-512, serializes each multimodal item and its processor
+  arguments, and streams those bytes into the selected digest. These hashes are generated while preparing multimodal model
+  inputs and serve as identifiers for processor and encoder cache paths, including encoder-cache bookkeeping used by vllm-ascend.
+  Algorithm cost can therefore affect multimodal request preprocessing latency and, when hashing is a bottleneck, request
+  throughput; the effect grows with the amount of image, audio, video, tensor, or prompt-embedding data hashed. It does not
+  change NPU kernels, model execution, KV-cache capacity, or device-memory allocation. The source labels BLAKE3 as the fast
+  default, while SHA-256 and SHA-512 are offered for FIPS-compliant deployments, so this is principally a compliance-versus-CPU-preprocessing
+  tradeoff.
+usage_locations:
+- file: vllm/envs.py:879
+  context: Defines the case-insensitive environment choice, defaults it to blake3, and restricts values to blake3, sha256,
+    or sha512.
+- file: vllm/model_executor/models/transformers/multimodal.py:254
+  context: Generates multimodal hashes from processor inputs before returning the model's multimodal input object, making
+    hashing part of request preprocessing.
+- file: vllm_ascend/worker/pcp_utils.py:276
+  context: Uses multimodal feature identifiers to decide which encoder inputs are absent from the local Ascend encoder cache
+    and must be scheduled.
+related_parameters:
+- name: mm_processor_cache_gb
+  relation: Sizes the multimodal processor cache whose entries are identified from multimodal input hashes; hash generation
+    still participates in identifying data.
+- name: mm_processor_cache_type
+  relation: Selects the LRU or shared-memory processor cache implementation that consumes multimodal cache identifiers.
+constraints:
+- Values are matched case-insensitively and must be blake3, sha256, or sha512.
+- Changing the algorithm changes digest values and lengths, so hashes produced with different settings are not interchangeable
+  cache identifiers.
+- BLAKE3 is not FIPS 140-3 compliant according to the pinned source comments; use SHA-256 or SHA-512 where FIPS compliance
+  is required.
+- The setting affects only multimodal hashing and has no direct effect on NPU computation or device-memory use.
+tuning_advice:
+  summary: Keep BLAKE3 for normal deployments and choose SHA-256 or SHA-512 only when the deployment's cryptographic-compliance
+    policy requires a FIPS-approved algorithm.
+  suggested_values:
+  - scenario: Performance-oriented multimodal serving without a FIPS requirement
+    value: blake3
+    reason: It is the pinned source's fast default and minimizes avoidable CPU hashing work during multimodal preprocessing.
+  - scenario: FIPS-governed deployment using the widely supported option
+    value: sha256
+    reason: The pinned source identifies SHA-256 as FIPS 140-3 compliant and widely supported; benchmark preprocessing overhead
+      on representative media sizes.
+  - scenario: FIPS-governed 64-bit deployment after workload validation
+    value: sha512
+    reason: The pinned source identifies SHA-512 as FIPS 140-3 compliant and notes that it can be faster on 64-bit systems,
+      but the actual result is platform-dependent.
+  caveats:
+  - The pinned sources provide no quantitative benchmark; compare end-to-end and preprocessing latency with representative
+    multimodal payloads before changing the default for performance reasons.
+  - Hashing overhead is CPU-side and workload-dependent, and may be negligible when tokenization, media decoding, network
+    I/O, or NPU inference dominates.
+  - Restart all cooperating processes with the same value so that they generate consistent multimodal identifiers.
+  quick_guide: Use blake3 by default; use sha256 for a conservative FIPS choice, or test sha512 on the target 64-bit host
+    when FIPS compliance and hashing speed both matter.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

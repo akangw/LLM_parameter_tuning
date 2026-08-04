@@ -1,0 +1,462 @@
+我需要构建一个 vllm-ascend 的参数解析模块（parse_params）。该模块是性能调优知识库的第二阶段：对 extract_params 输出的参数列表逐条做性能影响分析，并为性能相关参数生成结构化的 YAML 知识文件。
+
+---
+
+## 整体定位
+
+```
+extract_params (第一阶段)          parse_params (本阶段，第二阶段)
+─────────────────────────        ────────────────────────────────────
+vllm/vllm-ascend 源码              parameters.json (670 个参数)
+        │                                          │
+        ▼                                          ▼
+   parameters.json           ──►   参数 YAML 知识库目录（仅性能相关参数）
+  (结构化参数列表)                  每个参数一个 .yaml 文件，符合统一 schema
+```
+
+第一阶段（extract_params）已经完成，输出在 `parameters.json`。本阶段需要：
+1. 从提取出来的参数中**筛选出会影响性能的参数**
+2. 对性能相关参数**深入源码分析**，生成结构化的 YAML 知识文件
+
+---
+
+## 输入
+
+### 1. `parameters.json` — 参数列表
+
+JSON 数组，每个元素为一个参数。字段如下：
+
+| 字段 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `name` | str | CLI 参数 `--xxx`，环境变量原始名，嵌套参数 `.` 分隔 | `"--tensor-parallel-size"`, `"HCCL_BUFFSIZE"`, `"compilation_config.cudagraph_mode"` |
+| `type` | str | `"cli"` / `"env"` / `"nested"` | |
+| `category` | str | 功能分类 | `"scheduling"`, `"memory"`, `"parallelism"`, `"communication"`, `"quantization"`, `"compilation"`, `"speculation"`, `"kv_cache"`, `"model"`, `"observability"`, `"hardware"`, `"other"` |
+| `default` | any | 默认值，`null` 表示无默认，`"<computed>"` 表示运行时计算 | |
+| `description` | str\|null | 从 argparse help / 注释中提取的描述 | |
+| `source_file` | str | 定义该参数的源文件路径（相对 vllm 或 vllm-ascend 根目录） | `"vllm/engine/arg_utils.py"` |
+| `scope` | str | `"vllm"`（上游）或 `"vllm-ascend"`（插件） | |
+
+
+### 2. 参数 YAML Schema（输出格式定义）
+
+每个性能相关参数输出一个 YAML 文件，必须包含以下字段。Schema 本身也需要在代码中定义（建议用 Pydantic 或 dataclass 做校验），对外作为第二个输入。
+
+```yaml
+# ========== 基础信息（直接从 parameters.json 继承） ==========
+name: "--tensor-parallel-size"        # 参数名（原样保留）
+type: "cli"                           # cli | env | nested
+category: "parallelism"               # 功能分类
+scope: "vllm"                         # vllm | vllm-ascend
+source_file: "vllm/engine/arg_utils.py"  # 源文件路径
+source_line: 537                      # 源文件行号（新增，需从源码定位）
+
+# ========== 参数元信息 ==========
+value_type: "int"                     # Python 类型：int | float | bool | str | list[int] | dict 等
+default: 1                            # 默认值（比 parameters.json 更精确）
+valid_choices: null                   # 可选值列表（离散参数）或范围描述，null 表示无限制
+cli_example: "--tensor-parallel-size -tp"  # CLI 命令示例
+deprecated: false                     # 是否已弃用
+deprecated_since: null                # 弃用版本号
+
+# ========== 性能影响分析（核心） ==========
+performance_impact: "high"            # high | medium | low（两阶段筛选后只有 high/medium/low，none 已被跳过）
+performance_scope:                    # 影响范围（多选）
+  - "latency"                         # 延迟
+  - "throughput"                      # 吞吐
+  - "memory"                          # 显存/内存占用
+impact_detail: >
+  控制张量并行度，直接影响每张卡上的模型分片大小、
+  通信量和 KV cache 分布。增大 TP 可降低单卡显存压力但增加通信开销。
+
+
+
+# ========== 使用点分析 ==========
+usage_locations:                      # 主要使用/读取该参数的位置
+  - file: "vllm/engine/arg_utils.py"
+    line: 1233
+    context: "在 EngineArgs.__post_init__ 中读取并写入 VllmConfig"
+  - file: "vllm/config/parallel.py"
+    line: 89
+    context: "ParallelConfig 消费该值设置分布式拓扑"
+
+# ========== 参数间关系 ==========
+related_parameters:                   # 存在语义关联/互斥/依赖的其他参数
+  - name: "--pipeline-parallel-size"
+    relation: "与 TP 共同决定总并行度，乘积 ≤ GPU 数量"
+  - name: "--data-parallel-size"
+    relation: "可与 TP 叠加使用，DP×TP×PP = world_size"
+
+conflicts_with: []                    # 互斥参数
+requires: []                          # 前置依赖参数
+
+# ========== 调优指导 ==========
+tuning_advice:                        # 调优建议
+  summary: "根据模型大小和 GPU 显存选择最小的可行 TP 值以减少通信"
+  suggested_values:                   # 不同场景下的推荐值
+    - scenario: "7B 模型，8× 64GB NPU"
+      value: 1
+      reason: "单卡可容纳完整模型"
+    - scenario: "70B 模型，8× 64GB NPU"
+      value: 4
+      reason: "需要 4 卡才能装下模型权重 + KV cache"
+  caveats:                            # 注意事项
+    - "TP 必须是 GPU/NPU 数量的因子"
+    - "增大 TP 会增加 all-reduce 通信量"
+    - "Ascend 上 TP≥8 时需启用 HCCL 优化选项"
+  quick_guide: "TP=1 性能最优（无通信开销）；显存不足时优先增大 TP 而非 PP"
+
+# ========== 元数据 ==========
+analysis_version: "1.0"
+analysis_date: "2026-04-29"
+source_commit_vllm: "bcf2be96"
+source_commit_vllm_ascend: "99e1ea0f"
+```
+
+### 分类特殊规则
+
+不同 category 的参数默认对性能的影响不同（作为粗筛依据，最终以 LLM 代码分析为准）：
+
+| Category | 默认性能相关性 | 说明 |
+|----------|--------------|------|
+| `parallelism` | **高** | DP/TP/PP/EP 直接决定计算和通信模式 |
+| `memory` | **高** | 显存/内存管理直接影响吞吐和稳定性 |
+| `kv_cache` | **高** | KV cache 是显存占用的核心 |
+| `communication` | **高** | HCCL/RDMA/网络参数直接影响分布式性能 |
+| `compilation` | **高** | AOT/JIT/graph capture/融合等编译优化直接决定计算效率 |
+| `scheduling` | **高** | 调度策略影响 batch 效率和延迟 |
+| `speculation` | **中** | 推测解码影响 decode 阶段吞吐 |
+| `model` | **中** | 模型加载/结构配置部分影响性能（如 attention backend、dtype） |
+| `quantization` | **高** | 量化直接影响显存和计算速度 |
+| `hardware` | **中** | 硬件相关部分影响性能（如 SOC_VERSION 影响指令集选择） |
+| `observability` | **低** | 日志/监控类参数通常不影响性能 |
+| `other` | **低** | 杂项参数，需逐个判断 |
+
+该表用于第一阶段粗筛：`high` 类别 100% 送入 LLM 分析，`medium` 类别全部送入 LLM 分析，`low` 类别基于关键词做预过滤再入 LLM。
+
+---
+
+## 输出
+
+### 目录结构
+
+```
+parse_params/
+├── output/                          # 输出根目录（所有 YAML 平铺）
+│   ├── schema.yaml                  # 复制一份使用的 schema（便于追溯）
+│   ├── manifest.yaml                # 构建清单
+│   ├── tensor_parallel_size.yaml
+│   ├── HCCL_BUFFSIZE.yaml
+│   └── ...
+├── logs/                            # 运行日志
+│   ├── skipped_params.json
+│   └── analysis_errors.json
+└── progress.json
+```
+
+### manifest.yaml 格式
+
+```yaml
+build_timestamp: "2026-04-29T12:00:00Z"
+builder_version: "1.0.0"
+input_parameters_file: "parameters.json"
+input_total_params: 670
+stage1_coarse_filter:
+  passed: 450         # 进入 Stage 2 的参数数
+  skipped: 220        # 直接跳过的参数数
+stage2_deep_analysis:
+  analyzed: 450
+  performance_high: 85
+  performance_medium: 120
+  performance_low: 95
+  confirmed_perf_related: 300
+  confirmed_not_perf: 150
+output_yaml_count: 300
+output_skipped_count: 370
+source_commits:
+  vllm: "bcf2be96"
+  vllm-ascend: "99e1ea0f"
+```
+
+---
+
+## 详细流程
+
+### 整体流水线
+
+```
+parameters.json (670 条)
+        │
+        ▼
+┌─────────────────────────────────┐
+│ Stage 1: 粗筛（本地规则）         │
+│ - category 白名单/黑名单          │
+│ - 名称关键词匹配                  │
+│ - 描述文本正则                    │
+│ → 快速跳过确定无关的参数           │
+└──────────────┬──────────────────┘
+               │ ~450 条进入 Stage 2
+               ▼
+┌─────────────────────────────────┐
+│ Stage 2: 精筛 + 深度分析（LLM）   │
+│ 对每个候选参数:                    │
+│   2a. 读取源码上下文               │
+│   2b. 让 LLM 判断性能影响 + 生成   │
+│       YAML（一次 API 调用完成两件事）│
+│   2c. 校验 YAML 符合 schema       │
+│   2d. 写入输出目录                 │
+│ 对跳过的参数记录原因               │
+└──────────────┬──────────────────┘
+               │
+               ▼
+┌─────────────────────────────────┐
+│ Post: 后处理 + 统计               │
+│ - 生成 manifest.yaml             │
+│ - 生成 skipped_params.json       │
+│ - 验证所有 YAML 合法性            │
+│ - 检查覆盖率（对照原始参数列表）    │
+└─────────────────────────────────┘
+```
+
+### Stage 1 详细规则（粗筛，纯本地逻辑，不调 LLM）
+
+目的：快速跳过确定无关性能的参数，节省 LLM 调用成本。
+
+**跳过规则（满足任一则跳过）：**
+
+1. **category 为 `observability`**：日志/监控参数，除非名称中包含 `profiler`、`tracer`、`collect` 等关键词（profiling 类参数可能影响性能）
+2. **category 为 `other`** 且名称匹配以下模式：`--version`、`--help`、`--quiet`、`--no-color`、`S3_*`、`*_TOKEN`、`*_KEY`、`*_PASSWORD`、`*_PATH`（非性能路径类）
+3. **描述中包含明确说明**：如 "this does not affect performance"、"for debugging only"、"only used in testing"
+4. **弃用参数**：描述中包含 "deprecated"、"removed"、"no longer used"
+
+**强制保留规则（即使命中上述跳过规则也保留）：**
+
+1. category 为 `parallelism`、`memory`、`kv_cache`、`communication`、`compilation`、`quantization` → 全部保留
+
+**Stage 1 输出**：一个过滤后的参数子集（预计 ~400-450 个），写入 `progress.json` 中的 `stage1_passed` 列表。
+
+### Stage 2 详细流程（LLM 分析，每个参数一次 API 调用）
+
+对 Stage 1 输出的每个参数，执行以下步骤：
+
+#### Step 2a：读取源码上下文
+
+根据参数 `source_file` 和行号信息（需先用 grep 定位行号），从对应 repo 中读取源码片段（定义处 ±20 行 + 主要使用点 ±15 行），作为 LLM 分析的上下文。对于环境变量，额外搜索 `os.environ.get("VAR_NAME")` / `os.getenv("VAR_NAME")` 的使用位置。
+
+源码路径映射：
+- `scope == "vllm"` → `/vllm-workspace/vllm/` + `source_file`
+- `scope == "vllm-ascend"` → `/vllm-workspace/vllm-ascend/` + `source_file`（注意 `source_file` 前缀为 `vllm_ascend/`）
+
+上下文截断策略：每个参数最多读取 200 行源码上下文，超出则按优先级截断（定义处 > 最近使用点 > 其他使用点）。
+
+#### Step 2b：LLM 分析并生成 YAML（单次 API 调用）
+
+**System Prompt：**
+
+```
+You are an expert in vLLM performance tuning on Ascend NPU. Your task is to analyze a single configuration parameter from vLLM/vllm-ascend source code and produce a structured YAML analysis.
+
+Rules:
+1. Carefully read the provided source code context to understand what the parameter does.
+2. Determine if this parameter affects runtime performance (latency, throughput, memory usage). Consider Ascend NPU specifics: HCCL communication, CANN compilation, Da Vinci architecture.
+3. If performance_impact is "none", output a minimal YAML with just the skip reason.
+4. If performance-related, output a complete YAML following the schema.
+5. Be specific about HOW the parameter affects performance — cite code evidence.
+6. Keep tuning advice concrete and Ascend-specific where possible.
+```
+
+**User Prompt 模板（每个参数渲染一次）：**
+
+```
+## Parameter to analyze
+
+Name: {name}
+Type: {type}
+Category: {category}
+Default: {default}
+Scope: {scope}
+Source file: {source_file}
+Description from code: {description}
+
+## Source code context
+
+{source_code_context}
+
+## Task
+
+1. Determine the performance impact level (high/medium/low/none) of this parameter on Ascend NPU.
+2. If performance_impact is NOT "none", produce a complete YAML per the schema below.
+3. If performance_impact IS "none", output a minimal YAML with just name, type, performance_impact: "none", and a one-line skip_reason.
+
+## Output schema (for performance-related params)
+
+Generate the following YAML structure, filling in all fields based on the source code:
+
+[schema YAML 内容嵌入此处]
+
+Output ONLY the YAML, no markdown fences.
+```
+
+**关键设计要求**：
+- 一次 API 调用同时完成「是否影响性能判断」和「YAML 生成」两个任务，避免每个参数调两次 API
+- 对 performance_impact == "none" 的参数只输出最小 YAML（3-4 行），节省 token 消耗
+- System prompt 中强调 Ascend NPU 视角（HCCL、CANN、Da Vinci），因为最终用户是 Ascend 芯片用户
+
+#### Step 2c：校验 YAML
+
+用 Pydantic 模型验证 LLM 输出的 YAML：
+- 必填字段完整性
+- 枚举值合法性
+- 类型正确性
+- 验证失败则记录错误、跳过该参数（写入 `analysis_errors.json`），不重试（重试成本高且成功率低）
+
+#### Step 2d：写入输出目录
+
+校验通过的 YAML 写入 `output/{impact_level}/{safe_filename}.yaml`。文件名规则：参数名中的 `/`、`*` 等特殊字符替换为 `_`。
+
+### 并发策略
+
+670 个参数，Stage 2 预计处理 ~400-450 个。每个参数一次 LLM API 调用，需要并发控制：
+
+- **并发数**：建议 10-20（取决于 API rate limit）
+- **重试**：失败时最多重试 2 次，指数退避（1s, 4s）
+- **超时**：单次调用超时 120s
+- **断点续跑**：每完成 10 个参数更新一次 `progress.json`，记录已处理的参数列表
+
+### 两阶段筛选的关系
+
+| 阶段 | 方式 | 输入数量 | 输出数量 | 成本 |
+|------|------|---------|---------|------|
+| Stage 1 | 本地规则（category + 关键词） | 670 | ~400-450 | 零 |
+| Stage 2 | LLM 分析 | ~400-450 | ~250-350 个 YAML | API 调用费用 |
+
+Stage 2 中被 LLM 判定为 performance_impact == "none" 的参数也要输出（输出最小 YAML + 跳过原因），以保证可追溯性——这些参数的跳过记录写入 `logs/skipped_params.json`。
+
+### 辅助 Judge 预筛选（可选优化）
+
+如果 Stage 2 的 LLM 调用成本仍然太高，可以在 Stage 2 之前加一个「快速 Judge」步骤：用一个更便宜/更快的模型（如 Haiku）先快速判断参数是否与性能相关，仅将 Judge 认为「相关」的参数送入完整的深度分析流程。Judge 的 prompt 只需参数名 + 描述 + 分类，不需要源码上下文。
+
+---
+
+## 实现要求
+
+### 技术栈
+
+- **语言**：Python 3.10+
+- **外部依赖**：`anthropic`（Claude API SDK）、`pyyaml`、`pydantic`（schema 校验）
+- **标准库**：`json`, `pathlib`, `asyncio`, `argparse`, `logging`, `re`, `subprocess`（用于 grep 定位行号）
+
+### 核心模块设计
+
+```
+parse_params/
+├── __init__.py
+├── __main__.py              # 入口，编排整体流程
+├── config.py                # 常量：路径、源码仓库映射、Stage 1 规则、并发参数
+├── schema.py                # Pydantic 模型定义（输出 YAML 的 schema）
+├── stage1_filter.py         # Stage 1：本地规则粗筛
+├── stage2_analyzer.py       # Stage 2：LLM 深度分析 + YAML 生成
+│   ├── llm_client.py        #   Claude API 封装（含重试、超时、并发）
+│   ├── context_reader.py    #   源码上下文读取
+│   └── prompt_builder.py    #   Prompt 模板渲染
+├── yaml_validator.py        # YAML 校验（基于 schema.py）
+├── progress.py              # 进度管理（断点续跑）
+├── manifest.py              # manifest.yaml 生成
+└── utils.py                 # 通用工具（文件名安全化、日志配置等）
+```
+
+### 运行方式
+
+```bash
+# 完整运行（从 Stage 1 开始）
+python -m parse_params --input parameters.json --output output/
+
+# 断点续跑（从上次中断处继续）
+python -m parse_params --input parameters.json --output output/ --resume
+
+# 仅运行 Stage 1（预览粗筛结果）
+python -m parse_params --input parameters.json --output output/ --dry-run-stage1
+
+# 限制数量（测试用）
+python -m parse_params --input parameters.json --output output/ --max-params 20
+
+# 指定并发数
+python -m parse_params --input parameters.json --output output/ --concurrency 15
+```
+
+### 关键参数（config.py 中可配置）
+
+```python
+# LLM 调用
+LLM_MODEL = "claude-sonnet-4-6"         # 分析用模型（性价比之选）
+LLM_JUDGE_MODEL = "claude-haiku-4-5"    # 可选：快速 Judge 用模型
+LLM_MAX_TOKENS = 4096                    # 单参数最大输出 token
+LLM_TIMEOUT = 120                        # 秒
+LLM_MAX_RETRIES = 2
+LLM_CONCURRENCY = 15                     # 并发数
+
+# 上下文读取
+MAX_CONTEXT_LINES = 200                  # 单参数最大源码行数
+DEFINITION_CONTEXT_LINES = 20            # 定义处上下文行数
+USAGE_CONTEXT_LINES = 15                 # 使用点上下文行数
+MAX_USAGE_LOCATIONS = 3                  # 最多展示的使用点数量
+
+# 进度
+SAVE_PROGRESS_EVERY = 10                 # 每 N 个参数更新进度文件
+```
+
+### 错误处理
+
+| 场景 | 处理方式 |
+|------|---------|
+| 源码文件找不到 | 记录 warning，用空的源码上下文继续（LLM 仍可根据参数名+描述判断） |
+| LLM API 调用超时 | 重试 2 次，仍失败则记录 `analysis_errors.json`，继续下一个参数 |
+| LLM 返回非法 YAML | 尝试从响应中提取 YAML 块（` ```yaml ... ``` `），失败则记录错误 |
+| YAML schema 校验失败 | 记录校验失败的字段，该参数写入 `analysis_errors.json` |
+| LLM API rate limit | 自动限速（令牌桶），超限时指数退避 |
+| 用户中断 (Ctrl+C) | 捕获 SIGINT，保存 progress.json 后退出 |
+
+### 成本估算
+
+- Stage 2 需分析 ~400-450 参数
+- 每个参数平均输入 ~2000 token（含源码），输出 ~500 token
+- 总 token：450 × 2500 = ~1.1M token
+- Sonnet 4.6 定价约 $3/$15 per 1M input/output token
+- 预估总成本：~$5-15
+
+---
+
+## 验收标准
+
+1. **覆盖率**：所有 category 为 parallelism/memory/kv_cache/communication/compilation/quantization/scheduling 的参数必须有对应的 YAML 文件（除非源码已删除）
+2. **质量**：YAML 文件中 `performance_impact` 为 high/medium 的参数，必须包含至少 1 条具体的调优建议
+3. **一致性**：所有 YAML 文件必须通过 `schema.py` 的 Pydantic 校验
+4. **可追溯**：`manifest.yaml` + `skipped_params.json` + `analysis_errors.json` 必须完整反映处理结果
+5. **幂等**：同一份 `parameters.json` 在同一份源码上运行两次，输出必须一致（模型温度设为 0）
+6. **特殊参数覆盖**：`/vllm-workspace/vllm-ascend/docs/source/tutorials/models/` 下文档中提到的所有参数必须在输出中有对应的 YAML 文件
+7. **断点续跑**：中断后加 `--resume` 能正确续跑，不重复处理、不遗漏参数
+
+---
+
+## 注意事项
+
+1. **Ascend 视角优先**：分析参数时始终从 Ascend NPU 用户的角度出发——关注 HCCL 通信、CANN 编译、Da Vinci 架构特性、NPU 显存管理等
+2. **源码是唯一真相**：LLM 的判断必须基于提供的源码上下文，不能凭参数名猜测
+3. **YAML 可读性**：`impact_detail` 等长文本字段使用 YAML 的 `>` 折叠块语法，保证文件人类可读
+4. **进度可见**：运行时输出清晰的进度日志（`[45/450] Analyzing --tensor-parallel-size... done (high, 3.2s)`）
+5. **只输出 YAML**：LLM 的 user prompt 中明确要求 "Output ONLY the YAML, no markdown fences."，减少解析出错
+
+---
+
+## 与第一阶段的衔接
+
+本模块的 `parameters.json` 输入由 `extract_params` 模块生成。两个模块独立运行：
+
+```bash
+# 第一阶段（已完成）
+cd extract_params && python -m extract_params --pretty > ../parse_params/parameters.json
+
+# 第二阶段（本模块）
+cd parse_params && python -m parse_params --input parameters.json --output output/
+```
+
+如需更新参数列表（上游源码有变更），重新运行第一阶段即可，`parameters.json` 路径保持约定不变。

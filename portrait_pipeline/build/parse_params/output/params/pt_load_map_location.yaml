@@ -1,0 +1,72 @@
+name: --pt-load-map-location
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:106
+- vllm/engine/arg_utils.py:867
+- vllm/model_executor/model_loader/weight_utils.py:1225
+- vllm/model_executor/model_loader/weight_utils.py:1244
+value_type: str
+default: cpu
+valid_choices: 'a string like ''cpu'' or ''cuda'', or a JSON dict mapping device strings like ''{"": "cuda"}'' or ''{"cuda:1":
+  "cuda:0"}'''
+cli_example: '--pt-load-map-location ''{"": "cuda"}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls the `map_location` argument passed to `torch.load()` when loading PyTorch (.pt/.bin)
+  checkpoint shards. It determines which device tensors are loaded onto during model initialization. On Ascend NPU, the default
+  value is "cpu", meaning weights are first loaded into CPU memory and then transferred to NPU during model construction.
+  This is a one-time cost during model loading and does not affect runtime inference performance. However, setting it to an
+  NPU device string (e.g., "npu") could reduce model loading time by loading weights directly to NPU memory, at the cost of
+  higher NPU memory usage during loading. This parameter only affects PyTorch-format checkpoints; safetensors format (the
+  default) uses its own loading path and ignores this parameter. vllm-ascend does not override or modify this parameter''s
+  behavior.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/weight_utils.py:1234
+  context: Passed as map_location to torch.load() in pt_weights_iterator for single-threaded loading
+- file: vllm/model_executor/model_loader/weight_utils.py:1250
+  context: Passed as map_location to torch.load() in multi_thread_pt_weights_iterator for multi-threaded loading
+- file: vllm/model_executor/model_loader/default_loader.py:271
+  context: Used in DefaultModelLoader._get_weights_iterator when loading non-safetensors weights with multi-thread enabled
+- file: vllm/model_executor/model_loader/default_loader.py:280
+  context: Used in DefaultModelLoader._get_weights_iterator when loading non-safetensors weights with single-thread
+- file: vllm/model_executor/model_loader/bitsandbytes_loader.py:182
+  context: Used in BitsAndBytesModelLoader._get_weights_iterator for bitsandbytes quantized models
+related_parameters:
+- name: --load-format
+  relation: Only affects loading when load_format results in PyTorch (.pt/.bin) checkpoint loading; safetensors format ignores
+    this parameter
+- name: --model-loader-extra-config
+  relation: When enable_multithread_load is set in extra_config, this parameter is used with multi_thread_pt_weights_iterator
+constraints:
+- The value must be a valid device string (e.g., 'cpu', 'cuda', 'npu') or a JSON dict mapping device strings
+- When passed from command line, dictionary values must use double-quoted strings for proper JSON parsing
+- This parameter has no effect when loading safetensors-format checkpoints (the default)
+tuning_advice:
+  summary: Keep the default 'cpu' for Ascend NPU unless you have specific device-loading requirements for legacy PyTorch checkpoints
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with safetensors checkpoints
+    value: cpu
+    reason: Safetensors is the default format and ignores this parameter; 'cpu' is safe and avoids unnecessary NPU memory
+      usage during loading
+  - scenario: Loading legacy PyTorch checkpoints that must be loaded on a specific device
+    value: npu
+    reason: Loads weights directly to NPU memory, potentially reducing loading time but consuming NPU memory during initialization
+  - scenario: Loading checkpoints with device-specific tensors (e.g., CUDA-only checkpoints)
+    value: '''{"": "cpu"}'''
+    reason: Remaps all device tensors to CPU, ensuring compatibility when loading checkpoints saved on different hardware
+  caveats:
+  - This parameter only affects PyTorch (.pt/.bin) checkpoint loading; most vLLM deployments use safetensors format which
+    ignores this parameter entirely
+  - Setting this to 'npu' will consume NPU memory during model loading, which could cause OOM if the model is large and NPU
+    memory is limited
+  - vllm-ascend does not override this parameter, so the default 'cpu' behavior is the same as upstream vLLM
+  quick_guide: Use default 'cpu' for Ascend NPU; this parameter is only relevant for legacy PyTorch checkpoints and does not
+    affect runtime inference performance
+analysis_date: '2026-07-06'

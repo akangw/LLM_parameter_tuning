@@ -1,0 +1,65 @@
+name: VLLM_ASCEND_ENABLE_MLAPO
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:87
+- vllm_ascend/ascend_config.py:155
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When enabled (default), MLAPO (MlaPreprocessOperation) activates a fusion operator that merges multiple MLA
+  (Multi-head Latent Attention) preprocessing steps into a single kernel launch on Ascend NPU. This reduces kernel launch
+  overhead and improves token throughput for DeepSeek W8A8 series models. However, the fused operator requires additional
+  NPU memory for intermediate buffers. When disabled, the individual MLA preprocessing operations run as separate kernels,
+  reducing memory pressure at the cost of lower throughput. The parameter is read in vllm_ascend/ascend_config.py:152-157
+  via _get_config_value, which checks additional_config.enable_mlapo first, then falls back to this env var. The env var is
+  deprecated in favor of the additional_config key.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:152-157
+  context: Reads VLLM_ASCEND_ENABLE_MLAPO env var as fallback for AscendConfig.enable_mlapo
+- file: vllm_ascend/envs.py:83-87
+  context: Defines the env var with default '1' (enabled)
+related_parameters:
+- name: enable_mlapo
+  relation: The additional_config key that replaces this deprecated env var; takes precedence when set
+- name: VLLM_ASCEND_ENABLE_NZ
+  relation: Both are Ascend-specific optimizations for quantized models; NZ controls weight format while MLAPO controls operator
+    fusion
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: Both are fusion optimizations for DeepSeek W8A8 models; MC2 fuses communication ops while MLAPO fuses MLA preprocessing
+    ops
+constraints:
+- MLAPO is designed for DeepSeek W8A8 series models; its effect on other model architectures is not documented
+tuning_advice:
+  summary: 'Keep MLAPO enabled (default) for maximum throughput on DeepSeek W8A8 models; disable only when NPU memory is insufficient
+    and throughput can be sacrificed.
+
+    '
+  suggested_values:
+  - scenario: DeepSeek W8A8 with sufficient NPU memory (default)
+    value: true
+    reason: Enables MLA preprocessing fusion, reducing kernel launch overhead and improving token throughput
+  - scenario: DeepSeek W8A8 with tight NPU memory budget
+    value: false
+    reason: Disables the fusion operator to reduce NPU memory consumption at the cost of lower throughput
+  - scenario: PD separation deployment (decode nodes)
+    value: true
+    reason: Documentation recommends enabling MLAPO on decode nodes for significant performance improvement
+  caveats:
+  - MLAPO increases NPU memory usage; if you encounter OOM errors with DeepSeek W8A8 models, try disabling it
+  - This env var is deprecated and will be removed in a future release; migrate to additional_config.enable_mlapo
+  - In PD separation scenarios, enable MLAPO only on decode nodes to avoid excessive memory pressure on prefill nodes
+  quick_guide: Set VLLM_ASCEND_ENABLE_MLAPO=0 only if NPU memory is insufficient for DeepSeek W8A8; otherwise keep the default
+    (1)
+analysis_date: '2026-07-06'

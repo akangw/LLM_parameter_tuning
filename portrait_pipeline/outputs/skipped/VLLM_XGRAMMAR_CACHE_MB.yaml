@@ -1,0 +1,7 @@
+name: VLLM_XGRAMMAR_CACHE_MB
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares and parses this environment variable in vllm/envs.py; a repository-wide
+  search finds no code that reads the parsed value or passes it to an xgrammar compiler. The pinned vLLM-Ascend repository
+  contains no occurrence of the variable. Therefore it has no latency, throughput, or memory effect in the pinned implementations,
+  despite the legacy profile describing behavior from an older source version.

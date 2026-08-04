@@ -1,0 +1,78 @@
+name: VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:249
+- vllm/envs.py:1698
+- vllm/model_executor/models/deepseek_v4.py:1279
+- vllm/model_executor/models/deepseek_v4.py:1314
+value_type: int
+default: 1024
+valid_choices: Any integer accepted by Python int(); 0 is the documented value for disabling the multi-stream path.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This environment variable is the token-count cutoff for overlapping the DeepSeek-V4 attention input GEMMs.
+  In the upstream attention wrapper, fused_wqa_wkv remains on the current CUDA stream while up to three auxiliary GEMMs for
+  the compressor and indexer run on separate streams when the flattened hidden-state token count is less than or equal to
+  the configured value. Above the cutoff, execute_in_parallel runs the same functions sequentially on the current stream.
+  The pinned source documents a 5-45% benefit at or below 1024 tokens because the FP8 main GEMM has idle SMs that the bf16
+  auxiliary GEMMs can use; for larger token batches the main GEMM saturates the device and stream synchronization becomes
+  overhead. The parameter therefore changes latency and attainable throughput only for the upstream DeepSeek-V4 attention
+  path. It does not change tensor shapes or cache capacity. The pinned vllm-ascend repository registers its own AscendDeepseekV4ForCausalLM
+  implementation, whose attention forward path delegates to AscendDeepseekSparseAttention and never reads this variable, so
+  this setting has no effect on the Ascend DeepSeek-V4 path.
+usage_locations:
+- file: vllm/model_executor/models/deepseek_v4.py:1279
+  context: Documents the three auxiliary streams used by DeepseekV4MultiHeadLatentAttentionWrapper.attn_gemm_parallel_execute,
+    where the threshold gates concurrent execution.
+- file: vllm/model_executor/models/deepseek_v4.py:1314
+  context: Passes the shared auxiliary-stream list into each DeepSeek-V4 decoder layer and ultimately into the attention wrapper
+    controlled by the threshold.
+related_parameters:
+- name: VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD
+  relation: Independently gates separate-stream execution for shared experts by token count; it does not control the DeepSeek-V4
+    attention GEMMs.
+- name: VLLM_DISABLE_SHARED_EXPERTS_STREAM
+  relation: Disables the separate shared-experts stream, whereas this parameter uses a threshold of 0 to disable the DeepSeek-V4
+    attention multi-stream path.
+constraints:
+- A configured value must be parseable by Python int() or environment-variable access raises ValueError.
+- The overlap condition is hidden_states.shape[0] less than or equal to the threshold; 0 disables overlap for normal nonempty
+  token batches.
+- The parameter is consumed only by the upstream DeepSeek-V4 attention implementation and has no effect on other upstream
+  model architectures.
+- ROCm passes no auxiliary streams and therefore executes serially regardless of this threshold.
+- The pinned vllm-ascend DeepSeek-V4 model uses its Ascend-specific attention implementation and does not consume this variable.
+tuning_advice:
+  summary: Keep 1024 for upstream CUDA DeepSeek-V4 unless representative profiling shows that the device's GEMM saturation
+    crossover occurs at another token count; do not tune this variable for the pinned Ascend implementation.
+  suggested_values:
+  - scenario: Upstream CUDA DeepSeek-V4 default
+    value: 1024
+    reason: This is the empirically selected pinned default; the source reports a 5-45% overlap benefit at or below this token
+      count and overhead above it.
+  - scenario: Disable DeepSeek-V4 attention input-GEMM overlap
+    value: 0
+    reason: The source explicitly documents 0 as the disable setting, causing positive-token batches to take the sequential
+      path.
+  - scenario: Profiled upstream CUDA deployment with a different saturation crossover
+    value: profile-dependent integer
+    reason: The best cutoff is where auxiliary GEMMs stop benefiting from idle compute resources in the main FP8 GEMM; determine
+      it using representative token counts and the actual GPU.
+  caveats:
+  - The comparison uses the total token dimension of hidden_states for the current forward pass, not an individual request's
+    prompt length.
+  - Raising the cutoff can add synchronization overhead once the main GEMM saturates the GPU; lowering it can forfeit useful
+    overlap for smaller batches.
+  - The documented 5-45% result is specific to the upstream CUDA implementation and should not be extrapolated to Ascend,
+    where this variable is unused, or to ROCm, where the auxiliary stream list is disabled.
+  - Negative integers are accepted by int() and also keep the overlap condition false for nonempty batches, but 0 is the documented
+    and clearest disable value.
+  quick_guide: Use 1024 for upstream CUDA DeepSeek-V4, use 0 to disable, and change the cutoff only from token-count sweeps
+    on the target GPU; ignore it on Ascend.
+analysis_date: '2026-07-29'

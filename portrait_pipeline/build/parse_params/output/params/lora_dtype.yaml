@@ -1,0 +1,81 @@
+name: --lora-dtype
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/lora.py:46
+- vllm/engine/arg_utils.py:576
+- vllm/engine/arg_utils.py:1246
+value_type: str
+default: auto
+valid_choices: auto, float16, bfloat16, float32, or any torch.dtype string
+cli_example: --lora-dtype float16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter controls the data type used for LoRA adapter weight tensors (lora_a_stacked and lora_b_stacked)
+  allocated on the NPU. When set to "auto", it defaults to the base model''s dtype. On Ascend NPU, the dtype directly affects:
+  "(1) NPU memory consumption — LoRA weights are allocated as stacked tensors of shape" [max_loras, 1, output_dim, input_dim]
+  for each linear layer, so lower-precision dtypes (float16/bfloat16) halve memory usage compared to float32; (2) compute
+  throughput — Ascend NPUs have specialized hardware units for float16/bfloat16 matrix operations that can deliver higher
+  throughput than float32. The parameter is used in vllm/lora/layers/base_linear.py:141, column_parallel_linear.py:229,240,
+  and fused_moe.py:99,126 to allocate LoRA weight buffers. It also affects the computation graph hash (vllm/config/lora.py:91),
+  meaning changing it invalidates cached compiled graphs. No vllm-ascend override was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/config/lora.py:46
+  context: Field definition with default 'auto' and docstring explaining fallback to base model dtype
+- file: vllm/config/lora.py:91
+  context: Included in compute_hash factors — affects compiled graph cache key
+- file: vllm/lora/layers/base_linear.py:141
+  context: Used as dtype when allocating lora_a_stacked and lora_b_stacked tensors for base linear layers
+- file: vllm/lora/layers/column_parallel_linear.py:229
+  context: Used as dtype for lora_a_stacked allocation in column-parallel linear layers
+- file: vllm/lora/layers/column_parallel_linear.py:240
+  context: Used as dtype for lora_b_stacked allocation in column-parallel linear layers
+- file: vllm/lora/layers/fused_moe.py:99
+  context: Used as dtype for w13_lora_a_stacked and w2_lora_a_stacked in fused MoE layers
+- file: vllm/lora/layers/fused_moe.py:126
+  context: Used as dtype for w13_lora_b_stacked and w2_lora_b_stacked in fused MoE layers
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for --lora-dtype to have any effect
+- name: --max-loras
+  relation: Together with max_lora_rank, determines the total size of stacked LoRA weight tensors; dtype multiplies the memory
+    footprint
+- name: --max-lora-rank
+  relation: Together with max_loras, determines the dimensions of LoRA weight tensors; dtype multiplies the memory footprint
+- name: --fully-sharded-loras
+  relation: Affects the output dimension of LoRA tensors, which changes the absolute memory savings from dtype choice
+constraints:
+- Must be a valid torch.dtype string (e.g., float16, bfloat16, float32) or 'auto'
+- Only takes effect when --enable-lora is set to True
+tuning_advice:
+  summary: Use float16 or bfloat16 for LoRA weights on Ascend NPU to reduce memory footprint and leverage faster mixed-precision
+    compute, unless numerical precision issues arise.
+  suggested_values:
+  - scenario: Default / general-purpose LoRA deployment on Ascend NPU
+    value: auto
+    reason: Inherits the base model dtype, which is typically float16 or bfloat16 on Ascend NPU, providing a good balance
+      of memory efficiency and precision without manual tuning.
+  - scenario: Memory-constrained deployment with many LoRA adapters (high --max-loras)
+    value: float16
+    reason: Halves LoRA weight memory compared to float32; Ascend NPU has native float16 hardware acceleration for matrix
+      operations, maintaining high throughput.
+  - scenario: Numerical stability issues observed with float16 LoRA weights
+    value: float32
+    reason: Provides higher precision for LoRA weight accumulation at the cost of 2x memory and potentially lower throughput
+      on Ascend NPU.
+  caveats:
+  - Changing --lora-dtype invalidates the computation graph hash, requiring recompilation of any cached CUDA/NPU graphs, which
+    increases startup time.
+  - On Ascend NPU, bfloat16 may offer better numerical range than float16 with similar memory savings, but support depends
+    on the specific Ascend hardware generation and CANN version.
+  - The actual memory savings depend on --max-loras and --max-lora-rank; larger values amplify the absolute memory difference
+    between dtypes.
+  quick_guide: Leave as 'auto' to match the base model dtype; set to 'float16' to explicitly reduce LoRA memory on Ascend
+    NPU when using many adapters.
+analysis_date: '2026-07-06'

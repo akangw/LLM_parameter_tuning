@@ -1,0 +1,116 @@
+name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:421
+- vllm_ascend/distributed/parallel_state.py:138
+- vllm_ascend/ops/linear_op.py:181
+- docs/source/user_guide/feature_guide/Fine_grained_TP.md:60
+value_type: int
+default: 0
+valid_choices: 0 to disable, or a positive integer that evenly divides parallel_config.data_parallel_size
+cli_example: vllm serve deepseek-ai/DeepSeek-R1 --data-parallel-size 16 --tensor-parallel-size 1 --enable-expert-parallel
+  --additional-config '{"finegrained_tp_config":{"mlp_tensor_parallel_size":8}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: A value greater than zero creates an Ascend module-specific tensor-parallel group of this size within the data-parallel
+  dimension and uses it for eligible dense MLP gate_up_proj and down_proj layers. The configured group determines their weight
+  partition size. At execution, the column- parallel gate/up projection all-gathers its input before the local matrix multiplication,
+  while the row-parallel down projection computes its local partition and reduce-scatters the output. This can reduce per-rank
+  MLP weight storage and weight-read or GEMM work, but introduces collectives whose cost can improve or degrade latency and
+  throughput depending on batch, topology, and group size. The pinned Ascend guide reports that FFN TP size 8 saved 0.9 GB
+  per device and improved TPOT by about 1.0 ms in one DeepSeek-R1-W8A8 DP32/EP32 decode experiment; that measurement is workload-specific.
+  The pinned upstream vLLM tree has no counterpart.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:421
+  context: Reads the nested integer with default 0 and includes it in shared fine-grained TP validation.
+- file: vllm_ascend/ascend_config.py:449
+  context: Treats values greater than 0 as enabled; the shared loop rejects non-MoE models and sizes that do not divide data_parallel_size.
+- file: vllm_ascend/distributed/parallel_state.py:117
+  context: Constructs module-specific groups by chunking the data-parallel dimension for each pipeline and global-TP coordinate.
+- file: vllm_ascend/distributed/parallel_state.py:138
+  context: Reads the configured size and creates the mlptp group when the value is greater than zero.
+- file: vllm_ascend/utils.py:978
+  context: Enables the MLP-specific path exactly when the configured value is greater than zero.
+- file: vllm_ascend/ops/linear_op.py:181
+  context: Uses the MLP group for gate/up projection input all-gather and down projection output reduce-scatter.
+- file: vllm_ascend/ops/linear_op.py:628
+  context: Selects the custom MLP operators for gate_up_proj and down_proj only when they are not MoE expert layers.
+- file: vllm_ascend/quantization/method_adapters.py:149
+  context: Uses the MLP-group rank when applying quantized down_proj row-parallel weights.
+- file: docs/source/user_guide/feature_guide/Fine_grained_TP.md:91
+  context: Reports memory and TPOT measurements for FFN TP size 8 in a specific DP32/EP32 decode experiment.
+related_parameters:
+- name: parallel_config.data_parallel_size
+  relation: The MLP group is carved from the DP dimension, and an enabled size must evenly divide data_parallel_size.
+- name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+  relation: Sibling module-specific TP option governed by the same MoE and DP-divisibility validation loop; equal sizes reuse
+    the cached process group.
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling fine-grained TP option for the language-model head, also formed over the DP dimension.
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Sibling setting for attention output projection with additional graph-mode and deployment-role restrictions.
+- name: model_config.is_moe
+  relation: Current configuration validation requires the overall model to be MoE even though the custom MLP operators target
+    non-expert dense layers.
+constraints:
+- Values greater than 0 enable the feature; use 0 to disable it.
+- When enabled, model_config.is_moe must be true or Ascend configuration initialization raises an AssertionError.
+- When enabled, parallel_config.data_parallel_size modulo mlp_tensor_parallel_size must equal 0.
+- The custom MLP operators apply to gate_up_proj and down_proj prefixes only when is_moe_layer(prefix) is false, so expert
+  FFN layers are excluded.
+- Negative integers are not explicitly rejected, but greater-than-zero gates treat them as disabled; use 0 rather than relying
+  on that behavior.
+- The setting is Ascend-only and has no upstream vLLM counterpart in the pinned source.
+tuning_advice:
+  summary: Keep 0 as the baseline. For an MoE deployment whose dense MLP layers materially contribute to device memory or
+    decode time, benchmark positive divisors of data_parallel_size and retain the smallest group that meets memory needs without
+    making the added all-gather and reduce-scatter dominate end-to-end latency.
+  suggested_values:
+  - scenario: Disabled baseline, dense model, or MLP sharding is not needed
+    value: 0
+    reason: This avoids the dedicated collectives and is required for dense models by the current runtime validation.
+  - scenario: Initial MoE trial with an even data_parallel_size
+    value: 2
+    reason: When it divides DP size, this is a conservative first sharding step that reduces eligible dense-MLP weight allocation
+      while limiting collective-group width.
+  - scenario: DeepSeek-style MoE decode deployment with data_parallel_size divisible by 8
+    value: 8
+    reason: This matches the pinned guide's DP32/EP32 FFN experiment, but should be retained only if representative measurements
+      reproduce useful memory or TPOT gains.
+  caveats:
+  - Larger groups increase collective participants; lower per-rank weight and compute cost does not guarantee better latency
+    or throughput.
+  - The documented 0.9 GB saving and roughly 1.0 ms TPOT improvement come from one DeepSeek-R1-W8A8 decode setup and are not
+    universal.
+  - The guide describes dense-model support, but pinned runtime validation rejects any positive fine-grained TP size when
+    model_config.is_moe is false; runtime code is the operational ground truth.
+  - Despite the FFN label in the guide, current operator selection excludes MoE expert layers and targets dense MLP layers,
+    including dense layers within an MoE model.
+  - Shared validation errors mention lmhead parallel even when mlp_tensor_parallel_size caused the failure; inspect the common
+    validation loop.
+  quick_guide: Start at 0. On an MoE model with eligible dense MLP layers, try 2 and then larger exact divisors of data_parallel_size
+    such as 8, selecting by measured latency, throughput, and NPU memory.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

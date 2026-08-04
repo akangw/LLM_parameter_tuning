@@ -1,0 +1,94 @@
+name: --enable-ep-weight-filter
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1026
+- vllm/config/parallel.py:153
+- vllm/model_executor/model_loader/default_loader.py:333
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-ep-weight-filter
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'When enabled alongside --enable-expert-parallel for MoE models, this flag causes each rank to skip non-local
+  expert weight tensors during model loading. The filter is implemented in `_init_ep_weight_filter` (default_loader.py:318-352),
+  which computes the set of local expert IDs based on the flattened EP rank and passes them to the weight loader. This avoids
+  reading expert shards that belong to other ranks from disk, reducing peak host memory pressure and storage I/O during initialization.
+  On Ascend NPU, where host-to-device bandwidth and host memory may be constrained, this can significantly accelerate model
+  loading for large MoE checkpoints (e.g., DeepSeek, Mixtral, Kimi-K2.5). The filter is automatically skipped when EPLB is
+  enabled (line 341) because redundant physical expert slots may need weights from other ranks'' logical experts. It also
+  has no effect on 3D fused-expert checkpoints (e.g., GPT-OSS) or non-MoE models.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/default_loader.py:333
+  context: '`_init_ep_weight_filter` checks `enable_ep_weight_filter` to decide whether to compute local expert IDs and activate
+    weight filtering during loading.
+
+    '
+- file: vllm/config/parallel.py:153
+  context: 'Field definition with docstring explaining the parameter''s purpose and limitations (no effect on 3D fused-expert
+    checkpoints or non-MoE models).
+
+    '
+related_parameters:
+- name: --enable-expert-parallel
+  relation: 'Required prerequisite; --enable-ep-weight-filter has no effect unless expert parallelism is active.
+
+    '
+- name: --enable-eplb
+  relation: 'When EPLB is enabled, the weight filter is automatically disabled because redundant physical expert slots may
+    need weights from other ranks'' logical experts.
+
+    '
+constraints:
+- --enable-ep-weight-filter has no effect unless --enable-expert-parallel is also enabled.
+- --enable-ep-weight-filter has no effect on non-MoE models.
+- --enable-ep-weight-filter has no effect on 3D fused-expert checkpoints (e.g., GPT-OSS).
+- --enable-ep-weight-filter is automatically disabled when --enable-eplb is active.
+tuning_advice:
+  summary: 'Enable this flag for large MoE models with per-expert weight tensors to reduce disk I/O and host memory pressure
+    during model loading on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: 'Loading large MoE models (DeepSeek, Mixtral, Kimi-K2.5) with expert parallelism on Ascend NPU, without EPLB.
+
+      '
+    value: true
+    reason: 'Each rank only reads its own expert shard from disk, drastically reducing storage I/O and peak host memory usage.
+      The vllm-ascend documentation recommends keeping it enabled for very large MoE checkpoints.
+
+      '
+  - scenario: 'Non-MoE models, 3D fused-expert checkpoints (GPT-OSS), or when EPLB is enabled.
+
+      '
+    value: false
+    reason: 'The filter has no effect in these cases and is automatically skipped; explicitly disabling it avoids confusion.
+
+      '
+  caveats:
+  - 'This flag only affects model loading time and peak host memory, not runtime inference latency or throughput after the
+    model is loaded.
+
+    '
+  - 'When EPLB is enabled, the filter is silently skipped even if the flag is set, because redundant expert slots may require
+    weights from non-local logical experts.
+
+    '
+  - 'On Ascend NPU, host memory is often more constrained than on GPU servers; enabling this flag can be the difference between
+    a successful load and an OOM during initialization.
+
+    '
+  quick_guide: 'Enable --enable-ep-weight-filter for MoE models with expert parallelism on Ascend NPU unless using EPLB or
+    3D fused checkpoints.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,22 @@
+{
+  "input": 1540,
+  "passed": 445,
+  "skipped": 1095,
+  "decision_reasons": {
+    "ascend_runtime_tuning_surface": 72,
+    "container_with_extracted_leaves": 12,
+    "duplicate_cli_mirror": 302,
+    "duplicate_nested_helper": 37,
+    "internal_private_field": 15,
+    "no_performance_signal": 133,
+    "non_ascend_backend": 85,
+    "non_tuning_control_surface": 333,
+    "nonproduction_source": 165,
+    "performance_signal": 299,
+    "reviewed_rescue": 65,
+    "runtime_state_type": 13,
+    "user_facing_cli_review": 9
+  },
+  "filter_policy_version": "stage1-filter/v5",
+  "worklist_hash": "220ec7c5bc3fbcedfaf4e84d998d0da83b8a1b171185f50c2fb82f99575727bd"
+}

@@ -1,0 +1,115 @@
+name: --cudagraph-capture-sizes
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1384
+- vllm/config/compilation.py:392
+- vllm_ascend/platform.py:52
+- vllm_ascend/worker/model_runner_v1.py:532
+- vllm_ascend/worker/v2/aclgraph_utils.py:62
+- vllm_ascend/worker/v2/spec_decode/eagle/aclgraph.py:52
+- vllm_ascend/worker/v2/spec_decode/eagle/aclgraph.py:141
+- vllm_ascend/worker/worker.py:506
+- vllm_ascend/ascend_forward_context.py:202
+- vllm_ascend/compilation/compiler_interface.py:77
+value_type: list[int]
+default: None
+valid_choices: list of positive integers, or None to auto-infer
+cli_example: --cudagraph-capture-sizes 1 2 4 8 16 24 32
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter directly controls which batch sizes have pre-captured NPU graphs (ACL graphs on Ascend). On\
+  \ Ascend, graph capture replaces per-step operator dispatch with a pre-recorded execution stream, eliminating CPU launch\
+  \ overhead. The capture sizes determine the granularity of this optimization: - \"Each captured size consumes NPU memory\
+  \ for the graph and its intermediate buffers.\" - \"At runtime, if the actual batch size does not exactly match a captured\
+  \ size, vLLM pads the batch\"\n  to the next larger captured size, wasting compute on padding tokens.\n- \"Too few capture\
+  \ sizes cause excessive padding (throughput loss); too many cause memory bloat and\"\n  long startup times.\n- \"vllm-ascend\
+  \ v1 worker (model_runner_v1.py:532) sorts the sizes and uses them as the set of\"\n  cudagraph batch sizes when cudagraph_mode\
+  \ != NONE.\n- \"vllm-ascend v2 worker (aclgraph_utils.py:62) similarly sorts and uses them for full-graph capture,\"\n \
+  \ and also passes them to the attention backend via set_graph_params().\n- \"For speculative decoding (Eagle), the capture\
+  \ sizes must be multiples of (num_speculative_tokens + 1)\"\n  because each decode step processes (1 + K) tokens. The documentation\
+  \ explicitly states this constraint.\n- \"The parameter also affects MC2 token capacity calculation (ascend_forward_context.py:202):\
+  \ when\"\n  cudagraph_capture_sizes is set, max_cudagraph_capture_size is used to determine the token capacity\n  for MC2\
+  \ communication, otherwise a default cap of 512 is applied.\n- \"In the v1 worker compile/warmup path (worker.py:506), cudagraph_capture_sizes\
+  \ are excluded from\"\n  warmup sizes to avoid redundant compilation.\n"
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:532
+  context: 'v1 worker: sets self.cudagraph_batch_sizes from sorted capture sizes when cudagraph_mode != NONE'
+- file: vllm_ascend/worker/v2/aclgraph_utils.py:62
+  context: 'v2 worker: AclGraphManager.__init__ sorts capture sizes and passes them to attention backend via set_graph_params()'
+- file: vllm_ascend/worker/v2/spec_decode/eagle/aclgraph.py:52
+  context: 'v2 Eagle prefill: PrefillEagleAclGraphManager uses sorted capture sizes for draft model graph capture'
+- file: vllm_ascend/worker/v2/spec_decode/eagle/aclgraph.py:141
+  context: 'v2 Eagle decode: DecodeEagleAclGraphManager uses sorted capture sizes for draft model graph capture'
+- file: vllm_ascend/worker/worker.py:506
+  context: 'v1 worker: compile_or_warm_up_model excludes cudagraph_capture_sizes from warmup_sizes to avoid redundant compilation'
+- file: vllm_ascend/ascend_forward_context.py:202
+  context: 'MC2 token capacity: when cudagraph_capture_sizes is set, uses max_cudagraph_capture_size for capacity calculation'
+- file: vllm_ascend/compilation/compiler_interface.py:77
+  context: Filters capture sizes to those within [uniform_decode_query_len, max_num_tokens] for decode cudagraph batch sizes
+- file: vllm_ascend/platform.py:193
+  context: 'Platform default logic: skips injecting default max_cudagraph_capture_size when cudagraph_capture_sizes is user-provided'
+- file: vllm/config/vllm.py:1139
+  context: 'Upstream: sets cudagraph_capture_sizes to [] when enforce_eager is True'
+related_parameters:
+- name: --max-cudagraph-capture-size
+  relation: When cudagraph_capture_sizes is None, max_cudagraph_capture_size determines the upper bound for auto-generated
+    capture sizes. When cudagraph_capture_sizes is explicitly set, max_cudagraph_capture_size is used for MC2 token capacity
+    calculation on Ascend.
+- name: --compilation-config.cudagraph_mode
+  relation: cudagraph_capture_sizes only takes effect when cudagraph_mode is not NONE. If cudagraph_mode is NONE, capture
+    sizes are ignored.
+- name: --enforce-eager
+  relation: When enforce_eager is True, cudagraph_mode is forced to NONE and cudagraph_capture_sizes is set to [].
+- name: --max-num-seqs
+  relation: The auto-generated default capture sizes range from 1 to max_num_seqs. On Ascend, the default max capture size
+    is capped at min(max_num_seqs * decode_query_len, 512).
+- name: --speculative-config.num_speculative_tokens
+  relation: When using speculative decoding (Eagle/MTP), capture sizes must be multiples of (num_speculative_tokens + 1).
+constraints:
+- When using EAGLE speculative decoding with fullgraph mode, each capture size must be a multiple of (num_speculative_tokens
+  + 1), e.g., for num_speculative_tokens=4, sizes must be multiples of 5.
+- Capture sizes must be positive integers.
+- cudagraph_capture_sizes is ignored when cudagraph_mode is NONE or enforce_eager is True.
+- On Ascend, breakable cudagraph (PIECEWISE mode for DeepSeek V4) is force-disabled; cudagraph_capture_sizes will not be used
+  in that path.
+tuning_advice:
+  summary: On Ascend, explicitly set cudagraph_capture_sizes to match your expected batch size distribution to minimize padding
+    waste while controlling NPU memory overhead from graph capture.
+  suggested_values:
+  - scenario: General deployment without speculative decoding (v1 or v2 worker)
+    value: '[1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64]'
+    reason: Provides good coverage for typical batch size ranges. The default Ascend behavior auto-generates sizes up to min(max_num_seqs
+      * decode_query_len, 512), but explicit sizes avoid unnecessary captures for batch sizes you never reach, saving NPU
+      memory and startup time.
+  - scenario: Speculative decoding with Eagle/MTP (num_speculative_tokens=K)
+    value: '[n * (K+1) for n in 1..max_num_seqs]'
+    reason: Each decode step processes (K+1) tokens. Capture sizes must be exact multiples to avoid padding. For K=4 and max_num_seqs=8,
+      use [5, 10, 15, 20, 25, 30, 35, 40].
+  - scenario: High-throughput decode-only node with known concurrency
+    value: Set to the most frequent batch sizes observed in production, e.g., [8, 16, 32, 48, 64]
+    reason: Minimizes padding overhead by capturing only the batch sizes that actually occur. Use cudagraph metrics (--cudagraph-metrics)
+      to identify hit rates and adjust.
+  - scenario: Memory-constrained deployment
+    value: '[1, 2, 4, 8]'
+    reason: Fewer capture sizes reduce NPU memory consumption from graph storage. Accepts higher padding waste for larger
+      batches in exchange for memory savings.
+  caveats:
+  - Each captured size consumes additional NPU memory for the ACL graph and its buffers. Too many capture sizes can cause
+    OOM or excessive startup time.
+  - On Ascend, the default auto-generated capture sizes are capped at 512 (platform.py:211). If your max_num_seqs * decode_query_len
+    exceeds 512, you must explicitly set larger sizes if needed.
+  - When cudagraph_capture_sizes is explicitly set, the Ascend platform skips its default max_cudagraph_capture_size injection
+    (platform.py:198), so you must ensure the sizes cover your expected range.
+  - For v2 worker with Eagle speculative decoding, capture sizes are passed to both the main model and the draft model graph
+    capture (aclgraph.py:52,141). Mismatched sizes can cause graph capture failures.
+  - The v1 worker compile/warmup path (worker.py:506) excludes cudagraph_capture_sizes from warmup_sizes. If you change capture
+    sizes, you may need to re-run warmup for the new sizes.
+  quick_guide: For most Ascend deployments, start with [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64]; for speculative decoding,
+    use multiples of (num_speculative_tokens + 1); reduce the list if memory is tight.
+analysis_date: '2026-07-06'

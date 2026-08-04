@@ -1,0 +1,50 @@
+name: --gdn-prefill-backend
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1479
+- vllm/engine/arg_utils.py:699
+- vllm/model_executor/layers/mamba/gdn_linear_attn.py:141
+value_type: str
+default: None
+valid_choices:
+- flashinfer
+- triton
+cli_example: --gdn-prefill-backend triton
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls which backend kernel is used for the Gated DeltaNet (GDN) prefill computation in Mamba-based
+  models. The selection logic in vllm/model_executor/layers/mamba/gdn_linear_attn.py:141-173 reads the parameter from additional_config
+  and routes to either a FlashInfer CUDA kernel (forward_cuda) or a Triton/FLA kernel (forward_native). On Ascend NPU, the
+  FlashInfer backend is NOT supported because the platform check at line 144-146 requires CUDA with compute capability 9.0
+  (Hopper). Therefore, regardless of the user''s choice, the code will always fall back to the Triton/FLA backend on Ascend
+  hardware. The only performance-relevant effect on Ascend is that explicitly setting "--gdn-prefill-backend flashinfer" triggers
+  a warning log message and the fallback path, which has negligible overhead. The actual kernel execution path is identical
+  to "--gdn-prefill-backend triton" or leaving it unset (auto mode). This parameter has no meaningful runtime performance
+  impact on Ascend NPU.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/mamba/gdn_linear_attn.py:141
+  context: Reads gdn_prefill_backend from additional_config to determine whether to use FlashInfer or Triton/FLA kernel for
+    GDN prefill.
+related_parameters: []
+constraints:
+- FlashInfer backend requires CUDA platform with compute capability 9.0 (Hopper) and is not available on Ascend NPU.
+tuning_advice:
+  summary: On Ascend NPU, this parameter has no effect — the Triton/FLA backend is always used regardless of the setting.
+  suggested_values:
+  - scenario: Running GDN/Mamba models on Ascend NPU
+    value: triton
+    reason: FlashInfer is unsupported on Ascend; setting 'triton' avoids an unnecessary warning log and makes the intent explicit.
+  caveats:
+  - Setting 'flashinfer' on Ascend triggers a fallback warning but does not change behavior — the Triton/FLA kernel is always
+    used.
+  - The FlashInfer GDN kernel is JIT-compiled on first use on CUDA, but this is irrelevant on Ascend since the kernel is never
+    invoked.
+  quick_guide: Leave at default (None) or set to 'triton' on Ascend NPU — 'flashinfer' is unsupported and will be ignored.
+analysis_date: '2026-07-06'

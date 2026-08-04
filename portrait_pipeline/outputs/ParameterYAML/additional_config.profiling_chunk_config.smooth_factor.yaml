@@ -1,0 +1,101 @@
+name: additional_config.profiling_chunk_config.smooth_factor
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:606
+- vllm_ascend/core/profiling_chunk_predictor.py:249
+- vllm_ascend/core/profiling_chunk_predictor.py:293
+- vllm_ascend/core/scheduler_profiling_chunk.py:89
+- docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:52
+- docs/source/developer_guide/Design_Documents/dynamic_chunked_pipeline_parallel.md:81
+value_type: float
+default: 1.0
+valid_choices: Floating-point value in (0, 1].
+cli_example: --pipeline-parallel-size 2 --enable-chunked-prefill --additional-config '{"profiling_chunk_config":{"enabled":true,"smooth_factor":0.8}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This Ascend-only value controls how strongly the Dynamic Chunked Pipeline Parallel predictor changes a prefill
+  chunk away from max_num_batched_tokens, which is used as the base chunk size. Both the startup-profile and history-aware
+  paths compute base + smooth_factor * (prediction - base), then apply min_chunk and round upward to the scheduler alignment.
+  At 1.0 the scheduler follows the raw model prediction; smaller positive values damp the adjustment toward the fixed base
+  chunk. Stronger adaptation can better equalize work across pipeline stages and reduce pipeline bubbles and TTFT when the
+  fitted model represents the workload, while damping can avoid unstable or overly small chunks that add scheduling steps
+  and reduce NPU operator efficiency. The setting has no runtime effect while profiling_chunk_config.enabled is false or before
+  its profiling predictor becomes ready, and it does not directly change model or KV-cache memory allocation.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:606
+  context: Converts the nested value with float(), defaults it to 1.0, and rejects values outside the interval (0, 1].
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:83
+  context: Reads the Ascend profiling configuration and passes smooth_factor into ProfilingChunkManager when constructing
+    the dynamic scheduler.
+- file: vllm_ascend/core/profiling_chunk_predictor.py:249
+  context: Blends the startup-profile raw prediction with the base chunk before applying min_chunk and token alignment.
+- file: vllm_ascend/core/profiling_chunk_predictor.py:293
+  context: Applies the same blend to predictions from the online history-aware latency model.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:323
+  context: Uses the resulting prediction to cap tokens scheduled for running, partially computed requests.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:530
+  context: Uses the prediction to cap prefill tokens for waiting requests that already have computed prefix history.
+- file: docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:58
+  context: Documents 1.0 as strict trust in the prediction and 0.6 through 0.85 as a balance between dynamic adjustment and
+    scheduling overhead.
+related_parameters:
+- name: additional_config.profiling_chunk_config.enabled
+  relation: Selects the profiling-based scheduler; smooth_factor has no scheduling effect when this switch is false.
+- name: --max-num-batched-tokens
+  relation: Supplies the base chunk size toward which values below 1.0 damp each model prediction.
+- name: additional_config.profiling_chunk_config.min_chunk
+  relation: Imposes a lower bound after smoothing, so it can mask changes to smooth_factor when the blended result is below
+    the floor.
+- name: additional_config.profiling_chunk_config.need_timing
+  relation: Controls online calibration; smooth_factor applies to both the initial fitted model and the calibrated history-aware
+    model.
+- name: --pipeline-parallel-size
+  relation: Must be greater than one when profiling_chunk_config is enabled; the setting targets balancing prefill work across
+    those pipeline stages.
+- name: --enable-chunked-prefill
+  relation: Dynamic Chunked Pipeline Parallel operates on partial prefills, and the pinned feature guide requires chunked
+    prefill.
+constraints:
+- The value is converted with float() and must satisfy 0 < smooth_factor <= 1.0; zero, negative values, values above one,
+  and non-numeric values fail configuration.
+- Although two pinned documentation passages describe 0.0 as disabling dynamic adjustment, current Ascend code and unit tests
+  reject 0.0; use profiling_chunk_config.enabled=false to disable the feature.
+- The blend is applied only after startup profiling has made the predictor ready and only to partially computed requests for
+  which the dynamic scheduler asks for a prediction.
+- min_chunk is applied after smoothing and the result is rounded upward to a multiple of max(KV-cache page size, 64), so the
+  realized chunk can differ from the direct interpolation.
+- Dynamic profiling_chunk_config requires pipeline_parallel_size greater than one and cannot be enabled together with additional_config.enable_balance_scheduling.
+- The pinned upstream vLLM repository has no profiling_chunk_config or smooth_factor consumer; this setting is specific to
+  vllm-ascend.
+tuning_advice:
+  summary: Start with 1.0, then benchmark a damped value only if raw dynamic chunk changes cause measured scheduling overhead
+    or unstable TTFT. Tune with production-like prompt lengths and concurrency after profiling is ready.
+  suggested_values:
+  - scenario: General Ascend Dynamic Chunked Pipeline Parallel deployment
+    value: 1.0
+    reason: This is the validated default and strictly follows the fitted model's prediction, maximizing the intended dynamic
+      adjustment.
+  - scenario: Raw predictions vary too aggressively or small chunks add overhead
+    value: 0.8
+    reason: This lies in the pinned guide's documented 0.6-to-0.85 balancing range and moves each prediction closer to the
+      fixed base chunk; retain it only when end-to-end benchmarks improve.
+  - scenario: Dynamic chunk sizing should be disabled
+    value: <disable profiling_chunk_config.enabled>
+    reason: Zero is rejected by current source, so disabling the parent feature is the valid way to return to the non-profiling
+      scheduler.
+  caveats:
+  - There is no universal optimum; prediction quality, sequence history, model shape, NPU kernels, concurrency, and max_num_batched_tokens
+    all affect the result.
+  - 'Lower values do not simply mean smaller chunks: they move predictions in either direction closer to the base chunk size.'
+  - min_chunk and alignment can dominate small changes in smooth_factor and make nearby values produce the same realized chunk.
+  - Compare TTFT and input throughput after startup profiling and, when need_timing is enabled, after online calibration has
+    converged.
+  - Do not use the documentation's nominal 0.0 setting; it contradicts the pinned runtime validation.
+  quick_guide: Keep 1.0 first. If measured chunk volatility or small-chunk overhead hurts latency or throughput, test 0.8
+    and retain it only on benchmark evidence; disable the parent feature instead of setting 0.0.
+analysis_date: '2026-08-02'

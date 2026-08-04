@@ -1,0 +1,79 @@
+name: --enable-elastic-ep
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1038
+- vllm/config/parallel.py:193
+value_type: bool
+default: 'False'
+valid_choices: true, false
+cli_example: --enable-elastic-ep
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'Enables elastic expert parallelism for MoE models, allowing dynamic scaling of data-parallel (DP) and expert-parallel
+  (EP) ranks at runtime using stateless NCCL groups. On Ascend NPU, this parameter affects how DP/EP communication groups
+  are established and managed. When enabled, it forces client_local_only to False in engine ZMQ address allocation (vllm/v1/engine/utils.py:973-974),
+  meaning the front-end API server communicates with engines over TCP rather than local IPC, which can impact latency. It
+  also enables ZMQ ROUTER socket handover (vllm/v1/engine/core_client.py:500) to allow engine replacement during scaling.
+  The parameter requires EPLB (expert parallel load balancing) to be enabled and is incompatible with pipeline parallelism
+  and data-parallel external/hybrid load balancing. On Ascend, the HCCL communication backend must support dynamic group creation
+  for this to work effectively. The primary performance benefit is improved resource utilization through dynamic expert redistribution,
+  but the TCP-based communication path may introduce additional latency compared to local-only mode.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:772-785
+  context: 'Post-init validation: requires enable_eplb=True, forbids pipeline_parallel_size>1, forbids data_parallel_external_lb
+    or data_parallel_hybrid_lb'
+- file: vllm/v1/engine/coordinator.py:91-92
+  context: Forces local_only_eng=False when elastic EP is enabled, allowing inter-node scaling coordination
+- file: vllm/v1/engine/core_client.py:500
+  context: Enables ZMQ ROUTER socket handover for engine replacement during scale-up/down
+- file: vllm/v1/engine/utils.py:379-391
+  context: Creates a TCP store for coordination when elastic EP is enabled
+- file: vllm/v1/engine/utils.py:973-974
+  context: Forces client_local_only=False, switching from local IPC to TCP for engine communication
+- file: vllm/v1/worker/gpu/eplb_utils.py:70-72
+  context: Asserts elastic EP is not used with speculative decoding draft models
+related_parameters:
+- name: --enable-eplb
+  relation: Elastic EP requires EPLB to be enabled; raises ValueError if enable_eplb is False
+- name: --pipeline-parallel-size
+  relation: Elastic EP is incompatible with pipeline parallelism (must be 1)
+- name: --data-parallel-external-lb
+  relation: Elastic EP is incompatible with external data-parallel load balancing
+- name: --data-parallel-hybrid-lb
+  relation: Elastic EP is incompatible with hybrid data-parallel load balancing
+- name: --data-parallel-size
+  relation: Elastic EP works with data-parallel deployments to enable dynamic scaling of DP ranks
+- name: --enable-expert-parallel
+  relation: Elastic EP extends expert parallelism with dynamic scaling capabilities
+constraints:
+- --enable-eplb must be set to true when using elastic EP
+- --pipeline-parallel-size must be 1 when elastic EP is enabled
+- --data-parallel-external-lb and --data-parallel-hybrid-lb must both be false when elastic EP is enabled
+- Elastic EP is not supported with speculative decoding draft models
+tuning_advice:
+  summary: 'Enable only for MoE model deployments that require dynamic scaling of expert-parallel ranks. On Ascend NPU, verify
+    HCCL supports dynamic group creation before enabling.
+
+    '
+  suggested_values:
+  - scenario: Static MoE deployment with fixed DP/EP configuration
+    value: 'false'
+    reason: Elastic EP adds TCP communication overhead and coordination complexity; not needed when scaling is not required
+  - scenario: Dynamic MoE deployment requiring runtime scale-up/down of expert-parallel ranks
+    value: 'true'
+    reason: Enables dynamic expert redistribution and rank scaling, improving resource utilization under varying load
+  caveats:
+  - On Ascend NPU, elastic EP forces TCP-based engine communication instead of local IPC, which may increase per-request latency
+  - Requires HCCL to support dynamic NCCL group creation; verify with your CANN version
+  - Incompatible with speculative decoding — do not combine with eagle/ngram/medusa speculators
+  - The coordination TCP store adds a small startup overhead for port allocation
+  quick_guide: Enable only for MoE models needing dynamic DP/EP scaling; ensure --enable-eplb is also set and pipeline parallelism
+    is disabled
+analysis_date: '2026-07-06'

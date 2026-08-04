@@ -1,0 +1,99 @@
+name: structured_outputs.backend
+type: nested
+category: other
+scope: vllm
+source_file:
+- vllm/sampling_params.py:786
+- vllm/v1/structured_output/__init__.py:131
+value_type: str
+default: auto
+valid_choices:
+- auto
+- xgrammar
+- guidance
+- outlines
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: "This parameter selects the structured output backend engine used for guided decoding (JSON schema, regex,\
+  \ grammar constraints). The backend choice affects token generation overhead because each backend has different grammar\
+  \ compilation and bitmask computation costs. On Ascend NPU, the performance impact is low because: 1) The backend runs on\
+  \ CPU (grammar compilation, bitmask generation) and only the\n   resulting token masks are applied on-device, so NPU-specific\
+  \ acceleration is minimal.\n2) vllm-ascend does not override or specialize this parameter — it inherits the upstream\n \
+  \  vLLM behavior. The Ascend e2e tests (test_guided_decoding.py) pass the backend through\n   `structured_outputs_config`\
+  \ unchanged.\n3) The primary performance factor is backend correctness and feature support (e.g.,\n   \"outlines\" does\
+  \ not support regex), not NPU-specific throughput differences.\nThe \"auto\" default makes opinionated choices based on\
+  \ request content and backend capabilities, which may change between releases.\n"
+usage_locations:
+- file: vllm/sampling_params.py:786
+  context: '_validate_structured_outputs reads structured_outputs_config.backend to set per-request _backend field; enforces
+    that request-level backend selection matches the server-level configuration.
+
+    '
+- file: vllm/v1/structured_output/__init__.py:131
+  context: 'grammar_init lazily instantiates the backend (XgrammarBackend, GuidanceBackend, or OutlinesBackend) based on the
+    _backend value set during validation.
+
+    '
+- file: tests/e2e/pull_request/one_card/test_guided_decoding.py:90
+  context: 'Ascend e2e test passes backend via structured_outputs_config to VllmRunner for JSON schema guided decoding.
+
+    '
+- file: tests/e2e/pull_request/one_card/test_guided_decoding.py:122
+  context: 'Ascend e2e test passes backend via structured_outputs_config for regex guided decoding; skips "outlines" backend
+    due to lack of regex support.
+
+    '
+related_parameters:
+- name: structured_outputs
+  relation: 'The per-request StructuredOutputsParams that specifies the actual constraints (JSON schema, regex, grammar, choice,
+    structural_tag). The backend processes these constraints.
+
+    '
+- name: skip_tokenizer_init
+  relation: 'Structured outputs requires a tokenizer; if skip_tokenizer_init is set, validation raises a ValueError.
+
+    '
+constraints:
+- Only one backend can be used per vLLM server instance; per-request backend selection is not supported.
+- The "outlines" backend does not support regex-based guided decoding.
+- Structured outputs requires a tokenizer and cannot be used with skip_tokenizer_init.
+- An empty string grammar is rejected during validation.
+- An empty list for the "choice" constraint is rejected during validation.
+tuning_advice:
+  summary: 'Use the default "auto" backend unless you encounter specific compatibility issues with your constraint types;
+    the backend choice has minimal NPU-specific performance impact.
+
+    '
+  suggested_values:
+  - scenario: General structured output usage on Ascend NPU
+    value: auto
+    reason: 'Automatically selects the best backend based on request content and library capabilities; avoids manual configuration
+      errors and adapts to future releases.
+
+      '
+  - scenario: JSON schema constraints with complex features unsupported by xgrammar
+    value: auto
+    reason: 'The "auto" mode falls back to guidance or outlines when xgrammar cannot handle the schema, preventing generation
+      failures.
+
+      '
+  - scenario: Regex-based guided decoding
+    value: xgrammar
+    reason: 'The "outlines" backend does not support regex; "xgrammar" and "guidance" both support regex, but "xgrammar" is
+      the default and most tested path.
+
+      '
+  caveats:
+  - The "auto" backend selection behavior may change between vLLM releases, potentially altering which backend is chosen for
+    the same request.
+  - Per-request backend selection is not supported; all requests in a server instance use the same backend configured at startup.
+  - The "outlines" backend lacks regex support and will cause test failures if used with regex constraints.
+  quick_guide: 'Keep the default "auto" backend for structured outputs on Ascend NPU; only change to a specific backend if
+    you encounter unsupported constraint types.
+
+    '
+analysis_date: '2026-07-06'

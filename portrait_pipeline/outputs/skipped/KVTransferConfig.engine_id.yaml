@@ -1,0 +1,7 @@
+name: KVTransferConfig.engine_id
+type: nested
+performance_impact: none
+skip_reason: This value is an identity and routing key for KV-transfer endpoints, not a performance-control knob. Upstream
+  generates a UUID when it is omitted, and vLLM Ascend further appends a UUID before connectors use the value to distinguish
+  local and remote engines. It can affect correctness if engine identifiers collide, but changing a unique identifier does
+  not itself alter latency, throughput, or memory use.

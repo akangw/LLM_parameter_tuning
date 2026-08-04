@@ -1,0 +1,50 @@
+name: VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:1403
+value_type: int
+default: '163840'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This environment variable controls the maximum number of tokens per expert supported by the NVFP4 MoE CUTLASS
+  kernel. It determines the size of a pre-allocated buffer for the blockscale tensor used in NVFP4 quantization of MoE inputs.
+  The buffer size is `MAX_TOKENS_PER_EXPERT * topk` elements. If the actual number of tokens routed to experts (`m_numtopk`)
+  exceeds this limit, the kernel raises an assertion error. On Ascend NPU, this parameter is only relevant when using NVFP4-quantized
+  MoE models with the CUTLASS backend — a GPU-specific code path. vllm-ascend does not override or reference this parameter,
+  and Ascend NPUs do not support the NVFP4 CUTLASS kernel. Therefore, this parameter has no effect on Ascend hardware under
+  normal operation. It may only become relevant if an Ascend-compatible NVFP4 MoE backend is introduced in the future.
+
+  '
+usage_locations:
+- file: vllm/_custom_ops.py:1800
+  context: Read in `cutlass_moe_fp4` to set `MAX_TOKENS_PER_EXPERT` for buffer allocation and assertion check on `m_numtopk`.
+- file: vllm/_custom_ops.py:1863
+  context: Read in `cutlass_moe_fp4_gate_up` to set `MAX_TOKENS_PER_EXPERT` for buffer allocation and assertion check on `m_numtopk`.
+related_parameters:
+- name: VLLM_USE_FLASHINFER_MOE_FP4
+  relation: Must be enabled for NVFP4 MoE quantization path where this parameter is used.
+- name: VLLM_FLASHINFER_MOE_BACKEND
+  relation: The CUTLASS kernel using this parameter is part of the FlashInfer MoE backend.
+constraints:
+- m_numtopk must not exceed VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE × topk, otherwise the kernel raises an assertion error.
+tuning_advice:
+  summary: 'This parameter is specific to the NVFP4 CUTLASS MoE kernel on NVIDIA GPUs and has no effect on Ascend NPU. No
+    tuning is required for Ascend deployments.
+
+    '
+  suggested_values:
+  - scenario: Ascend NPU deployment (all scenarios)
+    value: '163840'
+    reason: The parameter is unused on Ascend NPU; the default value is harmless and requires no modification.
+  caveats:
+  - This parameter only affects the NVFP4 CUTLASS MoE kernel path, which is not supported on Ascend NPU.
+  - Increasing this value on GPU increases pre-allocated buffer memory; on Ascend it has no memory impact.
+  quick_guide: No action needed for Ascend NPU — this parameter is GPU-specific and has no effect.
+analysis_date: '2026-07-06'

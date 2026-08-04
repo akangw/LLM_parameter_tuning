@@ -1,0 +1,79 @@
+name: --kv-cache-dtype-skip-layers
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1106
+- vllm/config/cache.py:114
+value_type: list[str]
+default: '[]'
+valid_choices: list of layer index strings (e.g., '0', '2', '4') or attention type names (e.g., 'sliding_window')
+cli_example: --kv-cache-dtype-skip-layers 0 2 sliding_window
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter selectively disables KV cache quantization for specified layers, causing those layers to use
+  the model''s native dtype (e.g., fp16/bf16) instead of the quantized dtype (e.g., fp8, turboquant_4bit). The primary performance
+  impact is on memory: "skipped layers consume more KV cache memory per token" (e.g., 2 bytes per element for fp16 vs 1 byte
+  for fp8). This reduces the effective number of tokens that can fit in the KV cache, potentially lowering throughput due
+  to more frequent evictions or smaller batch sizes. On Ascend NPU, the memory impact is particularly significant because
+  NPU HBM is a constrained resource. Additionally, when using TurboQuant with mixed skip layers, the platform must compute
+  the LCM of quantized and non-quantized page sizes (vllm/platforms/interface.py:571-581), which can increase per-token page
+  size overhead for all layers, further reducing effective cache capacity. The parameter also affects compute: "skipped layers
+  avoid quantization/dequantization" overhead but lose the memory bandwidth benefits of reduced-precision KV cache access.
+  On Ascend NPUs, where memory bandwidth is often the bottleneck for decode, this tradeoff can significantly impact throughput.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/attention/attention.py:247
+  context: Checks kv_cache_dtype_skip_layers to decide whether to set kv_cache_dtype to 'auto' (native dtype) for a given
+    attention layer, skipping quantization.
+- file: vllm/platforms/interface.py:571
+  context: When skip layers exist alongside TurboQuant layers, computes LCM of quantized and non-quantized page sizes to unify
+    page allocation, potentially increasing page size for all layers.
+- file: vllm/engine/arg_utils.py:1704
+  context: Passes the skip layers list to CacheConfig during engine initialization.
+- file: vllm/v1/attention/backends/turboquant_attn.py:150
+  context: Documents that skipped layers get their own standard-shaped cache allocation separate from TurboQuant packed cache.
+related_parameters:
+- name: --kv-cache-dtype
+  relation: This parameter specifies which layers to exclude from the quantization scheme set by --kv-cache-dtype. Only meaningful
+    when --kv-cache-dtype is set to a quantized dtype (e.g., fp8, turboquant_4bit).
+- name: --calculate-kv-scales
+  relation: When a layer is skipped, calculate_kv_scales is also set to False for that layer, as scale calculation is only
+    needed for quantized KV caches.
+constraints:
+- Layer index values must be strings representing valid integer layer indices present in the model.
+- The 'sliding_window' attention type name only skips layers that have a non-None sliding_window attribute.
+- This parameter has no effect when --kv-cache-dtype is 'auto' (the default), as there is no quantization to skip.
+tuning_advice:
+  summary: Use sparingly to preserve accuracy for critical layers while still benefiting from KV cache quantization memory
+    savings on most layers. On Ascend NPU, prefer skipping fewer layers to maximize HBM utilization.
+  suggested_values:
+  - scenario: Default (no quantization or no skip needed)
+    value: '[]'
+    reason: When KV cache quantization is not enabled or all layers tolerate quantization well, skipping no layers maximizes
+      memory savings and throughput.
+  - scenario: FP8 KV cache with a few accuracy-sensitive layers (e.g., first and last layers)
+    value: '[''0'', ''last_layer_index'']'
+    reason: Some models show accuracy degradation in specific layers under FP8 quantization. Skipping only those layers preserves
+      overall accuracy while retaining ~90%+ of the memory savings. On Ascend NPU, this is a good balance between HBM efficiency
+      and output quality.
+  - scenario: Sliding window attention layers need full precision
+    value: '[''sliding_window'']'
+    reason: Sliding window attention layers may be more sensitive to quantization due to their localized attention pattern.
+      Skipping all sliding window layers by attention type is more maintainable than listing individual indices.
+  caveats:
+  - On Ascend NPU, each skipped layer increases KV cache memory usage by 2x (fp16 vs fp8) or more (vs 4-bit). This directly
+    reduces the maximum context length or batch size the NPU can support.
+  - When using TurboQuant with mixed skip layers, the platform computes the LCM of page sizes, which can increase the per-token
+    page size for ALL layers (not just skipped ones), amplifying the memory overhead beyond just the skipped layers.
+  - Skipping layers eliminates quantization/dequantization overhead for those layers but loses the memory bandwidth reduction
+    of smaller KV cache dtypes. On Ascend NPUs where decode is memory-bandwidth-bound, this can reduce throughput.
+  - This parameter is only effective when --kv-cache-dtype is set to a quantized dtype. With the default 'auto', it has no
+    effect.
+  quick_guide: Start with an empty list. Only add layer indices or 'sliding_window' if you observe accuracy degradation with
+    quantized KV cache, and add as few layers as possible to minimize memory overhead on Ascend NPU.
+analysis_date: '2026-07-06'

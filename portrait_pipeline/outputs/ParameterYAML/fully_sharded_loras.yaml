@@ -1,0 +1,69 @@
+name: --fully-sharded-loras
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/lora.py:38
+- vllm/engine/arg_utils.py:1992
+- docs/source/user_guide/release_notes.md:446
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-lora --fully-sharded-loras
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Upstream LoRAConfig defines this as the switch from partially sharded to fully sharded LoRA layers under tensor
+  parallelism, and explicitly says it is likely faster at high sequence length, LoRA rank, or tensor-parallel size (vllm/config/lora.py:38).
+  Full sharding changes how LoRA work and associated adapter state are partitioned across tensor-parallel ranks, so its principal
+  trade-off is per-rank adapter-memory distribution versus distributed work; the net latency and throughput effect is workload
+  dependent. The current Ascend release notes state that LoRA with tensor parallelism and this flag is fixed and working,
+  and the Ascend TP=2 LoRA test exercises both true and false settings (docs/source/user_guide/release_notes.md:446 and tests/e2e/pull_request/two_card/lora/test_llama32_lora_tp2.py:15).
+usage_locations:
+- file: vllm/engine/arg_utils.py:1992
+  context: EngineArgs builds LoRAConfig with fully_sharded_loras only when enable_lora is true.
+- file: vllm/config/lora.py:38
+  context: LoRAConfig defaults the flag to false and documents the partially versus fully sharded behavior.
+- file: vllm/config/lora.py:87
+  context: The flag participates in the LoRA computation hash, so changing it changes graph-structure configuration.
+- file: docs/source/user_guide/release_notes.md:446
+  context: Ascend release notes record that LoRA with tensor parallelism and this flag is fixed and working.
+- file: tests/e2e/pull_request/two_card/lora/test_llama32_lora_tp2.py:15
+  context: Ascend end-to-end coverage runs LoRA at tensor_parallel_size=2 with both flag values.
+related_parameters:
+- name: --enable-lora
+  relation: LoRAConfig, including this setting, is created only when LoRA is enabled.
+- name: --tensor-parallel-size
+  relation: This setting changes LoRA sharding under tensor parallelism; the documented benefit is most relevant as TP size
+    increases.
+- name: --max-lora-rank
+  relation: Upstream identifies high LoRA rank as a scenario where fully sharded layers are likely faster.
+constraints:
+- The flag has no effect unless --enable-lora is set, because no LoRAConfig is created otherwise.
+- Treat it as a tensor-parallel tuning option; the upstream documentation identifies high sequence length, rank, or TP size
+  as its likely-benefit regime.
+- VLLM_LORA_ENABLE_DUAL_STREAM is disabled with a warning when this flag is enabled.
+tuning_advice:
+  summary: Benchmark enabled and disabled under the actual LoRA workload. Start with enabled for tensor-parallel deployments
+    with long sequences or high LoRA rank; retain the default for workloads that do not show a measured gain.
+  suggested_values:
+  - scenario: Tensor-parallel LoRA serving with high sequence length, high LoRA rank, or a larger TP size.
+    value: true
+    reason: Upstream documents fully sharded layers as likely faster in these conditions, and Ascend currently supports the
+      TP LoRA combination.
+  - scenario: LoRA is disabled, or a measured short-sequence/low-rank workload does not benefit.
+    value: false
+    reason: This is the upstream default; without LoRA the configuration is not created, and the documented speed benefit
+      is conditional rather than universal.
+  caveats:
+  - The exact latency, throughput, and per-rank memory outcome is workload- and topology-dependent; benchmark both values.
+  - On Ascend, rely on a release containing the documented TP LoRA fix; the pinned release notes state it is fixed and working.
+  - Enabling the flag disables VLLM_LORA_ENABLE_DUAL_STREAM with a warning in the current upstream LoRAConfig validator.
+  quick_guide: Enable for TP LoRA when long sequences, high rank, or high TP make it faster in benchmarks; otherwise leave
+    the default false.
+analysis_date: '2026-07-27'

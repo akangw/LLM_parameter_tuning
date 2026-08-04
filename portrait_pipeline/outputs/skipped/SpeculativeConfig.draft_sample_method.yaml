@@ -1,0 +1,6 @@
+name: SpeculativeConfig.draft_sample_method
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source this field is only declared and mentioned by the adjacent rejection-sampling documentation;
+  no runtime code reads draft_sample_method. The pinned vLLM Ascend repository has no definition or usage of the field. Consequently,
+  changing it cannot affect latency, throughput, or memory in these pinned revisions.

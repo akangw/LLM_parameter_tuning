@@ -1,0 +1,58 @@
+name: additional_config.ascend_fusion_config.fusion_ops_gmmswigluquant
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:529
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:69
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls whether to use the GmmSwigluQuant fused operator on Ascend NPUs. When enabled (default:
+  true), the system replaces separate GMM (Grouped Matrix Multiplication), SwiGLU activation, and quantization steps with
+  a single fused kernel. This fusion reduces kernel launch overhead and intermediate memory traffic, typically improving throughput
+  and reducing latency for MoE (Mixture of Experts) models. However, the vllm-ascend documentation explicitly warns that the
+  performance of this fused operator degrades when the total number of NPUs is ≤ 16. In such small-scale deployments, the
+  fusion overhead may outweigh its benefits, leading to lower throughput compared to the non-fused path. The parameter is
+  read in `set_gmmswigluquant_method()` (vllm_ascend/ops/fused_moe/moe_comm_method.py:69) and used to select the communication
+  method for fused MoE operations.
+
+  '
+usage_locations:
+- file: vllm_ascend/ops/fused_moe/moe_comm_method.py:69
+  context: Reads the config value to determine whether to use the fused GmmSwigluQuant operator in MoE communication.
+- file: vllm_ascend/ascend_config.py:529
+  context: Defines the AscendFusionConfig class and initializes the parameter with a default of True.
+related_parameters:
+- name: additional_config.ascend_compilation_config.fuse_norm_quant
+  relation: Another Ascend-specific fusion configuration; both control operator fusion to reduce kernel launch overhead.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Both affect MoE performance on Ascend NPUs; the documentation discusses them together for GLM4.x model tuning.
+constraints: []
+tuning_advice:
+  summary: Enable for deployments with >16 NPUs to improve MoE throughput; disable for ≤16 NPUs to avoid performance degradation.
+  suggested_values:
+  - scenario: Multi-node or large-scale deployment with >16 NPUs total
+    value: true
+    reason: The fused operator reduces kernel launch overhead and memory traffic, improving throughput and latency for MoE
+      models at scale.
+  - scenario: Small-scale deployment with ≤16 NPUs total
+    value: false
+    reason: The vllm-ascend documentation states that the GmmSwigluQuant fusion operator performance degrades when the total
+      number of NPUs is ≤16. Disabling it avoids this regression.
+  caveats:
+  - Performance degradation is documented for deployments with ≤16 NPUs total — always test with your specific model and hardware
+    configuration.
+  - This parameter only affects MoE (Mixture of Experts) models that use SwiGLU activation and quantization; it has no effect
+    on dense models.
+  - The fused operator is an Ascend-specific optimization and is not available in upstream vLLM.
+  quick_guide: Set to false when total NPU count ≤ 16; keep true (default) for larger deployments.
+analysis_date: '2026-07-06'

@@ -1,0 +1,106 @@
+# =============================================================================
+# Stage 1 Coarse Filter Rules
+# =============================================================================
+# These rules are applied locally (no LLM calls) to quickly skip parameters
+# that are clearly not related to runtime performance.
+# =============================================================================
+
+# --- Category-based rules ---
+# Categories that are ALWAYS kept (sent to Stage 2 regardless of other rules)
+always_keep_categories:
+  - parallelism
+  - memory
+  - kv_cache
+  - communication
+  - compilation
+  - quantization
+  - scheduling
+
+# Categories that are conditionally kept (need keyword check)
+conditional_categories:
+  speculation:
+    note: "推测解码相关，影响 decode 阶段性能"
+  model:
+    note: "部分影响（attention backend, dtype 等）"
+  hardware:
+    note: "部分影响（SOC_VERSION, compiler flags 等）"
+
+# Categories that are SKIPPED unless they match keep-keywords
+low_priority_categories:
+  observability:
+    note: "日志/监控类，仅 profiling/tracing 子类影响性能"
+    keep_keywords:
+      - profiler
+      - tracer
+      - collect
+      - dump
+      - debug
+  other:
+    note: "杂项，严格筛选"
+    keep_keywords:
+      - parallel
+      - memory
+      - cache
+      - compile
+      - schedule
+      - batch
+      - chunk
+      - prefill
+      - decode
+      - dispatch
+      - transfer
+
+# --- Name-based skip rules (regex patterns, applied to parameter name) ---
+skip_name_patterns:
+  - '^S3_'               # S3 存储凭证
+  - '_TOKEN$'            # 认证 token
+  - '_KEY$'              # 密钥
+  - '_PASSWORD$'         # 密码
+  - '_SECRET'            # 密钥
+  - '^NO_COLOR$'         # 终端颜色
+  - '^VLLM_VERSION$'     # 版本信息
+  - '^CMAKE_'            # 编译工具链（非运行时）
+  - '^NVCC_'             # NVCC 线程（非 NPU）
+  - '^CUDA_'             # CUDA 相关（非 NPU）
+  - '^MAX_JOBS$'         # 编译并行度（非运行时）
+  - '^VERBOSE$'          # 编译 verbose
+  - '^CXX_COMPILER$'     # 编译器选择（非运行时）
+  - '^C_COMPILER$'       # 编译器选择（非运行时）
+  - '--help$'            # help flag
+  - '--version$'         # version flag
+  - '--quiet$'           # quiet flag
+  - '--no-color$'        # no color flag
+
+# --- Description-based skip rules (regex patterns, applied to description text) ---
+skip_description_patterns:
+  - '(?i)this does not affect (runtime )?performance'
+  - '(?i)for debugging only'
+  - '(?i)only used in (unit )?test'
+  - '(?i)no longer used'
+  - '(?i)this parameter is deprecated'
+  - '(?i)this argument is deprecated'
+  - '(?i)for development purposes only'
+  - '(?i)does not impact inference'
+  - '(?i)only affects logging'
+  - '(?i)only for (package )?building'
+
+# --- Name-based force-keep rules (overrides all skip rules) ---
+force_keep_name_patterns:
+  - '(?i)attention'
+  - '(?i)block.?size'
+  - '(?i)max.?batch'
+  - '(?i)prefill'
+  - '(?i)decode'
+  - '(?i)cache'
+  - '(?i)dispatch'
+  - '(?i)chunk'
+  - '(?i)prefix.?cach'
+  - '(?i)mm.?processor'
+  - '(?i)matmul'
+  - '(?i)all.?reduce'
+  - '(?i)flash.?comm'
+  - '(?i)fused'
+  - '(?i)fusion'
+  - '(?i)quant'
+  - '(?i)dtype'
+  - '(?i)precision'

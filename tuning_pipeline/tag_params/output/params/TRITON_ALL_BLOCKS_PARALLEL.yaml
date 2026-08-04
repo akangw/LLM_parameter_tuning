@@ -1,0 +1,74 @@
+name: TRITON_ALL_BLOCKS_PARALLEL
+type: env
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ops/rotary_embedding.py:474
+- vllm_ascend/ops/rotary_embedding.py:476
+- vllm_ascend/ops/rotary_embedding.py:501
+- vllm_ascend/ops/rotary_embedding.py:523
+value_type: str
+default: null
+valid_choices:
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: On Ascend, this environment variable selects the large-grid execution mode used by Triton for the MRoPE kernel.
+  AscendMRotaryEmbedding.forward_triton checks the leading query dimension immediately before triton_mrope; when that dimension
+  exceeds the empirical grid limit of 65535, it sets the variable to "1" unless it is already "1". The source states that
+  this automatic enablement avoids scheduler or runtime failures, so it materially affects successful latency and throughput
+  for oversized Triton MRoPE launches. The pinned upstream vLLM repository has no direct use of this environment variable.
+usage_locations:
+- file: vllm_ascend/ops/rotary_embedding.py:501
+  context: Checks query.shape[0] against 65535 and sets the process environment variable to "1" immediately before launching
+    triton_mrope.
+- file: vllm_ascend/ops/rotary_embedding.py:523
+  context: Selects forward_triton only when Triton is available, positions is two-dimensional, and MRoPE is interleaved.
+related_parameters: []
+constraints:
+- The verified enabling value is the string "1"; the Ascend check replaces every other value with "1" when query.shape[0]
+  exceeds 65535.
+- Automatic enablement occurs only in the Triton MRoPE path selected when Triton is available, positions.ndim is 2, and mrope_interleaved
+  is true.
+- The 65535 threshold is explicitly described in source as an empirical Ascend NPU safety limit.
+- Once automatically enabled, the value is written to os.environ and remains process-wide; the code does not restore the prior
+  value after the kernel call.
+tuning_advice:
+  summary: Leave the variable unset for normal workloads and rely on vllm-ascend to enable it when an interleaved Triton MRoPE
+    grid exceeds the verified safety threshold.
+  suggested_values:
+  - scenario: Standard Ascend serving, including Triton MRoPE workloads whose leading query dimension does not exceed 65535
+    value: <unset>
+    reason: The current Ascend implementation performs no environment mutation below the threshold and automatically handles
+      oversized grids.
+  - scenario: A deployment that must force the large-grid Triton mode from process startup
+    value: '1'
+    reason: This is the only enabling value verified by the Ascend source and is the value that the implementation selects
+      to avoid scheduler or runtime failures for grids above 65535.
+  caveats:
+  - The pinned repositories do not provide benchmark evidence that manually enabling the variable below the automatic threshold
+    improves latency or throughput.
+  - The variable has no verified effect in the non-Triton MRoPE fallback paths.
+  - Automatic enablement mutates process-wide environment state, so later Triton launches in the same process observe the
+    value "1".
+  quick_guide: Leave it unset by default; use "1" only when deliberately forcing the large-grid mode, while relying on the
+    built-in >65535 safeguard otherwise.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

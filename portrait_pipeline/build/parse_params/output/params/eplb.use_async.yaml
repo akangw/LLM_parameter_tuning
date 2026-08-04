@@ -1,0 +1,70 @@
+name: eplb.use_async
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/config/parallel.py:899
+- vllm/distributed/eplb/eplb_state.py:351
+- vllm/distributed/eplb/eplb_utils.py:73
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: "This parameter controls whether Expert Parallel Load Balancing (EPLB) weight exchange uses non-blocking (asynchronous)\
+  \ communication. When enabled, EPLB weight synchronization between ranks runs in a background thread, overlapping with computation\
+  \ to reduce the performance penalty of load rebalancing. The mechanism works as follows:\n1. In vllm/config/parallel.py:899,\
+  \ when use_async is true and elastic_ep is not enabled,\n   the EPLB communicator backend is set to \"torch_gloo\" (instead\
+  \ of \"torch_nccl\") to avoid\n   NCCL multi-thread conflicts that could cause hangs during async weight exchange.\n\n2.\
+  \ In vllm/distributed/eplb/eplb_state.py:351, the async flag is stored in the EPLB state\n   and used to determine whether\
+  \ weight synchronization runs synchronously or asynchronously.\n\n3. In vllm/distributed/eplb/eplb_utils.py:73-103, when\
+  \ async EPLB is combined with the\n   DeepEP low-latency all-to-all backend and an NCCL-based communicator, the code overrides\n\
+  \   NCCL_MAX_CTAS to prevent deadlocks caused by interleaved NCCL and DeepEP kernel launches.\n\nOn Ascend NPU, the impact\
+  \ depends on whether the HCCL communication library exhibits similar multi-thread conflicts as NCCL. The torch_gloo fallback\
+  \ may have different performance characteristics on Ascend compared to GPU. Async EPLB can improve throughput by hiding\
+  \ communication latency behind computation, but may increase memory usage due to additional buffers for non-blocking operations.\n"
+usage_locations:
+- file: vllm/config/parallel.py:899
+  context: Selects EPLB communicator backend based on use_async flag
+- file: vllm/distributed/eplb/eplb_state.py:351
+  context: Stores async flag in EPLB state for weight synchronization mode
+- file: vllm/distributed/eplb/eplb_utils.py:73
+  context: Overrides NCCL_MAX_CTAS env var when async EPLB is used with DeepEP low-latency
+related_parameters:
+- name: enable_eplb
+  relation: Must be enabled for use_async to have any effect
+- name: eplb_config.communicator
+  relation: use_async influences the default communicator backend selection
+- name: enable_elastic_ep
+  relation: When elastic_ep is enabled, communicator defaults to pynccl regardless of use_async
+- name: all2all_backend
+  relation: When set to deepep_low_latency with async EPLB, triggers NCCL_MAX_CTAS override
+constraints:
+- enable_eplb must be true for use_async to take effect
+- When enable_elastic_ep is true, use_async does not affect communicator selection (pynccl is always used)
+tuning_advice:
+  summary: Enable async EPLB to overlap weight synchronization with computation, but be aware of potential communication library
+    conflicts on Ascend NPU.
+  suggested_values:
+  - scenario: High-throughput MoE inference where EPLB rebalancing overhead is noticeable
+    value: 'true'
+    reason: Overlaps weight exchange communication with computation, reducing the latency impact of load rebalancing steps
+  - scenario: Stability-sensitive deployments or when using HCCL-based communicators on Ascend NPU
+    value: 'false'
+    reason: Synchronous mode avoids potential multi-thread conflicts between HCCL and other communication libraries; safer
+      default for Ascend where torch_gloo fallback behavior may differ from GPU
+  caveats:
+  - On Ascend NPU, the torch_gloo backend used for async EPLB may have different performance characteristics than on GPU;
+    test thoroughly before enabling in production
+  - Async EPLB with DeepEP low-latency all-to-all requires NCCL_MAX_CTAS override to prevent deadlocks; this override may
+    not apply to HCCL on Ascend
+  - Async mode may increase memory usage due to additional communication buffers
+  quick_guide: Enable for throughput gains in MoE models with frequent EPLB rebalancing; keep disabled if stability issues
+    arise on Ascend NPU.
+analysis_date: '2026-07-06'

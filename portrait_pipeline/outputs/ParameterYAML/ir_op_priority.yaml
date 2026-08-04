@@ -1,0 +1,64 @@
+name: --ir-op-priority
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/kernel.py:20
+- vllm/config/kernel.py:189
+- vllm/forward_context.py:325
+- vllm_ascend/platform.py:208
+value_type: dict
+default: platform-dependent
+valid_choices:
+  rms_norm: list of provider names or a comma-separated provider string
+  fused_add_rms_norm: list of provider names or a comma-separated provider string
+cli_example: --ir-op-priority '{"rms_norm":["native"],"fused_add_rms_norm":["native"]}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: The CLI value is converted to IrOpPriorityConfig and, for each forward-pass context, set_priority imports the
+  current platform's IR kernels and installs the configured provider order for rms_norm and fused_add_rms_norm. The first
+  available provider therefore determines the kernel path for these frequently executed operations. KernelConfig appends platform
+  defaults to any user list and includes the resulting priority and provider implementation UUIDs in the compilation hash,
+  so a change can also cause a different compiled artifact. On Ascend, NPUPlatform supplies compilation defaults but does
+  not override this IR-priority interface in the pinned source; use only providers registered by the installed vLLM/Ascend
+  stack.
+usage_locations:
+- file: vllm/engine/arg_utils.py:719
+  context: Converts a dictionary CLI value into IrOpPriorityConfig before engine configuration is created.
+- file: vllm/config/kernel.py:189
+  context: Appends current-platform default provider priorities to the user-supplied order.
+- file: vllm/forward_context.py:325
+  context: Activates the priority lists for the duration of every forward-pass context.
+- file: vllm/config/vllm.py:99
+  context: Uses the first rms_norm provider to decide whether norm/quant fusion is enabled.
+- file: vllm_ascend/platform.py:208
+  context: Applies Ascend-specific compilation defaults; the pinned NPU platform has no ir-op-priority override.
+related_parameters:
+- name: --compilation-config
+  relation: IR provider priority participates in KernelConfig's compilation hash and affects compiled artifacts.
+- name: --enforce-eager
+  relation: Disabling compilation changes the execution context in which selected IR providers run.
+constraints:
+- 'The mapping may contain only supported IrOpPriorityConfig fields: rms_norm and fused_add_rms_norm.'
+- Each value must be a list of strings or one comma-separated string; unknown provider names are not portable across installations.
+- Platform defaults are appended, so a user-specified provider should precede fallback providers when strict preference is
+  required.
+tuning_advice:
+  summary: Benchmark supported provider orders on the target Ascend model and workload; retain a known-good fallback provider.
+  suggested_values:
+  - scenario: Correctness baseline or provider-debugging on an Ascend deployment
+    value: '{"rms_norm":["native"],"fused_add_rms_norm":["native"]}'
+    reason: Uses the upstream native provider first, making it easier to isolate issues from optional registered IR implementations.
+  - scenario: A validated non-native provider is registered by the deployed stack
+    value: '{"rms_norm":["<validated-provider>","native"],"fused_add_rms_norm":["<validated-provider>","native"]}'
+    reason: Prioritizes the benchmarked provider while preserving native fallback through the configured ordering.
+  caveats:
+  - Do not use the placeholder validated-provider literally; replace it only with a provider registered in the running environment.
+  - The pinned Ascend platform does not define an Ascend-specific default IR provider order, so performance claims require
+    workload measurement.
+  - Changing this setting can invalidate or select a different compilation cache entry.
+  quick_guide: Start with native first, then benchmark a registered provider before placing it ahead of native.
+analysis_date: '2026-07-27'

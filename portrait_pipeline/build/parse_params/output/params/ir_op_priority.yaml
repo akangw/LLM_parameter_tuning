@@ -1,0 +1,66 @@
+name: --ir-op-priority
+type: cli
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/kernel.py:132
+- vllm/engine/arg_utils.py:1397
+value_type: dict
+default: <computed>
+valid_choices: dict with op names as keys and list of backend strings as values
+cli_example: '--ir-op-priority ''{"rms_norm": ["aiter", "native"]}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the dispatch priority of vLLM IR (Intermediate Representation) operators during the
+  forward pass. It is a dict mapping operator names (e.g., "rms_norm", "fused_add_rms_norm") to ordered lists of backend implementations.
+  During model execution, vLLM tries each backend in priority order and dispatches to the first available one. The choice
+  of backend directly affects kernel performance: "\"aiter\" uses AMD AITer kernels (ROCm), \"native\" uses PyTorch native
+  ops," "oink" uses external Oink plugins. On Ascend NPU, vllm-ascend may register its own custom ops that can be selected
+  via this mechanism. The priority is set via a context manager (ir_op_priority.set_priority()) in the forward context (vllm/forward_context.py:325),
+  meaning it affects every operator dispatch during inference. The parameter also influences whether norm fusion is enabled
+  (vllm/config/vllm.py:102) and whether norm-pad fusion is enabled (vllm/config/vllm.py:162). Platform-specific defaults are
+  appended automatically during VllmConfig.__post_init__ via current_platform.get_default_ir_op_priority().
+
+  '
+usage_locations:
+- file: vllm/forward_context.py:325
+  context: Sets IR op priority via context manager during forward pass execution
+- file: vllm/config/vllm.py:102
+  context: Checks if rms_norm priority is not 'native' to enable norm fusion
+- file: vllm/config/vllm.py:162
+  context: Checks if fused_add_rms_norm priority is 'aiter' to enable norm-pad fusion
+- file: vllm/model_executor/layers/layernorm.py:75
+  context: Reads priority to determine whether to pass weight to native RMS norm implementation
+- file: vllm/config/kernel.py:193
+  context: Platform defaults appended via get_default_ir_op_priority()
+related_parameters:
+- name: --compilation-config
+  relation: Compilation config's ir_enable_torch_wrap interacts with IR op dispatch
+- name: VLLM_USE_OINK_OPS
+  relation: Environment variable that adds 'oink' to default priority for supported ops
+constraints:
+- Each op key must map to a list of valid backend strings (e.g., 'native', 'aiter', 'oink')
+- The dict must be valid JSON when passed via CLI
+tuning_advice:
+  summary: 'On Ascend NPU, vllm-ascend may register custom op implementations; set priority to prefer Ascend-optimized backends
+    over native PyTorch for critical ops like rms_norm.
+
+    '
+  suggested_values:
+  - scenario: Ascend NPU with vllm-ascend custom ops registered
+    value: '{"rms_norm": ["ascend", "native"], "fused_add_rms_norm": ["ascend", "native"]}'
+    reason: Prioritizes Ascend-optimized kernel implementations when available, falling back to native PyTorch
+  - scenario: Debugging or verifying correctness
+    value: '{"rms_norm": ["native"]}'
+    reason: Forces native PyTorch implementation to isolate custom op issues
+  caveats:
+  - vllm-ascend does not appear to override this parameter directly, but platform defaults from get_default_ir_op_priority()
+    may append Ascend-specific backends
+  - The 'oink' backend requires device capability 100 and external plugin registration; not applicable to Ascend NPU
+  - Setting a backend that is not available on Ascend will cause fallback to the next priority, adding dispatch overhead
+  - Norm fusion (vllm/config/vllm.py:102) is disabled when rms_norm priority is 'native', which may reduce performance
+  quick_guide: Prefer Ascend-registered backends for rms_norm and fused_add_rms_norm; use 'native' only for debugging.
+analysis_date: '2026-07-06'

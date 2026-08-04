@@ -1,0 +1,94 @@
+name: CompilationConfig.pass_config.fuse_act_quant
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/compilation.py:123
+- vllm/config/vllm.py:106
+- docs/design/fusions.md:345
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: -cc.pass_config.fuse_act_quant=True
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Controls a post-gradient Inductor fusion of a custom SiLU-and-multiply activation followed by supported FP8
+  or NVFP4 quantization into one kernel. Fusion avoids a separate kernel launch and avoids materializing the full-precision
+  post-activation tensor, reducing memory traffic and temporary tensor lifetime. The pinned design documentation reports an
+  indicative 1-4% end-to-end speedup, dependent on hardware, quantization scheme, model, and shapes. A null value is resolved
+  from the optimization level: O0 sets false, while O1-O3 conditionally enable it when silu_and_mul or quant_fp8 uses a custom
+  op, or for an NVFP4-quantized model. The pinned vllm-ascend repository contains no reference, override, or matching pass
+  for this upstream field, so this portrait is scoped to upstream vLLM rather than Ascend execution.'
+usage_locations:
+- file: vllm/config/compilation.py:123
+  context: Declares the delayed-default boolean in PassConfig; the field participates in the pass-configuration hash used
+    for compiled-graph cache identity.
+- file: vllm/config/vllm.py:106
+  context: Computes the conditional O1-O3 default from custom silu_and_mul or quant_fp8 operation selection, or NVFP4 model
+    quantization.
+- file: docs/design/fusions.md:345
+  context: Documents the fused operation, conditional enablement, indicative speedup, and supported FP8/NVFP4 hardware and
+    quantization combinations.
+related_parameters:
+- name: optimization_level
+  relation: 'Supplies the effective default when this field remains null: O0 disables it and O1-O3 use the conditional enablement
+    predicate.'
+- name: CompilationConfig.pass_config.eliminate_noops
+  relation: Should remain enabled because disabling no-op elimination can prevent the SiLU-and-multiply plus quantization
+    pattern from matching.
+- name: CompilationConfig.custom_ops
+  relation: Selection of custom silu_and_mul or quant_fp8 operations makes the optimization-level default resolve to true.
+constraints:
+- The optimization applies only to compiled Inductor graphs containing a supported SiLU-and-multiply followed by quantization
+  pattern; it has no eager-mode benefit.
+- Supported upstream combinations are FP8 static per-tensor on CUDA/ROCm, FP8 dynamic groups of 128 or 64 on supported CUDA
+  devices, NVFP4 on CUDA SM100+ with the required fused operator, and FP8 per-token-group through ROCm AITER.
+- XPU platform configuration explicitly disables this fusion as unsupported.
+- Explicit true or false overrides the optimization-level-derived default.
+tuning_advice:
+  summary: Leave the value null to use vLLM's hardware- and model-aware optimization defaults. Force true only for a supported
+    quantized compiled workload when validating the fusion, and force false to diagnose compiler or fused-kernel correctness
+    issues.
+  suggested_values:
+  - scenario: Normal deployment using O1, O2, or O3
+    value: leave unset
+    reason: Lets vLLM enable the pass only when custom operations or NVFP4 make the explicit fusion preferable to Inductor's
+      native fusion.
+  - scenario: Supported FP8 or NVFP4 compiled workload requiring explicit fusion
+    value: true
+    reason: Adds the matching fusion pass to reduce kernel-launch and intermediate activation traffic when the graph contains
+      a supported pattern.
+  - scenario: Compiler debugging, correctness isolation, eager mode, or XPU
+    value: false
+    reason: Avoids an inapplicable or suspect custom fusion; XPU disables it regardless because the pass is not supported
+      there.
+  caveats:
+  - On NVIDIA, native Inductor fusion can be faster when both operations use native implementations, which is why automatic
+    enablement is conditional.
+  - Setting true does not guarantee a match; quantization scheme, platform capability, operator selection, graph shape, and
+    no-op elimination all affect whether a replacement occurs.
+  - The documented 1-4% speedup is indicative; benchmark warm steady-state latency and throughput on the target model and
+    serving shapes.
+  - The memory effect is reduced intermediate materialization and traffic, not a guaranteed material reduction in model-weight
+    or KV-cache capacity.
+  quick_guide: Use null normally; use true for a supported compiled FP8/NVFP4 A/B test, and use false for debugging or unsupported
+    platforms.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

@@ -1,0 +1,75 @@
+name: --skip-mm-profiling
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:183
+- vllm/engine/arg_utils.py:1222
+- vllm/v1/worker/gpu_model_runner.py:5892
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --skip-mm-profiling
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'When --skip-mm-profiling is enabled (set to true), the vLLM engine skips the memory profiling step for the
+  multimodal encoder and encoder cache during engine initialization. In the v1 worker''s profile_run method (vllm/v1/worker/gpu_model_runner.py:5892),
+  the code checks mm_config.skip_mm_profiling: if true, it logs a message and bypasses the encoder profiling entirely. This
+  reduces engine startup time (lower cold-start latency) but shifts the responsibility to the user for estimating the peak
+  memory usage of multimodal encoder activations and embedding caches. On Ascend NPU, where memory management is critical
+  due to limited HBM capacity, skipping profiling can lead to OOM errors at runtime if the user underestimates memory requirements,
+  or wasted memory if they overestimate. The parameter does not affect steady-state throughput directly, but incorrect memory
+  estimation can cause request failures or suboptimal KV cache allocation, indirectly impacting throughput.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_model_runner.py:5892
+  context: In profile_run(), checks skip_mm_profiling to decide whether to profile multimodal encoder and encoder cache memory
+    usage.
+- file: vllm/config/multimodal.py:183
+  context: Field definition with default=False and docstring explaining the trade-off between startup time and memory estimation
+    responsibility.
+- file: vllm/engine/arg_utils.py:566
+  context: EngineArgs attribute declaration, defaulting to MultiModalConfig.skip_mm_profiling.
+- file: vllm/engine/arg_utils.py:1547
+  context: Passed to ModelConfig during engine initialization.
+related_parameters:
+- name: --max-model-len
+  relation: Memory profiling results influence KV cache block allocation; skipping profiling may require manual adjustment
+    of --max-model-len or --gpu-memory-utilization to avoid OOM.
+- name: --gpu-memory-utilization
+  relation: When --skip-mm-profiling is used, users may need to lower --gpu-memory-utilization to leave headroom for unprofiled
+    multimodal encoder memory.
+- name: --enable-mm-embeds
+  relation: When --enable-mm-embeds is set and all modality limits are 0, encoder profiling is automatically skipped regardless
+    of --skip-mm-profiling.
+constraints:
+- Only takes effect for multimodal models; has no effect on text-only models.
+- When --enable-mm-embeds is set and all modality limits are 0 (embedding-only mode), encoder profiling is skipped automatically
+  regardless of this flag.
+tuning_advice:
+  summary: Enable --skip-mm-profiling to reduce engine startup time for multimodal models on Ascend NPU, but manually reserve
+    extra GPU memory to avoid runtime OOM.
+  suggested_values:
+  - scenario: Production deployment with known multimodal workload and stable memory patterns
+    value: true
+    reason: Reduces cold-start latency by skipping encoder profiling; memory headroom can be pre-calculated and reserved via
+      --gpu-memory-utilization.
+  - scenario: Development or first-time deployment with unknown multimodal memory requirements
+    value: false
+    reason: Allows vLLM to automatically profile encoder memory usage and allocate KV cache safely, preventing OOM errors
+      on Ascend NPU where HBM is limited.
+  caveats:
+  - On Ascend NPU, HBM capacity is typically smaller than high-end GPUs, making accurate memory estimation critical. Skipping
+    profiling without proper manual headroom can cause OOM.
+  - The parameter only affects startup time (latency), not steady-state inference throughput. The primary risk is memory misconfiguration.
+  - If you enable this flag, monitor GPU memory usage closely during initial runs and adjust --gpu-memory-utilization downward
+    to leave room for unprofiled encoder activations.
+  quick_guide: Set --skip-mm-profiling to speed up engine startup for multimodal models on Ascend NPU, but reduce --gpu-memory-utilization
+    by 5-10% to compensate for unprofiled encoder memory.
+analysis_date: '2026-07-06'

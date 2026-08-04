@@ -1,0 +1,111 @@
+name: KVTransferConfig.kv_connector_extra_config.num_cpu_blocks
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/kv_offload/npu.py:20
+- vllm_ascend/kv_offload/cpu_npu.py:90
+- docs/source/user_guide/feature_guide/kv_cache_cpu_offload.md:68
+- vllm/config/kv_transfer.py:60
+value_type: int
+default: null
+valid_choices: A positive integer; it is required when NPUOffloadingSpec is selected.
+cli_example: --kv-transfer-config '{"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"num_cpu_blocks":1000,"block_size":128,"spec_name":"NPUOffloadingSpec","spec_module_path":"vllm_ascend.kv_offload.npu"}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: 'This Ascend-specific extra setting fixes the capacity of the CPU KV-cache offload pool in blocks. NPUOffloadingSpec
+  passes it both to the scheduler-side CPUOffloadingManager and to the worker-side CpuNpuOffloadingHandler. The handler preallocates
+  key and value CPU tensors for every KV-cache layer with a block dimension proportional to num_cpu_blocks, so host-memory
+  consumption grows linearly with this value (and with the effective CPU block size, layer count, KV dimensions, and dtype).
+  A larger pool can retain more evicted prefixes, increasing the chance that an NPU cache miss can be restored asynchronously
+  from CPU instead of recomputed; this can improve effective cache capacity, request latency, and throughput in memory-constrained,
+  prefix-reusing workloads. Excess capacity consumes host memory without benefit and may cause host OOM. This key is not an
+  upstream KVTransferConfig field: upstream merely provides the connector-owned kv_connector_extra_config dictionary, while
+  the pinned Ascend NPUOffloadingSpec defines its meaning.'
+usage_locations:
+- file: vllm_ascend/kv_offload/npu.py:20
+  context: Reads the connector extra value, rejects a missing or falsy value, and stores it as the NPU offloading specification's
+    CPU-block capacity.
+- file: vllm_ascend/kv_offload/npu.py:37
+  context: Uses the value as num_blocks when constructing the scheduler-side CPUOffloadingManager.
+- file: vllm_ascend/kv_offload/npu.py:52
+  context: Passes the value into CpuNpuOffloadingHandler for worker-side storage and transfers.
+- file: vllm_ascend/kv_offload/cpu_npu.py:90
+  context: Sizes each layer's preallocated CPU key and value tensors from num_cpu_blocks multiplied by the CPU-to-NPU block-size
+    factor.
+- file: docs/source/user_guide/feature_guide/kv_cache_cpu_offload.md:68
+  context: Documents the setting as the number of CPU-memory blocks and explains that larger values support longer-context
+    scenarios at proportional memory cost.
+- file: vllm/config/kv_transfer.py:60
+  context: Defines kv_connector_extra_config as the generic dictionary through which connector-specific keys such as this
+    one are supplied.
+related_parameters:
+- name: KVTransferConfig.kv_connector_extra_config.block_size
+  relation: Sets the CPU-side block size; together with this block count, model KV shape, layer count, and dtype it determines
+    allocated host memory.
+- name: KVTransferConfig.kv_connector_extra_config.spec_name
+  relation: Must select NPUOffloadingSpec for this Ascend-specific key to be read.
+- name: KVTransferConfig.kv_connector_extra_config.spec_module_path
+  relation: Must point to vllm_ascend.kv_offload.npu so the Ascend offloading specification is loaded.
+- name: KVTransferConfig.kv_connector
+  relation: Must select OffloadingConnector for the documented CPU-offload path.
+- name: KVTransferConfig.kv_role
+  relation: The documented bidirectional offload configuration uses kv_both to store NPU blocks on CPU and load them back.
+- name: --gpu-memory-utilization
+  relation: Controls NPU KV-cache capacity; lowering it leaves fewer NPU blocks and can make the CPU offload pool more active.
+constraints:
+- The value has no default in NPUOffloadingSpec and must be explicitly supplied; null and 0 are rejected as missing.
+- Use a positive integer. Negative sizes are not meaningful and cannot form the downstream CPU tensor or block pool.
+- The documented configuration requires kv_connector=OffloadingConnector, kv_role=kv_both, spec_name=NPUOffloadingSpec, and
+  spec_module_path=vllm_ascend.kv_offload.npu.
+- block_size must be a multiple of the NPU-side KV-cache block size; the handler asserts integral CPU-to-NPU block expansion.
+- The chosen count must fit available host memory after accounting for all layers' key and value tensors, effective CPU block
+  size, KV dimensions, dtype, and other process memory.
+tuning_advice:
+  summary: Choose the smallest positive pool that retains the useful working set of offloaded prefixes, then benchmark cache
+    behavior and end-to-end service metrics while monitoring host memory.
+  suggested_values:
+  - scenario: Initial Ascend CPU-offload evaluation
+    value: 1000
+    reason: This is the example value in the pinned Ascend guide; it is a starting point, not a universal optimum, and must
+      be checked against the model's bytes per block and available host memory.
+  - scenario: Long-context or high-concurrency workload with reusable prefixes and host-memory headroom
+    value: Increase from the measured baseline
+    reason: More CPU blocks retain more evicted KV data and can reduce recomputation when CPU-resident prefixes are reused.
+  - scenario: Host-memory pressure or little prefix reuse
+    value: Decrease from the measured baseline
+    reason: A smaller pool lowers linear CPU KV-cache allocation when additional retained blocks do not produce useful offload
+      hits.
+  caveats:
+  - The same count can consume very different amounts of memory across models, dtypes, block sizes, and parallel layouts.
+  - More capacity does not make CPU-to-NPU transfer faster and can be wasted when requests do not reuse offloaded prefixes.
+  - Too few blocks increase LRU eviction and may forfeit reuse opportunities; too many may fail during eager CPU tensor allocation
+    or pressure the host into paging.
+  - Pinned memory is used only when available, so transfer behavior also depends on host/platform pin-memory support.
+  quick_guide: Start with 1000 only as a documented baseline, calculate and observe host memory, then raise the count until
+    useful CPU-cache retention stops improving latency or throughput; lower it immediately if host memory is pressured.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

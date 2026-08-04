@@ -1,0 +1,69 @@
+name: additional_config.profiling_chunk_config.config
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:54
+value_type: dict
+default: '''{}'''
+valid_choices: 'A dictionary with keys: ''enabled'' (bool), ''min_chunk'' (int), ''max_chunk'' (int), ''chunk_granularity''
+  (int)'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls chunked prefill profiling for pipeline-parallel (PP > 1) deployments on Ascend NPU.
+  When enabled, the scheduler splits prefill requests into chunks bounded by min_chunk and max_chunk, allowing pipeline stages
+  to overlap computation more effectively. The chunk_granularity controls the step size for chunk sizing. The mechanism directly
+  affects how tokens are batched and dispatched across pipeline stages, which impacts both throughput (better pipeline utilization)
+  and latency (chunking may increase time-to-first-token for large prefill requests). The parameter is only consumed in vllm-ascend''s
+  AscendConfig initialization (vllm_ascend/ascend_config.py:54-55) and passed to ProfilingChunkConfig. It has no effect when
+  pipeline_parallel_size <= 1 (raises ValueError). It is mutually exclusive with enable_balance_scheduling (raises ValueError
+  if both enabled).
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:54
+  context: ProfilingChunkConfig is instantiated from additional_config['profiling_chunk_config'] dict
+- file: vllm_ascend/ascend_config.py:56
+  context: When enabled, validates min_chunk against max_num_batched_tokens and clamps if needed
+- file: vllm_ascend/ascend_config.py:68
+  context: When enabled, validates that pipeline_parallel_size > 1, raises ValueError otherwise
+- file: vllm_ascend/ascend_config.py:89
+  context: When enabled, checks mutual exclusion with enable_balance_scheduling, raises ValueError if both enabled
+related_parameters:
+- name: pipeline_parallel_size
+  relation: profiling_chunk_config requires pipeline_parallel_size > 1; disabled otherwise
+- name: max_num_batched_tokens
+  relation: min_chunk is clamped to max_num_batched_tokens if min_chunk exceeds it
+- name: enable_balance_scheduling
+  relation: Mutually exclusive; cannot be enabled simultaneously with profiling_chunk_config
+constraints:
+- pipeline_parallel_size must be greater than 1 when profiling_chunk_config is enabled
+- enable_balance_scheduling must be disabled when profiling_chunk_config is enabled
+- min_chunk is automatically clamped to max_num_batched_tokens if min_chunk exceeds it
+tuning_advice:
+  summary: Enable profiling_chunk_config only for pipeline-parallel deployments (PP > 1) to improve pipeline utilization through
+    chunked prefill scheduling.
+  suggested_values:
+  - scenario: Pipeline-parallel deployment with PP > 1 and large prefill requests
+    value:
+      enabled: true
+      min_chunk: 256
+      max_chunk: 8192
+      chunk_granularity: 128
+    reason: Balances pipeline utilization with prefill latency; min_chunk=256 ensures small requests are not unnecessarily
+      split, max_chunk=8192 prevents excessive chunking of large requests.
+  - scenario: Single-node or PP=1 deployment
+    value:
+      enabled: false
+    reason: profiling_chunk_config has no effect and raises an error when PP <= 1; disable it to avoid startup failure.
+  caveats:
+  - Enabling chunked prefill may increase time-to-first-token (TTFT) for large prefill requests because the prefill is split
+    into multiple chunks processed sequentially.
+  - min_chunk is silently clamped to max_num_batched_tokens if it exceeds that value, which may cause unexpected chunk sizes.
+  - This feature is mutually exclusive with enable_balance_scheduling; enabling both causes a startup error.
+  quick_guide: Set enabled=true with min_chunk=256, max_chunk=8192 for PP>1 deployments; disable entirely for PP<=1.
+analysis_date: '2026-07-06'

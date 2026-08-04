@@ -1,0 +1,89 @@
+name: VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:112
+- setup.py:342
+value_type: str
+default: null
+valid_choices:
+- '0'
+- '1'
+- null
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether the vllm-ascend C++ extension is compiled with support for `aclrtMemcpyBatchAsync`,
+  a CANN API that performs batched memory copies between host and device. The primary use case is KV cache offloading — when
+  the KV cache is swapped between NPU HBM and CPU RAM (e.g., under memory pressure or for prefix caching), batched memcpy
+  can significantly reduce the overhead of many small transfers by issuing them as a single batch operation. Enabling this
+  feature (value "1") forces the compile-time inclusion of the batched memcpy code path. Disabling it (value "0") forces exclusion.
+  When unset (null), the CMake build system auto-detects whether the installed CANN headers support the API. The performance
+  impact is medium because it only affects offloading scenarios — if KV cache offloading is not active, this parameter has
+  no runtime effect. However, when offloading IS active, the difference between batched and individual memcpy calls can be
+  substantial for latency-sensitive workloads.
+
+  '
+usage_locations:
+- file: setup.py:342-345
+  context: 'During vllm-ascend C++ extension build, the env var value is passed to CMake as -DVLLM_ASCEND_ENABLE_BATCH_MEMCPY.
+    When None, the flag is omitted and CMake auto-detects from CANN headers.
+
+    '
+- file: vllm_ascend/envs.py:110-112
+  context: 'Defined in the env_variables dict with lazy evaluation. Returns the raw string value or None if unset.
+
+    '
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_MLAPO
+  relation: 'Both are vllm-ascend env vars that control Ascend-specific optimizations at different levels — MLAPO affects
+    DeepSeek W8A8 model execution, while BATCH_MEMCPY affects KV cache offloading infrastructure.
+
+    '
+- name: --swap-space
+  relation: 'The vLLM CLI parameter that controls CPU swap space size for KV cache offloading. VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+    optimizes the transfer mechanism when swap-space is actually used.
+
+    '
+constraints:
+- This is a compile-time flag — changing its value requires rebuilding the vllm-ascend C++ extension (pip install -e . or
+  similar).
+- The auto-detection path (None) depends on the installed CANN version; if CANN headers do not expose aclrtMemcpyBatchAsync,
+  the feature is silently disabled.
+tuning_advice:
+  summary: 'Enable batched memcpy if your deployment uses KV cache offloading (swap-space > 0) and your CANN version supports
+    it; otherwise leave unset for auto-detection.
+
+    '
+  suggested_values:
+  - scenario: KV cache offloading is active (--swap-space > 0) and CANN version supports aclrtMemcpyBatchAsync
+    value: '''"1"'''
+    reason: 'Forces the batched memcpy code path, reducing per-transfer overhead when KV cache blocks are swapped between
+      NPU HBM and CPU RAM. This directly improves latency during prefill-decode transitions that trigger offloading.
+
+      '
+  - scenario: KV cache offloading is not used (--swap-space 0 or default)
+    value: 'null'
+    reason: 'The batched memcpy code path has no effect when offloading is inactive. Leaving it unset allows auto-detection
+      and avoids unnecessary compile-time dependencies.
+
+      '
+  - scenario: CANN version is known to have buggy or missing aclrtMemcpyBatchAsync support
+    value: '''"0"'''
+    reason: 'Explicitly disables the feature to prevent compilation errors or runtime crashes from a broken/missing CANN API.
+
+      '
+  caveats:
+  - This is a compile-time flag, not a runtime toggle. After changing the value, you must rebuild the vllm-ascend extension.
+  - When set to '1' but the CANN headers lack aclrtMemcpyBatchAsync, the CMake build will fail — check CANN compatibility
+    first.
+  - The performance benefit only materializes when KV cache offloading actually occurs; for pure HBM-resident workloads, this
+    flag has zero impact.
+  quick_guide: 'Set to "1" if you use --swap-space and your CANN supports aclrtMemcpyBatchAsync; otherwise leave unset.
+
+    '
+analysis_date: '2026-07-06'

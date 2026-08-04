@@ -1,0 +1,83 @@
+name: additional_config.weight_nz_mode
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:212
+- vllm_ascend/utils.py:209
+- vllm_ascend/envs.py:92
+- docs/source/user_guide/configuration/additional_config.md:97
+value_type: int
+default: 1
+valid_choices: 0, 1, 2
+cli_example: 'vllm serve MODEL --additional-config ''{"weight_nz_mode": 2}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: Selects which Ascend model weights are converted to the device-specific FRACTAL_NZ layout. On non-310P devices,
+  0 prevents conversion, 1 converts quantized or other supported non-floating weights while leaving FP16/BF16 weights unchanged,
+  and 2 also converts FP16/BF16 weights. The conversion is performed with torch_npu.npu_format_cast and is used by linear,
+  fused-MoE, quantization, and attention weight-loading paths, so it can change matrix execution efficiency and the device-memory
+  layout of a substantial fraction of model weights. The project deliberately defaults float weights to mode 1 because mode
+  2 regressed performance in some float workloads; any benefit therefore depends on the model, dtype, operators, and NPU generation.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:212
+  context: Reads weight_nz_mode from additional_config, with the deprecated VLLM_ASCEND_ENABLE_NZ environment variable as
+    the fallback.
+- file: vllm_ascend/utils.py:209
+  context: Implements dtype-, device-, and mode-dependent eligibility for weight conversion and calls npu_format_cast with
+    ACL_FORMAT_FRACTAL_NZ.
+- file: vllm_ascend/ops/linear.py:87
+  context: Converts supported linear-layer weights during post-load processing.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:126
+  context: Converts fused-MoE expert weights during post-load processing.
+- file: vllm_ascend/worker/worker.py:219
+  context: Rejects wake-up while any nonzero NZ mode is active because of possible model-parameter precision issues in reinforcement-learning
+    scenarios.
+- file: vllm_ascend/xlite/xlite.py:201
+  context: Enables Xlite weight_nz only when the configured mode equals 2.
+related_parameters:
+- name: VLLM_ASCEND_ENABLE_NZ
+  relation: Deprecated environment-variable fallback with the same integer value; additional_config.weight_nz_mode takes precedence
+    when explicitly set.
+- name: additional_config.enable_kv_nz
+  relation: Independently controls an NZ layout for MLA KV cache rather than model weights.
+- name: VLLM_BATCH_INVARIANT
+  relation: Ascend batch-invariant setup forcibly changes weight_nz_mode to 0.
+constraints:
+- Only integer modes 0, 1, and 2 have documented semantics.
+- FP32 and meta tensors are never converted, regardless of the selected mode.
+- On Ascend 310P, supported non-FP32, non-meta weights are always converted; weight_nz_mode does not disable the conversion
+  there.
+- On non-310P devices, FP16 and BF16 weights convert only in mode 2; mode 1 still converts quantized or other supported dtypes.
+- Worker wake-up is incompatible with nonzero weight_nz_mode and raises an error instructing the user to select mode 0.
+tuning_advice:
+  summary: Keep mode 1 for ordinary inference. Benchmark mode 2 only for FP16/BF16 workloads where FRACTAL_NZ may help, and
+    use mode 0 when conversion must be disabled or the worker wake-up/RL path is required.
+  suggested_values:
+  - scenario: General inference, especially quantized models
+    value: 1
+    reason: 'This is the maintained default: quantized or other supported non-float weights use NZ while FP16/BF16 avoid the
+      known risk of float-case performance regressions.'
+  - scenario: Benchmarked FP16 or BF16 workload that benefits from NZ
+    value: 2
+    reason: This is the only mode that converts FP16/BF16 weights on non-310P devices, and Xlite also treats exactly this
+      value as enabling weight NZ.
+  - scenario: Disable NZ, debug layout issues, or use worker wake-up/RL flows
+    value: 0
+    reason: Prevents NZ conversion on non-310P devices and satisfies the worker wake-up guard; 310P remains an exception and
+      still converts supported weights.
+  caveats:
+  - 'Mode 2 is not a universal optimization: Ascend release notes explicitly report poor performance in some float-weight
+    cases, so compare end-to-end latency and throughput before deployment.'
+  - Layout conversion changes device memory representation; measure peak NPU memory as well as speed on the exact model and
+    quantization method.
+  - The deprecated environment variable is only a fallback and is planned for removal; prefer --additional-config for new
+    deployments.
+  - The 310P override, FP32 exclusion, meta-tensor exclusion, and batch-invariant override can make the effective behavior
+    differ from the requested integer mode.
+  quick_guide: Start with 1; test 2 only for FP16/BF16 after benchmarking, or choose 0 for wake-up/RL compatibility and to
+    disable conversion on non-310P hardware.
+analysis_date: '2026-08-03'

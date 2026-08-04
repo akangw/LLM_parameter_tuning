@@ -1,0 +1,58 @@
+name: VLLM_MEDIA_CACHE_MAX_SIZE_MB
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:824
+value_type: int
+default: '5120'
+valid_choices: positive integer (MB)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This parameter controls the maximum disk cache size (in MB) for downloaded multimodal media files (images,
+  video, audio). It only takes effect when VLLM_MEDIA_CACHE is set to a non-empty writable directory path. When the cache
+  exceeds this size, least-recently-used entries are evicted. On Ascend NPU, this parameter does not directly affect GPU/NPU
+  memory, compute throughput, or inference latency — it only governs local disk usage for media caching. The value is converted
+  to bytes at vllm/multimodal/media/ connector.py:140 and used for LRU eviction decisions. vllm-ascend does not override or
+  modify this parameter.
+
+  '
+usage_locations:
+- file: vllm/envs.py:72
+  context: Default value declaration in EnvironmentVariables class (5120 MB)
+- file: vllm/envs.py:824
+  context: Environment variable definition with default 5120
+- file: vllm/multimodal/media/connector.py:140
+  context: Converted to bytes (value * 1024 * 1024) for cache size limit
+- file: vllm/envs.py:1914
+  context: Listed in environment_variables_to_use for observability
+related_parameters:
+- name: VLLM_MEDIA_CACHE
+  relation: Must be set to a non-empty writable path for VLLM_MEDIA_CACHE_MAX_SIZE_MB to have any effect
+- name: VLLM_MEDIA_CACHE_TTL_HOURS
+  relation: Works alongside max size for cache eviction; entries older than TTL are evicted regardless of size
+constraints:
+- VLLM_MEDIA_CACHE must be set to a non-empty writable directory path; otherwise this parameter is ignored
+- Value must be a positive integer representing megabytes
+tuning_advice:
+  summary: Adjust only if multimodal media caching is enabled and disk space is constrained; has no direct impact on NPU inference
+    performance.
+  suggested_values:
+  - scenario: Default usage with sufficient disk space
+    value: '5120'
+    reason: 5 GB is sufficient for most multimodal serving workloads without excessive disk consumption
+  - scenario: Disk-constrained environments with media caching enabled
+    value: '1024'
+    reason: Reduces disk footprint to 1 GB while still providing caching benefits for frequently accessed media
+  - scenario: High-volume multimodal serving with abundant disk space
+    value: '10240'
+    reason: Larger cache reduces network fetches for repeated media URLs, lowering request latency for cached items
+  caveats:
+  - This parameter only affects disk usage, not NPU device memory (HBM) or compute performance
+  - If VLLM_MEDIA_CACHE is not set or the directory is not writable, this parameter is silently ignored
+  - Cache eviction is LRU-based; setting this too low may cause thrashing with frequent re-downloads
+  quick_guide: Leave at default 5120 unless disk space is tight; has no Ascend NPU-specific tuning implications.
+analysis_date: '2026-07-06'

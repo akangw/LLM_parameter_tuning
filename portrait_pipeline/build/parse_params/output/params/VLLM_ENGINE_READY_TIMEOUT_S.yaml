@@ -1,0 +1,55 @@
+name: VLLM_ENGINE_READY_TIMEOUT_S
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:666
+value_type: int
+default: '600'
+valid_choices: any positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls the maximum time (in seconds) the engine client waits for engine core processes
+  to signal readiness during startup. In the v1 engine (vllm/v1/engine/core_client.py:582), the timeout is converted to milliseconds
+  and passed to zmq.Socket.poll(). If the timeout expires before all engine cores respond, a TimeoutError is raised and the
+  server fails to start. On Ascend NPU, large models may require longer weight loading times due to CANN compilation or model
+  conversion overhead, making this timeout relevant for successful startup. However, it does not affect steady-state throughput
+  or latency — it only determines whether the server starts successfully or fails with a timeout. No vllm-ascend override
+  was found; the parameter behaves identically on Ascend as on upstream.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/core_client.py:582
+  context: Used as poll timeout (converted to ms) when waiting for engine core ready messages via ZMQ
+- file: vllm/envs.py:26
+  context: Type-hinted default value declaration (600 seconds)
+related_parameters:
+- name: VLLM_ENGINE_ITERATION_TIMEOUT_S
+  relation: Sibling timeout parameter for per-iteration engine operations (default 60s), distinct from startup readiness timeout
+constraints:
+- Must be a positive integer; non-positive values may cause immediate timeout or undefined poll behavior
+tuning_advice:
+  summary: Increase this timeout only if large models on Ascend NPU fail to start with a TimeoutError during weight loading
+  suggested_values:
+  - scenario: Default usage with models that load within 10 minutes
+    value: '600'
+    reason: The default 600 seconds (10 minutes) is sufficient for most models on Ascend NPU
+  - scenario: Very large models (e.g., 70B+) on Ascend NPU where CANN compilation or weight loading exceeds 10 minutes
+    value: '1200'
+    reason: Doubling the timeout to 20 minutes accommodates extended Ascend NPU model initialization without risking premature
+      failure
+  - scenario: Extremely large models or slow storage (e.g., network-attached weights) on Ascend NPU
+    value: '3600'
+    reason: A 60-minute timeout provides ample headroom for slow weight loading scenarios while still preventing indefinite
+      hangs
+  caveats:
+  - This timeout only affects startup; it has no impact on inference throughput or latency once the server is running
+  - Setting an excessively high value may mask genuine startup failures (e.g., hung processes) by delaying error detection
+  - On Ascend NPU, first-time model loading may trigger CANN graph compilation which can add significant startup latency —
+    monitor startup logs before increasing this timeout
+  quick_guide: Leave at default 600s unless large models on Ascend NPU consistently time out during startup; then increase
+    to 1200–3600s
+analysis_date: '2026-07-06'

@@ -1,0 +1,75 @@
+name: --data-parallel-hybrid-lb
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1011
+- vllm/config/parallel.py:142
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --data-parallel-hybrid-lb
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the load balancing mode for data-parallel (DP) deployments. When enabled, it switches
+  vLLM from "internal" LB (where the client manages all DP ranks) to "hybrid" LB mode. In hybrid mode, the client only manages
+  local DP ranks on the same node, and an external load balancer distributes requests across nodes. This affects the `local_engines_only`
+  property in ParallelConfig (parallel.py:507), which determines whether the client connects to remote EngineCores. On Ascend
+  NPU, this changes the request dispatch topology: "local-only engine management reduces" cross-node communication overhead
+  but requires an external LB for multi-node setups. The parameter also influences `api_server_count` defaulting (serve.py:71)
+  and `remote_should_be_headless` logic (utils.py:1159), which affects how engine cores are initialized and connected. For
+  Ascend multi-node deployments, hybrid LB can reduce HCCL cross-node synchronization pressure by localizing DP scheduling.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:507
+  context: local_engines_only property — returns True when hybrid_lb or external_lb is set, limiting client to local EngineCores
+    only
+- file: vllm/entrypoints/cli/serve.py:71
+  context: Detects hybrid LB mode to default api_server_count to local DP size
+- file: vllm/entrypoints/cli/serve.py:158
+  context: Raises ValueError if hybrid_lb is used in headless mode
+- file: vllm/v1/engine/utils.py:1159
+  context: Determines remote_should_be_headless flag during engine startup handshake
+- file: vllm/v1/engine/core_client.py:1232
+  context: Assertion check — hybrid_lb and external_lb must be False during elastic EP scale-up
+related_parameters:
+- name: --data-parallel-size
+  relation: Hybrid LB only applies when data_parallel_size > 0
+- name: --data-parallel-external-lb
+  relation: Mutually exclusive — cannot use both hybrid and external LB modes simultaneously
+- name: --data-parallel-start-rank
+  relation: Implicitly enables hybrid LB mode when set; used to configure starting DP rank for secondary nodes
+- name: --data-parallel-size-local
+  relation: Determines how many local DP ranks the hybrid LB manages on each node
+- name: --api-server-count
+  relation: Hybrid LB mode defaults api_server_count to local DP size instead of full DP size
+constraints:
+- Cannot be used simultaneously with --data-parallel-external-lb or --data-parallel-rank (mutually exclusive LB modes)
+- Cannot be used in headless mode (raises ValueError)
+- Only applies to online serving and when data_parallel_size > 0
+- Must not be enabled during elastic expert-parallel scale-up operations
+tuning_advice:
+  summary: Enable hybrid LB for multi-node Ascend DP deployments where an external load balancer handles cross-node distribution,
+    reducing HCCL cross-node coordination overhead.
+  suggested_values:
+  - scenario: Multi-node Ascend DP deployment with external load balancer (e.g., Kubernetes Service)
+    value: 'True'
+    reason: Localizes DP scheduling to within each node, reducing cross-node HCCL communication and allowing external LB to
+      handle node-level distribution
+  - scenario: Single-node Ascend DP deployment or internal LB sufficient
+    value: 'False'
+    reason: Internal LB mode (default) manages all DP ranks directly, which is simpler and sufficient when all ranks are on
+      one node
+  caveats:
+  - Hybrid LB requires an external load balancer to distribute requests across nodes — vLLM only balances among local DP ranks
+  - On Ascend NPU, ensure the external LB is configured with proper health checks for each vLLM node/replica
+  - When hybrid LB is enabled, api_server_count defaults to local DP size, not total DP size — verify this matches your deployment
+    topology
+  - Not compatible with elastic expert-parallel scale-up — hybrid LB must be disabled during dynamic EP scaling
+  quick_guide: Set --data-parallel-hybrid-lb for multi-node Ascend DP with external LB; leave False for single-node or internal
+    LB setups.
+analysis_date: '2026-07-06'

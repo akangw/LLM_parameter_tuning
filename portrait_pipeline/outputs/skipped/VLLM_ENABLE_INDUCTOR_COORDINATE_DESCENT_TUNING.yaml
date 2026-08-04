@@ -1,0 +1,6 @@
+name: VLLM_ENABLE_INDUCTOR_COORDINATE_DESCENT_TUNING
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this environment variable is only declared and parsed in vllm/envs.py; there is no
+  current code path that reads it or passes it into an Inductor configuration. The pinned vllm-ascend source contains no reference
+  to the variable either. It therefore has no latency, throughput, or memory effect in the pinned repositories.

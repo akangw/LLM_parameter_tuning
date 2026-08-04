@@ -1,0 +1,6 @@
+name: --mamba-cache-philox-rounds
+type: cli
+performance_impact: none
+skip_reason: Current vLLM parses this value and conditionally copies a nonzero value to MambaConfig.stochastic_rounding_philox_rounds,
+  but no current code in either pinned vLLM or vLLM-Ascend reads that configuration field to alter execution. Therefore it
+  has no source-verifiable latency, throughput, or memory effect.

@@ -1,0 +1,98 @@
+name: CompilationConfig.pass_config.enable_qk_norm_rope_fusion
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:139
+- vllm/config/compilation.py:264
+- vllm/config/compilation.py:933
+- docs/design/fusions.md:289
+- vllm_ascend/platform.py:505
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --compilation-config '{"pass_config":{"enable_qk_norm_rope_fusion":true}}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: On supported upstream CUDA models, true requests a compile-time graph rewrite that replaces split QKV, per-head
+  Q/K RMSNorm, reshapes, and rotary embedding with one fused_qk_norm_rope CUDA kernel. The pinned fusion guide reports a workload-dependent
+  2-3% end-to-end speedup, while also recording performance issues on H100; the option is therefore off at every optimization
+  level. The rewrite only matches models that perform per-head Q/K RMSNorm immediately before RoPE, so true can have no effect
+  when the graph does not match. During compilation setup, enabling it also forces +rotary_embedding into custom_ops so the
+  pass can match the custom RoPE operation. On vllm-ascend, the platform is not CUDA-like, so PassConfig initialization disables
+  this upstream flag. Ascend independently enables its own additional_config.ascend_compilation_config.fuse_qknorm_rope pass
+  by default; changing this parameter does not control that NPU fusion.
+usage_locations:
+- file: vllm/config/compilation.py:264
+  context: PassConfig post-initialization warns and resets the option to false when the current platform is neither CUDA nor
+    ROCm.
+- file: vllm/config/compilation.py:933
+  context: CompilationConfig adds +rotary_embedding to custom_ops when the option is true, making the custom rotary operation
+    available for fusion-pattern matching.
+- file: docs/design/fusions.md:289
+  context: Documents the matched QKV-split, per-head RMSNorm, and RoPE sequence, supported CUDA hardware, model applicability,
+    default-off policy, and measured 2-3% range.
+- file: vllm_ascend/platform.py:505
+  context: The Ascend platform explicitly notes that it is not CUDA-like, which causes the upstream PassConfig guard to disable
+    this option.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+  context: Ascend registers its separate QKNormRopeFusionPass from additional_config.ascend_compilation_config.fuse_qknorm_rope,
+    defaulting that separate control to true.
+related_parameters:
+- name: CompilationConfig.custom_ops
+  relation: Enabling this fusion automatically appends +rotary_embedding when it is absent, because the current matcher requires
+    the custom rotary_embedding operation.
+- name: additional_config.ascend_compilation_config.fuse_qknorm_rope
+  relation: This is the independent Ascend control for the analogous NPU graph fusion; it is enabled by default and is not
+    driven by the upstream pass flag.
+constraints:
+- The documented upstream fused kernel supports CUDA sm80 or newer and was tested only on sm90 and sm100; despite the configuration
+  guard accepting ROCm as CUDA-like, the pinned fusion guide lists no ROCm implementation support.
+- The model graph must split a packed QKV tensor, apply per-head RMSNorm to Q and K, and then apply rotary embedding in the
+  form recognized by the pass.
+- The pass is not enabled automatically at any optimization level and requires compilation rather than an eager-only execution
+  path.
+- On Ascend this upstream option is reset to false; use the separate additional_config.ascend_compilation_config.fuse_qknorm_rope
+  control for the NPU implementation.
+tuning_advice:
+  summary: Leave the option false unless a supported CUDA model matches the fusion pattern and an end-to-end benchmark on
+    the target workload shows a gain.
+  suggested_values:
+  - scenario: Supported CUDA deployment after an A/B benchmark shows improvement
+    value: true
+    reason: A matching graph can remove intermediate kernel launches and memory traffic, and the pinned guide reports a possible
+      2-3% end-to-end speedup.
+  - scenario: H100, unsupported or unverified model, or any Ascend deployment
+    value: false
+    reason: The feature is default-off because regressions have been observed, nonmatching graphs gain nothing, and Ascend
+      disables this upstream flag in favor of its own fusion control.
+  caveats:
+  - The documented speedup is not guaranteed and depends on the exact model, batch size, token mix, dtype, and GPU; benchmark
+    both values with the production workload.
+  - The pinned guide specifically cites performance issues on H100 even though H100 is among the tested hardware generations.
+  - Enabling the flag changes custom_ops by forcing +rotary_embedding, so comparisons include both that graph representation
+    change and the fusion attempt.
+  quick_guide: Start with false. On a CUDA sm80+ model with per-head Q/K RMSNorm before RoPE, test true and keep it only if
+    measured latency or throughput improves; on Ascend leave it false and tune the separate Ascend fuse_qknorm_rope option
+    instead.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

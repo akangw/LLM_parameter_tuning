@@ -1,0 +1,60 @@
+name: speculative.suffix_decoding_max_cached_requests
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: int
+default: '1000'
+valid_choices: non-negative integer
+cli_example: '--speculative-config ''{"suffix_decoding_max_cached_requests": 500}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter controls the maximum number of requests cached in the global suffix tree used by suffix-decoding
+  speculative decoding. When the cache exceeds this limit, entries are evicted in FIFO order. Setting it to 0 disables the
+  global suffix tree entirely (prompt-level trees are still used). The performance impact is indirect: a larger cache retains
+  more historical suffix patterns, potentially improving speculative match rates and thus throughput, but at the cost of increased
+  CPU memory for the suffix tree data structure. On Ascend NPU, speculative decoding support is limited — vllm-ascend v1 supports
+  ngram/mtp/medusa via Ascend-native proposers, while v2 only supports eagle. Suffix decoding is a vLLM-upstream feature with
+  no Ascend-specific override found in the vllm-ascend codebase. Its effectiveness on Ascend depends on whether the suffix
+  decoding proposer is compatible with the Ascend worker path being used.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.method
+  relation: Must be set to 'suffix_decoding' for this parameter to have any effect.
+- name: speculative.suffix_decoding_prompt_cache_size
+  relation: Controls per-prompt suffix cache size; works alongside the global cache controlled by this parameter.
+constraints:
+- Must be a non-negative integer.
+- Has no effect unless speculative decoding method is set to suffix_decoding.
+- Setting to 0 disables the global suffix tree cache entirely.
+tuning_advice:
+  summary: 'Increase this value if suffix-decoding speculative match rates are low and you have spare CPU memory; decrease
+    or set to 0 if memory is constrained or suffix decoding is not used.
+
+    '
+  suggested_values:
+  - scenario: Default usage with suffix decoding enabled
+    value: '1000'
+    reason: The upstream default provides a reasonable balance between cache hit rate and memory overhead.
+  - scenario: Memory-constrained deployment or suffix decoding not in use
+    value: '0'
+    reason: Disabling the global suffix tree frees CPU memory with no impact when suffix decoding is not the active method.
+  - scenario: High-throughput serving with diverse, repetitive prompts
+    value: '5000'
+    reason: A larger cache retains more suffix patterns across requests, potentially improving speculative match rates and
+      throughput.
+  caveats:
+  - Suffix decoding is a vLLM-upstream speculative method. vllm-ascend v2 only supports eagle speculation; v1 supports ngram/mtp/medusa
+    via Ascend-native proposers. Verify suffix decoding compatibility with your Ascend worker version before tuning.
+  - This cache resides in CPU memory, not NPU HBM — increasing it does not directly compete with model weights or KV cache
+    for NPU memory.
+  - Eviction is FIFO, not LRU — older entries are evicted regardless of their utility, which may limit the benefit of very
+    large cache sizes.
+  quick_guide: Use the default of 1000 unless memory is tight (set to 0) or you observe low speculative acceptance rates with
+    suffix decoding (increase to 2000-5000).
+analysis_date: '2026-07-06'

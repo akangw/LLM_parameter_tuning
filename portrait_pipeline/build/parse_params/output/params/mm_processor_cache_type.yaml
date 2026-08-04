@@ -1,0 +1,104 @@
+name: --mm-processor-cache-type
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:132
+- vllm/engine/arg_utils.py:1186
+- vllm/multimodal/registry.py:292
+value_type: str
+default: lru
+valid_choices:
+- lru
+- shm
+cli_example: --mm-processor-cache-type shm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: "Controls the caching strategy for multi-modal preprocessor/mapper outputs. Two modes exist: 1. `lru` (default):\
+  \ Uses a mirrored LRU cache per process. Each API server\n   and engine core process maintains its own copy of cached multi-modal\n\
+  \   tensors, consuming `mm_processor_cache_gb` memory per process. Total\n   memory usage = `mm_processor_cache_gb * (api_server_count\
+  \ + data_parallel_size)`.\n2. `shm`: Uses a shared memory FIFO cache backed by a POSIX shared memory\n   buffer. All processes\
+  \ share a single cache instance, reducing total memory\n   consumption. However, `shm` requires IPC support: it only activates\
+  \ when\n   `_api_process_count == 1` AND (`data_parallel_size == 1` OR\n   `data_parallel_external_lb` is True). If IPC\
+  \ is unsupported, the cache\n   falls back to `processor_only` mode (no cross-process sharing). The `shm`\n   mode also\
+  \ requires a `shared_worker_lock` to be passed from the executor;\n   if missing, vLLM raises a ValueError. On Ascend NPU,\
+  \ multi-modal models\n   (e.g., Qwen2-VL, InternVL) benefit from `shm` when running with multiple\n   workers, as it avoids\
+  \ redundant NPU memory allocations for identical\n   preprocessed tensors. The `shm` cache has a per-object size limit\n\
+  \   controlled by `--mm-shm-cache-max-object-size-mb` (default 128 MiB).\n"
+usage_locations:
+- file: vllm/multimodal/registry.py:292
+  context: '`_get_cache_type()` returns `mm_processor_cache_type` to determine which cache implementation to instantiate.
+
+    '
+- file: vllm/multimodal/registry.py:294
+  context: '`processor_cache_from_config()` dispatches to `MultiModalProcessorSenderCache` for `lru`, `ShmObjectStoreSenderCache`
+    for `shm`, or `MultiModalProcessorOnlyCache` for `processor_only` fallback.
+
+    '
+- file: vllm/v1/worker/worker_base.py:285
+  context: 'Worker initialization checks if `mm_processor_cache_type == "shm"` and requires `shared_worker_lock`; raises ValueError
+    if missing.
+
+    '
+- file: vllm/envs.py:1617
+  context: '`VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME` env var is only effective when `mm_processor_cache_type == "shm"`.
+
+    '
+related_parameters:
+- name: --mm-processor-cache-gb
+  relation: 'Sets the cache size in GiB. Total memory consumption scales with this value multiplied by process count for `lru`
+    mode; shared across processes for `shm` mode.
+
+    '
+- name: --mm-shm-cache-max-object-size-mb
+  relation: 'Only effective when `--mm-processor-cache-type shm`. Limits the maximum size of individual objects stored in
+    the shared memory cache.
+
+    '
+- name: VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME
+  relation: 'Environment variable that names the shared memory buffer; only used when `--mm-processor-cache-type shm`.
+
+    '
+constraints:
+- --mm-shm-cache-max-object-size-mb must only be set when --mm-processor-cache-type is 'shm'; otherwise vLLM raises a ValueError.
+- 'The ''shm'' cache type requires IPC support: _api_process_count must be 1 and either data_parallel_size must be 1 or data_parallel_external_lb
+  must be True; otherwise the cache falls back to ''processor_only'' mode.'
+- When --mm-processor-cache-type is 'shm', the executor must provide a shared_worker_lock; if missing, vLLM raises a ValueError.
+tuning_advice:
+  summary: 'Use `shm` on Ascend NPU for multi-modal models with multiple workers to reduce redundant memory consumption; fall
+    back to `lru` when IPC is unavailable or for single-process deployments.
+
+    '
+  suggested_values:
+  - scenario: 'Multi-modal model (e.g., Qwen2-VL) with data_parallel_size > 1 or multiple API server processes on Ascend NPU.
+
+      '
+    value: shm
+    reason: 'Shared memory cache avoids duplicating preprocessed multi-modal tensors across processes, reducing total NPU
+      host/device memory pressure and improving throughput by eliminating redundant preprocessing.
+
+      '
+  - scenario: 'Single-process deployment or when IPC is unavailable (e.g., _api_process_count > 1 without external load balancing).
+
+      '
+    value: lru
+    reason: 'The `shm` cache requires IPC support; when unavailable, vLLM automatically falls back to `processor_only` mode,
+      which provides no cross-request caching benefit. `lru` at least provides per-process caching.
+
+      '
+  caveats:
+  - On Ascend NPU, multi-modal preprocessing tensors can be large (hundreds of MiB for high-resolution images/videos). Duplicating
+    these across workers with `lru` can quickly exhaust host memory, especially on systems with limited RAM (e.g., Atlas 800T
+    A2 with 64 GB host memory).
+  - The `shm` cache uses POSIX shared memory (`/dev/shm`). Ensure sufficient space in `/dev/shm` (typically half of host RAM
+    by default on Linux). Monitor with `df -h /dev/shm`.
+  - When `shm` is active but IPC conditions are not met, the cache silently degrades to `processor_only` mode with no cross-request
+    caching — this can cause a performance regression compared to `lru`.
+  quick_guide: 'For multi-modal models on Ascend NPU with multiple workers, prefer `--mm-processor-cache-type shm` to share
+    preprocessed tensors and reduce memory duplication.
+
+    '
+analysis_date: '2026-07-06'

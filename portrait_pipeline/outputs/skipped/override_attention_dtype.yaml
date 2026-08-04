@@ -1,0 +1,8 @@
+name: --override-attention-dtype
+type: cli
+performance_impact: none
+skip_reason: In the pinned current sources this option has no latency, throughput, or memory effect on Ascend. ModelConfig
+  only emits a warning when override_attention_dtype is set on a non-ROCm platform (vllm/config/model.py:501), and the only
+  other occurrences are the field/CLI plumbing plus exclusion from the model configuration hash. The pinned vllm-ascend repository
+  has no consumer or override for this setting, so on Ascend changing it does not alter attention kernels, tensor dtypes,
+  or cache allocation.

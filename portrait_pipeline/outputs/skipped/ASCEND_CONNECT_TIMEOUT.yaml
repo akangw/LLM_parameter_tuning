@@ -1,0 +1,6 @@
+name: ASCEND_CONNECT_TIMEOUT
+type: env
+performance_impact: none
+skip_reason: External one-sided communication connection-establishment timeout in milliseconds. It controls how long connection
+  setup may wait before timing out and must remain below the Mooncake KV lease TTL, but it does not tune steady-state request
+  latency, throughput, or memory usage.

@@ -1,0 +1,76 @@
+name: --convert
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:766
+- vllm/config/model.py:123
+value_type: str
+default: auto
+valid_choices:
+- auto
+- classify
+cli_example: --convert classify
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'The --convert parameter controls model architecture adaptation via adapters defined in vllm.model_executor.models.adapters.
+  When set to "classify", it triggers conversion of a causal LM (ForCausalLM) into a sequence classification model (ForSequenceClassification)
+  by applying SequenceClassificationConfig.verify_and_update_config() during model config update in vllm/config/vllm.py:1779-1783.
+  This changes the model head from text generation to classification, which affects the forward pass computation graph and
+  output processing. The performance impact is indirect: it changes the model architecture (replacing the LM head with a classification
+  head), which alters compute patterns and memory usage of the final layers. However, this is a model-level semantic change
+  rather than a runtime performance tuning knob — it determines what task the model performs, not how efficiently it runs.
+  On Ascend NPU, there is no vllm-ascend override or special handling for this parameter; the upstream behavior applies unchanged.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:422
+  context: EngineArgs field definition with type ConvertOption
+- file: vllm/engine/arg_utils.py:766
+  context: CLI argument registration in ModelConfig group
+- file: vllm/config/model.py:123
+  context: ModelConfig field with docstring explaining adapter-based conversion
+- file: vllm/config/vllm.py:1779
+  context: Trigger point where convert_type=="classify" applies SequenceClassificationConfig
+related_parameters:
+- name: --model
+  relation: The model to which the conversion adapter is applied
+- name: --runner
+  relation: Runner type must be compatible with the converted model architecture
+constraints:
+- Only "auto" and "classify" are valid values for --convert
+- When set to "classify", the underlying model must support conversion from causal LM to sequence classification
+tuning_advice:
+  summary: 'Use --convert classify only when you need pooling/classification tasks instead of text generation; it is a functional
+    choice, not a performance tuning parameter.
+
+    '
+  suggested_values:
+  - scenario: Text generation tasks (default use case)
+    value: auto
+    reason: 'Keeps the original model architecture unchanged, which is the standard path for generative inference workloads.
+
+      '
+  - scenario: Pooling or sequence classification tasks (e.g., embeddings, reranking)
+    value: classify
+    reason: 'Adapts a causal LM into a classification model by replacing the LM head, enabling pooling outputs. This is required
+      for correct task semantics, not for performance optimization.
+
+      '
+  caveats:
+  - 'Changing --convert from auto to classify fundamentally alters the model output type (from token generation to classification
+    logits/pooled embeddings). Ensure your serving pipeline expects the new output format.
+
+    '
+  - 'The classify conversion may increase or decrease memory usage depending on the classification head size relative to the
+    original LM head — test with your specific model.
+
+    '
+  quick_guide: 'Leave --convert at default "auto" unless you explicitly need classification/pooling outputs from a causal
+    LM.
+
+    '
+analysis_date: '2026-07-06'

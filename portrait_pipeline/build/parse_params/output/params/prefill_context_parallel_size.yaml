@@ -1,0 +1,116 @@
+name: --prefill-context-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:963
+- vllm/config/parallel.py:115
+value_type: int
+default: 1
+valid_choices: positive integer; must divide tensor_parallel_size on Ascend
+cli_example: --prefill-context-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "Controls the number of prefill context parallel (PCP) groups, which shard the KV cache along the sequence\
+  \ dimension during prefill to reduce per-device memory footprint and enable long-context inference. On Ascend NPU, PCP interacts\
+  \ with multiple subsystems:\n1. **World size calculation** (vllm/config/parallel.py:765): world_size = pp_size × tp_size\
+  \ × pcp_size.\n   Increasing PCP multiplies the total number of required NPU devices.\n\n2. **KV cache memory** (vllm_ascend/patch/platform/patch_kv_cache_interface.py:190-194):\n\
+  \   When dcp × pcp > 1, max_model_len is divided by dcp × pcp, proportionally reducing\n   per-device KV cache memory usage.\
+  \ This is the primary mechanism enabling long sequences.\n\n3. **Block size alignment** (vllm_ascend/patch/platform/patch_kv_cache_utils.py:40-56):\n\
+  \   Ascend patches the upstream block size resolver to support CP with multiple KV cache\n   groups. scheduler_block_size\
+  \ = lcm(group_block_sizes) × dcp × pcp, ensuring proper\n   alignment for Ascend's MLA and SWA-MLA layers.\n\n4. **FLASHCOMM1\
+  \ constraint** (vllm_ascend/ascend_config.py:116-130): When FLASHCOMM1 is\n   enabled and pcp > 1, max_num_batched_tokens\
+  \ is automatically adjusted to be divisible\n   by tp_size × pcp_size to satisfy communication alignment requirements.\n\
+  \n5. **V1 worker padding** (vllm_ascend/worker/model_runner_v1.py:258-261): The V1 model\n   runner adds pcp_size × 2 ×\
+  \ max_num_seqs padding tokens to max_num_batched_tokens to\n   accommodate PCP communication buffers.\n\n6. **V2 worker\
+  \ unsupported** (vllm_ascend/worker/v2/model_runner.py:68-69): The Ascend V2\n   model runner explicitly raises NotImplementedError\
+  \ when pcp > 1, meaning PCP only works\n   with the V1 worker on Ascend.\n\n7. **P/D disaggregation** (vllm_ascend/platform.py:615-625):\
+  \ When KV transfer is configured\n   and cp_size > 1, cp_kv_cache_interleave_size must equal block_size.\n\nPerformance-wise,\
+  \ PCP reduces per-device KV cache memory (enabling longer contexts or larger batch sizes) at the cost of additional all-to-all\
+  \ communication during prefill attention, which increases prefill latency. The tradeoff is favorable for long-context workloads\
+  \ where a single device cannot hold the full KV cache.\n"
+usage_locations:
+- file: vllm/config/parallel.py:115
+  context: Field definition with default=1
+- file: vllm/config/parallel.py:765
+  context: world_size = pp_size × tp_size × pcp_size
+- file: vllm_ascend/ascend_config.py:116-130
+  context: 'FLASHCOMM1: adjusts max_num_batched_tokens to be divisible by tp_size × pcp_size'
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:190-194
+  context: Reduces max_model_len by dcp × pcp factor for KV cache sizing
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:40-56
+  context: Ascend-specific block size resolution with CP support for multiple KV groups
+- file: vllm_ascend/worker/model_runner_v1.py:258-261
+  context: 'V1 worker: adds pcp_size × 2 × max_num_seqs padding to max_num_batched_tokens'
+- file: vllm_ascend/worker/v2/model_runner.py:68-69
+  context: 'V2 worker: raises NotImplementedError if pcp > 1'
+- file: vllm_ascend/worker/worker.py:764
+  context: Passed to ensure_model_parallel_initialized for HCCL group setup
+- file: vllm_ascend/platform.py:615-625
+  context: 'P/D disaggregation: validates cp_kv_cache_interleave_size == block_size when cp_size > 1'
+- file: vllm_ascend/attention/utils.py:61
+  context: enable_cp() returns True when pcp > 1 or dcp > 1
+- file: vllm/v1/core/sched/scheduler.py:150
+  context: V1 scheduler stores pcp_world_size for block alignment
+- file: vllm/v1/core/kv_cache_utils.py:589
+  context: 'Upstream block size resolution: scheduler_block_size = block_size × dcp × pcp'
+related_parameters:
+- name: --decode-context-parallel-size
+  relation: Together with PCP, forms the total context parallel size (cp_size = dcp × pcp). Both affect KV cache sharding
+    and block size alignment.
+- name: --tensor-parallel-size
+  relation: world_size = pp_size × tp_size × pcp_size. On Ascend, tp_size must be divisible by dcp_size; PCP interacts with
+    TP for FLASHCOMM1 alignment (max_num_batched_tokens must be divisible by tp_size × pcp_size).
+- name: --max-num-batched-tokens
+  relation: Automatically adjusted when FLASHCOMM1 is enabled and pcp > 1 to satisfy tp_size × pcp_size divisibility.
+- name: --cp-kv-cache-interleave-size
+  relation: Must equal block_size when cp_size > 1 in P/D disaggregation scenarios.
+- name: --max-model-len
+  relation: Effectively divided by dcp × pcp for per-device KV cache allocation when CP is active.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: When enabled with pcp > 1, triggers automatic max_num_batched_tokens adjustment.
+constraints:
+- prefill_context_parallel_size must be a positive integer.
+- On Ascend NPU, prefill_context_parallel_size > 1 is only supported with the V1 model runner; the V2 model runner raises
+  NotImplementedError.
+- When using P/D disaggregation with KV transfer and cp_size > 1, cp_kv_cache_interleave_size must equal block_size.
+- When FLASHCOMM1 is enabled and pcp > 1, max_num_batched_tokens must be divisible by tp_size × pcp_size (automatically adjusted
+  if not).
+- Upstream vLLM V2 model runner does not support prefill_context_parallel_size > 1.
+- Upstream vLLM does not support context parallelism with hybrid KV cache groups having multiple block sizes (Ascend patches
+  this limitation).
+- The --enable-return-routed-experts feature is not validated with pcp > 1.
+tuning_advice:
+  summary: Enable PCP for long-context inference when a single NPU cannot hold the full KV cache; use V1 worker on Ascend
+    and ensure tp_size is divisible by dcp_size.
+  suggested_values:
+  - scenario: Long-context inference (e.g., 128K+ tokens) on single-node 8-NPU Ascend
+    value: 2
+    reason: Common setting from vllm-ascend documentation; balances KV cache reduction with communication overhead. With tp=8,
+      pcp=2, dcp=2, each device holds 1/4 of the KV cache.
+  - scenario: Standard context lengths that fit in single-device KV cache
+    value: 1
+    reason: Default; avoids unnecessary all-to-all communication overhead during prefill. No KV cache sharding benefit when
+      memory is sufficient.
+  - scenario: Multi-node long-context inference with large TP
+    value: 2
+    reason: Documentation example uses tp=16, pcp=2, dcp=8 for multi-node deployment. PCP=2 provides additional KV cache reduction
+      beyond DCP alone.
+  caveats:
+  - PCP > 1 is only supported with the V1 model runner on Ascend NPU. The V2 worker will raise NotImplementedError.
+  - Increasing PCP adds all-to-all communication during prefill attention, which increases prefill latency. Only enable when
+    KV cache memory is the bottleneck.
+  - When FLASHCOMM1 is enabled with PCP > 1, max_num_batched_tokens is automatically adjusted, which may affect scheduling
+    behavior.
+  - 'PCP multiplies the total device count: world_size = pp_size × tp_size × pcp_size. Ensure sufficient NPUs are available.'
+  - On Ascend, tp_size must be divisible by dcp_size. PCP does not have this constraint directly, but the combined cp_size
+    affects block alignment.
+  - The V1 worker adds pcp_size × 2 × max_num_seqs padding tokens to max_num_batched_tokens, slightly increasing memory usage
+    for communication buffers.
+  quick_guide: Set --prefill-context-parallel-size to 2 for long-context inference on Ascend with V1 worker; leave at 1 (default)
+    when KV cache fits in single-device memory.
+analysis_date: '2026-07-06'

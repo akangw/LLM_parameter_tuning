@@ -1,0 +1,89 @@
+name: --safetensors-prefetch-num-threads
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/config/load.py:12
+- vllm/config/load.py:85
+- vllm/engine/arg_utils.py:431
+- vllm/engine/arg_utils.py:854
+- vllm/engine/arg_utils.py:1601
+value_type: int
+default: 8
+valid_choices: Integer greater than or equal to 1.
+cli_example: --safetensors-prefetch-num-threads 8
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This option sets the maximum number of worker threads in the background ThreadPoolExecutor that sequentially
+  reads safetensors checkpoint files into the operating-system page cache. It is consulted only by the standard safetensors
+  iterator when prefetching is active: either --safetensors-load-strategy is explicitly set to prefetch, or the default strategy
+  detects NFS/NFS4/Lustre and the checkpoint size is at most 90% of available RAM. Increasing the value can overlap reads
+  from multiple checkpoint files and reduce model cold-start time when storage benefits from concurrent I/O, but excessive
+  concurrency can saturate storage or compete for CPU and I/O. It does not change request-time inference throughput or accelerator
+  memory after model initialization. The pinned vLLM Ascend repository does not redefine or patch this parameter, so standard
+  Ascend loading inherits the upstream behavior; Ascend-specific custom model loaders that do not use the standard safetensors
+  iterator can bypass it.'
+usage_locations:
+- file: vllm/config/load.py:85
+  context: Defines the field with default 8, minimum 1, and describes its role in safetensors page-cache prefetching.
+- file: vllm/engine/arg_utils.py:431
+  context: Exposes the LoadConfig field through EngineArgs.
+- file: vllm/engine/arg_utils.py:854
+  context: Registers the command-line option from the generated LoadConfig argument metadata.
+- file: vllm/engine/arg_utils.py:1601
+  context: Copies the parsed value into LoadConfig during engine configuration.
+related_parameters:
+- name: --safetensors-load-strategy
+  relation: This thread count is used only when the strategy explicitly selects prefetch or the default strategy auto-enables
+    prefetch on a qualifying network filesystem.
+- name: --safetensors-prefetch-block-size
+  relation: Sets the read size for each prefetch worker; tune I/O concurrency and per-read size together.
+- name: --load-format
+  relation: The setting applies to the standard safetensors loading path and is bypassed by loaders that use a different iterator
+    or custom loading implementation.
+constraints:
+- The value must be an integer greater than or equal to 1.
+- The value has no effect unless safetensors page-cache prefetching is active.
+- Automatic prefetching requires NFS, NFS4, or Lustre and checkpoint files whose total size is at most 90% of available RAM.
+- Explicit prefetch can proceed above the 90% RAM threshold but emits a warning that out-of-memory errors may occur.
+tuning_advice:
+  summary: Keep the default of 8 unless model-startup measurements on prefetch-enabled network storage justify a different
+    concurrency level.
+  suggested_values:
+  - scenario: Default or unmeasured deployment
+    value: 8
+    reason: This is the pinned-source default and avoids assuming that the storage stack benefits from either more or less
+      parallel I/O.
+  - scenario: Prefetch-enabled deployment with constrained CPU or storage concurrency
+    value: 2
+    reason: A smaller positive value limits concurrent reads; benchmark cold-start time because reduced concurrency may also
+      make loading slower.
+  - scenario: High-throughput network storage with many checkpoint shards
+    value: 16
+    reason: Additional workers may overlap more file reads, but retain this value only if repeated cold-start tests improve
+      without storage contention.
+  caveats:
+  - Changing this option does nothing for lazy, eager, torchao, or custom loading paths where page-cache prefetch is not selected.
+  - More threads are not guaranteed to improve startup and can increase contention once the storage device or network is saturated.
+  - Page-cache prefetch itself consumes host page cache; the thread count does not make an oversized checkpoint safe to prefetch.
+  - This affects model initialization only, not steady-state request throughput or NPU memory.
+  quick_guide: Start at 8, measure end-to-end model load time, and change the value only when prefetch is confirmed active
+    and storage telemetry shows useful headroom.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

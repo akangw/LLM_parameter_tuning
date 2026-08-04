@@ -1,0 +1,94 @@
+name: additional_config.weight_prefetch_config.prefetch_ratio
+type: nested
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:573
+- vllm_ascend/ops/weight_prefetch.py:53
+value_type: dict
+default:
+  attn:
+    qkv: 1.0
+    o: 1.0
+  moe:
+    gate_up: 0.8
+  mlp:
+    gate_up: 1.0
+    down: 1.0
+valid_choices: dict with keys 'attn', 'moe', 'mlp'; each value is a dict mapping linear layer names to float ratios (0.0 to
+  1.0)
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the fraction of weight data to prefetch into L2 cache for specific linear layers (attention
+  QKV/O, MoE gate_up, MLP gate_up/down) on Ascend NPU. The weight prefetch mechanism (vllm_ascend/ops/weight_prefetch.py)
+  uses a separate pipeline to preload weights in parallel with vector computations (e.g., RMSNorm, SiLU), hiding memory transfer
+  latency and reducing MTE (Memory Transfer Engine) contention during subsequent matrix multiplications. The prefetch_ratio
+  directly determines the prefetch size: "a higher ratio prefetches more weight data, potentially improving" Cube (matrix
+  multiply unit) utilization by reducing MTE stalls, but excessive prefetching can cause resource contention and degrade performance.
+  The documentation explicitly states that the maximum prefetch size is capped at 18MB due to L2 cache limits — if prefetch_ratio
+  * weight_size exceeds 18MB, only 18MB is prefetched. MLP down projection prefetch additionally requires sequence parallel
+  to be enabled. This parameter replaces the deprecated environment variables VLLM_ASCEND_ENABLE_PREFETCH_MLP, VLLM_ASCEND_MLP_GATE_UP_PREFETCH_SIZE,
+  and VLLM_ASCEND_MLP_DOWN_PREFETCH_SIZE.
+
+  '
+usage_locations:
+- file: vllm_ascend/ops/weight_prefetch.py:53
+  context: 'Retrieves attn prefetch_ratio dict (defaults to {''qkv'': 1.0, ''o'': 1.0} if not specified)'
+- file: vllm_ascend/ops/weight_prefetch.py:62
+  context: 'Retrieves moe prefetch_ratio dict (defaults to {''gate_up'': 0.8} if not specified)'
+- file: vllm_ascend/ops/weight_prefetch.py:68
+  context: 'Retrieves mlp prefetch_ratio dict (defaults to {''gate_up'': 1.0, ''down'': 1.0} if not specified)'
+related_parameters:
+- name: additional_config.weight_prefetch_config.enabled
+  relation: Must be set to true for prefetch_ratio to take effect; weight prefetch is disabled by default
+- name: sequence_parallel
+  relation: MLP down projection weight prefetch requires sequence parallel to be enabled
+constraints:
+- prefetch_ratio values must be floats between 0.0 and 1.0
+- The effective prefetch size (prefetch_ratio * linear_layer_weight_size) is capped at 18MB due to L2 cache limits
+- MLP down projection prefetch requires sequence parallel to be enabled
+- Weight prefetch must be enabled via additional_config.weight_prefetch_config.enabled for prefetch_ratio to have any effect
+tuning_advice:
+  summary: 'Adjust prefetch_ratio per linear layer to balance MTE hiding against resource contention; start with defaults
+    and tune based on observed MTE utilization and Cube efficiency.
+
+    '
+  suggested_values:
+  - scenario: Dense models with high MTE utilization in MLP layers (e.g., Qwen3-Dense)
+    value:
+      mlp:
+        gate_up: 1.0
+        down: 1.0
+    reason: Full prefetch of MLP weights maximizes overlap with vector computations (RMSNorm, SiLU), reducing MTE contention
+      during Cube operations as documented in the Qwen3-Dense tuning guide
+  - scenario: MoE models with large expert weights
+    value:
+      moe:
+        gate_up: 0.8
+    reason: Default 0.8 ratio balances prefetch benefit against L2 cache pressure from multiple experts; full 1.0 may exceed
+      18MB cap for large MoE layers
+  - scenario: Memory-constrained deployments or models with small linear layers
+    value:
+      attn:
+        qkv: 0.5
+        o: 0.5
+      mlp:
+        gate_up: 0.5
+        down: 0.5
+    reason: Reduced ratios prevent L2 cache thrashing when available cache is limited or weight sizes are small enough that
+      full prefetch provides diminishing returns
+  caveats:
+  - The 18MB L2 cache cap means ratios above the threshold for large layers have no additional effect — calculate weight_size
+    * ratio to check if you are hitting the cap
+  - MLP down projection prefetch silently requires sequence parallel; without it, the down prefetch setting is ignored
+  - Excessively high prefetch_ratio can cause resource contention between the prefetch pipeline and compute streams, degrading
+    rather than improving performance
+  - The deprecated environment variables VLLM_ASCEND_MLP_GATE_UP_PREFETCH_SIZE and VLLM_ASCEND_MLP_DOWN_PREFETCH_SIZE are
+    replaced by this config; migrate to the new dict-based configuration
+  quick_guide: Start with default ratios; if MTE utilization is high, increase mlp ratios to 1.0; reduce if L2 cache contention
+    is observed
+analysis_date: '2026-07-06'

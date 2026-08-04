@@ -1,0 +1,86 @@
+name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+type: env
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:22
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:120
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:265
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:297
+- docs/source/user_guide/feature_guide/kv_pool.md:194
+- docs/source/user_guide/feature_guide/kv_pool.md:204
+value_type: str
+default: null
+valid_choices: A nonnegative byte-size string with an optional binary unit suffix GB, MB, KB, or B (case-insensitive); operational
+  values must be aligned to 1 GiB.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This environment variable overrides global_segment_size in mooncake.json and is parsed into a byte count before
+  Mooncake store initialization. The resulting value is passed directly to MooncakeDistributedStore.setup() as global_segment_size
+  in both the normal transfer-engine path and the Ascend fabric-memory path. The Ascend guide defines it as the registered
+  memory size per card contributed to the KV Pool, so raising it reserves or contributes more host-memory capacity for distributed
+  KV data, while undersizing it reduces cache capacity and can cause puts to fail when store capacity is exhausted. Capacity
+  and cache availability can therefore affect memory use, KV-reuse latency, and serving throughput. The pinned upstream vLLM
+  repository contains Mooncake configuration guidance but no implementation of this Ascend-specific environment override.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:269
+  context: Reads the environment variable while constructing MooncakeStoreConfig.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:272
+  context: Gives the environment value precedence over mooncake.json and the built-in 1 GiB fallback, then parses it to bytes.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:123
+  context: Passes the resolved byte count to MooncakeDistributedStore.setup() in the normal transfer-engine path.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:136
+  context: Passes the same resolved global capacity to setup() in the fabric-memory path.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:204
+  context: Defines the setting as registered memory per card, requires 1 GB alignment, and documents environment-over-JSON
+    precedence.
+related_parameters:
+- name: global_segment_size
+  relation: This mooncake.json field supplies the value only when MOONCAKE_GLOBAL_SEGMENT_SIZE is unset.
+- name: MOONCAKE_CONFIG_PATH
+  relation: Selects the mooncake.json file whose global_segment_size is overridden and is required to load MooncakeStoreConfig.
+- name: local_buffer_size
+  relation: Configures Mooncake's separate private local buffer; it does not replace the distributed global segment.
+- name: ASCEND_ENABLE_USE_FABRIC_MEM
+  relation: Changes Mooncake setup to use local_buffer_size=0, but still passes this global segment size unchanged.
+- name: preferred_segment
+  relation: Controls whether puts prefer the local segment whose contributed capacity is set by this parameter.
+constraints:
+- The documented operational size must be aligned to 1 GiB (1073741824 bytes).
+- Environment input is a string parsed case-insensitively with optional GB, MB, KB, or B suffix; no suffix means bytes.
+- Empty strings, negative strings, unsupported units, and malformed numeric strings fail during Mooncake configuration loading.
+- When unset, mooncake.json global_segment_size is used; if that field is also absent, the effective fallback is 1073741824
+  bytes (1 GiB).
+- The variable is read during MooncakeStoreConfig construction, so changing it requires rebuilding or restarting the backend
+  to take effect.
+tuning_advice:
+  summary: Size the registered segment to the KV working set and available host memory, always in 1 GiB increments; leave
+    the variable unset when mooncake.json already carries the intended per-card capacity.
+  suggested_values:
+  - scenario: Configuration is managed consistently through mooncake.json
+    value: <unset>
+    reason: Preserves the JSON value and avoids an environment override silently taking precedence; absent both settings,
+      the code uses 1 GiB.
+  - scenario: Minimal documented aligned KV Pool configuration
+    value: 1GB
+    reason: Matches the built-in fallback and the Ascend guide's example while satisfying the required 1 GiB alignment.
+  - scenario: Documented multi-instance deployment with sufficient host-memory headroom
+    value: 100GB
+    reason: The pinned Ascend multi-instance tutorial uses 107374182400 bytes, equivalent to 100 GiB, as its per-segment example.
+  caveats:
+  - The size is per card, so total registered host memory grows with the number of participating cards and instances.
+  - A larger segment increases KV Pool capacity but consumes more host memory; it is not inherently faster once the working
+    set already fits.
+  - A segment that is too small can exhaust store capacity and make KV puts fail, reducing reuse and potentially increasing
+    recomputation and tail latency.
+  - Unit labels are implemented with powers of 1024 despite being written as GB, MB, and KB.
+  - The source supplies examples and constraints, not a universal optimum; benchmark cache hit rate, put failures, throughput,
+    and host-memory headroom on the target topology.
+  quick_guide: Start with an aligned mooncake.json value and leave the variable unset; use MOONCAKE_GLOBAL_SEGMENT_SIZE only
+    as an intentional deployment override, then increase in 1 GiB steps while monitoring KV capacity and host memory.
+analysis_date: '2026-07-28'

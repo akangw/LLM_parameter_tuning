@@ -1,0 +1,107 @@
+name: CompilationConfig.cudagraph_num_of_warmups
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:617
+- vllm/config/vllm.py:1141
+- vllm_ascend/platform.py:442
+- vllm_ascend/worker/model_runner_v1.py:4514
+value_type: int
+default: 0
+valid_choices: Any integer; non-negative values are meaningful, but normal platform configuration overwrites the effective
+  value to 1 when graph capture is enabled.
+cli_example: vllm serve <model> --compilation-config '{"cudagraph_num_of_warmups":1}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: Controls how many eager dummy executions are made for every CUDA/ACL graph batch descriptor immediately before
+  that descriptor is captured. More runs increase model initialization and graph-capture time roughly in proportion to the
+  number of capture descriptors, while allowing kernels, allocators, and workspaces to reach a warmed state before capture.
+  The setting does not add work to steady-state graph replay. The declared default is 0, but normal upstream VllmConfig initialization
+  changes it to 1 whenever eager execution is not forced, and the Ascend platform unconditionally assigns 1 during its configuration
+  pass; graph capture is skipped when the effective graph mode is NONE. Consequently, a user-supplied nested value is not
+  a durable tuning control in the standard pinned serving path. Warmup can affect which workspaces have already been allocated
+  before graph capture and the later workspace lock, so removing it in a custom integration may change capture reliability
+  or the resulting device-memory footprint even though the warmup runs themselves do not persist.
+usage_locations:
+- file: vllm/config/vllm.py:1134
+  context: When eager execution is disabled, upstream normalization overwrites the configured value with 1 before graph capture
+    sizes are finalized; eager mode instead disables graph capture.
+- file: vllm_ascend/platform.py:442
+  context: Ascend platform configuration takes precedence and assigns an effective value of 1, including before later compatibility
+    logic can disable ACLGraph through cudagraph_mode.
+- file: vllm_ascend/worker/worker.py:502
+  context: Ascend derives graph capture sizes, performs non-graph compilation warmups, and then invokes model_runner.capture_model
+    once to capture the configured ACLGraph descriptors.
+- file: vllm_ascend/worker/model_runner_v1.py:4514
+  context: Ascend delegates capture_model to the upstream GPUModelRunner under NPU wrappers, so its inherited per-descriptor
+    warmup-and-capture sequence uses the normalized count for ACLGraph capture.
+related_parameters:
+- name: CompilationConfig.cudagraph_mode
+  relation: NONE skips graph capture and makes this count irrelevant; active FULL and/or PIECEWISE modes determine which descriptor
+    families are warmed.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Determines how many token-size descriptors may be captured and therefore how many times the configured warmup
+    loop is repeated.
+- name: ModelConfig.enforce_eager
+  relation: Upstream eager mode disables cudagraph capture, so no graph warmup runs occur; Ascend may still store 1 in the
+    field, but capture remains skipped.
+- name: CompilationConfig.cudagraph_specialize_lora
+  relation: Separate LoRA graph cases add capture descriptors and multiply the total warmup work controlled by this count.
+constraints:
+- The schema declares an integer and has no explicit lower-bound validator. Because runtime uses range(num_warmups), zero
+  and negative values execute no warmup iterations, although negative values are semantically invalid.
+- In the standard pinned upstream serving path, VllmConfig overwrites the value with 1 whenever enforce_eager is false; on
+  Ascend, platform configuration assigns 1 unconditionally. Setting another value in the initial compilation-config JSON therefore
+  does not survive normalization.
+- The field has no effect when cudagraph_mode resolves to NONE or model execution is forced eager because capture_model exits
+  without capturing.
+- Total warmup work is num_warmups multiplied by the effective set of graph descriptors, which can include multiple capture
+  sizes, FULL and PIECEWISE modes, and LoRA-specialized cases.
+tuning_advice:
+  summary: Treat the effective value 1 as a platform-owned safety setting, not as a normal throughput knob. Tune graph modes
+    and capture-size coverage when startup time or graph memory is excessive.
+  suggested_values:
+  - scenario: Standard upstream CUDA or Ascend ACLGraph serving
+    value: 1
+    reason: This is the value imposed by the pinned platform normalization and provides one eager execution before every graph
+      capture.
+  - scenario: Eager execution or cudagraph_mode NONE
+    value: 0
+    reason: No graphs are captured, so warmups for graph capture provide no value; the stored Ascend value may still be 1
+      but is not consumed.
+  - scenario: Custom integration that mutates the normalized config after platform setup
+    value: 1
+    reason: Retain the platform baseline unless targeted testing proves that extra warmups are required for a backend-specific
+      lazy allocation or that zero warmups capture reliably.
+  caveats:
+  - Increasing the value cannot improve steady-state graph replay directly; it only adds eager work before capture.
+  - Zero warmups can reduce startup time in a custom path but may capture before lazy kernels and workspaces are initialized,
+    affecting stability or memory behavior.
+  - The initial JSON value is overwritten in normal pinned startup. Verify the normalized effective configuration rather than
+    assuming the requested value was honored.
+  - Reducing cudagraph_capture_sizes or selecting a narrower cudagraph_mode usually offers a supported way to reduce total
+    capture warmup and graph memory.
+  quick_guide: Leave the effective count at 1. If startup is too slow, first reduce graph capture sizes or graph-mode coverage
+    and benchmark initialization time, peak device memory, and serving latency together. Only alter this field after normalization
+    in a controlled backend experiment.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

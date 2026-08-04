@@ -1,0 +1,97 @@
+name: --max-cudagraph-capture-size
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm_ascend/platform.py:177
+- vllm_ascend/utils.py:595
+- vllm/config/compilation.py:666
+- vllm/engine/arg_utils.py:1386
+value_type: int
+default: <computed>
+valid_choices: positive integer, or null to use the platform default
+cli_example: --max-cudagraph-capture-size 256
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Sets the upper bound for CUDA-graph capture sizes. When capture sizes are not explicitly supplied, upstream
+  generates graph sizes through this bound; a larger bound covers more batch sizes with graph execution but captures more
+  graphs, increasing startup work and graph-memory use. On Ascend, the platform default is min(max_num_seqs * decode_query_len,
+  512), where decode_query_len includes speculative tokens. This bound also sizes Ascend MoE dispatch and MC2 communication
+  capacity when graph capture sizes are in use. Too small a bound leaves larger batches without graph coverage and can raise
+  their execution latency; too large a bound wastes accelerator memory and startup time.
+usage_locations:
+- file: vllm_ascend/platform.py:177
+  context: Computes the Ascend default as min(max_num_seqs * decode_query_len, 512).
+- file: vllm_ascend/platform.py:229
+  context: Applies the Ascend-computed default to the compilation configuration.
+- file: vllm_ascend/utils.py:595
+  context: Validates or reconciles the bound with the effective cudagraph capture-size list.
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:131
+  context: Uses the bound as the token capacity for MoE dispatch/combine buffer sizing.
+- file: vllm_ascend/ascend_forward_context.py:203
+  context: Uses the bound to set MC2 token capacity when capture sizes are configured.
+- file: vllm/config/compilation.py:666
+  context: Defines automatic capture-size-list generation and the upstream default behavior.
+- file: vllm/config/vllm.py:1138
+  context: Sets the bound to zero when enforce_eager disables CUDA graphs.
+related_parameters:
+- name: --cudagraph-capture-sizes
+  relation: Its largest effective value becomes the capture bound; an explicitly supplied conflicting bound is rejected or
+    reconciled by platform logic.
+- name: --max-num-seqs
+  relation: Determines the automatic bound; Ascend uses it multiplied by decode_query_len, capped at 512.
+- name: --speculative-config
+  relation: Speculative tokens increase decode_query_len and can increase the automatic Ascend bound.
+- name: --enforce-eager
+  relation: Disables graph capture and forces the bound to zero.
+- name: --compilation-config
+  relation: Provides an alternative configuration path for max_cudagraph_capture_size.
+constraints:
+- If both an explicit bound and explicit cudagraph capture sizes are provided, their maximum values must be consistent; otherwise
+  validation can raise an error.
+- Under enforce_eager, graph capture is disabled and the bound is set to 0.
+- With graph capture enabled, the effective capture-size list must contain a valid maximum capture size.
+tuning_advice:
+  summary: Leave this unset in most cases so the platform chooses a safe bound. Reduce it to cut graph-capture startup and
+    memory cost; raise it only when workload batch sizes exceed graph coverage and memory allows.
+  suggested_values:
+  - scenario: Typical Ascend deployment
+    value: <computed>
+    reason: The Ascend default balances graph coverage against capture overhead and is capped at 512.
+  - scenario: Memory-constrained or fast-start deployment
+    value: 256
+    reason: A lower bound reduces the number and memory footprint of captured graphs, at the cost of coverage for larger batches.
+  - scenario: Large, variable decode batches with sufficient memory
+    value: 512
+    reason: Covers more supported batch sizes with graph execution while accepting increased capture time and memory use.
+  - scenario: MTP with large expert parallelism
+    value: max_concurrency * (1 + num_speculative_tokens)
+    reason: Matches the decode token requirement used by the Ascend workaround for graph-capture buffer overflow.
+  caveats:
+  - 'Ascend defaults differ from upstream: Ascend uses min(max_num_seqs * decode_query_len, 512) without the upstream trailing
+    multiplier of two.'
+  - A larger value can increase MoE dispatch and MC2 communication buffer capacity on Ascend.
+  - Explicit cudagraph_capture_sizes control the effective maximum and must be kept consistent with this setting.
+  quick_guide: Use the computed default first; lower it for startup or memory pressure, and increase it only after confirming
+    graph misses for expected batch sizes.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

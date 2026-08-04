@@ -1,0 +1,81 @@
+name: CPU_AFFINITY_CONF
+type: env
+category: other
+scope: vllm-ascend
+source_file:
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:169
+- docs/source/tutorials/models/PaddleOCR-VL.md:78
+value_type: int
+default: 1
+valid_choices: Integer accepted by the external torch_npu runtime; the pinned vLLM Ascend sources document only the value
+  1.
+cli_example: export CPU_AFFINITY_CONF=1
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: This torch_npu environment setting controls an external CPU-affinity optimization used by Ascend inference.
+  The pinned vLLM Ascend tuning guide recommends value 1 and says it greatly improves CPU-bottlenecked models while preserving
+  performance for NPU-bottlenecked models. Binding host-side work more effectively can reduce CPU scheduling and migration
+  overhead, improving request latency and throughput when operator submission or preprocessing is the bottleneck; it is not
+  expected to accelerate an execution path already limited by NPU compute. Neither pinned repository reads or validates this
+  variable directly, so its exact binding policy and accepted values belong to the installed torch_npu/CANN stack rather than
+  vLLM.
+usage_locations:
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:169
+  context: Recommends exporting value 1 as a torch_npu scheduling optimization and identifies CPU-bottlenecked models as the
+    workload expected to benefit.
+- file: docs/source/tutorials/models/PaddleOCR-VL.md:78
+  context: Enables value 1 in the documented PaddleOCR-VL deployment environment, alongside task-queue tuning and Ascend-native
+    CPU binding.
+related_parameters:
+- name: TASK_QUEUE_ENABLE
+  relation: The tuning guide places this operator-delivery queue optimization beside CPU_AFFINITY_CONF, and the PaddleOCR-VL
+    recipe enables both.
+- name: additional_config.enable_cpu_binding
+  relation: The same PaddleOCR-VL recipe explicitly enables vLLM Ascend's own worker CPU-core binding; coordinate the external
+    torch_npu affinity policy with this process-level binding and the host cpuset.
+constraints:
+- Set the variable before importing torch_npu or launching vLLM so the external runtime can observe it during initialization.
+- The pinned repositories document only value 1 and contain no parser or validation for other integer values.
+- The effect depends on the installed torch_npu/CANN version, host CPU topology, process cpuset, worker count, and whether
+  the workload is CPU-bound.
+- This is an external runtime setting; neither pinned vLLM nor vLLM Ascend source code consumes it directly.
+tuning_advice:
+  summary: Use 1 as the documented Ascend baseline for CPU-bound serving, then retain it only after comparing end-to-end latency
+    and throughput on the deployed torch_npu/CANN stack.
+  suggested_values:
+  - scenario: CPU-bottlenecked Ascend inference
+    value: 1
+    reason: This is the sole value recommended by the pinned performance guide, which says it greatly improves CPU-bottlenecked
+      models.
+  - scenario: NPU-bottlenecked Ascend inference
+    value: 1
+    reason: The pinned guide states that the setting preserves the same performance for NPU-bottlenecked models, making 1
+      the documented baseline there too.
+  caveats:
+  - The pinned sources provide no benchmark numbers, CPU-binding algorithm, or supported-value table.
+  - Existing container cpusets, taskset policies, NUMA placement, or orchestration affinity can constrain or supersede the
+    external runtime's requested affinity.
+  - The PaddleOCR-VL example also enables vLLM Ascend CPU binding, so its recipe does not isolate the contribution of CPU_AFFINITY_CONF.
+  - Verify behavior again after changing torch_npu or CANN versions because the consumer is outside both pinned repositories.
+  quick_guide: Export CPU_AFFINITY_CONF=1 before launch, benchmark representative CPU-bound traffic, and check effective process
+    affinity and NUMA placement rather than assuming the environment assignment was applied.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

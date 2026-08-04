@@ -1,0 +1,77 @@
+name: --mamba-ssm-cache-dtype
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:35
+- vllm/config/cache.py:128
+- vllm/engine/arg_utils.py:1115
+- vllm/config/vllm.py:778
+- vllm/v1/attention/backends/flash_attn.py:81
+value_type: str
+default: auto
+valid_choices:
+- auto
+- float32
+- float16
+cli_example: --mamba-ssm-cache-dtype float16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This setting controls only the SSM-state portion of the Mamba cache; the convolution state remains controlled
+  by mamba_cache_dtype. The current MambaDType accepts auto, float32, and float16. With auto, the cache config first follows
+  mamba_cache_dtype, while model-specific configuration can replace auto: NemotronH uses its HF configuration or float32 by
+  default, and Qwen3.5 uses its mamba_ssm_dtype when present. Choosing float16 rather than float32 reduces the storage required
+  for this state cache, which can leave more device memory for active requests. In hybrid models, the FlashAttention backend
+  restricts block sizes to 16, 32, or 64 whenever either Mamba cache dtype is float32; otherwise it permits multiples of 16.
+  Stochastic rounding is also rejected unless this SSM cache dtype is explicitly float16. vLLM Ascend contains no package-code
+  override of this option, so the pinned upstream behavior applies to Ascend integrations.'
+usage_locations:
+- file: vllm/config/cache.py:128
+  context: Defines the SSM-only cache dtype and documents auto resolution through mamba_cache_dtype.
+- file: vllm/engine/arg_utils.py:659
+  context: Exposes the CacheConfig field through EngineArgs for CLI construction.
+- file: vllm/engine/arg_utils.py:1707
+  context: Passes the parsed value into CacheConfig.
+- file: vllm/model_executor/models/config.py:414
+  context: Resolves auto for NemotronH from the HF configuration or the float32 fallback.
+- file: vllm/model_executor/models/config.py:609
+  context: Resolves auto from Qwen3.5 mamba_ssm_dtype and warns on an explicit mismatch.
+- file: vllm/config/vllm.py:778
+  context: Requires float16 when Mamba stochastic rounding is enabled.
+- file: vllm/v1/attention/backends/flash_attn.py:81
+  context: Restricts hybrid-model FlashAttention block sizes when this dtype or mamba_cache_dtype is float32.
+related_parameters:
+- name: --mamba-cache-dtype
+  relation: Controls the convolution-state dtype and supplies the auto resolution path for the SSM state.
+- name: --enable-mamba-cache-stochastic-rounding
+  relation: Requires --mamba-ssm-cache-dtype float16.
+- name: --block-size
+  relation: In hybrid models, float32 SSM state restricts FlashAttention-supported block sizes to 16, 32, or 64.
+constraints:
+- Valid values in the current source are auto, float32, and float16.
+- When Mamba stochastic rounding is enabled, set --mamba-ssm-cache-dtype float16 explicitly.
+- For Qwen3.5, an explicit value different from the model mamba_ssm_dtype is used but produces a warning.
+tuning_advice:
+  summary: Leave the setting at auto to use model-aware resolution; use float16 when lower SSM-cache memory use and compatible
+    precision are desired.
+  suggested_values:
+  - scenario: Initial deployment or a model with an intended SSM dtype in its configuration
+    value: auto
+    reason: Lets the current model-specific resolution choose the configured SSM dtype; NemotronH falls back to float32 if
+      its configuration does not specify one.
+  - scenario: Memory-constrained Mamba or hybrid-model serving with acceptable float16 state precision
+    value: float16
+    reason: Uses half the per-element cache storage of float32, satisfies stochastic rounding, and avoids the float32 hybrid
+      FlashAttention block-size restriction.
+  - scenario: A model or validation run that requires float32 SSM state
+    value: float32
+    reason: Preserves float32 state precision, but increases SSM-cache storage and can limit hybrid FlashAttention block sizes.
+  caveats:
+  - The option does not change the Mamba convolution-state dtype; tune --mamba-cache-dtype separately when needed.
+  - Stochastic rounding fails configuration validation unless this value is float16.
+  - In hybrid models, float32 restricts FlashAttention-supported block sizes to 16, 32, and 64.
+  quick_guide: Start with auto; select float16 only after confirming the model and workload tolerate that SSM-state precision.
+analysis_date: '2026-07-27'

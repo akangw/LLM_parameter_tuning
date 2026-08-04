@@ -1,0 +1,90 @@
+name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:80
+- vllm_ascend/ascend_config.py:158
+- vllm_ascend/utils.py:1316
+- vllm_ascend/ops/linear_op.py:272
+value_type: int
+default: 0
+valid_choices: Any integer; values <= 0 disable FLASHCOMM2. An enabled value must be a positive divisor of tensor_parallel_size
+  and strictly smaller than tensor_parallel_size.
+cli_example: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE=1 vllm serve <model> --tensor-parallel-size 2
+deprecated: true
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This environment variable supplies AscendConfig.enable_flashcomm2_parallel_size unless the same additional_config
+  key is present. A positive value enables the FlashComm2 path and becomes the output-projection tensor-parallel group size.
+  The implementation reorganizes attention-output batches with all-to-all communication, computes o_proj/out_proj in the configured
+  group, and reduce-scatters partial output when that group has more than one rank; if FlashComm1 is disabled, it then all-gathers
+  over the global TP group. Consequently the setting changes the communication and compute decomposition on every affected
+  attention output layer and can materially change latency and throughput. It also interacts with optional o_proj layer sharding,
+  which current source explicitly identifies as reducing memory consumption for FlashComm2's otherwise resident full output-projection
+  weights. The default 0 bypasses this path.
+usage_locations:
+- file: vllm_ascend/envs.py:80
+  context: Parses the environment variable as an integer with default 0.
+- file: vllm_ascend/ascend_config.py:158
+  context: Loads the deprecated environment value, unless additional_config.enable_flashcomm2_parallel_size overrides it.
+- file: vllm_ascend/utils.py:1316
+  context: Enables and validates FlashComm2, its TP-group size, deployment role, layer-sharding combination, and incompatible
+    fine-grained o_proj TP.
+- file: vllm_ascend/distributed/parallel_state.py:152
+  context: Builds the FlashComm2 output tensor-parallel and output data-parallel communication groups from the configured
+    size.
+- file: vllm_ascend/ops/linear_op.py:272
+  context: Implements the FlashComm2 o_proj/out_proj all-to-all, matrix multiplication, reduce-scatter, and conditional all-gather
+    path.
+- file: docs/source/user_guide/feature_guide/layer_sharding.md:47
+  context: Documents FlashComm2 with o_proj layer sharding as a memory-saving configuration.
+related_parameters:
+- name: additional_config.enable_flashcomm2_parallel_size
+  relation: Preferred replacement; when present it takes precedence over this environment variable.
+- name: tensor_parallel_size
+  relation: The enabled value must be smaller than and evenly divide the global tensor-parallel size; runtime use also requires
+    TP greater than 1.
+- name: additional_config.enable_flashcomm1
+  relation: Current validation recommends enabling FlashComm1 simultaneously for optimal performance; otherwise FlashComm2
+    output is all-gathered over global TP.
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Mutually exclusive output-projection tensor-parallel configuration.
+- name: additional_config.layer_sharding
+  relation: With FlashComm2, only the sole value ["o_proj"] is accepted; this combination can reduce output-projection weight
+    memory.
+constraints:
+- Values <= 0 disable FLASHCOMM2.
+- An enabled value must be strictly smaller than tensor_parallel_size and tensor_parallel_size must be divisible by it.
+- additional_config.enable_flashcomm2_parallel_size overrides this environment variable when both are set.
+- It cannot be enabled together with finegrained_tp_config.oproj_tensor_parallel_size greater than 0.
+- If layer_sharding is non-empty while FLASHCOMM2 is enabled, it must be exactly ["o_proj"].
+- It is not applicable to a PD-disaggregated decode consumer (D node); current source raises an assertion in that role.
+tuning_advice:
+  summary: Keep 0 unless benchmarking FlashComm2 on a tensor-parallel prefill-oriented deployment. Start with 1, then benchmark
+    other strict divisors of global TP size while checking latency, throughput, and device memory.
+  suggested_values:
+  - scenario: Feature disabled or TP=1
+    value: 0
+    reason: The default avoids the FlashComm2 communication path, and no positive value is valid when global TP size is 1.
+  - scenario: First FlashComm2 trial with TP greater than 1
+    value: 1
+    reason: It is a valid strict divisor for every TP size above 1 and matches the documented FlashComm2 layer-sharding example.
+  - scenario: Larger output-projection TP group
+    value: A positive strict divisor of tensor_parallel_size, such as 2 for TP=4
+    reason: The value directly sets the o_proj/out_proj TP-group size; benchmark valid divisors because they change group
+      layout and communication.
+  caveats:
+  - The environment variable is deprecated and current code warns that it will be removed; use additional_config.enable_flashcomm2_parallel_size
+    for new deployments.
+  - Current source recommends enabling FlashComm1 simultaneously for optimal performance.
+  - Current source recommends FlashComm2 for prefill (P) deployments, warns that hybrid use may degrade decode performance,
+    and rejects decode-only consumers.
+  - Layer sharding with FlashComm2 accepts only ["o_proj"]; other non-empty layer_sharding lists fail validation.
+  - An equal-to-TP value is invalid even though it divides TP; the enabled group size must be strictly smaller.
+  quick_guide: 'For TP=2, start with VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE=1 and benchmark against 0. For TP=4, compare 1 and
+    2. Prefer --additional-config ''{"enable_flashcomm2_parallel_size": 1}'' because the environment variable is deprecated.'
+analysis_date: '2026-07-28'

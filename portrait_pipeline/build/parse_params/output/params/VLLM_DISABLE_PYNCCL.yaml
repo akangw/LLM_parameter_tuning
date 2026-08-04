@@ -1,0 +1,83 @@
+name: VLLM_DISABLE_PYNCCL
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:988
+- vllm/distributed/device_communicators/pynccl.py:91
+value_type: bool
+default: 'False'
+valid_choices:
+- 'true'
+- '1'
+- 'false'
+- '0'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When VLLM_DISABLE_PYNCCL is set to true, the PyNcclCommunicator is disabled and vLLM falls back to using torch.distributed
+  for all-reduce operations (see vllm/distributed/device_communicators/pynccl.py:91). On Ascend NPU, torch.distributed uses
+  HCCL as the communication backend. PyNCCL is a lightweight NCCL wrapper that avoids Python GIL overhead and torch.distributed
+  initialization costs. Disabling it forces all collective communication through the heavier torch.distributed path, which
+  can increase per-step communication latency and reduce throughput, especially in tensor-parallel configurations where frequent
+  all-reduce operations occur. The impact is most pronounced during decode phases with small message sizes, where PyNCCL''s
+  lower overhead provides a measurable advantage.
+
+  '
+usage_locations:
+- file: vllm/distributed/device_communicators/pynccl.py:91
+  context: 'Checks VLLM_DISABLE_PYNCCL during PyNcclCommunicator initialization; if true, sets self.available=False and self.disabled=True,
+    skipping NCCL library loading entirely.
+
+    '
+- file: vllm/envs.py:109
+  context: 'Declares VLLM_DISABLE_PYNCCL as a boolean environment variable with default False in the environment variables
+    class definition.
+
+    '
+related_parameters:
+- name: VLLM_SKIP_P2P_CHECK
+  relation: 'Both affect custom communication paths; VLLM_SKIP_P2P_CHECK controls P2P verification for custom all-reduce,
+    while VLLM_DISABLE_PYNCCL disables the PyNCCL communicator entirely.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Keep VLLM_DISABLE_PYNCCL at its default (False) on Ascend NPU to use PyNCCL for lower-latency collective communication;
+    only set to true for debugging communication issues.
+
+    '
+  suggested_values:
+  - scenario: 'Normal production inference on Ascend NPU with tensor parallelism
+
+      '
+    value: 'false'
+    reason: 'PyNCCL provides lower overhead than torch.distributed for all-reduce operations, reducing per-step communication
+      latency and improving throughput in TP configurations.
+
+      '
+  - scenario: 'Debugging HCCL communication hangs or errors on Ascend NPU
+
+      '
+    value: 'true'
+    reason: 'Falling back to torch.distributed can help isolate whether issues are specific to the PyNCCL wrapper or the underlying
+      HCCL library.
+
+      '
+  caveats:
+  - 'On Ascend NPU, PyNCCL uses the HCCL library (not NVIDIA NCCL). The performance benefit of PyNCCL over torch.distributed
+    may differ from GPU environments due to HCCL''s own characteristics.
+
+    '
+  - 'When world_size == 1, PyNCCL is automatically disabled regardless of this setting, so VLLM_DISABLE_PYNCCL has no effect
+    in single-device deployments.
+
+    '
+  quick_guide: 'Leave at default (False) for production; set to true only when debugging HCCL communication issues on Ascend
+    NPU.
+
+    '
+analysis_date: '2026-07-06'

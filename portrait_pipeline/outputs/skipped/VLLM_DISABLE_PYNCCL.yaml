@@ -1,0 +1,8 @@
+name: VLLM_DISABLE_PYNCCL
+type: env
+performance_impact: none
+skip_reason: The variable disables upstream vLLM's CUDA PyNcclCommunicator, but the pinned vLLM-Ascend platform selects NPUCommunicator
+  instead (vllm_ascend/platform.py:758). That communicator currently has no PyHCCL integration and uses the device process
+  group for collectives (vllm_ascend/distributed/device_communicators/npu_communicator.py:23). Neither it nor the standalone
+  PyHcclCommunicator reads VLLM_DISABLE_PYNCCL. Therefore changing this environment variable has no latency, throughput, or
+  memory effect on the target Ascend runtime.

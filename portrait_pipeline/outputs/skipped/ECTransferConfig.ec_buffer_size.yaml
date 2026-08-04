@@ -1,0 +1,8 @@
+name: ECTransferConfig.ec_buffer_size
+type: nested
+performance_impact: none
+skip_reason: In the pinned vLLM source, ec_buffer_size is only declared and documented in ECTransferConfig; no EC connector
+  or other runtime code reads it. The only registered ECExampleConnector uses shared_storage_path from ec_connector_extra_config
+  and transfers encoder caches through safetensors files without allocating a buffer from ec_buffer_size. The pinned vLLM-Ascend
+  source likewise has no ec_buffer_size consumer and documents the ECExampleConnector pathway without this field. Consequently,
+  changing this parameter has no current latency, throughput, or memory effect.

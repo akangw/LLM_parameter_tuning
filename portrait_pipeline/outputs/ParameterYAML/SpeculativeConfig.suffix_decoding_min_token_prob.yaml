@@ -1,0 +1,79 @@
+name: SpeculativeConfig.suffix_decoding_min_token_prob
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/speculative.py:181
+- docs/features/speculative_decoding/README.md:114
+- vllm_ascend/spec_decode/suffix_proposer.py:1
+- docs/source/tutorials/features/suffix_speculative_decoding.md:5
+value_type: float
+default: 0.1
+valid_choices: float in the inclusive range [0, 1]
+cli_example: --speculative-config '{"method":"suffix","num_speculative_tokens":16,"suffix_decoding_min_token_prob":0.1}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This threshold filters suffix-decoding continuation tokens using probabilities estimated from frequency counts.
+  A token is proposed only when its estimated probability is at least this value. Raising the threshold makes proposals more
+  selective and can avoid verification work on low-confidence continuations, but may shorten drafts or suppress useful speculation
+  and therefore reduce the latency and throughput benefit. Lowering it permits more candidate tokens and can reduce target-model
+  decode iterations on strongly repetitive workloads, but low-confidence drafts are more likely to be rejected and can add
+  verification work without producing output. Ascend subclasses the upstream suffix proposer and passes it the complete vLLM
+  configuration, so the same acceptance-versus-draft-opportunity trade-off applies there.
+usage_locations:
+- file: vllm/config/speculative.py:181
+  context: Declares the 0.1 default and defines the threshold as the minimum frequency-estimated probability required for
+    a token to be speculated.
+- file: vllm/config/speculative.py:797
+  context: Validates that the threshold is between 0 and 1 inclusive when suffix decoding is selected.
+- file: docs/features/speculative_decoding/README.md:114
+  context: Documents the nested float option, its default, and its role as the minimum estimated token probability required
+    for speculation.
+- file: vllm_ascend/spec_decode/suffix_proposer.py:1
+  context: Ascend subclasses the upstream suffix proposer and forwards the full vLLM configuration, preserving this probability
+    threshold.
+- file: docs/source/tutorials/features/suffix_speculative_decoding.md:5
+  context: Ascend documents CPU-based frequency-statistical suffix prediction and its latency and throughput relevance on
+    repetitive workloads.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: This probability threshold has effect only when the speculative-decoding method is suffix.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Sets the overall proposal ceiling, while this threshold may stop a draft before that ceiling is reached.
+- name: SpeculativeConfig.suffix_decoding_max_spec_factor
+  relation: Caps adaptive proposal length from the matched-prefix length, independently of this confidence filter.
+- name: SpeculativeConfig.suffix_decoding_max_tree_depth
+  relation: Bounds the combined match and continuation depth; the threshold can further shorten the realized continuation.
+- name: SpeculativeConfig.suffix_decoding_max_cached_requests
+  relation: Controls how much cross-request history is retained for matching, which affects the frequency evidence used to
+    form proposals.
+constraints:
+- Must be between 0 and 1 inclusive; values outside that range raise ValueError during suffix-decoding validation.
+- Has performance effect only when SpeculativeConfig.method is suffix.
+- Suffix decoding requires Arctic Inference; configuration validation raises ImportError when the package is unavailable.
+- The realized proposal length is also bounded by num_speculative_tokens, suffix_decoding_max_spec_factor, and suffix_decoding_max_tree_depth.
+tuning_advice:
+  summary: Keep 0.1 as the baseline, then tune from measured draft length, acceptance, TPOT, and throughput on representative
+    repetitive traffic.
+  suggested_values:
+  - scenario: General suffix-decoding deployment
+    value: 0.1
+    reason: Uses the source default and admits continuations with at least ten-percent estimated frequency probability.
+  - scenario: Low acceptance or latency regressions from rejected drafts
+    value: 0.2
+    reason: A stricter threshold can suppress weak continuations and reduce wasted target-model verification work.
+  - scenario: Highly repetitive traffic with short drafts despite high acceptance
+    value: 0.05
+    reason: A lower threshold permits more continuation tokens; retain it only if end-to-end measurements improve.
+  caveats:
+  - A stricter threshold can improve average proposal quality while reducing draft length enough to lose speculative speedup.
+  - A lower threshold does not guarantee longer accepted output; added low-confidence tokens may simply be rejected.
+  - Frequency estimates depend on prompt and cached-response repetition, so the optimum varies by workload and cache contents.
+  - Benchmark Ascend and upstream separately because device-side verification costs differ even though they share the proposer
+    logic.
+  quick_guide: Start at 0.1. Raise it when rejected drafts hurt TPOT or throughput; lower it only when acceptance remains
+    high and the extra draft opportunity improves end-to-end results.
+analysis_date: '2026-07-31'

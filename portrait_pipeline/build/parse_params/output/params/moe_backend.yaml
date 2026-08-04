@@ -1,0 +1,86 @@
+name: --moe-backend
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1404
+- vllm/config/kernel.py:141
+- vllm/model_executor/layers/fused_moe/config.py:1263
+- vllm/model_executor/layers/fused_moe/layer.py:511
+value_type: str
+default: auto
+valid_choices:
+- auto
+- triton
+- deep_gemm
+- deep_gemm_mega_moe
+- cutlass
+- flashinfer_trtllm
+- flashinfer_cutlass
+- flashinfer_cutedsl
+- marlin
+- humming
+- triton_unfused
+- aiter
+- emulation
+cli_example: --moe-backend triton
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter selects the backend kernel implementation for Mixture-of-Experts (MoE) expert computation.
+  On Ascend NPU, the available backends are limited to those supported by the CANN/HCCL stack. The "auto" default delegates
+  selection to vLLM''s automatic backend resolution, which on Ascend typically falls back to "triton" or "triton_unfused"
+  since GPU-specific backends (deep_gemm, cutlass, flashinfer_*, aiter) are not available on NPU. The parameter is consumed
+  in FusedMoE layer construction (vllm/model_executor/layers/fused_moe/layer.py:511) where it is passed to FusedMoEConfig.moe_backend,
+  which then drives kernel selection in the MoE dispatch path. Since Ascend NPU lacks most of the listed backends, the effective
+  choice is between "auto" (which resolves to a Triton-based path) and "triton"/"triton_unfused" for explicit control. The
+  performance difference between these options on Ascend is minimal because they all ultimately rely on the same underlying
+  CANN operators. No vllm-ascend override of this parameter was found in the provided context.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/layer.py:511
+  context: Passed to FusedMoEConfig.moe_backend during MoE layer initialization
+- file: vllm/model_executor/layers/fused_moe/config.py:1263
+  context: Stored as FusedMoEConfig.moe_backend field with default 'auto'
+- file: vllm/config/kernel.py:141
+  context: Defined as KernelConfig.moe_backend with default 'auto'
+- file: vllm/engine/arg_utils.py:479
+  context: EngineArgs.moe_backend field declaration
+- file: vllm/v1/spec_decode/llm_base_proposer.py:1105
+  context: Draft model inherits or overrides moe_backend from target model config
+- file: vllm/lora/layers/fused_moe.py:56
+  context: 'LoRA compatibility check: requires moe_backend=''triton'' or ''auto'''
+related_parameters:
+- name: --speculative-config
+  relation: Draft model can override moe_backend via speculative_config.moe_backend field
+- name: --enable-expert-parallel
+  relation: Expert parallelism interacts with MoE kernel selection and dispatch strategy
+constraints:
+- On Ascend NPU, only 'auto', 'triton', and 'triton_unfused' backends are functional; other backends (deep_gemm, cutlass,
+  flashinfer_*, aiter, marlin, humming, emulation) are GPU-specific and will fail or fall back to Triton.
+- When LoRA is enabled with unquantized MoE, moe_backend must be 'triton' or 'auto' (which auto-selects Triton for LoRA compatibility).
+tuning_advice:
+  summary: On Ascend NPU, leave this at 'auto' (default) — the effective backend choice is limited to Triton-based paths,
+    and explicit selection provides no measurable performance benefit.
+  suggested_values:
+  - scenario: Default Ascend NPU deployment
+    value: auto
+    reason: Automatically selects the best available backend; on Ascend this resolves to a Triton-based kernel which is the
+      only viable option.
+  - scenario: Debugging or isolating MoE kernel issues on Ascend
+    value: triton
+    reason: Explicitly forces Triton backend, which is functionally equivalent to 'auto' on Ascend but removes any auto-selection
+      ambiguity.
+  caveats:
+  - GPU-specific backends (deep_gemm, cutlass, flashinfer_*, aiter) are not supported on Ascend NPU and will either error
+    out or silently fall back to Triton.
+  - The 'emulation' backend dequantizes weights and runs BF16/FP16 GEMM — this may work on Ascend but offers no performance
+    advantage over Triton.
+  - No vllm-ascend override was found for this parameter; behavior follows upstream vLLM with Ascend hardware limitations
+    applied at kernel dispatch time.
+  quick_guide: Use default 'auto' on Ascend NPU; only change to 'triton' for debugging MoE kernel issues.
+analysis_date: '2026-07-06'

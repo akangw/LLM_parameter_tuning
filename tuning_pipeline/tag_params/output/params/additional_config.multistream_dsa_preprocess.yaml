@@ -1,0 +1,100 @@
+name: additional_config.multistream_dsa_preprocess
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:136
+- vllm_ascend/attention/dsa_v1.py:1430
+- vllm_ascend/attention/context_parallel/dsa_cp.py:877
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"multistream_dsa_preprocess":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Enabling this Ascend-only switch moves selected DSA preprocessing work onto the attention calculation stream
+  and coordinates it with NPU events. In the standard DSA decode path, Q projection and rotary work remain on the current
+  stream while KV projection, normalization, rotary work, and KV-cache scatter run on the attention stream, allowing the two
+  preprocessing branches to overlap before the current stream waits for KV completion. In the DSA context parallel path, when
+  Q/KV gathering is needed, hidden-state all-gather runs on the attention stream concurrently with Q computation from local
+  hidden states; execution synchronizes before the gathered hidden states are used for KV computation. This can reduce attention
+  preprocessing latency and improve decode or long-sequence throughput when the parallel work is large enough to amortize
+  stream and event overhead. It does not change tensor shapes or persistent model/KV-cache capacity, and the pinned upstream
+  vLLM repository contains no corresponding option.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:136
+  context: Reads the nested additional-config boolean with a default of false.
+- file: vllm_ascend/attention/dsa_v1.py:1430
+  context: Copies the global Ascend setting into the DSA attention implementation.
+- file: vllm_ascend/attention/dsa_v1.py:2182
+  context: In the non-DSV4-overlap decode branch, records an event after hidden-state availability, runs KV preprocessing
+    and cache scatter on the attention stream while Q preprocessing proceeds on the current stream, then waits for attention-stream
+    completion.
+- file: vllm_ascend/attention/context_parallel/dsa_cp.py:980
+  context: Activates the alternate stream only when hidden-state Q/KV all-gather is required, overlapping that collective
+    with local Q projection and rotary preprocessing before synchronizing for KV work.
+related_parameters:
+- name: additional_config.multistream_dsv4_dsa_overlap
+  relation: Selects a newer DSA multi-stream decode implementation; when enabled, its decode branch takes precedence over
+    this option's standard Q/KV split.
+- name: additional_config.enable_dsa_cp
+  relation: Enables the DSA context-parallel implementation in which this option can overlap a required hidden-state all-gather
+    with local Q preprocessing.
+- name: additional_config.enable_flashcomm1
+  relation: DSA context parallelism depends on FLASHCOMM1, so the context-parallel overlap use case requires that communication
+    feature.
+constraints:
+- The option affects only Ascend DSA attention implementations; upstream vLLM has no matching parameter or usage.
+- In DSA context parallelism, multi-stream overlap is activated only when need_gather_q_kv is true.
+- In ordinary DSA decode, enabling multistream_dsv4_dsa_overlap selects a separate branch and bypasses this option's Q/KV
+  preprocessing split.
+- Correctness depends on the implementation's NPU event waits; this switch changes stream scheduling, not computation results
+  or cache sizing.
+tuning_advice:
+  summary: Keep false as the compatibility baseline; test true on Ascend DSA workloads and retain it only when end-to-end
+    decode or long-sequence measurements improve.
+  suggested_values:
+  - scenario: Ascend DSA decode without the DSV4 overlap mode
+    value: true
+    reason: Allows Q preprocessing on the current stream to overlap KV preprocessing and cache scatter on the attention stream.
+  - scenario: DSA context-parallel workload that gathers Q/KV hidden states
+    value: true
+    reason: Allows hidden-state all-gather to overlap local Q projection and rotary work before KV preprocessing consumes
+      the gathered states.
+  - scenario: Compatibility baseline, non-DSA model, or no measured gain
+    value: false
+    reason: Uses the source default and avoids extra stream switching and event synchronization when there is no useful work
+      to overlap.
+  caveats:
+  - The pinned source provides no universal performance numbers or hardware-specific recommendation for enabling this option.
+  - Small decode batches or short sequences may not expose enough parallel work to amortize stream and event overhead.
+  - When multistream_dsv4_dsa_overlap is enabled, benchmark that mode directly because it replaces this option's standard
+    decode path.
+  - The context-parallel benefit is conditional on Q/KV hidden-state gathering; calls without gathering remain on the normal
+    stream path.
+  quick_guide: Start with false. For an Ascend DSA deployment, enable true in isolation, warm up the service, and compare
+    TPOT, request latency, and throughput on a representative batch and sequence-length mix; revert if the gain is absent
+    or stability regresses.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

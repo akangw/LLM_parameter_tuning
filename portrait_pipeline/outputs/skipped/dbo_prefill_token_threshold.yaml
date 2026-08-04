@@ -1,0 +1,6 @@
+name: --dbo-prefill-token-threshold
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source this option is defined and propagated into ParallelConfig, but dbo_prefill_token_threshold
+  has no current runtime consumer. In the pinned vLLM-Ascend source, the parent enable_dbo option is explicitly reset to false,
+  so DBO threshold settings cannot affect execution on Ascend.

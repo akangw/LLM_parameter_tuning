@@ -1,0 +1,92 @@
+name: additional_config.hamming_sparse
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:262
+- vllm_ascend/worker/model_runner_v1.py:541
+- vllm_ascend/worker/kvcomp_utils.py:516
+- vllm_ascend/attention/kvcomp_attn/attention_utils.py:145
+value_type: dict
+default:
+  enabled: false
+  sparse_json_location: ''
+valid_choices: A mapping with required keys enabled (bool) and sparse_json_location (str). When enabled is true, sparse_json_location
+  must identify an existing, model-compatible KVComp JSON file.
+cli_example: --additional-config '{"hamming_sparse":{"enabled":true,"sparse_json_location":"/path/to/kvcomp.json"},"enable_hamming_sparse":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: AscendConfig parses this mapping into enable_hamming_sparse and sparse_json at vllm_ascend/ascend_config.py:262-265.
+  When its enabled field is true and speculative decoding is off, model_runner_v1.py:541-547 loads the JSON through initialize_kvcomp_metadata(),
+  allocates request-sized Hamming metadata (including an output tensor proportional to maximum requests, KV heads, and maximum
+  model length), and later allocates a uint8 hash-key cache for each participating attention layer in kvcomp_utils.py:516-653.
+  This directly increases startup work and device memory use. The sparse attention path itself is independently gated by the
+  sibling additional_config.enable_hamming_sparse key in attention_utils.py:145-152; when both gates are enabled, Hamming
+  top-k block selection can reduce long-context decode attention work and improve latency or throughput, while hash computation
+  and selection add overhead. If this nested gate is enabled without the sibling gate, the auxiliary allocations are created
+  but sparse dispatch remains off. Upstream vLLM only carries platform-specific additional_config data and has no Hamming-sparse
+  consumer.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:262
+  context: Parses the mapping, extracts enabled and sparse_json_location by direct key access, and validates the path when
+    enabled.
+- file: vllm_ascend/worker/model_runner_v1.py:541
+  context: Uses the extracted enabled value as the initialization gate, forces it off with speculative decoding, and initializes
+    KVComp metadata when active.
+- file: vllm_ascend/worker/kvcomp_utils.py:516
+  context: Loads sparse_json_location, creates request/model-length-dependent Hamming metadata, and constructs the hash encoder.
+- file: vllm_ascend/worker/kvcomp_utils.py:582
+  context: Allocates and binds per-layer uint8 hash-key caches for layers not configured as rollback or skip layers.
+- file: vllm_ascend/attention/kvcomp_attn/attention_utils.py:145
+  context: Shows that actual Hamming-sparse attention uses a separate enable_hamming_sparse sibling key and is also disabled
+    by speculative decoding.
+related_parameters:
+- name: additional_config.enable_hamming_sparse
+  relation: Independently gates attention hashing and Hamming top-k dispatch; set it consistently with hamming_sparse.enabled
+    to use the initialized metadata.
+- name: speculative_config
+  relation: Any configured speculative decoding disables both model-runner KVComp initialization and the separate attention
+    dispatch gate.
+- name: max_model_len
+  relation: Sizes the Hamming output metadata allocation through the number of KV-cache blocks represented at the configured
+    block size.
+constraints:
+- The mapping must contain both enabled and sparse_json_location because AscendConfig indexes both keys directly.
+- When enabled is true, sparse_json_location must be a string naming an existing file or AscendConfig raises ValueError during
+  startup.
+- The JSON must decode into fields accepted by KVCompConfig and match the deployed model, including layer counts, head dimensions,
+  hash widths, top-k settings, and skip or rollback layers.
+- hash_bits must be a multiple of 8, and fixed hash-weight matrices must match the dimensions declared in the KVComp JSON.
+- Set the sibling additional_config.enable_hamming_sparse key to true as well; otherwise metadata and hash caches are allocated
+  but the attention implementation does not consume them.
+- Speculative decoding overrides both Hamming-sparse gates to false.
+tuning_advice:
+  summary: Keep the default mapping unless a validated Ascend KVComp configuration is available. For a supported long-context
+    workload, enable this initialization gate together with the separate dispatch gate, then benchmark memory, latency, throughput,
+    and model quality on the target traffic.
+  suggested_values:
+  - scenario: Default, speculative decoding, or no validated KVComp JSON
+    value:
+      enabled: false
+      sparse_json_location: ''
+    reason: Avoids unused metadata/hash-cache allocations and keeps the normal dense attention path.
+  - scenario: Validated Ascend long-context workload using Hamming block selection
+    value:
+      enabled: true
+      sparse_json_location: /path/to/model-matched-kvcomp.json
+    reason: Initializes the metadata and hash caches needed by sparse attention; pair it with additional_config.enable_hamming_sparse=true.
+  caveats:
+  - Enabling only this nested object consumes device memory and startup work without activating sparse attention dispatch.
+  - Enabling only the sibling dispatch key can leave attention expecting KVComp metadata that was never initialized.
+  - The per-layer uint8 hash caches scale with KV-cache block count, KV-head count, block size, and hashed head width; the
+    Hamming output metadata also scales with maximum requests and maximum model length.
+  - Hash generation and Hamming top-k selection can outweigh saved attention work for short contexts or conservative reduction
+    settings.
+  - Sparse block selection can affect output quality, so validate accuracy as well as performance.
+  quick_guide: Start disabled. If the model has a tested KVComp JSON, enable both Hamming-sparse gates with speculative decoding
+    off, verify memory headroom, and compare representative long-context results against dense attention.
+analysis_date: '2026-08-01'

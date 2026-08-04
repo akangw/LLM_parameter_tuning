@@ -1,0 +1,101 @@
+name: --pipeline-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:923
+- vllm/config/parallel.py:111
+- vllm/config/parallel.py:761
+- vllm/config/model.py:1152
+- vllm_ascend/ascend_config.py:68
+- vllm_ascend/ascend_config.py:555
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:150
+- vllm_ascend/worker/worker.py:761
+- docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:1
+value_type: int
+default: 1
+valid_choices: positive integer
+cli_example: --pipeline-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option sets the number of pipeline stages and contributes directly to the model-worker world size. Pipeline
+  parallelism assigns subsets of model layers to different ranks, reducing per-device model-weight pressure and making models
+  that do not fit on one NPU practical. The tradeoff is inter-stage communication and pipeline bubbles, which can increase
+  latency or reduce utilization unless the workload and chunking keep stages busy. On Ascend, the value initializes the HCCL
+  model-parallel groups and is part of the multiprocess topology. A value greater than one also enables the Ascend profiling-based
+  dynamic chunked pipeline feature, which can reduce prefill idle time for long sequences, while Xlite graph mode explicitly
+  rejects pipeline parallelism. The value additionally changes MoE communication selection and some KV-transfer or CPU-offload
+  rank and memory calculations.
+usage_locations:
+- file: vllm/config/parallel.py:761
+  context: Multiplies pipeline, tensor, and prefill-context parallel sizes to determine model-worker world size.
+- file: vllm/config/model.py:1152
+  context: Rejects pipeline sizes greater than one for models that do not implement the SupportsPP interface.
+- file: vllm/config/model.py:1267
+  context: Derives the pipeline rank and assigns that rank a range of model layers.
+- file: vllm_ascend/worker/worker.py:761
+  context: Passes the pipeline size into Ascend model-parallel initialization.
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:150
+  context: Includes the pipeline size in the Ascend multiprocess executor's parallel-size tuple.
+- file: vllm_ascend/ascend_config.py:68
+  context: Requires pipeline size greater than one when profiling-based dynamic chunking is enabled.
+- file: vllm_ascend/ascend_config.py:555
+  context: Rejects pipeline size greater than one when Xlite graph mode is enabled.
+- file: vllm_ascend/ascend_forward_context.py:273
+  context: Divides the world size by pipeline size when selecting the Ascend MoE communication type.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:149
+  context: For MLA CPU KV offload, divides available memory by the pipeline size before calculating cache blocks.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Its product with pipeline size determines the core model-worker topology and contributes to device requirements.
+- name: --distributed-executor-backend
+  relation: Pipeline parallelism requires an executor that supports PP; automatic single-host multiprocessing depends on the
+    combined worker topology fitting the available devices.
+- name: --enable-chunked-prefill
+  relation: Ascend dynamic chunked pipeline parallel requires chunked prefill in addition to pipeline size greater than one.
+- name: profiling_chunk_config
+  relation: This Ascend additional configuration enables dynamic chunked PP and rejects pipeline size one.
+- name: xlite_graph_config.enabled
+  relation: Ascend Xlite graph mode is incompatible with pipeline size greater than one.
+- name: --enable-elastic-ep
+  relation: Upstream elastic expert parallelism rejects pipeline parallelism.
+- name: --mm-tensor-ipc
+  relation: The torch_shm mode is rejected when pipeline parallelism makes the distributed world size greater than one.
+constraints:
+- The value must be a positive integer.
+- A value greater than one requires a model implementing the SupportsPP interface.
+- The selected distributed executor must support pipeline parallelism; the built-in supported paths include mp, ray, and external_launcher.
+- Ascend profiling_chunk_config requires a value greater than one, chunked prefill enabled, and balance scheduling disabled.
+- Ascend Xlite graph mode is incompatible with a value greater than one.
+- Elastic expert parallelism is incompatible with a value greater than one.
+- mm_tensor_ipc set to torch_shm is unsupported when pipeline parallelism makes world_size_across_dp greater than one.
+tuning_advice:
+  summary: Keep the default when the model fits comfortably on one NPU. Increase the value to distribute layers when model
+    memory is the binding constraint, or to use Ascend dynamic chunked PP for long-prefill workloads, and benchmark the resulting
+    communication and bubble cost.
+  suggested_values:
+  - scenario: Model fits on one NPU and no pipeline-specific feature is needed
+    value: 1
+    reason: Avoids inter-stage communication and pipeline bubbles and remains compatible with Ascend Xlite graph mode.
+  - scenario: Model needs two pipeline stages or Ascend dynamic chunked PP
+    value: 2
+    reason: This is the smallest value that partitions layers across stages and satisfies profiling_chunk_config's PP requirement.
+  - scenario: Model requires more memory partitioning across four supported stages
+    value: 4
+    reason: Further reduces the layer allocation per stage, provided the model, executor, device count, and topology support
+      it.
+  caveats:
+  - More stages do not guarantee higher throughput; bubbles, uneven layer partitions, activation transfers, and topology can
+    outweigh memory benefits.
+  - The total worker topology also includes tensor and prefill-context parallel sizes, so confirm device capacity and multi-node
+    divisibility before increasing PP.
+  - Ascend dynamic chunked PP adds profiling startup work and requires representative tuning of max_num_batched_tokens for
+    the target prompt lengths.
+  - Changing PP can alter Ascend MoE communication selection and KV-transfer or CPU-offload rank and memory calculations.
+  quick_guide: Start at 1. Use 2 when memory requires layer partitioning or dynamic chunked PP is desired, then increase only
+    if memory still requires it and end-to-end latency and throughput measurements remain acceptable.
+analysis_date: '2026-07-27'

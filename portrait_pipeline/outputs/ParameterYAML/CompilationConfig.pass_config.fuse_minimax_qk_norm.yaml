@@ -1,0 +1,86 @@
+name: CompilationConfig.pass_config.fuse_minimax_qk_norm
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:137
+- vllm/config/vllm.py:1728
+- docs/design/fusions.md:194
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: vllm serve MiniMaxAI/MiniMax-M2.5 --tensor-parallel-size 4 --compilation-config '{"mode":3,"pass_config":{"fuse_minimax_qk_norm":true}}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: When true on a supported upstream CUDA deployment, this field adds a MiniMax-specific Inductor pattern pass
+  that replaces MiniMax M2's tensor-parallel Q/K variance all-reduce followed by separate Q and K RMS normalization with the
+  fused minimax_allreduce_rms_qk Lamport-workspace kernel. The replacement reduces separate kernel work and intermediate traffic
+  for matching decode-size compiled graphs; the pinned fusion guide reports an indicative 2-3% end-to-end speedup that depends
+  on model, batch size, and hardware. The pass applies only when a compile range ends at or below min(2048, max_num_batched_tokens);
+  enabling the field makes vLLM add the 2048-token boundary when the configured range extends beyond it so larger prefill
+  ranges retain the unfused path. The null default is falsey and the guide states that no optimization level enables this
+  pass automatically. The pinned vllm-ascend repository contains no reference to this field or an NPU implementation, while
+  upstream registers the pass only on CUDA, so no Ascend performance effect is established.
+usage_locations:
+- file: vllm/config/compilation.py:137
+  context: Declares the delayed-default PassConfig boolean; null leaves the MiniMax-specific fusion disabled unless the user
+    explicitly enables it.
+- file: vllm/config/vllm.py:1728
+  context: When enabled, inserts the MiniMax fusion token threshold into compiled range endpoints so only ranges of at most
+    2048 tokens use the pass.
+- file: docs/design/fusions.md:194
+  context: Documents the fused Q/K variance-all-reduce and RMSNorm sequence, model/platform prerequisites, default-off policy,
+    low-token applicability, example configuration, and indicative 2-3% speedup.
+related_parameters:
+- name: tensor_parallel_size
+  relation: Must be greater than one because the matched MiniMax Q/K normalization path and fused kernel perform a tensor-parallel
+    all-reduce.
+- name: max_num_batched_tokens
+  relation: Caps the pass's effective token threshold; the pass is applicable only through min(2048, max_num_batched_tokens).
+- name: CompilationConfig.compile_ranges_endpoints
+  relation: vLLM adds the MiniMax threshold to the computed endpoints when needed, separating fused small-token ranges from
+    unfused larger ranges.
+- name: CompilationConfig.mode
+  relation: Compilation must be active for this Inductor graph-rewrite flag to have an effect; the documented command uses
+    mode 3.
+constraints:
+- 'The model architecture must be MiniMaxM2ForCausalLM with the expected MiniMax M2 attention dimensions: 48 attention heads,
+  8 key/value heads, hidden size 3072, and head dimension 128.'
+- Tensor parallelism must be enabled with tensor_parallel_size greater than one, and the CUDA custom op minimax_allreduce_rms_qk
+  must be available.
+- The pass requires a compiled graph matching MiniMax M2's Q/K variance-all-reduce followed by RMS normalization; eager execution
+  and nonmatching graphs receive no benefit.
+- Fusion is limited to compile ranges ending at or below min(2048, max_num_batched_tokens); larger prefill ranges use the
+  original operations.
+- The supported upstream data types are FP16 and BF16 on CUDA SM80, SM89, SM90, and SM100. The pinned support matrix lists
+  no ROCm implementation.
+- The pinned vllm-ascend source has no matching use or NPU kernel for this field; do not enable it as an Ascend tuning control.
+tuning_advice:
+  summary: Keep the value null or false unless serving MiniMax M2 with tensor parallelism on a supported CUDA GPU; on that
+    exact workload, A/B test true over the production decode token distribution.
+  suggested_values:
+  - scenario: Supported MiniMax M2 CUDA deployment with tensor parallelism
+    value: true
+    reason: Enables the fused all-reduce plus Q/K RMSNorm path for eligible small-token compiled ranges, for which the pinned
+      guide reports an indicative 2-3% end-to-end gain.
+  - scenario: Ascend, ROCm, single-GPU, eager, non-MiniMax, or unverified deployment
+    value: false
+    reason: The CUDA-only pass will be unavailable, disabled, or unable to match, so explicit enablement cannot provide the
+      documented benefit and may expose an unsupported configuration path.
+  caveats:
+  - The 2-3% figure is indicative rather than guaranteed; benchmark warm request latency and throughput with the real batch-size
+    and token mix.
+  - 'Setting true does not guarantee a replacement: model architecture and dimensions, tensor-parallel size, custom-op availability,
+    compile range, dtype, and graph shape must all satisfy the pass.'
+  - The fusion allocates a Lamport all-reduce workspace, so confirm accelerator memory headroom even though this flag is primarily
+    a latency/throughput optimization.
+  - Benefits target decode-size ranges up to 2048 batched tokens; large prefill ranges intentionally retain the unfused implementation.
+  quick_guide: Leave unset by default. For MiniMax M2 on supported CUDA with TP > 1, compare true against false under the
+    production workload and retain true only when measured end-to-end latency or throughput improves.
+analysis_date: '2026-07-30'

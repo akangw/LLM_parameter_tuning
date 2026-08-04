@@ -1,0 +1,75 @@
+name: --video-pruning-rate
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:190
+- vllm/engine/arg_utils.py:1226
+- vllm/config/model.py:340
+value_type: float
+default: 'null'
+valid_choices: '[0.0, 1.0)'
+cli_example: --video-pruning-rate 0.5
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls Efficient Video Sampling (EVS), which prunes a fraction of media tokens from each
+  video before they enter the vision encoder and language model. The pruning rate q ∈ [0, 1) determines what fraction of tokens
+  is dropped. For example, q=0.5 means 50% of video tokens are pruned. The pruning is applied in the multimodal processor
+  (e.g., NanoNemotronVLProcessingInfo at vllm/model_executor/models/nano_nemotron_vl.py:524-539) via compute_retained_tokens_count(),
+  which reduces the number of visual tokens per video frame. Since video models can produce thousands of tokens per video
+  (num_frames × tokens_per_frame), pruning directly reduces: (1) Vision encoder compute — fewer patches to encode. (2) Language
+  model prefill compute — fewer visual tokens to attend to. (3) KV cache memory — fewer visual token KV entries to store.
+  (4) Decode latency — shorter sequence lengths for cross-attention or full-attention over visual tokens. On Ascend NPU, reducing
+  token count alleviates both compute and memory pressure, which is especially beneficial given the NPU''s fixed on-chip memory
+  and the overhead of dynamic shape handling in CANN. The parameter is only effective when video_pruning_rate is not None
+  and > 0 (checked at vllm/config/multimodal.py:338). No vllm-ascend override was found; the parameter passes through to the
+  model''s multimodal processor unchanged.
+
+  '
+usage_locations:
+- file: vllm/config/multimodal.py:190
+  context: Field definition with ge=0.0, lt=1.0 constraint
+- file: vllm/config/multimodal.py:338
+  context: is_multimodal_pruning_enabled() checks if rate is not None and > 0
+- file: vllm/model_executor/models/nano_nemotron_vl.py:524-539
+  context: 'EVS pruning applied: compute_retained_tokens_count reduces tokens_per_frame'
+- file: vllm/model_executor/models/nano_nemotron_vl.py:206
+  context: video_pruning_rate passed to NanoNemotronVLProcessor
+- file: vllm/model_executor/models/interns1_pro.py:575
+  context: Stored as self.video_pruning_rate for Qwen3VL model
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Also controls multimodal token limits but operates at the prompt level rather than per-video token pruning
+- name: --mm-processor-kwargs
+  relation: Can pass additional kwargs to the multimodal processor that may interact with video processing
+constraints:
+- video_pruning_rate must be >= 0.0 and < 1.0
+- video_pruning_rate only takes effect when set to a value > 0.0 (None or 0.0 disables pruning)
+tuning_advice:
+  summary: Set to a value between 0.1 and 0.5 to reduce video token count and improve throughput/latency with minimal accuracy
+    loss; higher values save more memory but may degrade video understanding quality.
+  suggested_values:
+  - scenario: High-throughput video serving with acceptable quality tradeoff
+    value: '0.3'
+    reason: Prunes 30% of video tokens, providing significant KV cache and compute savings while retaining enough frames for
+      most video understanding tasks
+  - scenario: Memory-constrained deployment on Ascend NPU with long videos
+    value: '0.5'
+    reason: Aggressive pruning halves video token count, critical when NPU memory is limited and videos have many frames
+  - scenario: Quality-sensitive applications (e.g., detailed video captioning)
+    value: 0.0 or null
+    reason: Disables pruning to preserve all video tokens for maximum accuracy
+  caveats:
+  - Pruning is applied per-video before encoding; the same rate applies to all videos in a batch
+  - Higher pruning rates may cause the model to miss fine-grained temporal details in videos
+  - On Ascend NPU, the performance gain from token reduction is amplified because shorter sequences reduce CANN graph compilation
+    complexity and dynamic shape overhead
+  - The actual token reduction depends on the model's video processing pipeline (e.g., num_frames, tokens_per_frame); test
+    with representative videos to calibrate the rate
+  quick_guide: Start with --video-pruning-rate 0.3 for a good balance of performance and quality; increase to 0.5 if memory
+    is tight, or disable (omit flag) for maximum accuracy.
+analysis_date: '2026-07-06'

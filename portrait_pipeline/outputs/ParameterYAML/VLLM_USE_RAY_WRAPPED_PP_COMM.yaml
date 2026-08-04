@@ -1,0 +1,72 @@
+name: VLLM_USE_RAY_WRAPPED_PP_COMM
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:62
+- vllm/envs.py:781
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: In the pinned upstream RayDistributedExecutor, this switch is read while compiling the Ray DAG. True registers
+  RayPPCommunicator, which implements Ray's communicator interface by forwarding point-to-point transfers through vLLM's existing
+  pipeline-parallel device communicator; false leaves Ray to use its native NCCL communicator. The choice can therefore change
+  intermediate-activation transfer latency and pipeline throughput, but only for the legacy Ray compiled-DAG executor. The
+  current runtime default for VLLM_USE_RAY_V2_EXECUTOR_BACKEND is true, which selects the MQ-based RayExecutorV2 and bypasses
+  this switch. The pinned Ascend repository contains no consumer or override. Moreover, the upstream wrapper registers Ray's
+  "cuda" accelerator context and asserts that actors have Ray GPU IDs, whereas the Ascend platform declares Ray resource key
+  "NPU"; the pinned sources do not establish this wrapped path as an Ascend-compatible tuning option.
+usage_locations:
+- file: vllm/envs.py:781
+  context: Parses the environment value through int() and bool(), with "1" as the default; the pinned upstream RayDistributedExecutor
+    later reads this accessor when compiling its Ray DAG.
+related_parameters:
+- name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+  relation: Its runtime default of true selects RayExecutorV2; this parameter is consulted only when that setting is false
+    and RayDistributedExecutor is selected.
+- name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+  relation: Selects auto, nccl, or shm tensor transport for edges between pipeline-parallel stages in the same compiled-DAG
+    path.
+- name: VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM
+  relation: Controls Ray compiled-DAG GPU communication overlap independently of which communicator implementation this switch
+    selects.
+- name: --distributed-executor-backend
+  relation: This switch is relevant only when the backend is ray and the legacy RayDistributedExecutor is selected.
+constraints:
+- The environment text must be accepted by Python int(); zero maps to false and any nonzero integer maps to true, with 0 and
+  1 the canonical settings.
+- VLLM_USE_RAY_V2_EXECUTOR_BACKEND must be false and --distributed-executor-backend must be ray for this switch to be read
+  by the executor.
+- The legacy Ray compiled-graph dependencies must be installed and meet the pinned executor's Ray version requirement.
+- The pinned wrapped communicator is CUDA/Ray-GPU specific; no corresponding Ascend override or NPU registration is present
+  in the pinned Ascend tree.
+tuning_advice:
+  summary: Do not tune this variable on Ascend from the pinned sources. For a supported upstream CUDA deployment that intentionally
+    disables RayExecutorV2, keep true as the baseline and compare false only as a diagnosed communicator experiment.
+  suggested_values:
+  - scenario: Upstream CUDA with the legacy Ray compiled-DAG executor
+    value: true
+    reason: This is the source default and reuses vLLM's initialized pipeline-parallel device communicator.
+  - scenario: Isolating a legacy Ray compiled-DAG communicator problem on CUDA
+    value: false
+    reason: It avoids RayPPCommunicator and lets Ray use its native NCCL communicator, providing a targeted compatibility
+      and performance comparison.
+  caveats:
+  - With the current runtime default VLLM_USE_RAY_V2_EXECUTOR_BACKEND=true, changing this variable has no effect.
+  - The pinned sources provide no benchmark proving that either communicator is universally faster; results depend on topology,
+    tensor shapes, Ray, and the communication stack.
+  - 'False is not an Ascend fallback: the alternative is explicitly Ray''s native NCCL communicator, while the target platform
+    uses NPU resources and HCCL.'
+  - True is likewise not verified for Ascend because the upstream wrapper registers a CUDA accelerator context and checks
+    Ray GPU allocation.
+  quick_guide: On Ascend, leave the default RayExecutorV2 path enabled and do not use this knob; on legacy upstream CUDA Ray,
+    start with true and test false only to isolate communicator behavior.
+analysis_date: '2026-07-29'

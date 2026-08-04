@@ -1,0 +1,63 @@
+name: VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:1403
+value_type: int
+default: 163840
+valid_choices: positive integer
+cli_example: VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE=200000 vllm serve <model>
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: In upstream vLLM's CUDA FP4 MoE expert-activation quantizers, this value is read as MAX_TOKENS_PER_EXPERT.
+  Each invocation allocates its block-scale output with a first dimension of MAX_TOKENS_PER_EXPERT * topk, while the actual
+  packed activation output uses m_numtopk rows. Consequently, increasing the value linearly increases temporary GPU memory
+  for the scale tensor and can add allocation/memory-traffic overhead; decreasing it reduces that capacity but does not change
+  the quantization math for requests that fit. The wrappers assert that m_numtopk is no greater than the configured value
+  times topk, so a value that is too small fails inference rather than merely slowing it. The current code applies the same
+  limit to NVFP4 and MXFP4, including their fused SiLU-and-multiply variants. vllm-ascend contains its own NPU MXFP4 MoE path
+  and has no reference to this environment variable, so it has no latency, throughput, or memory effect on Ascend.
+usage_locations:
+- file: vllm/_custom_ops.py:1800
+  context: scaled_fp4_experts_quant reads the limit, checks m_numtopk <= limit * topk, and allocates the NVFP4 block-scale
+    tensor from it.
+- file: vllm/_custom_ops.py:1863
+  context: silu_and_mul_scaled_fp4_experts_quant uses the same bound and limit-proportional block-scale allocation for fused
+    NVFP4 quantization.
+- file: vllm/_custom_ops.py:1924
+  context: mxfp4_experts_quant applies the limit to packed MXFP4 MoE activations and sizes its E8M0 block-scale storage from
+    it.
+- file: vllm/_custom_ops.py:1972
+  context: silu_and_mul_mxfp4_experts_quant uses the limit for the fused MXFP4 activation path and its scale-buffer allocation.
+related_parameters: []
+constraints:
+- m_numtopk must be less than or equal to VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE * topk in all four CUDA FP4 expert quantization
+  wrappers.
+- The value must be large enough for the largest routed-token workload; non-positive or undersized values fail the assertion
+  (or tensor allocation) instead of providing a usable low-memory mode.
+tuning_advice:
+  summary: Leave the default unless CUDA FP4 MoE inference either exceeds the routed token bound or needs its scale-buffer
+    footprint reduced. This setting is not a general batch-size control and requires no tuning on Ascend.
+  suggested_values:
+  - scenario: Normal CUDA NVFP4 or MXFP4 MoE inference
+    value: 163840
+    reason: The default provides the upstream-supported capacity without requiring workload-specific sizing.
+  - scenario: CUDA FP4 MoE assertion reports m_numtopk above the limit
+    value: workload-derived value above ceil(maximum m_numtopk / topk)
+    reason: The source assertion requires this bound; add operational headroom while avoiding an unnecessarily large scale
+      allocation.
+  - scenario: Ascend NPU inference
+    value: 163840
+    reason: Ascend's native MXFP4 MoE implementation does not read this variable, so retaining the default avoids a misleading
+      no-op tuning change.
+  caveats:
+  - Raising the value increases the FP4 block-scale allocation linearly with both the configured limit and topk.
+  - Lowering it without measuring peak m_numtopk can turn a valid large prefill or batch into an assertion failure.
+  - The parameter is read in CUDA custom-op wrappers; it does not configure vllm-ascend's native NPU MXFP4 kernels.
+  quick_guide: On CUDA, keep 163840, raise only after the explicit m_numtopk assertion, and lower only from measured peak
+    m_numtopk/topk with headroom. On Ascend, do not tune it.
+analysis_date: '2026-07-29'

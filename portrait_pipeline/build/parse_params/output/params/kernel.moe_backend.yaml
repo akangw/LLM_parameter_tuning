@@ -1,0 +1,87 @@
+name: kernel.moe_backend
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1402
+- vllm/model_executor/layers/fused_moe/layer.py:511
+- vllm/model_executor/models/deepseek_v4.py:723
+value_type: str
+default: auto
+valid_choices:
+- auto
+- flashinfer_trtllm
+- flashinfer_cutlass
+- triton
+- deep_gemm_mega_moe
+cli_example: --moe-backend flashinfer_trtllm
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter selects the backend kernel library used for Mixture-of-Experts (MoE) expert computation in
+  fused MoE layers. The backend directly determines which GPU kernel implementation executes the token-to-expert dispatch
+  and the expert feed-forward network computation. Different backends have vastly different performance characteristics: "flashinfer_trtllm
+  and flashinfer_cutlass" use highly optimized CUDA kernels with specialized memory layouts and fusion patterns, triton uses
+  a more portable but potentially slower JIT-compiled approach, and deep_gemm_mega_moe is a specialized backend for DeepSeek
+  V4 models that requires expert parallelism. On Ascend NPU, the situation is critical: "vllm-ascend does NOT define or override
+  this parameter, meaning all" upstream backends (flashinfer_trtllm, flashinfer_cutlass, triton, deep_gemm_mega_moe) are CUDA-
+  specific and will NOT work on Ascend hardware. The default value "auto" will attempt to select a CUDA backend, which will
+  fail at runtime on NPU. The parameter is read in vllm/model_executor/layers/fused_moe/layer.py:511 to construct FusedMoEConfig,
+  which controls the entire MoE execution path. On Ascend, MoE models must use Ascend-native kernel implementations (typically
+  through torch_npu or CANN operators), and this parameter has no valid Ascend-compatible value. Setting it to any non-auto
+  value will force a CUDA-specific code path that will crash or produce incorrect results on NPU.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1402
+  context: CLI argument registration for --moe-backend with lowercase normalization
+- file: vllm/engine/arg_utils.py:2081
+  context: Overrides kernel_config.moe_backend when user provides non-auto value
+- file: vllm/model_executor/layers/fused_moe/layer.py:511
+  context: Passed to FusedMoEConfig constructor to select MoE kernel backend
+- file: vllm/model_executor/models/deepseek_v4.py:723
+  context: Checked for "deep_gemm_mega_moe" to enable DeepSeek V4 MegaMoE path
+- file: vllm/model_executor/models/deepseek_v4.py:1264
+  context: Same deep_gemm_mega_moe check in DeepseekV4Model
+related_parameters:
+- name: parallel_config.enable_expert_parallel
+  relation: Required when moe_backend is deep_gemm_mega_moe; otherwise raises NotImplementedError
+- name: speculative_config.moe_backend
+  relation: Draft model can have independent moe_backend setting; inherits target's value if unset
+constraints:
+- deep_gemm_mega_moe requires --enable-expert-parallel to be set, otherwise raises NotImplementedError
+- deep_gemm_mega_moe only supports sqrtsoftplus routing function in DeepSeek V4
+- deep_gemm_mega_moe only supports fp4 expert dtype in DeepSeek V4
+- All upstream backends (flashinfer_trtllm, flashinfer_cutlass, triton, deep_gemm_mega_moe) are CUDA-specific and incompatible
+  with Ascend NPU
+tuning_advice:
+  summary: 'On Ascend NPU, leave this parameter at its default "auto" and do NOT set it explicitly. All available backends
+    are CUDA-only and will fail on Ascend hardware. vllm-ascend does not provide an Ascend-compatible MoE backend through
+    this parameter; MoE execution on NPU relies on Ascend-native operator dispatch that bypasses this setting entirely.
+
+    '
+  suggested_values:
+  - scenario: Running any MoE model on Ascend NPU
+    value: auto
+    reason: 'The default "auto" allows vllm-ascend to use its own internal MoE dispatch logic through torch_npu/CANN operators.
+      Explicitly setting any backend forces a CUDA-specific code path that is incompatible with Ascend hardware and will cause
+      runtime errors.
+
+      '
+  - scenario: Running DeepSeek V4 on Ascend NPU
+    value: auto
+    reason: 'deep_gemm_mega_moe is CUDA-only and will not work on Ascend. Use "auto" and rely on vllm-ascend''s native operator
+      fallback. Expert parallelism requirements for MegaMoE are irrelevant on Ascend since the backend itself is unavailable.
+
+      '
+  caveats:
+  - All documented backends (flashinfer_trtllm, flashinfer_cutlass, triton, deep_gemm_mega_moe) are CUDA-specific and will
+    fail on Ascend NPU
+  - Setting this parameter to any non-auto value on Ascend will force a CUDA kernel path that is incompatible with torch_npu
+  - vllm-ascend does not register any Ascend-specific MoE backend option for this parameter
+  - MoE performance on Ascend depends on CANN operator quality and torch_npu integration, not on this parameter
+  quick_guide: Keep default "auto" on Ascend NPU; all explicit backends are CUDA-only and will fail.
+analysis_date: '2026-07-06'

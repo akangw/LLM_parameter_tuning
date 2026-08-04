@@ -1,0 +1,92 @@
+name: KVTransferConfig.kv_connector_extra_config.swap_in_threshold
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_kv_cache_manager.py
+- vllm/config/kv_transfer.py
+- docs/source/user_guide/release_notes.md
+value_type: int
+default: 0
+valid_choices: A nonnegative integer token count is meaningful. The source performs no explicit type or range validation;
+  negative integers behave like zero for the nonnegative match delta, while incompatible types can fail at runtime.
+cli_example: --kv-transfer-config '{"kv_connector":"CPUOffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"swap_in_threshold":128}}'
+deprecated: true
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This Ascend CPUOffloadingConnector scheduler setting is the minimum number of additional CPU-cached prefix
+  tokens required beyond the prefix already matched in the NPU cache. The scheduler queries the CPU cache, computes num_cpu_computed_tokens
+  - num_computed_tokens, and exposes that delta as externally matched tokens only when it is greater than or equal to this
+  threshold. The default 0 therefore accepts every nonnegative incremental CPU match; a higher value rejects small CPU-only
+  hits and recomputes those tokens on the NPU instead. Raising the threshold can avoid host-to-NPU copies whose transfer and
+  synchronization cost exceeds the saved prefill compute, but it can also discard useful prefix reuse and increase time to
+  first token and NPU work. Lowering it favors reuse and can reduce prefill compute for long or expensive cached prefixes,
+  while potentially spending transfer bandwidth on small hits. CPU cache matches are full-block aligned, so the observable
+  gate advances in block_size token increments. This setting does not size the CPU cache or directly change its allocated
+  memory. It is inactive unless prefix caching is enabled and the deprecated CPUOffloadingConnector is selected.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py
+  context: Reads the extra setting with fallback 0, compares it inclusively against the CPU-only matched-token delta, returns
+    accepted external tokens to the scheduler, and copies the corresponding CPU blocks into NPU KV blocks.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_kv_cache_manager.py
+  context: Finds the longest CPU prefix-cache hit and reports a full-block-aligned token count that becomes the threshold
+    comparison's CPU-side operand.
+- file: vllm/config/kv_transfer.py
+  context: Defines kv_connector_extra_config as an arbitrary dictionary and returns the key or caller-supplied default without
+    validation or coercion.
+- file: docs/source/user_guide/release_notes.md
+  context: Declares CPUOffloadingConnector deprecated and planned for replacement by the upstream CPUOffload feature.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: This value is consumed by the Ascend CPUOffloadingConnector scheduler, either when selected directly or as its
+    connector-specific extra config.
+- name: CacheConfig.enable_prefix_caching
+  relation: CPUOffloadingConnector creates no scheduler or worker handler when prefix caching is disabled, so the threshold
+    then has no effect.
+- name: CacheConfig.block_size
+  relation: CPU prefix hits are counted in complete KV blocks, making effective threshold boundaries occur in block_size token
+    increments.
+- name: KVTransferConfig.kv_connector_extra_config.cpu_swap_space_gb
+  relation: Sizes the host CPU KV-cache pool; its capacity and hit rate determine whether enough CPU-only tokens exist to
+    cross this threshold.
+constraints:
+- Use a nonnegative integer. There is no explicit validator, and a value of an incompatible type can raise an error during
+  the numeric comparison.
+- 'The comparison is inclusive: a CPU-only hit exactly equal to the threshold is accepted.'
+- Match counts are block aligned, so thresholds between adjacent block-size multiples have the same practical eligibility
+  boundary.
+- A threshold larger than every attainable CPU-only prefix hit effectively disables CPU swap-in while leaving CPU-cache lookup
+  and bookkeeping active.
+- The setting has no effect when prefix caching is disabled or when a different KV connector is used.
+- CPUOffloadingConnector is deprecated in the pinned vLLM Ascend release and is planned for removal in favor of the upstream
+  CPUOffload feature.
+tuning_advice:
+  summary: Keep 0 when CPU prefix reuse reliably saves more prefill time than transfer costs; otherwise benchmark block-aligned
+    positive thresholds that filter out small, uneconomic host-to-NPU loads.
+  suggested_values:
+  - scenario: Repeated long prefixes with effective host-to-NPU transfer
+    value: 0
+    reason: Preserves the source default and accepts every incremental CPU cache hit, maximizing reuse of CPU-resident prefixes.
+  - scenario: Small CPU hits cost more to transfer than to recompute
+    value: A measured positive multiple of CacheConfig.block_size
+    reason: Filters short CPU-only matches while retaining longer matches whose avoided NPU prefill work amortizes transfer
+      overhead.
+  - scenario: Diagnose CPU swap-in overhead
+    value: Greater than the workload's maximum attainable CPU-only prefix hit
+    reason: Effectively suppresses swap-in for an A/B comparison, though CPU lookup and bookkeeping remain and this is not
+      a complete connector disable.
+  caveats:
+  - The crossover depends on model prefill cost, KV block size, NPU load, host-memory bandwidth, prefix-length distribution,
+    and concurrency; no universal positive threshold follows from source alone.
+  - Raising the value can improve latency for small hits yet hurt time to first token and throughput when it forces recomputation
+    of expensive prefixes.
+  - Lowering the value can save NPU compute but increase host-to-NPU traffic and contention under concurrent requests.
+  - This parameter does not reduce the CPU cache allocation; tune cpu_swap_space_gb separately for host-memory capacity.
+  - Plan migration rather than long-term tuning because the connector is deprecated in the pinned Ascend source.
+  quick_guide: Start at 0, record CPU-only matched-token deltas plus transfer and prefill latency, then test block-size multiples
+    around the measured transfer-versus-recompute crossover; retain a positive threshold only when end-to-end latency or throughput
+    improves on the real prefix-length mix.
+analysis_date: '2026-07-30'

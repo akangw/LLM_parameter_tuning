@@ -1,0 +1,124 @@
+name: --distributed-executor-backend
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/parallel.py:228
+- vllm/config/parallel.py:768
+- vllm/config/parallel.py:831
+- vllm/config/parallel.py:875
+- vllm/config/parallel.py:923
+- vllm_ascend/worker/worker.py:297
+- vllm_ascend/worker/worker.py:459
+- vllm_ascend/worker/model_runner_v1.py:1819
+value_type: str
+default: null
+valid_choices:
+- mp
+- ray
+- uni
+- external_launcher
+- custom Executor subclass or import path
+cli_example: --distributed-executor-backend mp
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option chooses the executor that launches and coordinates distributed model workers. It changes process
+  creation, placement, serialization, and collective setup, so it can materially affect startup cost, request latency, throughput,
+  and process memory. Current vLLM resolves an unset value to mp for multi-worker configurations when the local topology permits
+  it, or to uni for world size one; it can select ray from an active Ray placement group or data-parallel-Ray configuration.
+  external_launcher instead derives data-parallel rank from RANK and disables V1 multiprocessing. On the target Ascend implementation,
+  data-parallel execution validates local worker count for non-Ray and non-external-launcher paths, while external_launcher
+  with data parallel performs a dummy run when an iteration has no scheduled tokens to keep workers synchronized.
+usage_locations:
+- file: vllm/config/parallel.py:831
+  context: Resolves an unset backend for distributed configurations, preferring mp unless Ray conditions apply.
+- file: vllm/config/parallel.py:875
+  context: Resolves an unset backend to uni when the model-worker world size is one.
+- file: vllm/config/parallel.py:768
+  context: external_launcher includes data-parallel size in world size and changes distributed initialization handling.
+- file: vllm/config/parallel.py:827
+  context: external_launcher disables V1 multiprocessing.
+- file: vllm/config/parallel.py:923
+  context: Validates custom executor classes and documents accepted backend values.
+- file: vllm_ascend/worker/worker.py:297
+  context: For Ascend data parallelism, enforces that local world size fits visible NPUs unless using Ray or external_launcher.
+- file: vllm_ascend/worker/model_runner_v1.py:1819
+  context: In external_launcher data-parallel mode, runs a dummy iteration on empty scheduling steps to avoid worker desynchronization.
+- file: vllm_ascend/worker/worker.py:459
+  context: The Ascend pipeline-parallel send path asserts external_launcher is not used on this non-last-rank path.
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Along with pipeline parallel size, determines worker world size and whether the automatic mp selection fits the
+    local device count.
+- name: --pipeline-parallel-size
+  relation: Contributes to worker world size; Ascend contains an external-launcher restriction in a pipeline-parallel send
+    path.
+- name: --data-parallel-size
+  relation: external_launcher incorporates data-parallel workers into world size and has Ascend-specific synchronization behavior
+    when it exceeds one.
+- name: --data-parallel-backend
+  relation: A Ray data-parallel backend can cause vLLM to select the Ray distributed executor when this option is unset.
+- name: --nnodes
+  relation: Controls multi-node multiprocessing configuration and is validated against the executor-backend selection.
+constraints:
+- With Ascend data parallelism and a local data-parallel size above zero, a backend other than ray or external_launcher must
+  have local_world_size no greater than the visible NPU count when nnodes_within_dp is one.
+- external_launcher expects externally supplied distributed environment state, including RANK for automatic data-parallel
+  rank derivation, and disables V1 multiprocessing.
+- vLLM accepts mp, uni, external_launcher, ray, or a custom Executor subclass/import path; a non-string custom value must
+  be an Executor subclass.
+- On the Ascend pipeline-parallel intermediate-send path, external_launcher is asserted not to be in use on the affected non-last-rank
+  path.
+tuning_advice:
+  summary: Leave the option unset for the current topology-aware default unless deployment orchestration requires a specific
+    backend. For a single host that fits its workers on visible NPUs, mp avoids an external scheduler; use external_launcher
+    only with a correctly configured external distributed launch, and use Ray when its placement and cluster infrastructure
+    are deliberately in use.
+  suggested_values:
+  - scenario: One NPU and no distributed model workers
+    value: <unset>
+    reason: Current vLLM resolves the null value to uni when worker world size is one.
+  - scenario: Single-node Ascend deployment whose tensor and pipeline workers fit visible NPUs
+    value: mp
+    reason: The current automatic distributed path defaults to mp when Ray selection conditions do not apply, and Ascend validates
+      local worker capacity for this path.
+  - scenario: Externally launched distributed or data-parallel job with RANK configured
+    value: external_launcher
+    reason: Current vLLM derives data-parallel rank from the external environment and Ascend includes synchronization handling
+      for this mode.
+  - scenario: Deployment intentionally managed by an active Ray placement group or Ray data-parallel backend
+    value: ray
+    reason: Current automatic selection switches to Ray for those conditions, and this preserves the intended Ray orchestration
+      path.
+  caveats:
+  - The null default is an automatic policy, not a fixed backend; the effective choice depends on world size, Ray availability
+    and state, platform, and data-parallel configuration.
+  - external_launcher changes process ownership and requires external launch configuration; it is not a drop-in way to make
+    vLLM spawn workers.
+  - Static source analysis establishes behavior and compatibility constraints, but the fastest backend depends on NPU topology,
+    network, model, and traffic; compare end-to-end throughput and tail latency on the target deployment.
+  quick_guide: Leave unset for automatic selection. Use mp for a fitting single-node worker topology, Ray for an intentionally
+    Ray-managed deployment, or external_launcher only when an external distributed launcher owns worker startup.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

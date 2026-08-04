@@ -1,0 +1,36 @@
+## Parameter to analyze
+
+Name: {name}
+Type: {type}
+Hint from code extraction: {description}
+
+## Source code context (from vllm + vllm-ascend repos)
+
+{definition_context}
+
+## Additional usage sites
+
+{usage_contexts}
+
+## Relevant documentation (from vllm-ascend docs)
+
+{doc_contexts}
+
+## Task
+
+1. Determine the performance impact level of this parameter on Ascend NPU runtime.
+   - Search for the parameter definition and usage in BOTH vllm and vllm-ascend repos.
+   - vllm-ascend may silently override or modify this parameter — check for that.
+2. If performance_impact is NOT "none": produce a complete YAML following the schema below.
+3. If performance_impact IS "none": output a minimal YAML with only these fields:
+   name, type, performance_impact: "none", skip_reason (one-line explanation).
+
+## Output YAML Schema
+
+{output_schema}
+
+## Important
+
+- Output ONLY raw YAML. No ```yaml fences. No introductory or concluding text.
+- Base all analysis on the provided source code context and documentation. Do not fabricate information.
+- Source file paths in the output must be relative to the repo root (vllm/... or vllm_ascend/...).

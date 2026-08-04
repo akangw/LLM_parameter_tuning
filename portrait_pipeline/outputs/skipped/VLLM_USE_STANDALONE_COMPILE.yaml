@@ -1,0 +1,7 @@
+name: VLLM_USE_STANDALONE_COMPILE
+type: env
+performance_impact: none
+skip_reason: On the pinned Ascend stack, vllm_ascend/platform.py selects the custom AscendCompiler and explicitly disables
+  Inductor, so this upstream flag cannot switch between InductorStandaloneAdaptor and InductorAdaptor or affect latency, throughput,
+  or memory. Its only remaining Ascend-visible behavior is a startup assertion when VLLM_USE_MEGA_AOT_ARTIFACT=1 is combined
+  with value 0.

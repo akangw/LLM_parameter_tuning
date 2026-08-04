@@ -1,0 +1,95 @@
+name: compilation.cudagraph_specialize_lora
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/v1/cudagraph_dispatcher.py:121
+- vllm/v1/worker/gpu_model_runner.py:5662
+value_type: bool
+default: 'true'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: '--compilation-config ''{"cudagraph_specialize_lora": false}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls whether separate CUDA graphs are captured for inference with and without active LoRA
+  adapters. When true (default), two sets of graphs are captured: one for no-LoRA cases and one for LoRA-active cases. This
+  avoids running LoRA kernel overhead when no adapters are loaded, improving throughput for mixed workloads. When false, only
+  LoRA-enabled graphs are captured and used for all cases, meaning LoRA ops execute even when no adapters are active — incurring
+  unnecessary compute overhead. On Ascend NPU, CUDA graphs are implemented via Ascend Graph (torch_npu graph capture), and
+  the same specialization logic applies. Additionally, when cudagraph_specialize_lora is true and num_active_loras > 0, CUDA
+  graphs are disabled for the speculative drafter model (see gpu_model_runner.py:5662-5665), which is a workaround for issue
+  #28334. This means enabling specialization can cause the drafter to fall back to eager execution, potentially reducing speculative
+  decoding throughput.
+
+  '
+usage_locations:
+- file: vllm/v1/cudagraph_dispatcher.py:121
+  context: 'Determines whether to capture separate CUDA graphs for LoRA vs non-LoRA cases. When true, returns [0] + captured_lora_counts;
+    when false, returns only [max_loras + 1] (LoRA-only graphs).
+
+    '
+- file: vllm/v1/worker/gpu_model_runner.py:5662
+  context: 'When true and num_active_loras > 0, disables CUDA graphs for the speculative drafter model as a workaround for
+    a known issue.
+
+    '
+related_parameters:
+- name: lora_config.max_loras
+  relation: 'The number of LoRA adapter slots captured in specialized graphs depends on max_loras when cudagraph_specialize_lora
+    is true.
+
+    '
+- name: compilation_config.cudagraph_capture_sizes
+  relation: 'Both parameters affect which CUDA graph variants are captured; capture_sizes controls batch size dimensions while
+    cudagraph_specialize_lora controls LoRA adapter dimensions.
+
+    '
+- name: speculative_config.enforce_eager
+  relation: 'When cudagraph_specialize_lora is true and LoRA is active, the drafter falls back to eager mode; enforce_eager
+    on the speculative config can independently force eager execution.
+
+    '
+constraints:
+- This parameter has no effect when no LoRA adapters are configured (lora_config is None).
+- When set to true and LoRA is active, CUDA graphs are forcibly disabled for the speculative drafter model.
+tuning_advice:
+  summary: 'Set to false if you always run with LoRA adapters active, to reduce graph capture overhead and memory usage from
+    duplicate graphs. Set to true (default) if you have mixed workloads where some requests use no LoRA adapters.
+
+    '
+  suggested_values:
+  - scenario: All requests always use LoRA adapters
+    value: 'false'
+    reason: 'Avoids capturing duplicate graph sets, reducing graph memory and capture time. No benefit from specialization
+      since the no-LoRA path is never used.
+
+      '
+  - scenario: Mixed workloads with some requests not using LoRA
+    value: 'true'
+    reason: 'Allows the no-LoRA path to skip LoRA kernel overhead, improving throughput for non-LoRA requests. The cost is
+      additional graph memory for the second set of graphs.
+
+      '
+  - scenario: Using speculative decoding with LoRA on Ascend NPU
+    value: 'false'
+    reason: 'When true, the drafter falls back to eager execution when LoRA is active, negating speculative decoding benefits.
+      Setting to false keeps the drafter using CUDA graphs (Ascend Graph) for better performance.
+
+      '
+  caveats:
+  - On Ascend NPU, graph capture (Ascend Graph) has higher memory overhead than CUDA GPUs; capturing two sets of graphs doubles
+    this cost.
+  - When cudagraph_specialize_lora is true and LoRA is active, speculative decoding drafter models run in eager mode, which
+    can significantly reduce speculative decoding throughput.
+  - The number of specialized LoRA graphs scales with max_loras; large max_loras values combined with specialization can cause
+    excessive graph memory usage.
+  quick_guide: 'Set to false if LoRA is always active or if using speculative decoding; keep true only for mixed LoRA/non-LoRA
+    workloads without speculation.
+
+    '
+analysis_date: '2026-07-06'

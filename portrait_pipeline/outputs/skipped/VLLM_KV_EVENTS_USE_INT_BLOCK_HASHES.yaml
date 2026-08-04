@@ -1,0 +1,6 @@
+name: VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES
+type: env
+performance_impact: none
+skip_reason: The pinned upstream source only declares and parses this environment variable in vllm/envs.py, while neither
+  the pinned vLLM nor vLLM Ascend repository contains a runtime consumer. Changing an unconsumed KV-event serialization compatibility
+  setting cannot affect latency, throughput, or memory.

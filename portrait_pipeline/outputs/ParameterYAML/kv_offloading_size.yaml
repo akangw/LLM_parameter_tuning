@@ -1,0 +1,69 @@
+name: --kv-offloading-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:167
+- vllm/engine/arg_utils.py:687
+- vllm/engine/arg_utils.py:1124
+- vllm/engine/arg_utils.py:1710
+- vllm/config/vllm.py:682
+value_type: float
+default: null
+valid_choices: Any float size in GiB, or null to disable KV offloading.
+cli_example: --kv-offloading-size 4.0
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: A non-null value activates KV offloading and configures a CPU-resident buffer, reducing accelerator-resident
+  KV-cache pressure while introducing KV-transfer work. The native backend passes the requested GiB value as cpu_bytes_to_use;
+  the lmcache backend divides it by tensor_parallel_size times pipeline_parallel_size for its per-rank local CPU size. Null
+  returns before creating or configuring a KV-transfer connector.
+usage_locations:
+- file: vllm/config/cache.py:167
+  context: Defines the nullable GiB buffer size and documents that null disables KV offloading.
+- file: vllm/engine/arg_utils.py:687
+  context: Declares the EngineArgs field with the CacheConfig default.
+- file: vllm/engine/arg_utils.py:1124
+  context: Registers the --kv-offloading-size CLI option.
+- file: vllm/engine/arg_utils.py:1710
+  context: Passes the parsed value into CacheConfig during engine configuration creation.
+- file: vllm/config/vllm.py:682
+  context: Activates the configured KV-transfer connector only for a non-null size and converts or partitions the size by
+    backend.
+related_parameters:
+- name: --kv-offloading-backend
+  relation: Selects native or lmcache behavior once a non-null offloading size activates the feature.
+- name: --tensor-parallel-size
+  relation: Participates in lmcache per-rank buffer sizing; CacheConfig documents the configured size as total across TP ranks.
+- name: --pipeline-parallel-size
+  relation: Participates with tensor parallelism in lmcache per-rank buffer sizing.
+- name: --kv-cache-memory-bytes
+  relation: Independently controls accelerator KV-cache allocation while this option configures CPU KV offloading.
+constraints:
+- Null is the default and leaves KV offloading inactive.
+- --kv-offloading-backend alone does not activate offloading; a non-null --kv-offloading-size is required.
+- The current source recognizes native and lmcache backends; lmcache receives the configured size divided by tensor_parallel_size
+  times pipeline_parallel_size.
+tuning_advice:
+  summary: Leave the value unset when accelerator memory accommodates the workload. Use a measured non-null GiB budget only
+    when the extra CPU-resident KV capacity is worth the additional KV-transfer latency.
+  suggested_values:
+  - scenario: Workload whose KV cache fits in accelerator memory
+    value: <unset>
+    reason: The null default returns before KV offloading configures a transfer connector, avoiding offload transfer work.
+  - scenario: Memory-constrained long-context serving with sufficient host memory
+    value: 4.0
+    reason: Enables the source-defined CPU offload buffer with a concrete 4 GiB budget; benchmark to confirm the latency and
+      capacity trade-off.
+  caveats:
+  - A non-null setting changes the runtime to use a KV-transfer connector and CPU memory, so its latency effect depends on
+    the deployment interconnect and workload access pattern.
+  - For lmcache, the effective local CPU size is divided across tensor and pipeline parallel ranks.
+  - The current configuration source accepts a float but does not show a positivity validation for this option; use a sensible
+    non-negative value and validate it in the target deployment.
+  quick_guide: Start unset; if KV-cache capacity is the limiting resource, try a small measured GiB budget and compare memory
+    headroom and latency.
+analysis_date: '2026-07-27'

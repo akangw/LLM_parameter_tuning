@@ -1,0 +1,73 @@
+name: compilation.cache_dir
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:1053
+- vllm/compilation/decorators.py:551
+- vllm/compilation/wrapper.py:330
+value_type: str
+default: <computed>
+valid_choices: any valid filesystem path string
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the directory where compiled TorchInductor graphs are cached. When compilation.cache_dir
+  is empty (default), vLLM auto-generates a cache directory under VLLM_CACHE_ROOT/torch_compile_cache/ using a hash of environment,
+  config, code, and compiler factors (backends.py:1053-1065). This hash-based caching enables reuse of compiled artifacts
+  across restarts when the model and configuration remain unchanged, avoiding expensive recompilation on every launch. On
+  Ascend NPU, TorchInductor compilation (via torch.compile with the ascend backend) is particularly critical because the CANN
+  compiler performs additional graph-level optimizations for the Da Vinci architecture. Without a persistent cache_dir, every
+  vLLM restart triggers full recompilation, which can add minutes to startup latency. With a properly configured cache_dir,
+  subsequent launches skip compilation entirely, directly reducing cold-start time and improving time-to-first-token. The
+  parameter also affects AOT (Ahead-of-Time) compilation caching (decorators.py:551-563), where compiled model functions are
+  serialized to disk under cache_dir/rank_{rank}_{dp_rank}/. During dynamic reconfiguration (e.g., data_parallel_size changes),
+  the cache_dir is reset to empty string (wrapper.py:330) to force recompilation with new parameters. Note: vllm-ascend does
+  not override this parameter, but the underlying TorchInductor cache mechanism is equally applicable to Ascend NPU compilation.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:1053
+  context: Checks if cache_dir is empty; if so, auto-generates a hash-based cache directory under VLLM_CACHE_ROOT
+- file: vllm/compilation/decorators.py:551
+  context: Sets local_cache_dir for AOT compilation artifact storage, shared across ranks on the same node
+- file: vllm/compilation/wrapper.py:330
+  context: Resets cache_dir to empty string during dynamic reconfiguration to force recompilation
+related_parameters:
+- name: VLLM_CACHE_ROOT
+  relation: When cache_dir is not explicitly set, the auto-generated cache directory is placed under VLLM_CACHE_ROOT/torch_compile_cache/
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: When set, disables loading of cached AOT compiled functions even if cache_dir is configured
+- name: compilation_config.backend
+  relation: The compilation backend (e.g., 'inductor', 'eager') affects what artifacts are cached; 'eager' backend skips compilation
+    caching
+constraints:
+- The specified directory must be writable by the vLLM process; otherwise compilation caching will fail silently or raise
+  OSError
+- When using multiple ranks, each rank writes to a subdirectory rank_{rank}_{dp_rank} under cache_dir; sufficient disk space
+  is required for all ranks
+tuning_advice:
+  summary: Set a persistent cache_dir to avoid recompilation on every vLLM restart, significantly reducing cold-start latency
+    on Ascend NPU
+  suggested_values:
+  - scenario: Production deployment with stable model and configuration
+    value: /persistent/cache/vllm/torch_compile_cache
+    reason: A fixed, persistent directory ensures compiled graphs survive across container restarts and node reboots, eliminating
+      recompilation overhead on Ascend NPU where CANN graph compilation can be time-consuming
+  - scenario: Development or frequent model/config changes
+    value: <empty or unset>
+    reason: Let vLLM auto-generate hash-based cache directories; different model/config combinations get separate caches automatically,
+      preventing stale cache conflicts
+  caveats:
+  - On Ascend NPU, TorchInductor compilation with the ascend backend may produce device-specific binaries; cache directories
+    should not be shared across nodes with different NPU architectures or CANN versions
+  - When upgrading vLLM, vllm-ascend, CANN, or torch versions, the auto-generated hash will change, creating a new cache directory;
+    old cache directories are not automatically cleaned up and may consume significant disk space over time
+  - The cache_dir is reset to empty during dynamic reconfiguration (e.g., changing data_parallel_size); manually setting cache_dir
+    may interfere with this mechanism if the same directory is reused across different configurations
+  quick_guide: Set compilation.cache_dir to a persistent writable path to cache compiled graphs and avoid recompilation on
+    restart; leave unset for auto-generated hash-based caching
+analysis_date: '2026-07-06'

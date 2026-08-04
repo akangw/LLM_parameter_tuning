@@ -1,0 +1,85 @@
+name: speculative.draft_sample_method
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/v1/worker/gpu/spec_decode/eagle/speculator.py:109
+value_type: str
+default: greedy
+valid_choices:
+- greedy
+- gumbel
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls how the draft model generates candidate tokens during speculative decoding. In ''greedy''
+  mode, the draft model always selects the argmax token, and draft probabilities are treated as one-hot during rejection sampling.
+  This is computationally simpler and requires less memory. In ''gumbel'' mode, Gumbel noise is added for stochastic sampling,
+  and the full draft logits are used for the probability ratio test during rejection sampling. The key performance difference
+  on Ascend NPU is memory: "when set to ''gumbel'', the" Eagle speculator allocates a large tensor of shape (max_num_reqs,
+  num_speculative_steps, vocab_size) in float32 to store draft logits (see vllm/v1/worker/gpu/spec_decode/eagle/speculator.py:109-116).
+  For typical vocab sizes (e.g., 128k+), this can consume significant NPU memory, reducing the maximum batch size and potentially
+  causing out-of-memory errors. ''greedy'' avoids this allocation entirely. Additionally, ''gumbel'' mode involves more complex
+  rejection sampling logic, which may increase per-step latency on NPU due to additional kernel launches and data movement.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu/spec_decode/eagle/speculator.py:109
+  context: 'Checks if draft_sample_method is ''gumbel'' to conditionally allocate a draft_logits tensor of shape (max_num_reqs,
+    num_speculative_steps, vocab_size) in float32. This allocation is skipped for ''greedy'' mode.
+
+    '
+related_parameters:
+- name: speculative.num_speculative_tokens
+  relation: 'The draft_logits tensor size scales linearly with num_speculative_steps, so the memory impact of ''gumbel'' mode
+    is amplified when more speculative tokens are used.
+
+    '
+- name: speculative.method
+  relation: 'draft_sample_method is only relevant when speculative decoding is enabled and the method uses a draft model (e.g.,
+    eagle). It has no effect for ngram or other non-draft-model speculative methods.
+
+    '
+constraints:
+- draft_sample_method must be either 'greedy' or 'gumbel'.
+- This parameter only takes effect when speculative decoding is enabled with a draft model method (e.g., eagle).
+tuning_advice:
+  summary: 'Use ''greedy'' on Ascend NPU unless stochastic draft sampling is explicitly required, to avoid large draft_logits
+    memory allocation and reduce rejection sampling overhead.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment on Ascend NPU
+    value: greedy
+    reason: 'Avoids allocating a (max_num_reqs × num_speculative_steps × vocab_size) float32 tensor, saving significant NPU
+      memory and reducing per-step latency. Greedy draft sampling is sufficient for most use cases.
+
+      '
+  - scenario: When stochastic draft sampling is required for output diversity
+    value: gumbel
+    reason: 'Enables Gumbel-based stochastic sampling from the draft model, which can improve draft acceptance rates for diverse
+      generation tasks. Be prepared for increased NPU memory usage and potentially higher per-step latency.
+
+      '
+  caveats:
+  - 'On Ascend NPU, ''gumbel'' mode allocates a large draft_logits tensor (max_num_reqs × num_speculative_steps × vocab_size
+    × 4 bytes). For a vocab size of 128k, 32 requests, and 5 speculative steps, this is ~80 MB of additional NPU memory. This
+    can cause OOM at high batch sizes.
+
+    '
+  - 'The memory impact of ''gumbel'' mode is not documented in vllm-ascend docs and may be overlooked when porting GPU configurations
+    to Ascend NPU.
+
+    '
+  - 'vllm-ascend does not override or modify this parameter, but the memory constraints of Ascend NPU (typically less HBM
+    than high-end GPUs) make the ''greedy'' default more important to retain on Ascend.
+
+    '
+  quick_guide: 'Keep the default ''greedy'' on Ascend NPU to avoid large draft_logits memory allocation; only switch to ''gumbel''
+    if stochastic draft sampling is required and you have sufficient NPU memory headroom.
+
+    '
+analysis_date: '2026-07-06'

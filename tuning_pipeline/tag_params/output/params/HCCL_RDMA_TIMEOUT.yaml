@@ -1,0 +1,92 @@
+name: HCCL_RDMA_TIMEOUT
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/utils/utils.py:55
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1568
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1376
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1059
+- docs/source/user_guide/feature_guide/kv_pool.md:245
+value_type: int
+default: 20
+valid_choices: A string accepted by Python int(); use a nonnegative integer exponent appropriate for the HCCL RDMA timeout.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: In the Ascend Mooncake KV-transfer path, get_transfer_timeout_value() parses HCCL_RDMA_TIMEOUT as an integer
+  only when ASCEND_TRANSFER_TIMEOUT is empty or unset. It uses the value as the exponent in the RDMA timeout term 4.096 microseconds
+  * 2^HCCL_RDMA_TIMEOUT, multiplies that term by HCCL_RDMA_RETRY_CNT, converts it to milliseconds with floor division, and
+  adds 3000 ms. With the pinned defaults HCCL_RDMA_TIMEOUT=20 and HCCL_RDMA_RETRY_CNT=7, the resulting ASCEND_TRANSFER_TIMEOUT
+  is exactly 33064 ms. Standard, hybrid, and layerwise Mooncake connector workers install that result during initialization.
+  Increasing the exponent doubles the RDMA contribution for every increment, which can prevent slow or retried KV transfers
+  from timing out but delays detection of failed transfers and can increase tail latency. Decreasing it has the inverse tradeoff
+  and may cause premature failures that reduce throughput. The guide also warns that this HCCL setting affects collective
+  communication. Upstream vLLM contains no reference to this Ascend-specific variable.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/utils/utils.py:55
+  context: Parses the environment value and uses it as the exponent in the fallback Mooncake KV-transfer timeout calculation.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1568
+  context: A standard Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1376
+  context: A hybrid Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1059
+  context: A layerwise Mooncake connector worker installs the computed value as ASCEND_TRANSFER_TIMEOUT during initialization.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:245
+  context: Defines the RDMA timeout formula, states the seven-retry transfer-timeout bound, warns about collective-communication
+    effects, and demonstrates 17.
+related_parameters:
+- name: HCCL_RDMA_RETRY_CNT
+  relation: Multiplies the exponential RDMA timeout term in the fallback calculation and defaults to 7.
+- name: ASCEND_TRANSFER_TIMEOUT
+  relation: Any non-empty explicit value bypasses HCCL_RDMA_TIMEOUT and the entire fallback calculation.
+- name: default_kv_lease_ttl
+  relation: The KV Pool guide requires this Mooncake KV-object lease TTL to exceed ASCEND_TRANSFER_TIMEOUT.
+constraints:
+- The value must be parseable by Python int() or Mooncake connector-worker initialization raises ValueError.
+- HCCL_RDMA_TIMEOUT has no effect on the vLLM-Ascend fallback when ASCEND_TRANSFER_TIMEOUT is set to a non-empty value.
+- The guide requires ASCEND_TRANSFER_TIMEOUT to be greater than RDMA_TIMEOUT multiplied by 7, where RDMA_TIMEOUT is 4.096
+  microseconds multiplied by 2^HCCL_RDMA_TIMEOUT.
+- The pinned source does not enforce a documented numeric range, although negative or excessively large exponents are not
+  useful operational values.
+tuning_advice:
+  summary: Keep the source default unless observed RDMA or KV-transfer timeouts justify a change; tune the exponent with the
+    retry count, explicit transfer timeout, and Mooncake lease TTL as one timeout budget.
+  suggested_values:
+  - scenario: Default fallback with HCCL_RDMA_RETRY_CNT=7
+    value: 20
+    reason: This is the pinned source default and produces an exact computed ASCEND_TRANSFER_TIMEOUT of 33064 ms.
+  - scenario: KV Pool guide deployment with explicit 10000 ms transfer timeout
+    value: 17
+    reason: This is the guide's demonstrated exponent; seven RDMA timeout windows fit below 10000 ms, which the guide pairs
+      with an 11000 ms KV lease TTL.
+  caveats:
+  - Each increment doubles the RDMA-derived portion of the timeout, so small changes can substantially increase failed-transfer
+    detection latency.
+  - Do not use the guide's 10000 ms ASCEND_TRANSFER_TIMEOUT with exponent 20; it violates the guide's stated seven-retry lower
+    bound.
+  - An explicit non-empty ASCEND_TRANSFER_TIMEOUT masks this setting in get_transfer_timeout_value().
+  - This HCCL variable also affects collective communication behavior, so validate all-reduce and all-gather behavior as well
+    as Mooncake transfer.
+  - Keep default_kv_lease_ttl above the resulting ASCEND_TRANSFER_TIMEOUT.
+  quick_guide: Use 20 for the source fallback; use 17 only as part of the documented 10000 ms transfer-timeout and 11000 ms
+    lease-TTL configuration, and test collective communication after any change.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

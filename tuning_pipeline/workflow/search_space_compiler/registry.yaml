@@ -1,0 +1,211 @@
+schema_version: 1
+# Adapted to the current ParameterYAML names generated from vLLM 418bd627 and
+# vllm-ascend 32c8cf19. Parameters proven to have no active Ascend runtime
+# consumer (prefill query quantization, moe_backend) and the deprecated context
+# parallel environment alias are intentionally excluded from automatic search.
+parameters:
+  - canonical_name: max_num_seqs
+    knowledge_names: [--max-num-seqs]
+    candidate_values: [8, 16, 32, 48, 64]
+    risk: low
+    integration_status: existing
+    injection: {kind: env_value, name: MAX_NUM_SEQS, target: vllm_cli}
+
+  - canonical_name: max_model_len
+    knowledge_names: [--max-model-len]
+    candidate_values: [64000]
+    risk: high
+    role: session_fixed
+    fixed_reason: benchmark_and_memory_contract
+    integration_status: existing
+    injection: {kind: env_value, name: MAX_MODEL_LEN, target: vllm_cli}
+
+  - canonical_name: max_num_batched_tokens
+    knowledge_names: [--max-num-batched-tokens]
+    candidate_values: [4096, 8192, 16384, 32768]
+    accept_safe_suggestions: true
+    risk: low
+    integration_status: existing
+    injection: {kind: env_value, name: MAX_NUM_BATCHED_TOKENS, target: vllm_cli}
+
+  - canonical_name: gpu_memory_utilization
+    knowledge_names: [--gpu-memory-utilization]
+    candidate_values: [0.85, 0.90, 0.93, 0.95]
+    risk: medium
+    integration_status: existing
+    injection: {kind: env_value, name: GPU_MEMORY_UTILIZATION, target: vllm_cli}
+
+  - canonical_name: enable_prefix_caching
+    knowledge_names: [--enable-prefix-caching, --no-enable-prefix-caching]
+    candidate_values: [false, true]
+    accept_safe_suggestions: true
+    risk: low
+    integration_status: existing
+    injection: {kind: env_bool_flag, name: ENABLE_PREFIX_CACHING, flag: --enable-prefix-caching}
+
+  - canonical_name: async_scheduling
+    knowledge_names: [--async-scheduling]
+    candidate_values: [true]
+    risk: high
+    role: session_fixed
+    fixed_reason: required_by_current_mtp_contract
+    integration_status: existing
+    injection: {kind: env_bool_flag, name: ASYNC_SCHEDULING, flag: --async-scheduling}
+
+  - canonical_name: enable_expert_parallel
+    knowledge_names: [--enable-expert-parallel]
+    candidate_values: [true]
+    risk: high
+    role: session_fixed
+    fixed_reason: glm52_moe_topology_contract
+    prerequisites:
+      - {path: model.moe, op: eq, value: true}
+    integration_status: existing
+    injection: {kind: env_bool_flag, name: ENABLE_EXPERT_PARALLEL, flag: --enable-expert-parallel}
+
+  - canonical_name: compilation_mode
+    knowledge_names: [CompilationConfig.cudagraph_mode, compilation.cudagraph_mode, --compilation-config]
+    candidate_values: [FULL_DECODE_ONLY, PIECEWISE]
+    risk: medium
+    integration_status: existing
+    injection: {kind: env_json_field, name: COMPILATION_MODE, object: compilation_config, field: cudagraph_mode}
+
+  - canonical_name: num_speculative_tokens
+    knowledge_names: [SpeculativeConfig.num_speculative_tokens, speculative.num_speculative_tokens]
+    candidate_values: [0, 1, 2, 3]
+    risk: medium
+    prerequisites:
+      - {path: features.mtp, op: eq, value: true}
+    integration_status: existing
+    injection: {kind: env_json_field, name: NUM_SPECULATIVE_TOKENS, object: speculative_config, field: num_speculative_tokens}
+
+  - canonical_name: long_prefill_token_threshold
+    knowledge_names: [--long-prefill-token-threshold]
+    candidate_values: [0, 1024, 2048, 4096]
+    accept_safe_suggestions: true
+    risk: low
+    integration_status: existing
+    injection: {kind: env_value, name: LONG_PREFILL_TOKEN_THRESHOLD, target: vllm_cli}
+
+  - canonical_name: enable_chunked_prefill
+    knowledge_names: [--enable-chunked-prefill]
+    candidate_values: [false, true]
+    accept_safe_suggestions: true
+    risk: low
+    prerequisites:
+      - {path: model.encoder_decoder, op: eq, value: false}
+      - {path: model.uses_kv_cache, op: eq, value: true}
+    integration_status: planned
+    injection: {kind: cli_bool_flag, flag: --enable-chunked-prefill}
+
+  - canonical_name: cudagraph_capture_sizes
+    knowledge_names: [--cudagraph-capture-sizes, compilation.cudagraph_capture_sizes]
+    candidate_values:
+      # Verified effective profile from the 0706 A0 engine logs.  Keep this
+      # coupled with max_cudagraph_capture_size=192 and MTP=3 when activated.
+      - [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+      - null
+    risk: medium
+    integration_status: planned
+    injection: {kind: cli_list, flag: --cudagraph-capture-sizes}
+
+  - canonical_name: max_cudagraph_capture_size
+    knowledge_names: [--max-cudagraph-capture-size, compilation.max_cudagraph_capture_size]
+    candidate_values: [128, 192, 256]
+    risk: medium
+    integration_status: planned
+    injection: {kind: cli_value, flag: --max-cudagraph-capture-size}
+
+  - canonical_name: compilation_enable_sp
+    knowledge_names: [CompilationConfig.pass_config.enable_sp, compilation.pass_config.enable_sp]
+    candidate_values: [false, true]
+    risk: medium
+    prerequisites:
+      - {path: topology.tensor_parallel_size, op: gt, value: 1}
+      - {path: model.moe, op: eq, value: true}
+    integration_status: planned
+    injection: {kind: json_field, object: compilation_config, field: pass_config.enable_sp}
+
+  - canonical_name: enable_eplb
+    knowledge_names: [--enable-eplb]
+    candidate_values: [false]
+    risk: high
+    role: session_fixed
+    fixed_reason: upstream_cli_is_not_supported_on_pinned_ascend
+    integration_status: planned
+    injection: {kind: cli_bool_flag, flag: --enable-eplb}
+
+  - canonical_name: eplb_num_redundant_experts
+    knowledge_names: [eplb.num_redundant_experts, additional_config.eplb_config.num_redundant_experts]
+    candidate_values: [0]
+    risk: high
+    role: session_fixed
+    fixed_reason: dynamic_eplb_is_disabled_for_current_scenario
+    integration_status: planned
+    injection: {kind: json_field, object: eplb_config, field: num_redundant_experts}
+
+  - canonical_name: block_size
+    knowledge_names: [--block-size]
+    candidate_values: [16, 32]
+    risk: high
+    integration_status: planned
+    injection: {kind: cli_value, flag: --block-size}
+
+  - canonical_name: flashcomm1
+    knowledge_names: [additional_config.enable_flashcomm1]
+    candidate_values: [false, true]
+    risk: medium
+    prerequisites:
+      - {path: topology.tensor_parallel_size, op: gt, value: 1}
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: enable_flashcomm1}
+
+  - canonical_name: mlapo
+    knowledge_names: [additional_config.enable_mlapo]
+    candidate_values: [true, false]
+    risk: medium
+    prerequisites:
+      - {path: model.mla, op: eq, value: true}
+      - {path: model.quantized, op: eq, value: true}
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: enable_mlapo}
+
+  - canonical_name: fused_mc2
+    knowledge_names: [additional_config.enable_fused_mc2]
+    candidate_values: [0, 1, 2]
+    risk: high
+    prerequisites:
+      - {path: model.moe, op: eq, value: true}
+      - {path: model.quantized, op: eq, value: true}
+      - {path: features.hierarchy_communication, op: eq, value: false}
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: enable_fused_mc2}
+
+  - canonical_name: decode_context_parallel_size
+    knowledge_names: [--decode-context-parallel-size]
+    candidate_values: [1, 2, 4, 8, 16]
+    risk: high
+    prerequisites:
+      - {path: topology.worker_generation, op: eq, value: v1}
+      - {path: model.mla, op: eq, value: true}
+      - {path: features.kv_transfer, op: eq, value: false}
+    integration_status: planned
+    injection: {kind: cli_value, flag: --decode-context-parallel-size}
+
+  - canonical_name: all2all_backend
+    knowledge_names: [--all2all-backend]
+    candidate_values: [allgather_reducescatter]
+    risk: high
+    role: session_fixed
+    fixed_reason: ascend_runtime_may_override_backend
+    integration_status: planned
+    injection: {kind: cli_value, flag: --all2all-backend}
+
+  - canonical_name: offload_group_size
+    knowledge_names: [--offload-group-size]
+    candidate_values: [0, 4, 8]
+    risk: high
+    role: recovery_only
+    fixed_reason: activate_only_after_proven_memory_pressure
+    integration_status: planned
+    injection: {kind: cli_value, flag: --offload-group-size}

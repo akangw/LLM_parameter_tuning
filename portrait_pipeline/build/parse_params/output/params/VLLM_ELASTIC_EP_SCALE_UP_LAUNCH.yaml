@@ -1,0 +1,68 @@
+name: VLLM_ELASTIC_EP_SCALE_UP_LAUNCH
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:1757
+value_type: bool
+default: false
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: "This environment variable is an internal flag used by vLLM's elastic expert parallelism (EP) scale-up mechanism.\
+  \ When set to 1, it signals that the current engine instance is being launched as part of a scale-up operation (adding more\
+  \ data-parallel ranks to a running deployment). On Ascend NPU, the performance impact is indirect: it controls the code\
+  \ path taken during engine initialization. Specifically, when VLLM_ELASTIC_EP_SCALE_UP_LAUNCH=1:\n1. In EngineCore.__init__\
+  \ (vllm/v1/engine/core.py:124), it triggers\n   _eep_scale_up_before_kv_init() which pre-sets available_gpu_memory_for_kv_cache\n\
+  \   before KV cache initialization, avoiding a redundant memory profiling step.\n\n2. In _initialize_kv_caches (vllm/v1/engine/core.py:240),\
+  \ it skips the normal\n   determine_available_memory() profiling and uses the pre-set memory value instead.\n\n3. In all\
+  \ executor types (multiproc_executor.py:616, ray_executor.py:377,\n   uniproc_executor.py:62), it calls elastic_ep_execute(\"\
+  load_model\") instead of\n   the standard load_model(), which handles the distributed synchronization needed\n   when new\
+  \ workers join an existing deployment.\n\nThis parameter is set automatically by EngineCoreClient during scale-up operations\
+  \ (vllm/v1/engine/utils.py:789) and should NOT be set manually by users. It does not directly affect steady-state inference\
+  \ performance on Ascend NPU; it only affects the initialization path during elastic scaling events. The parameter has no\
+  \ vllm-ascend specific override or Ascend-specific behavior.\n"
+usage_locations:
+- file: vllm/v1/engine/core.py:124
+  context: Triggers _eep_scale_up_before_kv_init() during EngineCore initialization
+- file: vllm/v1/engine/core.py:240
+  context: Skips determine_available_memory() profiling during KV cache init
+- file: vllm/v1/engine/utils.py:789
+  context: Set to "1" in runtime_env when launching new engines during scale-up
+- file: vllm/v1/executor/multiproc_executor.py:616
+  context: Calls elastic_ep_execute("load_model") instead of load_model()
+- file: vllm/v1/executor/ray_executor.py:377
+  context: Calls elastic_ep_execute("load_model") via collective_rpc
+- file: vllm/v1/executor/uniproc_executor.py:62
+  context: Calls elastic_ep_execute("load_model") for single-process executor
+related_parameters:
+- name: VLLM_ELASTIC_EP_DRAIN_REQUESTS
+  relation: Companion env var for elastic EP; controls whether to drain requests before scaling
+constraints:
+- This environment variable should only be set by EngineCoreClient internally during scale-up operations and must not be set
+  manually by users.
+tuning_advice:
+  summary: 'This is an internal flag for elastic EP scale-up and should not be manually configured. It has no direct tuning
+    relevance for Ascend NPU deployments.
+
+    '
+  suggested_values:
+  - scenario: All deployments
+    value: '0'
+    reason: 'This is an internal flag set automatically by vLLM''s elastic EP infrastructure. Manual configuration is not
+      intended and may cause incorrect initialization behavior.
+
+      '
+  caveats:
+  - Setting this flag manually may cause the engine to skip memory profiling and use an uninitialized memory value, leading
+    to incorrect KV cache allocation or crashes.
+  - This parameter is only relevant when using elastic expert parallelism (EP) with dynamic scaling, which is an advanced
+    deployment mode.
+  quick_guide: Do not set manually; this is an internal flag for elastic EP scale-up operations.
+analysis_date: '2026-07-06'

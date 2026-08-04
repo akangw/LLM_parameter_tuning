@@ -1,0 +1,86 @@
+name: additional_config.eplb_config.expert_map_path
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:631
+- vllm_ascend/eplb/core/eplb_utils.py:33
+- vllm_ascend/eplb/core/eplb_utils.py:71
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:63
+value_type: str
+default: null
+valid_choices: A readable existing file whose path ends with the lowercase suffix .json, or null
+cli_example: vllm serve Qwen/Qwen3-235B-A22 --tensor-parallel-size 16 --enable-expert-parallel --additional-config '{"eplb_config":{"expert_map_path":"/path/to/eplb.json"}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: A non-null path selects static Expert Parallel Load Balancing placement for Ascend MoE layers. During layer
+  initialization, expert_file_to_tensor reads the layer-specific device_expert arrays from the JSON file; init_eplb_config
+  turns them into the global and rank-local expert maps and a logical-to-physical routing table. The dispatch path uses that
+  table to map routed logical expert IDs to their physical copies. Placement therefore can change load skew and cross-rank
+  communication, affecting throughput and latency. It also determines physical_count and overrides the effective redundant-expert
+  count as physical_count minus the model's logical expert count, so a map containing replicas increases expert-weight memory.
+  With the default null and dynamic_eplb disabled, Ascend instead obtains the ordinary expert-parallel map from determine_expert_map.
+  Loading a static map does not by itself launch the dynamic EPLB background process; that process is gated by dynamic_eplb.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:658
+  context: Validates the lowercase .json suffix and that the path exists and is readable.
+- file: vllm_ascend/eplb/core/eplb_utils.py:33
+  context: Parses moe_layer_count and per-layer device_expert lists from the JSON file.
+- file: vllm_ascend/eplb/core/eplb_utils.py:71
+  context: Builds static global/local placement and logical-to-physical routing maps and derives redundant-expert count.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:412
+  context: Installs the resulting expert map, routing map, and redundant-expert count on each fused MoE layer.
+- file: vllm_ascend/ops/fused_moe/moe_comm_method.py:140
+  context: Remaps routed top-k logical expert IDs through log2phy before token dispatch.
+- file: vllm_ascend/worker/model_runner_v1.py:467
+  context: Marks EPLB enabled when either dynamic EPLB or a static expert map is configured.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:63
+  context: Documents reusing a previously recorded map for consistent subsequent deployments.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Static placement works with this false; setting it true additionally launches runtime load collection and rebalancing
+    on the v1 runner.
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: Records a map during dynamic EPLB so that a later deployment can load it through expert_map_path.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: When a static map is loaded, its physical expert count determines redundancy and supersedes this configured value.
+- name: enable_expert_parallel
+  relation: Static placement is meaningful for an MoE model running with expert parallelism across more than one rank.
+constraints:
+- The path is checked during configuration construction and must already exist, be readable, and end exactly in lowercase
+  .json.
+- The file must be valid JSON containing moe_layer_count and a layer_list entry with device_list and device_expert data for
+  every initialized MoE layer.
+- The placement must match the deployed model and expert-parallel topology; malformed layer or device dimensions can fail
+  during tensor construction or map initialization.
+- With expert-parallel size 1 and dynamic_eplb disabled, init_eplb_config returns before reading the static map, so this setting
+  has no placement effect.
+- The effective redundant count is physical_count minus the model expert count; the map must describe a coherent placement
+  with the intended number of expert copies per rank.
+tuning_advice:
+  summary: Reuse a static map only after recording or profiling the same MoE model and expert-parallel topology under representative
+    traffic; otherwise leave it null or generate a suitable map first.
+  suggested_values:
+  - scenario: Stable production workload with a validated map recorded for the same model and topology
+    value: /path/to/eplb.json
+    reason: Reuses the chosen placement immediately without waiting for runtime rebalancing and can reduce persistent expert-load
+      skew.
+  - scenario: First deployment, changing traffic mix, or no topology-matched map
+    value: 'null'
+    reason: Avoids applying stale or incompatible placement; use the default mapping or record and validate a new map before
+      static reuse.
+  caveats:
+  - A map optimized for a different model, layer layout, expert-parallel size, or request distribution can worsen load balance
+    and latency or fail initialization.
+  - Replicated experts encoded by the map consume additional device memory; inspect the map's physical expert count before
+    deployment.
+  - expert_map_path is an input file, whereas expert_map_record_path is the output path used to produce a reusable map.
+  - Static map loading avoids the dynamic rebalancer only when dynamic_eplb remains false; enabling both retains dynamic EPLB
+    runtime overhead.
+  quick_guide: Record and validate a map on representative traffic, then set expert_map_path to that readable JSON on matching
+    deployments; otherwise keep null.
+analysis_date: '2026-08-03'

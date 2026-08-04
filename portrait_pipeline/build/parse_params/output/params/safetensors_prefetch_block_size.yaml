@@ -1,0 +1,89 @@
+name: --safetensors-prefetch-block-size
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/load.py:90
+- vllm/engine/arg_utils.py:858
+- vllm/model_executor/model_loader/weight_utils.py:916
+value_type: int
+default: '2097152'
+valid_choices: '>= 1'
+cli_example: --safetensors-prefetch-block-size 4194304
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+impact_detail: 'This parameter controls the read block size (in bytes) used when prefetching safetensors checkpoint files
+  into the OS page cache during model loading. It only takes effect when safetensors_load_strategy is "prefetch" (or when
+  auto-detected for network filesystems like NFS/Lustre where the checkpoint fits in RAM). The prefetch is performed by worker
+  threads that read the checkpoint files sequentially in blocks of this size, warming the OS page cache so that subsequent
+  model weight loading sees lower I/O latency. Since this only affects the one-time model loading phase (not per-request inference),
+  its impact on steady-state throughput and latency is negligible. However, a poorly chosen block size can slow down model
+  startup time, especially on Ascend NPU systems where model weights must be loaded from host CPU memory to NPU device memory
+  — faster host-side I/O reduces the overall initialization latency before the server is ready to serve requests.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/weight_utils.py:991
+  context: 'Passed as block_size argument to _prefetch_all_checkpoints() when safetensors prefetching is active. Controls
+    the read chunk size for each prefetch thread.
+
+    '
+- file: vllm/model_executor/model_loader/default_loader.py:262
+  context: 'Forwarded from LoadConfig to safetensors_weights_iterator() when loading safetensors-format weights.
+
+    '
+related_parameters:
+- name: --safetensors-load-strategy
+  relation: 'Must be set to "prefetch" (or auto-triggered for network filesystems) for this parameter to have any effect.
+    Without prefetch mode, this parameter is ignored.
+
+    '
+- name: --safetensors-prefetch-num-threads
+  relation: 'Works together with prefetch block size: "num_threads controls how many" parallel readers prefetch the checkpoint,
+    while block_size controls the I/O granularity of each read operation.
+
+    '
+constraints:
+- safetensors_prefetch_block_size must be at least 1 byte.
+- This parameter only has effect when safetensors_load_strategy is "prefetch" or when auto-prefetch is triggered for network
+  filesystems.
+tuning_advice:
+  summary: 'Increase block size for high-latency network storage to improve model loading speed on Ascend NPU systems; leave
+    at default for local SSD/NVMe.
+
+    '
+  suggested_values:
+  - scenario: Local NVMe/SSD storage with low I/O latency
+    value: '2097152'
+    reason: 'The default 2 MiB block size is well-tuned for local storage where small random reads are not a bottleneck. Larger
+      blocks provide no benefit and may waste memory bandwidth.
+
+      '
+  - scenario: Network filesystem (NFS/Lustre) with high latency
+    value: '4194304'
+    reason: 'Doubling the block size to 4 MiB reduces the number of read syscalls per checkpoint file, which is beneficial
+      on high-latency network storage commonly used in Ascend NPU cluster deployments. This can measurably reduce model loading
+      time.
+
+      '
+  - scenario: Very large models (70B+) on network storage
+    value: '8388608'
+    reason: 'For very large checkpoint files (tens of GB), an 8 MiB block size further amortizes network round-trip overhead.
+      Monitor available CPU memory — each prefetch thread allocates a buffer of this size.
+
+      '
+  caveats:
+  - This parameter only affects model loading time, not inference throughput or latency.
+  - Setting block size too large may cause memory pressure during loading if many prefetch threads are used simultaneously
+    (num_threads × block_size bytes of temporary buffers).
+  - On Ascend NPU, model weights are ultimately copied to NPU device memory via PCIe; faster host-side I/O from prefetching
+    reduces total initialization time but does not affect NPU compute performance.
+  - The parameter is silently ignored if safetensors_load_strategy is not "prefetch" and the storage is not auto-detected
+    as network filesystem.
+  quick_guide: 'Use default 2 MiB for local storage; increase to 4-8 MiB for network filesystems to speed up model loading
+    on Ascend NPU clusters.
+
+    '
+analysis_date: '2026-07-06'

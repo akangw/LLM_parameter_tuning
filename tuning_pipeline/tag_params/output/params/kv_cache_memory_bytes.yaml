@@ -1,0 +1,98 @@
+name: --kv-cache-memory-bytes
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/cache.py:158
+- vllm/engine/arg_utils.py:360
+- vllm/engine/arg_utils.py:1086
+- vllm_ascend/worker/worker.py:348
+- vllm_ascend/_310p/worker_310p.py:126
+value_type: int
+default: null
+valid_choices: Any explicit positive byte count; the CLI also accepts human-readable integer suffixes.
+cli_example: --kv-cache-memory-bytes 4294967296
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: This option fixes the KV-cache budget per accelerator instead of deriving it from gpu_memory_utilization. In
+  the target Ascend worker, a nonzero explicit value still runs profile_run to compile the model but skips the memory-profile
+  calculation and returns that value as the available KV-cache memory. The cache budget determines how many cache blocks and
+  concurrent tokens can reside on the device, so an undersized value constrains concurrency and throughput while an oversized
+  value can cause allocation failure or OOM. When unset, the Ascend worker profiles non-KV memory and derives the remaining
+  cache budget; the 310P worker halves that derived budget to reserve workspace.
+usage_locations:
+- file: vllm/config/cache.py:158
+  context: Defines the nullable per-GPU KV-cache size and states that a non-null value overrides gpu_memory_utilization for
+    sizing.
+- file: vllm/engine/arg_utils.py:360
+  context: Parses this field through human_readable_int, allowing CLI byte-size input with supported integer suffixes.
+- file: vllm/engine/arg_utils.py:1696
+  context: Transfers the CLI value into CacheConfig.
+- file: vllm_ascend/worker/worker.py:348
+  context: A truthy explicit value takes the Ascend manual-sizing fast path, runs model compilation, skips profiling, and
+    is returned as the cache budget.
+- file: vllm_ascend/_310p/worker_310p.py:126
+  context: In the automatic 310P worker calculation, the derived available cache memory is halved to reserve workspace and
+    other cache.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Its cache-sizing effect is ignored when kv_cache_memory_bytes is non-null; it remains the automatic-sizing control
+    when this option is unset.
+- name: --num-gpu-blocks-override
+  relation: Overrides the profiled number of GPU cache blocks after sizing, providing a block-count rather than byte-budget
+    control.
+- name: --block-size
+  relation: Converts a given cache-memory budget into a number of token blocks, affecting capacity granularity.
+constraints:
+- A manual value must leave room for model weights, activations, runtime allocations, and any device-specific workspace; otherwise
+  cache allocation can fail or OOM.
+- On the Ascend manual-sizing path, a nonzero value bypasses the memory-profile calculation and does not respect gpu_memory_utilization
+  for cache sizing.
+- Leave the option null to use automatic sizing; the target 310P automatic worker halves its derived budget for workspace.
+tuning_advice:
+  summary: Leave this unset for normal deployments. Set it only to reproduce a known safe cache budget or when a measured,
+    fixed capacity is required.
+  suggested_values:
+  - scenario: Initial or changing Ascend deployment
+    value: <unset>
+    reason: The Ascend worker profiles non-KV memory and calculates the remaining cache budget, including the 310P workspace
+      reservation path.
+  - scenario: Reproducing a proven deployment on the same model and device configuration
+    value: <measured safe byte count>
+    reason: The explicit value selects the manual path and provides a stable per-accelerator KV-cache budget without relying
+      on a new sizing calculation.
+  - scenario: OOM or insufficient capacity after a manual setting
+    value: <lower or higher measured byte count>
+    reason: Reduce an OOM-prone budget to preserve runtime headroom, or increase a safely underutilized budget to admit more
+      cache blocks and concurrency.
+  caveats:
+  - The explicit Ascend path does not skip model compilation; it skips only the profiling calculation used to choose the cache
+    budget.
+  - A safe byte count can change with model, dtype, graph mode, other processes, driver state, and runtime allocations.
+  - 310P's halving is documented in the automatic worker calculation; do not assume that a manually supplied value is automatically
+    halved.
+  quick_guide: Leave unset first. Record a successful measured budget if deterministic capacity is needed, then set that per-accelerator
+    byte value and recheck for OOM after deployment changes.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

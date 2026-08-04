@@ -1,0 +1,102 @@
+name: CompilationConfig.custom_ops
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:469
+- vllm/config/compilation.py:881
+- vllm/config/compilation.py:969
+- vllm/config/compilation.py:1248
+- vllm/config/vllm.py:998
+- vllm/model_executor/custom_op.py:272
+- docs/design/custom_op.md:13
+- vllm_ascend/platform.py:571
+value_type: list[str]
+default: 'Computed: ["none"] when backend is "inductor" and mode is not NONE; ["all"] otherwise. On Ascend devices other than
+  310P, vllm-ascend forces ["all"].'
+valid_choices: A list containing exactly one base selector, "all" or "none", plus optional signed registered operation names
+  such as "-op_name" or "+op_name". The base selector is added automatically when omitted.
+cli_example: --compilation-config '{"custom_ops":["all","-op_name"]}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This list selects whether each vLLM CustomOp dispatches to its platform-specific implementation or its PyTorch-native
+  implementation. "all" enables custom ops by default and permits individual "-name" exclusions; "none" disables them by default
+  and permits individual "+name" inclusions. Upstream deliberately defaults to "none" for active Inductor compilation so Inductor
+  can generate and fuse kernels, and to "all" otherwise. Consequently, changing the list can replace optimized or compiled
+  execution paths across many model layers and materially alter per-token latency and throughput. In the pinned vllm-ascend
+  source this is not generally user-tunable: platform configuration overwrites the whole list with ["all"] on every supported
+  Ascend device except 310P, activating the Ascend custom-op paths. The 310P path does not apply that override and retains
+  upstream defaulting and explicit selections.'
+usage_locations:
+- file: vllm_ascend/platform.py:571
+  context: During Ascend platform configuration, replaces the entire list with ["all"] on devices other than 310P, regardless
+    of the user-supplied custom_ops list.
+- file: vllm/config/vllm.py:998
+  context: 'Adds the effective base selector when neither "all" nor "none" was supplied: "none" for active Inductor compilation
+    and "all" for other execution paths.'
+- file: vllm/model_executor/custom_op.py:272
+  context: CustomOp.enabled() combines the base policy with explicit +name and -name entries to choose the platform-specific
+    or native forward implementation.
+- file: vllm/config/compilation.py:881
+  context: Validates that at most one base selector appears and later validates every list entry as "all", "none", "+op",
+    or "-op".
+- file: vllm/config/compilation.py:1248
+  context: After model custom ops have been instantiated, warns when a signed operation name is unregistered or absent from
+    the model and therefore has no effect.
+- file: docs/design/custom_op.md:13
+  context: Documents that enabled custom ops dispatch to the current platform backend while disabled custom ops use their
+    PyTorch-native implementation.
+related_parameters:
+- name: CompilationConfig.backend
+  relation: Together with mode, determines whether an omitted base selector becomes "none" for Inductor or "all" for other
+    backends.
+- name: CompilationConfig.mode
+  relation: Inductor receives the default "none" only when compilation mode is not NONE.
+- name: CompilationConfig.pass_config.enable_qk_norm_rope_fusion
+  relation: Enabling this fusion causes configuration initialization to append "+rotary_embedding" unless it is already present.
+- name: CompilationConfig.pass_config.fuse_rope_kvcache
+  relation: Enabling this fusion also causes configuration initialization to append "+rotary_embedding".
+constraints:
+- '"all" and "none" cannot coexist or be repeated; their combined count must be at most one before default resolution.'
+- Every non-base entry must start with "+" or "-"; any other syntax raises ValueError during CompilationConfig initialization.
+- Do not include both "+name" and "-name" for the same instantiated CustomOp; CustomOp.enabled() asserts that an operation
+  cannot be simultaneously enabled and disabled.
+- A syntactically valid signed name that is unregistered or absent from the loaded model has no effect and produces a warning
+  during the post-load custom-op check.
+- On Ascend devices other than 310P, vllm-ascend replaces the complete configured list with ["all"], so user exclusions and
+  inclusions do not survive platform configuration.
+tuning_advice:
+  summary: On normal Ascend hardware, leave this field unset because the pinned platform forces ["all"]. On 310P or non-Ascend
+    platforms, retain the computed default and change individual ops only after a model- and backend-specific benchmark shows
+    a regression.
+  suggested_values:
+  - scenario: Ascend device other than 310P
+    value:
+    - all
+    reason: This is the mandatory effective value in the pinned vllm-ascend platform code; any supplied list is overwritten
+      with it during configuration.
+  - scenario: 310P or upstream active Inductor compilation with no proven per-op exception
+    value:
+    - none
+    reason: This is upstream's computed base policy for Inductor when mode is not NONE, allowing Inductor to trace native
+      implementations and generate fused kernels.
+  - scenario: 310P or upstream eager/non-Inductor execution with no proven per-op exception
+    value:
+    - all
+    reason: This is upstream's computed base policy outside active Inductor compilation and dispatches registered ops to their
+      platform-specific implementations.
+  caveats:
+  - 'The initial dataclass default is an empty list, but it is not the final runtime default: platform and VllmConfig initialization
+    resolve or replace it before use.'
+  - On non-310P Ascend, a CLI experiment comparing custom_ops values does not compare those requested values unless the effective
+    post-platform configuration is first verified, because all requests become ["all"].
+  - On paths where the field remains tunable, an individual custom kernel is not universally faster than its native/Inductor
+    alternative; results depend on model, shapes, compilation mode, software versions, and hardware.
+  - Signed names must use the registered CustomOp name, not a Python class or low-level torch operator name; irrelevant names
+    only warn and do not change execution.
+  quick_guide: 'Non-310P Ascend: leave unset and expect ["all"]. Otherwise, start with the computed backend/mode default,
+    benchmark representative prefill and decode traffic, and add only measured per-op +name or -name exceptions.'
+analysis_date: '2026-07-30'

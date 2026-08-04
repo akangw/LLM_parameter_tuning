@@ -1,0 +1,107 @@
+name: KernelConfig.ir_op_priority.fused_add_rms_norm
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/kernel.py:34
+- vllm/config/vllm.py:158
+- vllm/forward_context.py:325
+- docs/design/vllm_ir.md:118
+- vllm_ascend/ops/layernorm.py:49
+value_type: list[str]
+default: []
+valid_choices:
+- native
+- vllm_c
+- aiter
+- xpu_kernels
+- any provider registered for vllm.ir.ops.fused_add_rms_norm on the active platform
+cli_example: --ir-op-priority.fused_add_rms_norm=vllm_c,native
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This ordered list controls dispatch/lowering of the vLLM IR fused residual-add plus RMSNorm operation. During
+  each forward-pass context, vLLM imports the active platform''s IR kernels and installs this priority; dispatch selects the
+  first listed provider that supports the actual inputs. A specialized fused provider can reduce kernel-launch overhead and
+  intermediate memory traffic relative to a native implementation, improving latency and throughput for an operation repeated
+  throughout transformer layers. Provider order also enters KernelConfig''s compilation hash, including implementation UUIDs,
+  so changing it can invalidate and rebuild compiled artifacts. The field is declared as an empty list, but that is only a
+  pre-default value: KernelConfig appends unique platform defaults during configuration. Upstream documentation shows native
+  for Inductor compilation, vllm_c then native for CUDA eager or Dynamo-only, AITER then vllm_c then native for the documented
+  ROCm ordering, and xpu_kernels then native for XPU eager or Dynamo-only. A user list is prepended to those defaults.'
+usage_locations:
+- file: vllm/config/kernel.py:34
+  context: Declares the ordered provider list and accepts either a list of strings or one comma-separated string.
+- file: vllm/config/kernel.py:37
+  context: Includes the configured priorities and selected implementation UUIDs in the compilation hash.
+- file: vllm/config/kernel.py:71
+  context: Imports platform IR kernels and applies the priority to the registered fused_add_rms_norm operation.
+- file: vllm/config/kernel.py:190
+  context: Appends missing platform-default providers after user-specified entries without duplicating providers.
+- file: vllm/forward_context.py:325
+  context: Activates the configured IR provider priorities for the duration of every model forward pass.
+- file: vllm/config/vllm.py:158
+  context: Enables the ROCm GPT-OSS norm-plus-padding optimization only when AITER is first in this list.
+- file: docs/design/vllm_ir.md:118
+  context: Documents CLI and Python configuration, platform-specific orderings, and first-compatible-provider dispatch.
+- file: vllm_ascend/ops/layernorm.py:49
+  context: Ascend handles residual-add RMSNorm with NPU fused operators directly rather than defining a provider for this
+    IR priority.
+related_parameters:
+- name: KernelConfig.ir_op_priority.rms_norm
+  relation: Selects providers for the non-residual RMSNorm IR operation under the same forward-pass context.
+- name: CompilationConfig.pass_config.fuse_act_padding
+  relation: Its automatic ROCm GPT-OSS enablement requires aiter to be the first fused_add_rms_norm provider.
+- name: VllmConfig.optimization_level
+  relation: Compilation mode influences upstream platform defaults, notably native under Inductor versus custom kernels in
+    eager or Dynamo-only modes.
+constraints:
+- Every entry must be a string naming an implementation registered for vllm.ir.ops.fused_add_rms_norm on the active platform.
+- Order is significant; dispatch tries providers from first to last and requires one compatible implementation.
+- Platform defaults are appended after user entries, so an empty declared value does not remain empty after platform-default
+  resolution.
+- Do not use CUDA, ROCm, or XPU provider names on unsupported hardware merely because they are documented choices for another
+  platform.
+- The top-level ir_op_priority CLI setting and KernelConfig.ir_op_priority cannot both set this operation.
+tuning_advice:
+  summary: Keep the platform-resolved default unless profiling shows this repeated normalization operation is a bottleneck;
+    benchmark only providers supported by the deployment hardware, model shapes, dtype, and compilation mode.
+  suggested_values:
+  - scenario: CUDA with Inductor compilation
+    value:
+    - native
+    reason: This is the documented upstream default and lets Inductor optimize the native operation.
+  - scenario: CUDA eager or Dynamo-only execution
+    value:
+    - vllm_c
+    - native
+    reason: Prefer the compiled vLLM kernel while retaining the documented native fallback.
+  - scenario: ROCm deployment with a validated AITER installation
+    value:
+    - aiter
+    - vllm_c
+    - native
+    reason: This ordering tries the platform-specialized kernel first and is also required for automatic GPT-OSS norm-plus-padding
+      fusion.
+  - scenario: Ascend deployment
+    value: []
+    reason: The pinned Ascend plugin does not define an IR provider override for this field and routes its RMSNorm layer through
+      NPU fused operators; retain platform resolution rather than forcing foreign providers.
+  - scenario: Debugging provider-specific compilation or numerical behavior
+    value:
+    - native
+    reason: A native-only order isolates custom provider behavior, although it can reduce performance.
+  caveats:
+  - The source-level default is an empty list; the effective runtime value is computed by appending active-platform defaults.
+  - A provider can be registered yet reject particular shapes or dtypes, so end-to-end validation must cover the real model
+    and workload.
+  - Changing the order changes the compilation hash and can cause compilation or cache warmup before steady-state measurements.
+  - The documented ROCm AITER ordering is described as future/currently CUDA-like in the pinned design document; verify the
+    effective logged priority on the deployed vLLM build.
+  - Specialized-versus-native performance is workload-dependent; compare warm steady-state latency, throughput, and peak memory.
+  quick_guide: Use the active platform default; tune the first provider only with platform-valid kernels and measured end-to-end
+    gains.
+analysis_date: '2026-07-31'

@@ -1,0 +1,74 @@
+name: VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE
+type: env
+category: model
+scope: vllm
+source_file:
+- vllm/envs.py:984
+- vllm/envs.py:108
+- vllm/model_executor/layers/mamba/gdn_linear_attn.py:401
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether the Gated DeltaNet (GDN) linear attention layer uses a "packed
+  recurrent decode" optimization during the decode phase. When enabled (default), the `GatedDeltaNetLinearAttention` layer
+  sets `self.enable_packed_recurrent_decode = True`, which activates a specialized code path in `ChunkGatedDeltaRule` that
+  processes multiple sequences in a packed/batched manner during recurrent decoding. This optimization is specific to models
+  using GDN linear attention (e.g., Qwen3-Next architecture). The performance impact is limited to the decode phase of GDN-based
+  models and does not affect prefill or other attention mechanisms. On Ascend NPU, the effect depends on whether the packed
+  recurrent decode kernel is well-optimized for the Da Vinci architecture — if the kernel relies on operations that are not
+  efficiently mapped to Ascend, disabling this flag may actually improve performance by falling back to a more generic but
+  better-optimized code path. No vllm-ascend override or Ascend-specific handling was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/mamba/gdn_linear_attn.py:401
+  context: 'Read during GatedDeltaNetLinearAttention initialization to set self.enable_packed_recurrent_decode, which is then
+    used by ChunkGatedDeltaRule to determine whether to use packed recurrent decode optimization.
+
+    '
+related_parameters: []
+constraints: []
+tuning_advice:
+  summary: 'For GDN-based models on Ascend NPU, benchmark with this flag both enabled and disabled to determine which setting
+    yields better decode throughput, as the packed recurrent decode kernel may not be optimized for Ascend hardware.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with GDN-based models
+    value: true
+    reason: 'The default value enables the packed recurrent decode optimization, which is designed to improve decode throughput
+      by batching recurrent state updates. Start with the default and only change if benchmarking shows regressions.
+
+      '
+  - scenario: Ascend NPU where packed recurrent decode kernel performs poorly
+    value: false
+    reason: 'If profiling reveals that the packed recurrent decode kernel is a bottleneck on Ascend (e.g., due to suboptimal
+      operator mapping or memory access patterns), disabling this flag falls back to a non-packed decode path that may be
+      better optimized for the Da Vinci architecture.
+
+      '
+  caveats:
+  - 'This parameter only affects models using Gated DeltaNet (GDN) linear attention, such as Qwen3-Next. It has no effect
+    on standard Transformer, Mamba, or other attention variants.
+
+    '
+  - 'The performance difference between enabled and disabled states is typically small and only observable during the decode
+    phase, not prefill.
+
+    '
+  - 'No vllm-ascend override exists for this parameter; the upstream vLLM behavior applies as-is on Ascend NPU.
+
+    '
+  quick_guide: 'Benchmark GDN model decode throughput with VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE=1 and =0; use the faster
+    setting on your Ascend NPU.
+
+    '
+analysis_date: '2026-07-06'

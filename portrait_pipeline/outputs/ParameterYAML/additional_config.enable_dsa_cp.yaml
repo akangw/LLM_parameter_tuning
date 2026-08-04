@@ -1,0 +1,105 @@
+name: additional_config.enable_dsa_cp
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:1477
+- vllm_ascend/attention/dsa_v1.py:181
+- vllm_ascend/attention/context_parallel/dsa_cp.py:145
+- vllm_ascend/attention/sfa_v1.py:490
+- docs/source/user_guide/configuration/additional_config.md:101
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: 'vllm serve deepseek-ai/DeepSeek-V3.2 --tensor-parallel-size 8 --additional-config=''{"enable_flashcomm1": true,
+  "enable_dsa_cp": true}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only switch selects the context-parallel DSA attention metadata builder and implementation for
+  indexed architectures such as DeepSeek V3.2 and DeepSeek V4. The DSA-CP builder pads and evenly partitions the flattened
+  input-token stream across tensor-parallel ranks. Each rank projects and runs sparse attention for its local token slice,
+  then the implementation uses an all-to-all to restore the tensor-parallel head layout before the output projection. This
+  trades additional collective communication and padding for less per-rank attention and projection work and smaller local
+  intermediates, so it can improve long-sequence or sufficiently large-batch throughput, latency, and temporary activation
+  memory when computation saved outweighs communication. For small token counts or weak interconnect scaling, the collectives
+  and padding can instead regress latency. On the SFA path it also changes projection sharding, KV gathering, and PD layer-sharding
+  behavior.
+usage_locations:
+- file: vllm_ascend/utils.py:1477
+  context: Resolves and caches the flag, ignores it for models without an index_topk architecture field, and raises when FlashComm1
+    sequence parallelism is unavailable.
+- file: vllm_ascend/attention/dsa_v1.py:181
+  context: Selects the DSA context-parallel metadata builder and attention implementation instead of the ordinary DSA backend.
+- file: vllm_ascend/attention/context_parallel/dsa_cp.py:638
+  context: Pads the flattened token stream and divides it evenly into local token slices across tensor-parallel ranks.
+- file: vllm_ascend/attention/context_parallel/dsa_cp.py:920
+  context: Runs local-token DSA attention and restores the tensor-parallel head layout with an all-to-all before output projection.
+- file: vllm_ascend/attention/sfa_v1.py:490
+  context: Enables the SFA context-parallel projection, KV all-gather, output-projection, and optional layer-sharding paths.
+- file: vllm_ascend/ops/linear_op.py:631
+  context: Selects sharded context-parallel column operators for q_b_proj and kv_b_proj when DSA-CP is active.
+related_parameters:
+- name: additional_config.enable_flashcomm1
+  relation: Required prerequisite; it enables the sequence-parallel path used by DSA-CP.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Deprecated environment fallback that can satisfy the FlashComm1 prerequisite when the preferred additional_config
+    key is absent.
+- name: tensor_parallel_size
+  relation: DSA-CP partitions tokens and performs its layout-restoring collective across the tensor-parallel group; more than
+    one rank is needed for useful sharding.
+- name: additional_config.layer_sharding
+  relation: On a PD-disaggregated kv_producer, DSA-CP activates the layer-sharding integration and overlaps sharded-weight
+    work with prefill compute.
+- name: additional_config.multistream_dsa_preprocess
+  relation: When DSA-CP must gather Q/KV input, this option can overlap the hidden-state all-gather with preprocessing on
+    another stream.
+constraints:
+- Effective only for indexed DSA/SFA architectures whose hf_text_config exposes index_topk, such as DeepSeek V3.2 and DeepSeek
+  V4; other models force the result to false.
+- Requires FlashComm1 sequence parallelism through additional_config.enable_flashcomm1 or its deprecated environment fallback;
+  requesting DSA-CP without it raises ValueError.
+- Useful context sharding requires tensor_parallel_size greater than 1 because the implementation uses the tensor-parallel
+  group as its token-sharding group.
+- The token count is padded to a multiple of tensor_parallel_size so every rank receives an equal local slice; non-divisible
+  and small batches can pay padding overhead.
+- The value is cached after first resolution, so it is a startup configuration rather than a per-request tuning control.
+tuning_advice:
+  summary: Enable DSA-CP only for a supported indexed DeepSeek-style model on multi-NPU tensor parallelism, with FlashComm1
+    enabled, after benchmarking end-to-end latency and throughput at representative sequence lengths and batch sizes.
+  suggested_values:
+  - scenario: Long-sequence or high-token-batch DeepSeek V3.2/V4 inference with tensor_parallel_size greater than 1 and fast
+      interconnects
+    value: true
+    reason: Token sharding reduces per-rank projection and sparse-attention work, and large workloads are more likely to amortize
+      padding and all-to-all communication.
+  - scenario: PD-disaggregated DeepSeek prefill node using layer sharding
+    value: true
+    reason: Current SFA code gates the DSA-CP layer-sharding integration on this flag, allowing weight communication to overlap
+      heavier prefill computation.
+  - scenario: Indexed model with tensor_parallel_size equal to 1 or latency-sensitive small batches
+    value: false
+    reason: A single rank provides no context-parallel work reduction, while small workloads may not amortize backend, padding,
+      and collective overhead.
+  - scenario: Model without index_topk or deployment without FlashComm1 sequence parallelism
+    value: false
+    reason: Non-indexed architectures ignore the request, and indexed architectures raise an error if the FlashComm1 prerequisite
+      is disabled.
+  caveats:
+  - This flag does not make unsupported architectures use DSA context parallelism; enable_dsa_cp returns false before reading
+    the requested value when index_topk is absent.
+  - The optimal crossover depends on token count, tensor-parallel degree, padding, model architecture, quantization, and NPU
+    interconnect performance; source code defines no universal threshold.
+  - Enabling DSA-CP changes the attention backend and projection communication pattern, so validate numerical correctness
+    as well as latency, throughput, and memory on the target model.
+  - On the SFA path, PD role and layer_sharding settings further change output-projection weight handling and whether asynchronous
+    KV gathers overlap computation.
+  quick_guide: Start with false. For DeepSeek V3.2/V4 on TP greater than 1, first enable additional_config.enable_flashcomm1,
+    then test enable_dsa_cp=true against false using representative long prompts and batched token counts while monitoring
+    p50/p99 latency, throughput, peak NPU memory, and collective time.
+analysis_date: '2026-08-03'

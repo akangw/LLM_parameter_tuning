@@ -1,0 +1,96 @@
+name: ASCEND_BUFFER_POOL
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- docs/source/user_guide/feature_guide/kv_pool.md:110
+- docs/source/user_guide/feature_guide/kv_pool.md:483
+- docs/source/tutorials/features/pd_colocated_mooncake_multi_instance.md:217
+- tests/e2e/weekly/single_node/models/test_qwen3_30b_acc.py:82
+value_type: str
+default: '4:8'
+valid_choices: A colon-separated buffer count and per-buffer size in MB, written as count:size_MB; the pinned sources document
+  only 4:8.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'ASCEND_BUFFER_POOL is consumed by the external Ascend/Mooncake communication stack rather than by code in
+  either pinned vLLM repository. The Ascend guide defines the value as the number and size in MB of NPU-device buffers used
+  for aggregation and KV transfer: the documented 4:8 configuration allocates four 8 MB buffers, or 32 MB of pool capacity
+  per participating process/device. Buffer capacity is therefore on the data path for distributed KV movement and directly
+  reserves device memory, so an effective configuration can affect KV-transfer latency and throughput as well as memory headroom.
+  The guide also warns that HCCL one-sided connections are created lazily, add one-time latency, and persistently consume
+  4 MB of device memory per connection; benchmarks with this pool enabled require warm-up to avoid measuring connection setup.
+  The pinned upstream vLLM tree has no reference to this variable, and the pinned sources provide no comparative measurements
+  or supported values other than 4:8.'
+usage_locations:
+- file: docs/source/user_guide/feature_guide/kv_pool.md:110
+  context: Documents 4:8 for 800 I/T A3 systems with 25.5.0 <= HDK < 26.0.0 and defines it as four 8 MB NPU buffers for aggregation
+    and KV transfer.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:483
+  context: Requires a warm-up before performance benchmarking because HCCL one-sided connections are established lazily and
+    each connection adds persistent device-memory use.
+- file: docs/source/tutorials/features/pd_colocated_mooncake_multi_instance.md:217
+  context: Exports 4:8 in a colocated multi-instance MooncakeConnectorStoreV1 deployment and explicitly describes the syntax
+    as quantity:size(MB).
+- file: tests/e2e/weekly/single_node/models/test_qwen3_30b_acc.py:82
+  context: Supplies 4:8 to an AscendStoreConnector accuracy test using the Mooncake backend, confirming the documented value
+    in a current test deployment.
+related_parameters:
+- name: ASCEND_ENABLE_USE_FABRIC_MEM
+  relation: The KV-pool guide recommends this unified-memory direct-transfer mode for supported A3 stacks generally, while
+    listing ASCEND_BUFFER_POOL=4:8 specifically for the 25.5.0 <= HDK < 26.0.0 window.
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: The same hardware table uses HCCL_INTRA_ROCE_ENABLE=1 for the A2 direct-transfer scheme instead of the A3 buffer-pool
+    setup.
+- name: MOONCAKE_CONFIG_PATH
+  relation: Selects the Mooncake configuration used by deployments that export this buffer-pool setting.
+constraints:
+- The documented syntax is count:size_MB; 4:8 means four buffers of 8 MB each.
+- The pinned guide documents ASCEND_BUFFER_POOL=4:8 only for 800 I/T A3 hardware with 25.5.0 <= HDK < 26.0.0.
+- The variable is interpreted by the external Ascend/Mooncake stack; neither pinned repository validates its syntax or defines
+  unset behavior.
+- The pool consumes NPU device memory in addition to persistent HCCL connection memory and the model/KV-cache allocations.
+- A warm-up is required before representative benchmarks because the HCCL one-sided full-mesh connections are created lazily.
+tuning_advice:
+  summary: Use the documented 4:8 value only for the matching A3 Mooncake KV-transfer stack, budget its 32 MB pool allocation
+    plus connection memory, and warm up before measuring performance; the pinned sources do not justify alternative pool sizes.
+  suggested_values:
+  - scenario: Mooncake KV aggregation/transfer on 800 I/T A3 with 25.5.0 <= HDK < 26.0.0
+    value: '4:8'
+    reason: This is the sole configuration documented by the pinned Ascend guide and used by the current Mooncake deployment
+      examples and AscendStoreConnector test.
+  caveats:
+  - Do not extrapolate undocumented count or size values from the syntax alone; validate support in the deployed HDK/CANN/Mooncake
+    stack.
+  - The guide recommends ASCEND_ENABLE_USE_FABRIC_MEM=1 for supported A3 direct transfer more broadly; follow the version-specific
+    hardware table.
+  - Warm-up should use the guide's prescribed traffic before benchmarks so lazy full-mesh connection creation does not inflate
+    measured latency.
+  - The guide reports semantics and setup requirements but no benchmark deltas; measure KV-transfer throughput, tail latency,
+    and NPU memory headroom on the target topology.
+  quick_guide: On the documented A3/HDK window, export ASCEND_BUFFER_POOL=4:8, then warm up before benchmarking and monitor
+    NPU memory; outside that window, follow the hardware-specific KV-pool configuration instead of guessing another buffer-pool
+    value.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a3
+  deploy_scenario: []

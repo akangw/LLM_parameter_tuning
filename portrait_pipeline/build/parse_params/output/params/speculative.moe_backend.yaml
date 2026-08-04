@@ -1,0 +1,67 @@
+name: speculative.moe_backend
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: null
+valid_choices: Any valid MoE backend string (e.g., 'triton', 'flashinfer_trtllm', 'flashinfer_cutlass', 'cutlass', 'deepep',
+  'pplx')
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: "This parameter controls which MoE kernel backend the draft model uses during speculative decoding. When set,\
+  \ it overrides the target model's moe_backend for the draft model only. The mechanism is: 1. The speculative_config dict\
+  \ is parsed and stored in VllmConfig.speculative_config.moe_backend. 2. A helper function _apply_draft_moe_backend() copies\
+  \ the target config and patches the draft's\n   kernel_config.moe_backend to the specified value (or inherits the target's\
+  \ if None).\n3. The draft model then uses this backend for its MoE layers during speculative token generation.\nPerformance\
+  \ impact is LOW because: - \"It only affects the draft model, which is typically much smaller than the target model.\" -\
+  \ \"The draft model runs fewer layers and generates fewer tokens per step.\" - \"MoE backend choice primarily affects MoE\
+  \ layer latency; for small draft models with few or no\"\n  MoE layers, the impact is negligible.\n- \"On Ascend NPU, vllm-ascend\
+  \ does not define or override this parameter. The available MoE\"\n  backends on Ascend are limited (primarily 'deepep'\
+  \ and 'pplx' via vllm-ascend's\n  AscendMoE implementation). GPU-oriented backends like 'triton', 'flashinfer_trtllm',\n\
+  \  'flashinfer_cutlass' are not available on Ascend.\n\nThe primary use case is when the target model uses a quantized MoE\
+  \ backend (e.g., flashinfer_trtllm with FP8 quantization) but the draft model is unquantized and needs a different backend\
+  \ (e.g., triton). On Ascend, this scenario is less common because Ascend's MoE backends (deepep, pplx) handle both quantized\
+  \ and unquantized cases.\n"
+usage_locations:
+- file: vllm/v1/engine/processor.py
+  context: Parsed from speculative_config dict and stored in VllmConfig.speculative_config.moe_backend
+- file: vllm/v1/spec_decode/utils.py
+  context: _apply_draft_moe_backend() reads speculative_config.moe_backend and patches draft model's kernel_config
+related_parameters:
+- name: moe_backend
+  relation: The target model's MoE backend. speculative.moe_backend overrides this for the draft model only.
+- name: speculative_config.model
+  relation: The draft model must be specified for speculative.moe_backend to have any effect.
+- name: speculative_config.method
+  relation: Must be 'draft_model' (or similar draft-model-based method) for this parameter to apply.
+constraints:
+- The value must be a valid MoE backend name recognized by vLLM's kernel configuration system.
+- On Ascend NPU, only 'deepep' and 'pplx' are valid MoE backends; GPU-oriented backends like 'triton' or 'flashinfer_trtllm'
+  are not supported.
+- This parameter only takes effect when speculative decoding uses a draft model (method='draft_model' or equivalent).
+tuning_advice:
+  summary: 'On Ascend NPU, leave this parameter unset (None) to inherit the target model''s moe_backend, as Ascend''s available
+    MoE backends (deepep, pplx) are compatible with both quantized and unquantized draft models.
+
+    '
+  suggested_values:
+  - scenario: Default case on Ascend NPU — draft and target use same MoE backend
+    value: null
+    reason: Ascend's deepep and pplx backends handle both quantized and unquantized models, so inheritance works correctly.
+  - scenario: Draft model requires a different Ascend MoE backend than target
+    value: deepep
+    reason: If the target uses pplx but the draft performs better with deepep (or vice versa), explicitly set the draft's
+      backend.
+  caveats:
+  - GPU-oriented MoE backends (triton, flashinfer_trtllm, flashinfer_cutlass, cutlass) are not available on Ascend NPU and
+    will cause errors if specified.
+  - The draft model is typically much smaller than the target; MoE backend changes have proportionally smaller impact on overall
+    throughput.
+  - vllm-ascend does not override or patch this parameter, so its behavior follows upstream vLLM exactly.
+  quick_guide: On Ascend NPU, leave speculative.moe_backend unset to inherit the target's MoE backend.
+analysis_date: '2026-07-06'

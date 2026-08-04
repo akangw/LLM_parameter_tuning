@@ -1,0 +1,118 @@
+name: additional_config.enable_sparse_c8
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:241
+- vllm_ascend/ascend_config.py:320
+- vllm_ascend/ascend_config.py:352
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:31
+- vllm_ascend/patch/platform/patch_kv_cache_interface.py:63
+- vllm_ascend/worker/model_runner_v1.py:337
+- vllm_ascend/worker/model_runner_v1.py:4420
+- vllm_ascend/attention/sfa_v1.py:481
+- vllm_ascend/attention/sfa_v1.py:1001
+- vllm_ascend/device/device_op.py:1416
+- docs/source/user_guide/configuration/additional_config.md:88
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"enable_sparse_c8":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling this Ascend-only option selects the C8 path for sparse DSA indexer layers. On non-A5 devices, the
+  indexer key cache changes from the model KV dtype (normally two-byte BF16) to INT8 and adds one FP16 scale per cached token;
+  the cache specification uses those byte widths when calculating page size, so the reduced bytes per token can increase available
+  KV-cache block capacity. Query and key indexer inputs are Hadamard-transformed and dynamically quantized, and the quantized
+  lightning-indexer operator is used instead of the ordinary path. This can reduce indexer-cache memory and memory traffic
+  and change decode latency and throughput, but it also adds transform, quantization, scale-storage, and dequantization work,
+  so the pinned source does not establish a universal speedup. The current code has a distinct A5 path that merges CKV into
+  FP8 storage and uses FP8 indexer keys with FP32 scales; its memory/performance tradeoff therefore differs from the non-A5
+  INT8 path. Quantization metadata can restrict C8 to selected layers; without such metadata, every eligible sparse indexer
+  layer uses C8.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:241
+  context: Reads the nested boolean with a false default and makes it effective only when the model text configuration exposes
+    index_topk.
+- file: vllm_ascend/ascend_config.py:320
+  context: Parses quantization metadata to determine whether sparse-C8 layer filtering is active and which layer names or
+    IDs qualify.
+- file: vllm_ascend/ascend_config.py:352
+  context: Applies the effective global flag and optional quantization-derived layer filter.
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:63
+  context: Computes sparse-C8 page bytes from the 8-bit indexer cache and scale dtype, directly changing KV-cache memory accounting
+    and capacity.
+- file: vllm_ascend/worker/model_runner_v1.py:337
+  context: Selects the A5 merged-FP8 cache dimensions or the separate non-A5 sparse cache dimensions and C8 dtypes.
+- file: vllm_ascend/worker/model_runner_v1.py:4420
+  context: Builds each sparse layer's KV-cache specification with cache_sparse_c8 determined by the layer filter.
+- file: vllm_ascend/attention/sfa_v1.py:481
+  context: Enables the quantized indexer path only for an attention layer that has an indexer and passes the sparse-C8 layer
+    check.
+- file: vllm_ascend/attention/sfa_v1.py:1001
+  context: Hadamard-transforms and dynamically quantizes indexer keys, retaining a per-token scale for the cache.
+- file: vllm_ascend/device/device_op.py:1416
+  context: Dispatches quantized lightning-indexer operators and supplies the cached dequantization scale when C8 is enabled.
+- file: docs/source/user_guide/configuration/additional_config.md:88
+  context: Documents the false default and DSA model examples, although its A5 unsupported note conflicts with explicit A5
+    support branches in the pinned code.
+related_parameters:
+- name: model_config.hf_text_config.index_topk
+  relation: Its presence is the AscendConfig gate for making enable_sparse_c8 effective; without it, a requested true value
+    becomes false.
+- name: quant_config.quant_description
+  relation: Optional indexer quantization entries select which layer names or IDs use sparse C8; without indexer quant_type
+    entries, all eligible indexer layers pass the filter.
+- name: cache_config.cache_dtype
+  relation: Supplies the ordinary sparse KV-cache dtype used when C8 is false and therefore affects the baseline memory comparison.
+- name: additional_config.enable_kv_nz
+  relation: This is a separate MLA KV-layout option; its validation rejects sparse index_topk models, whereas enable_sparse_c8
+    targets that sparse DSA family.
+constraints:
+- The model text configuration must expose index_topk; otherwise the effective flag is silently false even when the user requests
+  true.
+- The runtime path is intended for sparse DSA models with indexer attention, such as the documented DeepSeekV3.2 and GLM5
+  examples; layers without an indexer do not enable the attention-level C8 path.
+- When quant_description contains any key ending in .indexer.quant_type, layer filtering is enabled. Only parsed layer names
+  or IDs whose .indexer.quant_type or .indexer.wq_b_weight value is INT8_DYNAMIC or W8A8_MXFP8 qualify.
+- The pinned documentation says A5 is unsupported, but the pinned implementation explicitly defines A5 FP8 cache allocation
+  and execution. Treat A5 as version-sensitive and validate the exact plugin, firmware, and model combination rather than
+  relying on that stale documentation statement.
+- This option changes cached indexer precision and can affect numerical behavior; qualify model accuracy as well as serving
+  performance.
+tuning_advice:
+  summary: Keep false for ordinary or unsupported models. For a supported sparse DSA deployment, benchmark true against false
+    with the production model, hardware, sequence lengths, and concurrency; retain it when the cache-capacity and quantized-indexer
+    gains outweigh conversion overhead without unacceptable accuracy loss.
+  suggested_values:
+  - scenario: Supported sparse DSA model under KV-cache memory pressure
+    value: true
+    reason: Uses 8-bit indexer-key storage plus scales and updates page-size accounting, which can reduce bytes per cached
+      token and permit more cache blocks.
+  - scenario: Non-DSA model, a model without index_topk, or a layer without an indexer
+    value: false
+    reason: The option is either forced off or has no applicable attention-level C8 path, so the default avoids relying on
+      an inapplicable optimization.
+  - scenario: Initial performance and accuracy qualification
+    value: false
+    reason: Use the default full-precision indexer-cache path as the control before comparing the C8 path on representative
+      traffic.
+  caveats:
+  - The source establishes lower-width cache storage and different kernels but provides no benchmark magnitude; latency and
+    throughput gains are workload- and hardware-dependent.
+  - Dynamic quantization, Hadamard transforms, and scale handling add compute and metadata, so small-cache or lightly loaded
+    workloads may not benefit.
+  - Per-layer quantization metadata can make the setting apply to only a subset of layers; confirm the effective model configuration
+    before interpreting measurements.
+  - A5 uses merged FP8 CKV/indexer storage with FP32 scales, while other supported devices use INT8 indexer keys with FP16
+    scales, so results should not be generalized across device generations.
+  - This field is passed inside --additional-config and has no dedicated top-level command-line switch.
+  quick_guide: Enable only for a verified sparse DSA model, then keep it if end-to-end benchmarks show useful cache-capacity
+    or throughput gains with acceptable latency and accuracy.
+analysis_date: '2026-08-01'

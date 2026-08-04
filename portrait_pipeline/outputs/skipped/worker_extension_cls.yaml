@@ -1,0 +1,7 @@
+name: --worker-extension-cls
+type: cli
+performance_impact: none
+skip_reason: In the pinned current vLLM source, this option is declared, parsed, and copied into ParallelConfig, but worker_extension_cls
+  has no runtime consumer; its only other use is as a configuration hash factor. The pinned vLLM-Ascend source has no consumer
+  or override for it either. Therefore, unlike the legacy implementation that dynamically inherited an extension class, the
+  current option cannot affect latency, throughput, or memory.

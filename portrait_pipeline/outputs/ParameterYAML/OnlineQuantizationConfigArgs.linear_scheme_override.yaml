@@ -1,0 +1,103 @@
+name: OnlineQuantizationConfigArgs.linear_scheme_override
+type: nested
+category: quantization
+scope: vllm
+source_file:
+- vllm/config/quantization.py:12
+- vllm/config/quantization.py:42
+- vllm/config/quantization.py:53
+- vllm/config/quantization.py:65
+- vllm/config/model.py:209
+- vllm/engine/arg_utils.py:724
+- docs/features/quantization/online.md:43
+- vllm_ascend/platform.py:118
+value_type: str
+default: null
+valid_choices:
+- fp8_per_tensor
+- fp8_per_block
+- int8_per_channel_weight_only
+- mxfp8
+cli_example: 'quantization_config={"linear_scheme_override": "fp8_per_block"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This nullable field overrides the online-quantization recipe specifically for supported LinearBase layers.
+  When it is null, linear layers use global_scheme; when set, the selected enum takes precedence for that layer family while
+  MoE layers retain their global or MoE-specific recipe. Online quantization converts eligible BF16/FP16 weights during model
+  loading and dynamically scales activations during forward execution. Changing the linear recipe can therefore alter linear-weight
+  precision and scale metadata, device memory and bandwidth, load-time conversion work, runtime kernels, latency, throughput,
+  and numerical quality across every eligible dense projection. Per-tensor FP8 uses one weight scale per tensor, per-block
+  FP8 uses 128x128 weight blocks and 1x128 activation blocks, and MXFP8 uses 1x32 blocks; the INT8 recipe is documented as
+  MoE-expert weight-only and leaves linear layers unquantized. Ascend takes precedence for NPU behavior: the pinned plugin
+  does not list online quantization or its scheme aliases as supported.'
+usage_locations:
+- file: vllm/config/quantization.py:12
+  context: Defines the four accepted OnlineQuantScheme values and their scaling recipes.
+- file: vllm/config/quantization.py:42
+  context: Declares the nullable override and limits its target to LinearBase layers.
+- file: vllm/config/quantization.py:53
+  context: Coerces a supplied string to OnlineQuantScheme and rejects values outside the enum.
+- file: vllm/config/quantization.py:65
+  context: Resolves and validates the containing online-quantization configuration.
+- file: vllm/config/model.py:209
+  context: Carries the resolved OnlineQuantizationConfigArgs object on ModelConfig.
+- file: vllm/engine/arg_utils.py:724
+  context: Resolves quantization and quantization_config before ModelConfig construction.
+- file: docs/features/quantization/online.md:43
+  context: Documents mixed recipes for dense Linear and MoE layers and shows this override in use.
+- file: vllm_ascend/platform.py:118
+  context: Lists NPU-supported quantization methods and excludes upstream online quantization and its aliases.
+related_parameters:
+- name: OnlineQuantizationConfigArgs.global_scheme
+  relation: Supplies the fallback recipe for LinearBase layers when this override is null.
+- name: OnlineQuantizationConfigArgs.moe_scheme_override
+  relation: Independently overrides the recipe for FusedMoE layers.
+- name: OnlineQuantizationConfigArgs.ignore
+  relation: An ignore match bypasses the selected linear recipe and preserves the matched layer at original precision.
+- name: EngineArgs.quantization
+  relation: Must select online or one of the four OnlineQuantScheme aliases for the containing configuration to be accepted.
+- name: ModelConfig.dtype
+  relation: The upstream online quantizer operates on BF16 or FP16 models and activations.
+constraints:
+- At least one of global_scheme, linear_scheme_override, or moe_scheme_override must be set for an online quantization configuration.
+- String values must be one of fp8_per_tensor, fp8_per_block, int8_per_channel_weight_only, or mxfp8.
+- The containing quantization_config is accepted by EngineArgs only when quantization is online or one of the four online
+  scheme aliases.
+- A null value delegates LinearBase layers to global_scheme; a non-null value takes precedence for that layer family.
+- The documented int8_per_channel_weight_only recipe applies to MoE expert weights and leaves linear layers unquantized, so
+  it is not a linear-compression recipe.
+- MXFP8 W8A8 requires SM 100 or newer; the documented upstream fallback on other GPUs is W8A16.
+- The pinned vllm-ascend platform supports only ascend, compressed-tensors, fp8, and deepseek_v4_fp8 methods, so this upstream
+  override is not a supported NPU tuning path.
+tuning_advice:
+  summary: Benchmark a uniform online-quantization baseline first, then set this override only when dense linear layers need
+    a different accuracy or performance tradeoff from MoE layers.
+  suggested_values:
+  - scenario: Use finer-grained FP8 scaling for dense linear layers
+    value: fp8_per_block
+    reason: The documented mixed-recipe example uses this override with a per-tensor global baseline; its smaller scaling
+      groups may change accuracy and kernel performance.
+  - scenario: Use the simplest FP8 scaling recipe for dense linear layers
+    value: fp8_per_tensor
+    reason: One scale per weight tensor provides a straightforward linear-layer baseline to compare against finer-grained
+      recipes.
+  - scenario: Blackwell-class SM 100 or newer GPU
+    value: mxfp8
+    reason: MXFP8 uses compact 1x32 microscaling blocks, while its documented W8A8 execution requires this capability.
+  caveats:
+  - A finer scaling granularity does not guarantee better latency or throughput; kernel availability, model architecture,
+    request shapes, and hardware generation can dominate.
+  - Any linear override can change numerical accuracy, so validate production outputs as well as load time, peak memory, latency,
+    and throughput.
+  - Online conversion adds model-startup work even when lower-precision weights reduce steady-state memory traffic.
+  - The benefit scales with how much of the model is eligible LinearBase weight; MoE-heavy architectures may respond differently
+    from dense models.
+  - Ignore patterns take precedence over this recipe, and broad exclusions can erase much of its memory and kernel effect.
+  - Do not assume these upstream GPU recipes work on Ascend NPU; the pinned plugin excludes the online method and its aliases.
+  quick_guide: Keep null for the uniform baseline, compare fp8_per_tensor with fp8_per_block for dense linear layers, reserve
+    mxfp8 for hardware where its behavior is understood, and avoid treating the MoE-only INT8 recipe as linear compression.
+analysis_date: '2026-07-31'

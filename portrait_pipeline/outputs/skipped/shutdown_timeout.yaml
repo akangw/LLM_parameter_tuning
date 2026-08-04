@@ -1,0 +1,6 @@
+name: --shutdown-timeout
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source, this CLI value is validated and copied into VllmConfig, but no runtime code consumes
+  the configured field. The pinned vLLM Ascend repository also neither references nor overrides it. It therefore cannot change
+  request latency, throughput, or memory usage in these sources.

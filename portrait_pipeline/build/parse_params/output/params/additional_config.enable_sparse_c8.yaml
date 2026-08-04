@@ -1,0 +1,71 @@
+name: additional_config.enable_sparse_c8
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:241
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When enabled, this parameter activates sparse C8 acceleration for KV cache in DSA (DeepSeek Attention) models
+  such as DeepSeekV3.2 and GLM5. The flag is gated by two conditions at line 241 of ascend_config.py: (1) the user sets enable_sparse_c8
+  to True in additional_config, and (2) the model has a sparse architecture (use_sparse is True, determined by the presence
+  of index_topk in the model''s HF config). If both conditions are met, the AscendConfig stores the enabled state and parses
+  layer-level sparse C8 configuration from the model''s quantization config (lines 243-245). The is_sparse_c8_layer() method
+  (line 352) then uses this flag to decide per-layer whether to apply sparse C8 KV cache layout. Sparse C8 changes the KV
+  cache storage format to exploit sparsity patterns in DSA models, which can reduce memory footprint and improve attention
+  computation throughput on Ascend NPUs. However, it is explicitly not supported on A5 devices (per documentation line 88),
+  and requires the model to have sparse architecture with index_topk defined. The performance benefit comes from reduced KV
+  cache memory usage and potentially faster attention operations when the sparse pattern is leveraged by the NPU.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:241
+  context: 'Initialization: self.enable_sparse_c8 = additional_config.get(''enable_sparse_c8'', False) and use_sparse'
+- file: vllm_ascend/ascend_config.py:353
+  context: 'Layer-level check: is_sparse_c8_layer() returns False immediately if enable_sparse_c8 is False'
+related_parameters:
+- name: additional_config.enable_kv_nz
+  relation: enable_kv_nz is another KV cache layout optimization for MLA models; enable_sparse_c8 is specifically for DSA
+    sparse models and they target different model architectures
+- name: model_config.hf_text_config.index_topk
+  relation: enable_sparse_c8 requires the model to have index_topk defined in its HF config (use_sparse must be True); without
+    this, the flag is forced to False regardless of user setting
+- name: quant_config.quant_description
+  relation: The sparse C8 layer filter reads quant_description from the model's quantization config to determine which layers
+    support sparse C8; if no layer config is found, all layers are treated as sparse C8 capable
+constraints:
+- enable_sparse_c8 is not supported on A5 devices.
+- The model must have a sparse architecture with index_topk defined in its HuggingFace text config; otherwise the flag is
+  silently forced to False.
+- Only applicable to DSA models such as DeepSeekV3.2 and GLM5.
+tuning_advice:
+  summary: 'Enable enable_sparse_c8 only when deploying supported DSA sparse models (DeepSeekV3.2, GLM5) on non-A5 Ascend
+    devices to reduce KV cache memory and improve attention throughput.
+
+    '
+  suggested_values:
+  - scenario: Deploying DeepSeekV3.2 or GLM5 on Ascend NPU (non-A5)
+    value: 'true'
+    reason: Activates sparse C8 KV cache layout which reduces memory footprint and accelerates attention computation for DSA
+      sparse models.
+  - scenario: Deploying on A5 devices or using non-DSA models
+    value: 'false'
+    reason: Sparse C8 is not supported on A5 hardware and requires DSA sparse architecture; enabling it would have no effect
+      or may cause errors.
+  caveats:
+  - This feature is explicitly not supported on A5 devices — enabling it on A5 may lead to undefined behavior or errors.
+  - The flag is silently forced to False if the model does not have index_topk in its HF config, even if the user sets it
+    to True.
+  - Sparse C8 layer filtering depends on the model's quantization config; if no per-layer sparse C8 config is present, all
+    layers are treated as sparse C8 capable.
+  quick_guide: Set to true for DeepSeekV3.2/GLM5 on non-A5 Ascend NPUs; leave false otherwise.
+analysis_date: '2026-07-06'

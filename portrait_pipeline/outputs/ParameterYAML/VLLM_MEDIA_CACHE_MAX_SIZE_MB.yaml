@@ -1,0 +1,70 @@
+name: VLLM_MEDIA_CACHE_MAX_SIZE_MB
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:824
+value_type: int
+default: '5120'
+valid_choices: Any integer accepted by Python int(); use a positive number of megabytes for a useful cache budget.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: Sets the on-disk byte budget used by the built-in HTTP media connector after multiplying the value by 1024
+  * 1024. After each successful cache write, the connector scans the cache directory, removes expired files, and evicts least-recently-used
+  entries until tracked unexpired content is within this budget. A larger budget can retain more downloaded image, video,
+  and audio bytes, increasing disk consumption while potentially reducing request preprocessing latency for repeated URLs
+  by avoiding later network fetches. A smaller budget reduces retained disk data but can increase eviction, re-downloads,
+  and cache churn. It has no direct effect on host RAM, NPU HBM, model execution, or NPU kernels. vLLM Ascend has no definition
+  or override, so it inherits the upstream connector behavior.
+usage_locations:
+- file: vllm/envs.py:824
+  context: Parses the environment variable as an integer and defaults it to 5120 MB.
+related_parameters:
+- name: VLLM_MEDIA_CACHE
+  relation: Must name a non-empty writable directory for this size budget to be initialized and used.
+- name: VLLM_MEDIA_CACHE_TTL_HOURS
+  relation: Removes expired entries independently of the size budget during lookup and post-write cache scans.
+- name: VLLM_MEDIA_CONNECTOR
+  relation: The budget is implemented by the built-in HTTP media connector; an alternative connector need not honor it.
+- name: VLLM_MEDIA_LOADING_THREAD_COUNT
+  relation: Sizes the thread pool that performs asynchronous cache reads, writes, eviction scans, and media decoding.
+constraints:
+- The value must be text accepted by Python int(); invalid text prevents environment configuration from loading.
+- The setting is inactive unless VLLM_MEDIA_CACHE is a non-empty path that can be created and written.
+- The value is interpreted as mebibytes in code (value * 1024 * 1024 bytes), despite the MB name.
+- Only downloaded HTTP or HTTPS media bytes handled by the built-in connector count toward this budget; data URLs and local
+  files bypass it.
+- Eviction runs after a successful cache write, not continuously, and the file just written is excluded from that eviction
+  pass, so a single file can exceed the configured budget.
+- Zero and negative integers are accepted but do not provide a conventional positive cache capacity; use a positive value
+  for predictable retention.
+tuning_advice:
+  summary: Keep the 5120 MB default unless measured URL reuse and disk constraints justify a change; size the cache from the
+    working set of repeated encoded media, available local storage, and the cost of a cache miss.
+  suggested_values:
+  - scenario: General multimodal serving with media caching enabled
+    value: '5120'
+    reason: Uses the current 5 GiB-equivalent default and is a reasonable baseline before measuring hit rate, eviction, and
+      disk use.
+  - scenario: Disk-constrained service with a small repeated-media working set
+    value: '1024'
+    reason: Limits the intended retained-media budget to about 1 GiB while preserving useful caching for a compact hot set.
+  - scenario: Large repeated-media working set on abundant fast local storage
+    value: '10240'
+    reason: A larger budget can avoid LRU eviction and network re-fetches when the active encoded-media set exceeds the default.
+  caveats:
+  - Increasing the value helps latency only when HTTP media URLs repeat and the additional capacity produces useful cache
+    hits.
+  - Every successful miss writes the payload and scans the directory, so a large directory or slow storage can add preprocessing
+    latency.
+  - The cache key is derived from the complete URL string; different URLs for identical content occupy separate entries.
+  - A hit still reads bytes from disk and decodes the media, so the setting does not eliminate preprocessing work.
+  - The budget governs disk storage, not NPU memory, KV-cache capacity, or host-memory allocation.
+  - Cached media may be sensitive; capacity increases how much data can persist until TTL eviction or external cleanup.
+  quick_guide: Start at 5120, lower it when disk pressure matters, and raise it only when eviction-driven network misses are
+    measurable.
+analysis_date: '2026-07-29'

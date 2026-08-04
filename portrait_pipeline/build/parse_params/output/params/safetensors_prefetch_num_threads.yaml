@@ -1,0 +1,62 @@
+name: --safetensors-prefetch-num-threads
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/config/load.py:85
+- vllm/engine/arg_utils.py:854
+- vllm/model_executor/model_loader/weight_utils.py:915
+value_type: int
+default: '4'
+valid_choices: '>= 1'
+cli_example: --safetensors-prefetch-num-threads 8
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls the number of worker threads used to prefetch safetensors checkpoint files into the
+  OS page cache during model loading. It only takes effect when safetensors prefetching is enabled (either explicitly via
+  --safetensors-load-strategy prefetch, or automatically when the checkpoint is on NFS/Lustre and fits within 90% of available
+  RAM). The prefetch happens once during engine initialization in _prefetch_all_checkpoints() (weight_utils.py:988-992), before
+  the actual weight loading loop. Increasing threads can speed up model loading on high-latency network storage, reducing
+  cold-start latency, but has no effect on inference throughput or runtime memory after loading completes. On Ascend NPU,
+  the parameter behaves identically to upstream vLLM — vllm-ascend does not override or modify it. The impact is limited to
+  model initialization time.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/weight_utils.py:915
+  context: Parameter received by safetensors_weights_iterator() and passed to _prefetch_all_checkpoints()
+- file: vllm/model_executor/model_loader/default_loader.py:259
+  context: Passed from LoadConfig to safetensors_weights_iterator() during model loading
+- file: vllm/config/load.py:85
+  context: Defined as a field in LoadConfig with default value and ge=1 constraint
+related_parameters:
+- name: --safetensors-load-strategy
+  relation: Must be 'prefetch' (or auto-enabled on NFS) for this parameter to have any effect
+- name: --safetensors-prefetch-block-size
+  relation: Controls the read block size per thread during prefetch; works together with num-threads
+constraints:
+- safetensors_prefetch_num_threads must be >= 1
+- This parameter has no effect unless safetensors_load_strategy is 'prefetch' or auto-prefetch is triggered on NFS/Lustre
+tuning_advice:
+  summary: 'Increase this value to speed up model loading from network storage; has no effect on inference performance after
+    loading completes.
+
+    '
+  suggested_values:
+  - scenario: Model on local SSD/NVMe storage
+    value: '4'
+    reason: Default is sufficient; prefetch is typically not triggered for local storage, so this parameter has no effect
+  - scenario: Model on NFS/Lustre with high-latency network storage
+    value: '8'
+    reason: More threads can parallelize I/O and reduce cold-start time when checkpoint fits in RAM
+  - scenario: Model on NFS/Lustre with limited CPU cores
+    value: '2'
+    reason: Avoid oversubscribing CPU with too many prefetch threads that compete with other initialization work
+  caveats:
+  - Only affects model loading time (cold-start latency), not inference throughput or runtime memory
+  - Has no effect unless --safetensors-load-strategy is set to 'prefetch' or auto-prefetch is triggered on NFS
+  - Too many threads on a CPU-constrained system may slow down other initialization tasks
+  quick_guide: Increase to 8-16 for faster model loading from network storage; leave at default (4) for local storage
+analysis_date: '2026-07-06'

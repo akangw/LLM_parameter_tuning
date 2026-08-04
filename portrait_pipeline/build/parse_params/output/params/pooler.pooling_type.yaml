@@ -1,0 +1,138 @@
+name: pooler.pooling_type
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/pooler.py
+value_type: str
+default: null
+valid_choices:
+- LAST
+- MEAN
+- CLS
+- STEP
+- ALL
+- SUM
+- ABS_MAX
+- INDEX
+- null
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter is a convenience alias that populates `seq_pooling_type` and/or `tok_pooling_type` in the PoolerConfig.
+  It does not directly affect performance; rather, the downstream pooling methods it selects determine the computational cost
+  of the pooling step. On Ascend NPU, the pooling operation itself is a lightweight reduction over hidden states — its cost
+  is negligible compared to the transformer forward pass. However, the chosen pooling type can indirectly affect throughput
+  and latency by influencing whether chunked prefill is supported: for decoder-only pooling models, `seq_pooling_type` of
+  "MEAN" or "CLS", or `tok_pooling_type` of "STEP", disables chunked prefill (see `vllm/config/model.py:1734`), which can
+  reduce throughput for long-context workloads. No vllm-ascend specific overrides were found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/config/pooler.py
+  context: 'PoolerConfig.__init__ — if `pooling_type` is set, it populates `seq_pooling_type` and `tok_pooling_type` with
+    the same value.
+
+    '
+- file: vllm/config/model.py:605
+  context: 'ModelConfig.__post_init__ — checks if `seq_pooling_type` is None and falls back to model default; same for `tok_pooling_type`.
+
+    '
+- file: vllm/config/model.py:1734
+  context: 'is_chunked_prefill_supported — disables chunked prefill for decoder pooling models when seq_pooling_type is MEAN/CLS
+    or tok_pooling_type is STEP.
+
+    '
+- file: vllm/model_executor/layers/pooler/seqwise/poolers.py:93
+  context: 'pooler_for_embed — resolves seq_pooling_type to a SequencePoolingMethod.
+
+    '
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:100
+  context: 'pooler_for_token_embed — resolves tok_pooling_type to a TokenPoolingMethod.
+
+    '
+- file: vllm/model_executor/layers/pooler/tokwise/poolers.py:123
+  context: 'pooler_for_token_classify — resolves tok_pooling_type to a TokenPoolingMethod.
+
+    '
+- file: vllm/model_executor/models/bert.py:104
+  context: 'BertPooler — uses seq_pooling_type to select the pooling method.
+
+    '
+- file: vllm/model_executor/models/clip.py:152
+  context: 'CLIP model — uses seq_pooling_type to determine vision feature select strategy.
+
+    '
+- file: vllm/model_executor/models/clip.py:895
+  context: 'CLIP model — uses seq_pooling_type for image feature extraction.
+
+    '
+- file: vllm/model_executor/models/config.py:299
+  context: 'LlamaBidirectionalConfig — maps HF pooling config to seq_pooling_type.
+
+    '
+related_parameters:
+- name: pooler.seq_pooling_type
+  relation: '`pooling_type` is a convenience alias that sets both `seq_pooling_type` and `tok_pooling_type`. If `seq_pooling_type`
+    is set explicitly, it takes precedence over the value from `pooling_type`.
+
+    '
+- name: pooler.tok_pooling_type
+  relation: '`pooling_type` is a convenience alias that sets both `seq_pooling_type` and `tok_pooling_type`. If `tok_pooling_type`
+    is set explicitly, it takes precedence over the value from `pooling_type`.
+
+    '
+- name: runner_type
+  relation: '`pooling_type` is only meaningful when `runner_type` is "pooling".
+
+    '
+constraints:
+- pooling_type is only used when runner_type is 'pooling'.
+- If both pooling_type and seq_pooling_type/tok_pooling_type are set, the explicit seq_pooling_type/tok_pooling_type values
+  take precedence.
+tuning_advice:
+  summary: 'Choose the pooling type that matches your model''s training objective; the performance difference between pooling
+    methods is negligible on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: 'Standard embedding models (e.g., BERT, Sentence-BERT) where the model was trained with mean pooling.
+
+      '
+    value: MEAN
+    reason: 'Matches the training objective of most sentence embedding models and produces the best quality embeddings.
+
+      '
+  - scenario: 'Classification models that use the [CLS] token representation (e.g., BERT for sequence classification).
+
+      '
+    value: CLS
+    reason: 'Uses the first token''s hidden state, which is the standard approach for BERT-like classification models.
+
+      '
+  - scenario: 'Decoder-only embedding models (e.g., Llama-based bidirectional models) where you want to preserve chunked prefill
+      support.
+
+      '
+    value: LAST
+    reason: 'LAST pooling does not disable chunked prefill for decoder models, unlike MEAN or CLS, which can improve throughput
+      for long sequences.
+
+      '
+  caveats:
+  - 'For decoder-only pooling models, using MEAN or CLS for seq_pooling_type (or STEP for tok_pooling_type) disables chunked
+    prefill, which can significantly reduce throughput for long-context workloads.
+
+    '
+  - 'The pooling operation itself is computationally cheap — the choice of pooling type primarily affects model output quality,
+    not inference speed.
+
+    '
+  quick_guide: 'Use MEAN for embedding models, CLS for classification models, and LAST for decoder-only models if chunked
+    prefill is desired.
+
+    '
+analysis_date: '2026-07-06'

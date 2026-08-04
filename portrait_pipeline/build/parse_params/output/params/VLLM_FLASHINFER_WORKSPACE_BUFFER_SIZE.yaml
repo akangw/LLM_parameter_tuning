@@ -1,0 +1,61 @@
+name: VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:1396
+- vllm/envs.py:184
+value_type: int
+default: '413558784'
+valid_choices: any positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: "Controls the size (in bytes) of a pre-allocated workspace buffer on the device used by the FlashInfer attention\
+  \ backend. The buffer is allocated once as a torch.zeros tensor of dtype uint8 on the device (CUDA/GPU). It is used in multiple\
+  \ attention paths: - \"TRT-LLM generation attention wrapper (vllm/v1/attention/backends/flashinfer.py:93)\" - \"General\
+  \ FlashInfer attention backend workspace (vllm/v1/attention/backends/flashinfer.py:750)\" - \"MLA prefill with FlashInfer\
+  \ (vllm/v1/attention/backends/mla/prefill/flashinfer.py:127)\" - \"MLA prefill with TRT-LLM ragged (vllm/v1/attention/backends/mla/prefill/trtllm_ragged.py:68)\"\
+  \ The default value is 394 * 1024 * 1024 = 413,558,784 bytes (~394 MB). On Ascend NPU, this parameter has low performance\
+  \ impact because: 1. FlashInfer is a CUDA-centric attention backend that relies on CUDA kernels\n   (CUTLASS, TRT-LLM) and\
+  \ is not used on Ascend NPU. vllm-ascend uses its own\n   Ascend-native attention backends (e.g., torch_npu-based flash\
+  \ attention).\n2. The vllm-ascend plugin does not reference or override this environment\n   variable anywhere in its codebase.\n\
+  3. The workspace buffer is only allocated when the FlashInfer attention backend\n   is selected, which does not happen on\
+  \ Ascend hardware.\nTherefore, this parameter has no effect on Ascend NPU runtime memory or performance. It only affects\
+  \ GPU/CUDA deployments using the FlashInfer backend.\n"
+usage_locations:
+- file: vllm/v1/attention/backends/flashinfer.py:93
+  context: Allocates TRT-LLM generation workspace buffer on CUDA device
+- file: vllm/v1/attention/backends/flashinfer.py:750
+  context: Allocates general FlashInfer attention workspace buffer
+- file: vllm/v1/attention/backends/mla/prefill/flashinfer.py:127
+  context: Allocates MLA prefill workspace buffer via workspace manager
+- file: vllm/v1/attention/backends/mla/prefill/trtllm_ragged.py:68
+  context: Allocates MLA TRT-LLM ragged prefill workspace buffer
+related_parameters:
+- name: VLLM_FLASHINFER_MOE_BACKEND
+  relation: Same FlashInfer backend family; both are CUDA-only and ignored on Ascend NPU
+- name: VLLM_FLASHINFER_ALLREDUCE_BACKEND
+  relation: Same FlashInfer backend family; both are CUDA-only and ignored on Ascend NPU
+- name: VLLM_BATCH_INVARIANT
+  relation: When set, overrides this buffer size with a fixed value (FLASHINFER_WORKSPACE_BUFFER_SIZE_BATCH_INVARIANT) in
+    the general attention backend path
+constraints:
+- Must be a positive integer representing bytes
+- Only takes effect when the FlashInfer attention backend is active (CUDA GPUs only)
+tuning_advice:
+  summary: This parameter is irrelevant for Ascend NPU deployments as FlashInfer is a CUDA-only backend not used by vllm-ascend.
+  suggested_values:
+  - scenario: Ascend NPU deployment (any model)
+    value: '413558784'
+    reason: The default value is fine since this parameter has no effect on Ascend NPU. The buffer is never allocated on NPU
+      devices.
+  caveats:
+  - FlashInfer is a CUDA-specific attention backend and is not supported on Ascend NPU. vllm-ascend uses its own Ascend-native
+    attention implementations.
+  - Changing this value on Ascend NPU has no effect on memory usage or performance.
+  - The vllm-ascend plugin does not reference this environment variable anywhere in its codebase.
+  quick_guide: Leave at default on Ascend NPU; this parameter only affects CUDA/FlashInfer deployments.
+analysis_date: '2026-07-06'

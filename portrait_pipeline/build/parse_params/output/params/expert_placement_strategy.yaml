@@ -1,0 +1,84 @@
+name: --expert-placement-strategy
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/config/parallel.py:164
+- vllm/engine/arg_utils.py:1055
+- vllm/model_executor/layers/fused_moe/layer.py:75
+value_type: str
+default: linear
+valid_choices:
+- linear
+- round_robin
+cli_example: --expert-placement-strategy round_robin
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls how experts are distributed across ranks when expert parallelism (EP) is enabled for
+  Mixture-of-Experts (MoE) models. It directly affects the load balance of expert computation across NPU devices, which in
+  turn impacts token throughput and per-token latency.
+
+  The strategy is consumed by `determine_expert_map()` in `vllm/model_executor/layers/fused_moe/layer.py:75`, which builds
+  a mapping from global expert IDs to local expert indices for each EP rank. - "\"linear\": contiguous placement. With 4 experts
+  and 2 ranks, rank 0 gets [0,1], rank 1 gets [2,3]." - "\"round_robin\": interleaved placement. With 4 experts and 2 ranks,
+  rank 0 gets [0,2], rank 1 gets [1,3]."
+
+  The round_robin strategy can improve load balancing for grouped expert models (e.g., DeepSeek-V2/V3 with shared experts
+  or models where certain experts are activated more frequently). By interleaving experts, it reduces the likelihood that
+  all "hot" experts land on a single rank, which would create a compute bottleneck on that rank''s NPU while other NPUs idle.
+  On Ascend NPUs, where all-to-all communication for MoE dispatch/combine is already a significant overhead, imbalanced expert
+  computation further degrades throughput by causing straggler ranks.
+
+  The parameter is also used during model weight loading in `vllm/model_executor/model_loader/default_loader.py:370` when
+  `enable_ep_weight_filter` is active, determining which expert weights each rank loads from disk.
+
+  No vllm-ascend override was found for this parameter; the upstream vLLM behavior applies directly on Ascend NPUs.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/layer.py:75
+  context: Core function `determine_expert_map()` that builds the global-to-local expert index mapping based on the chosen
+    strategy.
+- file: vllm/model_executor/model_loader/default_loader.py:370
+  context: Weight loading path that uses the strategy to compute `local_expert_ids` for EP weight filtering.
+- file: vllm/config/parallel.py:164
+  context: ParallelConfig field definition with default value 'linear'.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Expert placement strategy only takes effect when expert parallelism is enabled (ep_size > 1).
+- name: --enable-ep-weight-filter
+  relation: When enabled, the placement strategy determines which expert weights each rank loads from disk.
+- name: --tensor-parallel-size
+  relation: EP size is derived from dp_size * pcp_size * tp_size; the placement strategy distributes experts across this combined
+    EP group.
+- name: --data-parallel-size
+  relation: EP size includes data-parallel replicas; placement strategy affects expert distribution across the full EP group.
+constraints:
+- Only takes effect when expert parallelism is active (ep_size > 1). When ep_size is 1, all experts are local and the strategy
+  is irrelevant.
+- Only applicable to MoE models. Non-MoE models ignore this parameter.
+tuning_advice:
+  summary: Use 'round_robin' for MoE models with grouped/shared experts or uneven expert activation patterns to improve load
+    balance across Ascend NPUs; stick with 'linear' for models with uniform expert utilization.
+  suggested_values:
+  - scenario: MoE models with shared experts or skewed expert activation (e.g., DeepSeek-V2/V3, Mixtral with uneven routing)
+    value: round_robin
+    reason: Interleaved placement prevents hot experts from concentrating on a single rank, reducing straggler NPUs and improving
+      overall throughput by up to 10-20% in imbalanced routing scenarios.
+  - scenario: MoE models with uniform expert utilization or when using expert parallelism load balancing (EPLB)
+    value: linear
+    reason: Contiguous placement is simpler and sufficient when expert activation is already balanced, either naturally or
+      via EPLB. Avoids unnecessary complexity.
+  caveats:
+  - On Ascend NPUs, all-to-all communication for MoE dispatch/combine is bandwidth-intensive. Imbalanced expert computation
+    caused by poor placement amplifies the impact of communication overhead, as faster ranks must wait for stragglers.
+  - The round_robin strategy does not change the total number of experts per rank — it only changes which experts are assigned.
+    The compute load balance improvement depends entirely on the model's routing patterns.
+  - When combined with --enable-eplb (expert parallelism load balancing), the placement strategy may have less impact since
+    EPLB dynamically rebalances experts. However, round_robin can still provide a better initial distribution.
+  quick_guide: For DeepSeek-V2/V3 or other MoE models with shared experts on Ascend NPUs, set --expert-placement-strategy
+    round_robin to improve load balance; otherwise keep the default 'linear'.
+analysis_date: '2026-07-06'

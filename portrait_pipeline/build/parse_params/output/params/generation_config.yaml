@@ -1,0 +1,73 @@
+name: --generation-config
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:819
+- vllm/config/model.py:278
+value_type: str
+default: auto
+valid_choices: One of 'auto', 'vllm', or a folder path string
+cli_example: --generation-config auto
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls which generation_config.json is loaded to set default sampling parameters (e.g., temperature,
+  top_p, max_new_tokens). It affects performance indirectly: "if the loaded generation config specifies a" max_new_tokens
+  value, that becomes a server-wide cap on output tokens per request (see vllm/config/model.py:283-284). A lower cap reduces
+  worst-case decode length, improving tail latency and throughput under load. Conversely, a higher cap allows longer generations
+  at the cost of potentially higher latency and KV cache pressure. The parameter itself does not directly control any Ascend
+  NPU-specific code path; it is a pure upstream vLLM feature that determines which defaults are applied to SamplingParams
+  before requests are processed. In v1 engine (vllm/v1/engine/input_processor.py:315), the loaded generation_config_fields
+  are merged into each request''s SamplingParams via update_from_generation_config(). In the OpenAI-compatible serving layer
+  (vllm/entrypoints/openai/chat_completion/serving.py:154, completion/serving.py:78, responses/serving.py:198), the parameter
+  also determines whether override_max_tokens is sourced from the generation config path or from override_generation_config.
+  No vllm-ascend override was found for this parameter; it behaves identically on Ascend NPU as on GPU.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:278
+  context: Field definition with default 'auto' and docstring explaining the three modes
+- file: vllm/v1/engine/input_processor.py:53
+  context: Loaded via model_config.try_get_generation_config() and stored as generation_config_fields
+- file: vllm/v1/engine/input_processor.py:315
+  context: Merged into SamplingParams via update_from_generation_config() for each request
+- file: vllm/entrypoints/openai/chat_completion/serving.py:154
+  context: Determines source of override_max_tokens for chat completions
+- file: vllm/entrypoints/openai/completion/serving.py:78
+  context: Determines source of override_max_tokens for text completions
+- file: vllm/entrypoints/openai/responses/serving.py:198
+  context: Determines source of override_max_tokens for responses API
+related_parameters:
+- name: --override-generation-config
+  relation: Provides key-value overrides merged with or replacing the loaded generation config
+- name: --max-model-len
+  relation: If generation config sets max_new_tokens, it caps output length; max-model-len sets the absolute upper bound
+constraints:
+- Must be one of the strings 'auto', 'vllm', or a valid folder path
+- When set to a folder path, the directory must contain a valid generation_config.json file
+tuning_advice:
+  summary: Use 'auto' to load model defaults; use 'vllm' to ignore model generation config and rely solely on vLLM defaults
+    or --override-generation-config
+  suggested_values:
+  - scenario: Standard deployment where model-provided generation defaults (temperature, top_p, etc.) are desired
+    value: auto
+    reason: Loads the model's generation_config.json, providing sensible defaults that match the model's training configuration
+  - scenario: You want full control over sampling parameters and do not want model defaults to interfere
+    value: vllm
+    reason: Ignores the model's generation config entirely; combine with --override-generation-config to set explicit defaults
+      server-wide
+  - scenario: You have a custom generation_config.json in a non-standard location
+    value: /path/to/custom/generation_config
+    reason: Loads generation config from the specified folder, allowing centralized management of sampling defaults across
+      multiple model deployments
+  caveats:
+  - If the loaded generation config contains max_new_tokens, it acts as a server-wide hard cap on output tokens for all requests
+    — this can silently truncate long generations
+  - The 'auto' mode requires the model directory to contain a generation_config.json file; if missing, behavior depends on
+    the underlying HuggingFace config loading
+  - This parameter does not affect Ascend NPU-specific execution; it only controls default sampling parameter initialization
+  quick_guide: Leave as 'auto' unless you need to override model defaults server-wide, in which case use 'vllm' with --override-generation-config
+analysis_date: '2026-07-06'

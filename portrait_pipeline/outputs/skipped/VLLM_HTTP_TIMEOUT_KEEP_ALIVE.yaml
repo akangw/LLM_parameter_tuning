@@ -1,0 +1,7 @@
+name: VLLM_HTTP_TIMEOUT_KEEP_ALIVE
+type: env
+performance_impact: none
+skip_reason: At the pinned vLLM commit this environment variable is declared and parsed as an integer with a default of 5
+  seconds, but no API server or other runtime code reads it; it is also explicitly excluded from the environment fingerprint.
+  The pinned vllm-ascend repository contains no reference or override. Therefore changing it has no current effect on inference
+  latency, throughput, or memory use in the pinned sources.

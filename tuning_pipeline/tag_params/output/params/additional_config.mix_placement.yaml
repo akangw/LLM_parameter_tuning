@@ -1,0 +1,128 @@
+name: additional_config.mix_placement
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:259
+- vllm_ascend/worker/model_runner_v1.py:3442
+- vllm_ascend/ops/fused_moe/fused_moe.py:408
+- vllm_ascend/ops/fused_moe/experts_selector.py:120
+- vllm_ascend/eplb/core/eplb_utils.py:70
+- vllm_ascend/models/deepseek_v4.py:273
+- vllm_ascend/quantization/methods/w8a8_dynamic.py:237
+- docs/source/user_guide/release_notes.md:690
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --enable-expert-parallel --additional-config='{"mix_placement":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only switch changes a supported shared-expert MoE from separate routed- and shared-expert execution
+  to a fused pool in which shared experts participate in expert placement and execution. During FusedMoE construction, the
+  shared-expert count is added to the logical expert count and passed into EPLB initialization; placement generation then
+  accounts for shared experts and their replicas. Model loading also forces the fused-MoE and fused shared- expert paths on.
+  In the W8A8 dynamic route, each token's selected routed experts are augmented with the shared-expert IDs and fixed shared-expert
+  weights, so the shared computation is performed by the fused expert kernel instead of a standalone shared MLP. This can
+  improve throughput and latency by co-scheduling both expert types, reducing idle time, and allowing EPLB to balance their
+  placement together. It materially changes expert weight layout, local expert counts, routing tensors, and fused-kernel workspace,
+  so peak NPU memory can also change; the direction depends on EP size, shared-expert count, redundancy, placement policy,
+  and quantization path.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:259
+  context: Reads the nested boolean with a false default and rejects it when shared- expert DP or multistream shared-expert
+    overlap is active.
+- file: vllm_ascend/worker/model_runner_v1.py:3442
+  context: Before loading the model, forces the upstream fused-MoE and fused shared- expert capability predicates to true
+    when mixed placement is enabled.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:408
+  context: Adds shared experts to the FusedMoE expert count, records the new logical count, and initializes EPLB mappings
+    with mixed-placement semantics.
+- file: vllm_ascend/eplb/core/eplb_utils.py:70
+  context: Includes shared experts in generated rank placement and accounts for the additional shared-expert replicas in the
+    redundant-expert count.
+- file: vllm_ascend/ops/fused_moe/experts_selector.py:120
+  context: Appends every shared-expert ID and its routing weight to each token's normal top-k routed-expert selection.
+- file: vllm_ascend/quantization/methods/w8a8_dynamic.py:237
+  context: Propagates the layer's mixed-placement state and shared-expert count into expert selection for the W8A8 dynamic
+    MoE execution path.
+- file: vllm_ascend/models/deepseek_v4.py:273
+  context: Uses mixed placement as the fused-shared-expert capability flag, omits the separate shared-expert MLP, and expands
+    weight mappings to load shared experts into the fused expert set.
+related_parameters:
+- name: enable_expert_parallel
+  relation: Mixed placement is designed for expert-parallel MoE deployment; EPLB rank maps and local expert allocation are
+    determined from the EP size.
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: When enabled, EPLB can dynamically update the combined routed/shared expert placement; without dynamic EPLB, the
+    static expert map is used.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Controls extra routed-expert replicas; mixed placement additionally accounts for shared-expert replicas in the
+    physical expert count.
+- name: additional_config.eplb_config.expert_map_path
+  relation: A supplied placement table overrides generated placement and must describe physical experts consistently with
+    the mixed logical expert set.
+- name: additional_config.enable_shared_expert_dp
+  relation: Cannot be enabled together with mix placement.
+- name: additional_config.multistream_overlap_shared_expert
+  relation: Cannot be enabled together with mix placement.
+constraints:
+- Cannot be combined with additional_config.enable_shared_expert_dp=true or additional_config.multistream_overlap_shared_expert=true;
+  AscendConfig raises ValueError during startup.
+- Requires a model implementation and fused-MoE path that expose shared experts for fused loading and execution. The pinned
+  source explicitly wires this behavior into DeepSeek V4 and its MTP weight loader, while the model runner still notes pending
+  DeepSeek V2 integration.
+- With dynamic EPLB disabled and no expert_map_path, placement falls back to the static expert map. A custom map must contain
+  counts and expert IDs that match the combined routed/shared logical expert set.
+- 'The routing implementation must preserve the model''s shared-expert scaling: the pinned W8A8 dynamic path appends shared-expert
+  routes using either 1.0 or the inverse routed scaling factor, depending on gating-kernel support.'
+tuning_advice:
+  summary: Enable only for a validated shared-expert MoE deployment where fused mixed execution and joint EPLB placement improve
+    measured device utilization.
+  suggested_values:
+  - scenario: Supported shared-expert MoE with EP, observable rank imbalance, and a validated fused/quantized execution path
+    value: true
+    reason: Co-locates shared and routed experts in the fused expert pool so EPLB and fused execution can reduce rank idle
+      time and improve throughput.
+  - scenario: Unsupported model, uncertain weight mapping, or stable balanced workload
+    value: false
+    reason: Keeps the established separate shared-expert path and avoids changing expert counts, placement tables, routing
+      shapes, and memory layout.
+  - scenario: Shared-expert DP or shared-expert multistream overlap is required
+    value: false
+    reason: Those modes are mutually exclusive with mixed placement and otherwise cause configuration validation to fail at
+      startup.
+  caveats:
+  - Benchmark representative prefill/decode mixes; gains depend on token routing skew, EP topology, EPLB policy, quantization,
+    and kernel support.
+  - Re-measure peak NPU memory and model-load headroom because combined expert counts, replica accounting, weight layout,
+    and kernel workspace change.
+  - 'Validate output quality as well as performance: shared-expert IDs and scaling are injected into token routing, and weight
+    mapping must agree with the fused logical expert numbering.'
+  - Treat the feature as version- and model-path-sensitive; pinned release notes describe EPLB mixed placement as experimental
+    in its introduction.
+  quick_guide: Start false, enable EP on a supported shared-expert model, verify fused weight loading and output quality,
+    then compare per-rank load, throughput, latency percentiles, and peak NPU memory with and without mixed placement.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  - mla
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

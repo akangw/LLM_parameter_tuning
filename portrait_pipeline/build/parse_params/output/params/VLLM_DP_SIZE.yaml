@@ -1,0 +1,88 @@
+name: VLLM_DP_SIZE
+type: env
+category: parallelism
+scope: both
+source_file:
+- vllm/envs.py:1160
+- vllm/envs.py:144
+- vllm/config/parallel.py:813
+value_type: int
+default: '1'
+valid_choices: positive integer >= 1
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'VLLM_DP_SIZE controls the number of data-parallel replicas in offline (SPMD) mode. When set > 1, vLLM creates
+  multiple model replicas, each processing a different shard of the input data. This directly multiplies aggregate throughput
+  (tokens/sec across all replicas) by the DP size, at the cost of multiplying total NPU memory usage by the same factor. On
+  Ascend NPU, this is particularly impactful because each replica requires its own full model weights and KV cache in HBM.
+  The parameter is read in vllm/config/parallel.py:813 as a fallback when the engine is not launched via the standard distributed
+  executor (i.e., offline SPMD mode). In vllm-ascend, the offline_data_parallel.py example (line 122) and e2e tests (conftest.py:859,
+  test_aclgraph_capture_replay.py:81) demonstrate setting this env var to enable multi-rank data-parallel inference on Ascend
+  NPUs. Note that vllm-ascend only supports DP on the V1 engine (as stated in the example code comment at line 119: "\"DP
+  only support on V1 engine\"). For dense models, offline" DP is explicitly disallowed by a ValueError in vllm/config/parallel.py:819-823,
+  restricting this feature to MoE models only.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:813
+  context: 'Fallback path: reads VLLM_DP_SIZE to set data_parallel_size when not using standard distributed executor'
+- file: vllm/envs.py:144
+  context: Type declaration with default value 1
+- file: vllm/envs.py:1160
+  context: Environment variable definition with default '1'
+- file: vllm-ascend/examples/offline_data_parallel.py:122
+  context: Sets VLLM_DP_SIZE for Ascend offline DP example
+- file: vllm-ascend/tests/e2e/conftest.py:859
+  context: Sets VLLM_DP_SIZE in DP worker test fixture
+- file: vllm-ascend/tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:81
+  context: Sets VLLM_DP_SIZE in ACL graph capture/replay test
+related_parameters:
+- name: VLLM_DP_RANK
+  relation: Must be set per-process to identify each replica's rank (0 to VLLM_DP_SIZE-1)
+- name: VLLM_DP_RANK_LOCAL
+  relation: Local rank within a node; defaults to VLLM_DP_RANK if not set
+- name: VLLM_DP_MASTER_IP
+  relation: IP address of the master node for DP coordination; required when DP_SIZE > 1
+- name: VLLM_DP_MASTER_PORT
+  relation: Port for DP master communication; required when DP_SIZE > 1
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Often set to 'spawn' alongside DP env vars in vllm-ascend tests
+constraints:
+- VLLM_DP_SIZE must be >= 1 (default is 1, meaning no data parallelism)
+- Offline data parallel mode (VLLM_DP_SIZE > 1) is only supported for MoE models; dense models will raise a ValueError
+- On vllm-ascend, data parallelism is only supported on the V1 engine
+- When VLLM_DP_SIZE > 1, VLLM_DP_RANK must be set for each process in the range [0, VLLM_DP_SIZE)
+- Each DP replica requires its own dedicated NPU(s); total NPU count must be >= VLLM_DP_SIZE × (TP size per replica)
+tuning_advice:
+  summary: 'Set VLLM_DP_SIZE to the number of independent model replicas you want for data-parallel offline inference on MoE
+    models. Each replica doubles throughput but also doubles NPU memory consumption.
+
+    '
+  suggested_values:
+  - scenario: Single NPU, no data parallelism needed
+    value: '1'
+    reason: Default value; no additional memory overhead, simplest configuration
+  - scenario: Multiple NPUs with MoE model, maximizing throughput for offline batch inference
+    value: <number of available NPU groups>
+    reason: Each DP replica requires its own NPU(s); set to the number of independent NPU groups you can allocate, each group
+      sized to fit the model's TP requirement
+  - scenario: Dense model on Ascend NPU
+    value: '1'
+    reason: Offline DP is explicitly disallowed for dense models (raises ValueError); must use tensor parallelism or pipeline
+      parallelism instead
+  caveats:
+  - vllm-ascend only supports data parallelism on the V1 engine; V2 engine does not support this feature
+  - Each DP replica loads a full copy of the model weights, multiplying NPU HBM usage by VLLM_DP_SIZE
+  - KV cache memory is also replicated per DP rank, further increasing total memory consumption
+  - Offline DP is restricted to MoE models only; attempting to use it with dense models raises a ValueError
+  - All DP ranks must be launched as separate processes with unique VLLM_DP_RANK values and coordinated master IP/port
+  - Prompts should be manually sharded across DP ranks; each rank processes a different subset of the input data
+  quick_guide: 'For MoE models on Ascend V1 engine, set VLLM_DP_SIZE to the number of NPU groups you can dedicate (each group
+    sized for one model replica). For dense models, keep at 1 and use tensor parallelism instead.
+
+    '
+analysis_date: '2026-07-06'

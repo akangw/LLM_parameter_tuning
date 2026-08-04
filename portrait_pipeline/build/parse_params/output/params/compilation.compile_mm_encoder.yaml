@@ -1,0 +1,74 @@
+name: compilation.compile_mm_encoder
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py
+value_type: bool
+default: 'False'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: '"--compilation-config ''{"compile_mm_encoder": true}''"'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter triggers `torch.compile` on the multimodal vision encoder (e.g., the ViT component
+  of Qwen2_5_vl or mLLaMa4). The compilation decorator is applied in `vllm/model_executor/models/transformers/multimodal.py:310`
+  via `_decorate_cls_for_torch_compile`. This can reduce encoder latency through graph-level optimizations (operator fusion,
+  memory planning) but incurs a one-time compilation cost at model load. On Ascend NPU, the effectiveness depends on CANN''s
+  ability to optimize the compiled graph — some torch.compile patterns may not map efficiently to Da Vinci hardware. The parameter
+  also affects cache key computation in `vllm/config/vllm.py:385`, where it gates inclusion of multimodal config in the compilation
+  hash, ensuring compiled artifacts are invalidated when multimodal settings change. Currently limited to Qwen2_5_vl and mLLaMa4
+  models on selected platforms; experimental support exists for Transformers-backend models if the encoder is compilable.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:385
+  context: Gating inclusion of multimodal config in compilation cache hash
+- file: vllm/compilation/decorators.py:55
+  context: Callable `should_torch_compile_mm_encoder` reads this config to decide whether to apply torch.compile
+- file: vllm/model_executor/models/transformers/multimodal.py:310
+  context: Decorates vision encoder class for torch.compile when enabled; emits experimental feature warning
+- file: tests/compile/fullgraph/test_multimodal_compile.py:14
+  context: Test verifying default is False
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: Both are compilation-level optimizations; torch.compile on encoder may interact with CUDA graph capture on decoder
+- name: model_config.multimodal_config
+  relation: compile_mm_encoder only has effect when multimodal_config is present; its hash is included in compilation cache
+    key when enabled
+constraints:
+- Only works for Qwen2_5_vl and mLLaMa4 models on selected platforms (per parameter description).
+- For Transformers-backend models, the vision encoder must be torch compilable and all tensor inputs must be type-hinted as
+  torch.Tensor or torch.FloatTensor.
+- The 0-th dimension of all tensor inputs to the vision encoder must be the dynamic dimension (sequence length or number of
+  patches).
+- Requires transformers version >= 5.0.0 for Transformers-backend multimodal encoder compilation support.
+- The model must expose a detectable vision encoder via PreTrainedModel.get_encoder, otherwise compilation cannot proceed.
+tuning_advice:
+  summary: Enable for supported multimodal models (Qwen2_5_vl, mLLaMa4) on Ascend to reduce vision encoder latency, but test
+    thoroughly as torch.compile on NPU may not always yield gains.
+  suggested_values:
+  - scenario: Using Qwen2_5_vl or mLLaMa4 on Ascend NPU with high image throughput
+    value: 'true'
+    reason: Reduces per-image encoder latency through graph optimization; the one-time compilation cost is amortized over
+      many inferences
+  - scenario: Using unsupported multimodal models or Transformers backend on Ascend NPU
+    value: 'false'
+    reason: Experimental support may cause compilation failures or suboptimal NPU kernel generation; safer to disable until
+      validated
+  - scenario: Development or debugging multimodal models
+    value: 'false'
+    reason: Avoids compilation overhead and potential graph capture issues that complicate debugging
+  caveats:
+  - On Ascend NPU, torch.compile may not produce efficient CANN graphs for all encoder architectures — benchmark before deploying.
+  - Enabling this adds a one-time compilation delay at model load; for short-lived instances this may outweigh runtime savings.
+  - The experimental Transformers-backend path requires careful model compliance (type hints, dynamic dims) and may fail silently
+    or produce incorrect results.
+  - vllm-ascend does not override or patch this parameter, but Ascend-specific CANN compilation behavior may differ from CUDA.
+  quick_guide: Enable only for officially supported multimodal models (Qwen2_5_vl, mLLaMa4) on Ascend; benchmark encoder latency
+    before and after to confirm gains.
+analysis_date: '2026-07-06'

@@ -1,0 +1,76 @@
+name: VLLM_DEEPEP_HIGH_THROUGHPUT_FORCE_INTRA_NODE
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1631
+- docs/serving/expert_parallel_deployment.md:22
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This variable changes buffer construction for the upstream DeepEP high-throughput all-to-all manager on an
+  inter-node expert-parallel deployment. With the default 0, an inter-node manager allocates both NVLink and RDMA regions
+  at VLLM_DEEPEP_BUFFER_SIZE_MB each and sets num_qps_per_rank to half of the manager''s 20-SM default (10). With value 1,
+  the same inter-node manager takes its intra-node branch: it retains the NVLink buffer, sets the RDMA region to zero, and
+  uses one QP. This changes communication transport resources and therefore can materially change prefill throughput, communication
+  latency, and DeepEP buffer memory. On a topology that the manager classifies as intra-node, both values already take the
+  intra-node branch and the variable has no effect. The pinned vllm-ascend repository contains no definition, override, or
+  use of this CUDA DeepEP setting.'
+usage_locations:
+- file: vllm/envs.py:1631
+  context: Parses the environment value as an integer and then a boolean; unset defaults to false through the string value
+    "0".
+- file: docs/serving/expert_parallel_deployment.md:22
+  context: Identifies deepep_high_throughput as the multi-node, prefill-oriented expert- parallel backend for which this variable's
+    buffer-selection branch is relevant.
+related_parameters:
+- name: VLLM_DEEPEP_BUFFER_SIZE_MB
+  relation: Sets the per-region size used for the always-present NVLink buffer and, on the default inter-node path, the additional
+    RDMA buffer.
+- name: --all2all-backend
+  relation: The variable is consumed only when the selected expert-parallel backend constructs the DeepEP high-throughput
+    all-to-all manager.
+- name: --enable-expert-parallel
+  relation: DeepEP all-to-all dispatch and combine are used for MoE expert-parallel execution.
+- name: VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL
+  relation: This separate variable controls MNNVL use for the DeepEP low-latency internode kernel; it does not replace this
+    high-throughput setting.
+constraints:
+- The value must be an integer string accepted by int(); use 0 or 1 for the documented boolean meanings.
+- The setting affects only deepep_high_throughput and only when the manager detects an inter-node topology; it is inert for
+  intra-node deployments and other backends.
+- Forcing the intra-node branch on an inter-node deployment requires hardware and software support for cross-node NVLink/MNNVL,
+  such as the GB200-class topology named by the source comment.
+- All participating worker processes must receive the same value so they construct compatible DeepEP communication buffers.
+tuning_advice:
+  summary: Keep 0 for conventional inter-node networking. Consider 1 only on a validated multi-node NVLink/MNNVL system running
+    the DeepEP high-throughput backend, and select it with end-to-end prefill benchmarks.
+  suggested_values:
+  - scenario: Conventional multi-node deployment using RDMA or InfiniBand/RoCE
+    value: '0'
+    reason: Preserves the default inter-node DeepEP setup with an RDMA region and the normal inter-node QP count.
+  - scenario: GB200-class multi-node NVLink/MNNVL deployment focused on prefill throughput
+    value: '1'
+    reason: Forces the intra-node-kernel buffer setup that the source comment identifies as useful for higher prefill throughput
+      on systems supporting multi-node NVLink.
+  caveats:
+  - Value 1 removes the RDMA buffer and reduces num_qps_per_rank to one; enabling it on a topology without working cross-node
+    NVLink/MNNVL can cause failures or severe communication regressions.
+  - The source states the intended GB200 use case but supplies no benchmark result or universal speedup; measure prefill throughput
+    and tail latency on the target model, batch mix, node count, DeepEP version, and fabric.
+  - Buffer-memory savings from omitting the RDMA region scale with the configured VLLM_DEEPEP_BUFFER_SIZE_MB and the number
+    of DeepEP handles/processes, while the exact allocation behavior remains DeepEP-version dependent.
+  - This upstream CUDA DeepEP variable is not implemented by the pinned vllm-ascend tree and should not be treated as an Ascend
+    tuning control.
+  quick_guide: Use 0 unless deepep_high_throughput is running across nodes with verified MNNVL; there, benchmark 1 against
+    0 and keep 1 only if prefill throughput improves without latency or stability regressions.
+analysis_date: '2026-07-28'

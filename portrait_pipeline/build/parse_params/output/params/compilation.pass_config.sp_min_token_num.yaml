@@ -1,0 +1,120 @@
+name: compilation.pass_config.sp_min_token_num
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:1042
+- vllm/config/vllm.py:1689
+- vllm/compilation/passes/fusion/sequence_parallelism.py:540
+- vllm_ascend/platform.py:223
+value_type: int
+default: <computed>
+valid_choices: '''positive integer (token count)'''
+cli_example: '''--compilation-config ''''{"pass_config": {"enable_sp": true, "sp_min_token_num": 1000}}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the minimum number of tokens required for Sequence Parallelism (SP) to activate during
+  graph compilation. SP splits the residual tensor across tensor-parallel ranks, reducing per-rank memory and communication
+  volume for large token counts. However, when the token count is small, the fixed overhead of all-gather communication operators
+  dominates, causing SP to degrade performance rather than improve it. The parameter acts as a threshold: "SP is only applied
+  to graph compilation ranges where num_tokens >= sp_min_token_num." On Ascend NPU, vllm-ascend overrides the default value
+  to 1000 for dense models and 1 for MoE models (via NPUPlatform.apply_config_platform_defaults), whereas upstream vLLM computes
+  it from hidden_size, tp_size, and element_size. Setting this too low causes SP to activate on small batches, increasing
+  latency due to communication overhead. Setting it too high prevents SP from activating even when it would be beneficial,
+  missing throughput gains on large batches. The value is also capped by max_num_batched_tokens to avoid exceeding scheduler
+  limits.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:223
+  context: 'NPUPlatform.apply_config_platform_defaults sets sp_min_token_num to Ascend-specific default (1000 for dense, 1
+    for MoE) when enable_sp is True and sp_min_token_num is None.
+
+    '
+- file: vllm/config/vllm.py:1042
+  context: 'VllmConfig.__post_init__ computes sp_min_token_num from model hidden_size, tp_size, and dtype element_size if
+    not already set. Disables SP if computed value is None.
+
+    '
+- file: vllm/config/vllm.py:1689
+  context: 'Compilation config initialization computes sp_min_token_num and uses it to determine compile_ranges_split_points
+    for graph capture.
+
+    '
+- file: vllm/compilation/passes/fusion/sequence_parallelism.py:540
+  context: 'SequenceParallelismPass reads sp_min_token_num from pass_config and caps it at max_num_batched_tokens. Used as
+    threshold to decide whether SP applies per compile range.
+
+    '
+related_parameters:
+- name: compilation.pass_config.enable_sp
+  relation: 'sp_min_token_num is only meaningful when enable_sp is True. If enable_sp is False, sp_min_token_num is ignored.
+    Conversely, if sp_min_token_num is None after all defaults are applied, enable_sp is forced to False.
+
+    '
+- name: scheduler_config.max_num_batched_tokens
+  relation: 'sp_min_token_num is capped at max_num_batched_tokens to avoid exceeding scheduler limits. If sp_min_token_num
+    > max_num_batched_tokens, SP will never activate.
+
+    '
+- name: parallel_config.tensor_parallel_size
+  relation: 'SP requires tensor_parallel_size > 1. If tp_size is 1, enable_sp is forced to False regardless of sp_min_token_num.
+
+    '
+- name: compilation.pass_config.fuse_gemm_comms
+  relation: 'When fuse_gemm_comms is True, enable_sp is implicitly set to True, which triggers sp_min_token_num default computation.
+
+    '
+constraints:
+- sp_min_token_num must be a positive integer when explicitly set.
+- Sequence Parallelism requires tensor_parallel_size > 1; otherwise SP is disabled regardless of sp_min_token_num.
+- sp_min_token_num is only effective when enable_sp is True.
+- SP is not supported in eager mode; it requires graph compilation mode.
+tuning_advice:
+  summary: 'On Ascend NPU, the vllm-ascend default of 1000 for dense models is well-tuned and generally does not need modification.
+    Only adjust if you observe SP-related performance regressions on your specific model and workload.
+
+    '
+  suggested_values:
+  - scenario: Dense models on Ascend NPU (general use)
+    value: '1000'
+    reason: 'vllm-ascend default based on empirical testing. When token count is below 1000, communication operator fixed
+      overhead dominates and SP degrades performance. This value balances SP benefits for large batches against overhead for
+      small batches.
+
+      '
+  - scenario: MoE models on Ascend NPU
+    value: '1'
+    reason: 'vllm-ascend sets sp_min_token_num to 1 for MoE models, meaning SP activates for all token counts. MoE models
+      have different communication patterns where SP benefits outweigh overhead even at small batch sizes.
+
+      '
+  - scenario: Small hidden_size models where upstream heuristic returns None
+    value: '512'
+    reason: 'When the upstream vLLM heuristic determines hidden_size is too small for SP, it returns None and disables SP.
+      Manually setting a value like 512 forces SP to activate, which may help if your workload consistently uses large batches.
+
+      '
+  - scenario: Latency-sensitive deployment with small batch sizes
+    value: '4096'
+    reason: 'Setting a high threshold ensures SP only activates for very large batches, avoiding communication overhead on
+      latency-critical small requests. Use when max_num_batched_tokens is large but typical batch sizes are small.
+
+      '
+  caveats:
+  - Setting sp_min_token_num too low (e.g., 1 for dense models) causes SP to activate on small batches, where all-gather communication
+    overhead dominates and degrades latency.
+  - Setting sp_min_token_num higher than max_num_batched_tokens means SP will never activate, wasting potential throughput
+    gains.
+  - The vllm-ascend default (1000) overrides the upstream vLLM heuristic. If you rely on upstream behavior, explicitly set
+    sp_min_token_num to null and ensure vllm-ascend platform defaults do not apply.
+  - SP is experimental on Ascend and not enabled by default. You must explicitly set enable_sp to True.
+  quick_guide: 'Use the vllm-ascend default of 1000 for dense models and 1 for MoE models. Only lower it if your workload
+    consistently processes large batches and you want SP to activate sooner; only raise it if you observe latency regressions
+    from SP on small batches.
+
+    '
+analysis_date: '2026-07-06'

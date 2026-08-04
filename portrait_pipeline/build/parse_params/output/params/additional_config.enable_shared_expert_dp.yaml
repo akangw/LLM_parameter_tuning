@@ -1,0 +1,69 @@
+name: additional_config.enable_shared_expert_dp
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:106
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When enabled, shared experts in MoE models (e.g., DeepSeek series) are replicated across data-parallel groups
+  instead of being sharded via tensor parallelism. This eliminates all-reduce communication for shared expert computation,
+  reducing inter-device communication overhead and improving throughput. However, it increases NPU memory consumption because
+  each device in the DP group holds a full copy of the shared expert weights. The parameter only takes effect when both enable_expert_parallel
+  and tensor_parallel_size > 1 are set (lines 106-110 of ascend_config.py). It also triggers sequence parallelism (SP) via
+  the enable_sp() utility (line 114), which may further adjust max_num_batched_tokens to be divisible by tp_size * pcp_size
+  when FLASHCOMM1 is active (lines 116-130).
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:106
+  context: 'Read from additional_config dict and stored as AscendConfig.enable_shared_expert_dp. Gated by enable_expert_parallel
+    and tensor_parallel_size > 1. Triggers SP assertion.
+
+    '
+related_parameters:
+- name: enable_expert_parallel
+  relation: Must be true for enable_shared_expert_dp to take effect
+- name: tensor_parallel_size
+  relation: Must be > 1 for enable_shared_expert_dp to take effect
+- name: enable_flashcomm1
+  relation: When SP is enabled via enable_shared_expert_dp and FLASHCOMM1 is active, max_num_batched_tokens is adjusted to
+    be divisible by tp_size * pcp_size
+- name: multistream_overlap_shared_expert
+  relation: When TP size is 1 or enable_shared_expert_dp is true, an additional stream can overlap shared expert computation
+    for improved efficiency
+constraints:
+- enable_expert_parallel must be true for enable_shared_expert_dp to take effect
+- tensor_parallel_size must be greater than 1 for enable_shared_expert_dp to take effect
+- Currently only DeepSeek series models are supported
+tuning_advice:
+  summary: 'Enable for DeepSeek-series MoE models with TP > 1 to trade NPU memory for higher throughput by eliminating shared
+    expert all-reduce communication.
+
+    '
+  suggested_values:
+  - scenario: DeepSeek MoE model with TP > 1 and sufficient NPU memory
+    value: 'true'
+    reason: Eliminates all-reduce for shared experts, improving throughput at the cost of replicated weight memory
+  - scenario: NPU memory constrained or non-DeepSeek MoE models
+    value: 'false'
+    reason: Avoids extra memory consumption from shared expert weight replication; parameter has no effect on unsupported
+      models
+  caveats:
+  - Enabling this parameter increases NPU memory usage because shared expert weights are replicated across DP groups
+  - Only supported for DeepSeek series models; has no effect on other model architectures
+  - When combined with FLASHCOMM1, max_num_batched_tokens may be automatically adjusted to be divisible by tp_size * pcp_size
+  - When TP size is 1 or this parameter is enabled, consider also enabling multistream_overlap_shared_expert for additional
+    compute-communication overlap
+  quick_guide: Set to true for DeepSeek MoE models with TP > 1 when NPU memory is sufficient to gain throughput from reduced
+    communication
+analysis_date: '2026-07-06'

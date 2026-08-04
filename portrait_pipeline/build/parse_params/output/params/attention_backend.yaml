@@ -1,0 +1,105 @@
+name: --attention-backend
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:877
+- vllm/config/speculative.py:110
+- vllm_ascend/worker/model_runner_v1.py:4342
+value_type: str
+default: null
+valid_choices:
+- auto
+- FLASH_ATTN
+- FLASHINFER
+- FLASHMLA
+- FLASH_ATTN_VLLM_V1
+- TORCH_SDPA
+- FLEX_ATTENTION
+- TRITON_MLA
+- CUTLASS_MLA
+- CUSTOM
+- null (auto-select)
+cli_example: --attention-backend FLASH_ATTN
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls which attention kernel implementation is used for all attention layers in the model.
+  On Ascend NPU, the choice of attention backend directly determines which CANN operator or custom kernel executes the attention
+  computation, affecting both compute throughput and memory bandwidth utilization.
+
+  In vllm-ascend, the attention backend is resolved per KV cache group via `get_attn_backends_for_group()` and stored in `self.attn_groups`
+  (see vllm_ascend/worker/model_runner_v1.py:4342-4352). The resolved backend classes are then used to create attention metadata
+  builders and ultimately dispatch to NPU-specific attention implementations.
+
+  The vllm-ascend documentation explicitly recommends using `FLASH_ATTN` as the attention backend for Ascend NPU (see user_guide/feature_guide/
+  flash_attention.md:70), and the test suite includes dedicated FA3 vs FIA comparison tests (tests/e2e/pull_request/one_card/test_attention_fa3.py)
+  that validate numerical correctness of FLASH_ATTN on Ascend hardware.
+
+  The attention backend also interacts with CUDA graph capture: the `_check_and_update_cudagraph_mode` method (called at vllm_ascend/worker/model_runner_v1.py:4493)
+  uses the resolved attention backends to determine valid capture sizes for ACL graphs on Ascend NPU. An incompatible backend
+  selection could prevent graph capture entirely, forcing eager execution and significantly degrading throughput.
+
+  For speculative decoding, the draft model can use a different attention backend than the target model (vllm/config/speculative.py:110-113),
+  allowing optimization of the drafter independently.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:877
+  context: CLI argument definition under AttentionConfig group
+- file: vllm/engine/arg_utils.py:652
+  context: EngineArgs field declaration with type AttentionBackendEnum | None
+- file: vllm/engine/arg_utils.py:2030-2039
+  context: Post-parsing override logic; mutually exclusive with attention_config.backend
+- file: vllm_ascend/worker/model_runner_v1.py:4342-4352
+  context: Resolved per KV cache group to create AttentionGroup instances
+- file: vllm_ascend/worker/model_runner_v1.py:4493-4497
+  context: Used in _check_and_update_cudagraph_mode for ACL graph capture
+- file: vllm/config/speculative.py:110-113
+  context: Draft model attention backend in SpeculativeConfig
+- file: vllm/v1/spec_decode/llm_base_proposer.py:1114-1123
+  context: Draft model VllmConfig creation; never inherits from target model
+related_parameters:
+- name: --enforce-eager
+  relation: When enforce-eager is set, CUDA/ACL graph capture is disabled, reducing the performance difference between attention
+    backends
+- name: --speculative-config
+  relation: SpeculativeConfig has its own attention_backend field for the draft model, independent of the target model's attention
+    backend
+- name: attention_config.backend
+  relation: Mutually exclusive with --attention-backend; only one can be set
+constraints:
+- --attention-backend and attention_config.backend are mutually exclusive; setting both raises a ValueError
+- TurboQuant requires FlashAttention version < 3; if flash_attn_version >= 3, it is overridden to 2 with a warning
+- On Ascend 310P, Deepseek Sparse Attention is not supported and raises a ValueError
+- On Ascend 310P, KV cache transfer is not supported and raises a ValueError
+tuning_advice:
+  summary: On Ascend NPU, use --attention-backend FLASH_ATTN for best performance; this is the recommended and most tested
+    backend in vllm-ascend.
+  suggested_values:
+  - scenario: General inference on Ascend 910B/310P
+    value: FLASH_ATTN
+    reason: Recommended by vllm-ascend documentation; has dedicated correctness tests (FA3 vs FIA comparison) and is the primary
+      backend validated for Ascend NPU
+  - scenario: Auto-selection (default behavior)
+    value: null
+    reason: When set to null or "auto", vllm-ascend automatically selects the appropriate backend based on model architecture
+      and hardware; safe for initial deployment
+  - scenario: Speculative decoding with draft model requiring non-causal attention
+    value: FLASH_ATTN
+    reason: Draft models like DFlash may require a non-causal-capable backend; FLASH_ATTN supports this while some other backends
+      do not
+  caveats:
+  - FLASH_ATTN on Ascend NPU may require setting VLLM_BATCH_INVARIANT=1 for correct behavior with certain models (e.g., Qwen3-8B),
+    as documented in vllm-ascend flash_attention.md
+  - The attention backend choice affects ACL graph capture compatibility; an unsupported backend may prevent graph capture
+    and force eager execution, significantly reducing throughput
+  - On Ascend 310P, some features (Deepseek Sparse Attention, KV cache transfer) are explicitly unsupported regardless of
+    attention backend choice
+  - When using speculative decoding, the draft model attention backend is independently auto-selected unless explicitly specified
+    in the speculative config; it does not inherit from the target model
+  quick_guide: Set --attention-backend FLASH_ATTN for Ascend NPU; add VLLM_BATCH_INVARIANT=1 if using Qwen3 or similar models.
+analysis_date: '2026-07-06'

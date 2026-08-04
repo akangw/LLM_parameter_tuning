@@ -1,0 +1,102 @@
+name: compilation.pass_config.fuse_allreduce_rms
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py
+- vllm_ascend/config/additional_config.py
+value_type: bool
+default: 'False'
+valid_choices:
+- true
+- false
+cli_example: '''--compilation-config ''''{"pass_config": {"fuse_allreduce_rms": true}}'''''''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter activates a compilation pass that fuses the all-reduce communication operation
+  with the subsequent RMS normalization into a single kernel. On Ascend NPU, this is implemented via the vllm-ascend Matmul
+  Allreduce Rmsnorm fusion Pass (PR #5034). The fusion eliminates the overhead of launching separate kernels for all-reduce
+  and RMS norm, and reduces intermediate data movement between NPU cores and memory. This directly reduces the latency of
+  each transformer layer that contains this pattern, improving end-to-end throughput. However, the vllm-ascend documentation
+  explicitly notes that this pass is disabled by default because it conflicts with Sequence Parallelism (SP). When SP is enabled,
+  enabling this fusion may cause incorrect results or compilation errors. The parameter is read in vllm/config/vllm.py:1661
+  to determine compile ranges for flashinfer/aiter allreduce fusion, and in vllm/compilation/passes/pass_manager.py:145 to
+  register the appropriate fusion pass (RocmAiterAllReduceFusionPass for ROCm/aiter backends, or AllReduceFusionPass for others).
+  On Ascend, the vllm-ascend plugin provides its own implementation of this pass.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1661
+  context: 'Checks fuse_allreduce_rms to compute compile range endpoints for flashinfer/aiter allreduce fusion, adjusting
+    max_token_num based on allreduce max size and model hidden size.
+
+    '
+- file: vllm/compilation/passes/pass_manager.py:145
+  context: 'Registers the AllReduceFusionPass or RocmAiterAllReduceFusionPass when fuse_allreduce_rms is True.
+
+    '
+- file: vllm_ascend/config/additional_config.py
+  context: 'Defines the Ascend-specific default (False) and documents the conflict with Sequence Parallelism.
+
+    '
+related_parameters:
+- name: compilation.pass_config.enable_sp
+  relation: 'Mutually exclusive in practice on Ascend. fuse_allreduce_rms is documented as conflicting with Sequence Parallelism
+    (SP). Enabling both may cause incorrect results or compilation failures.
+
+    '
+- name: parallel_config.tensor_parallel_size
+  relation: 'The allreduce operation being fused is the tensor-parallel all-reduce. The fusion pass behavior depends on tp_size
+    to determine the allreduce group size and max fusion size.
+
+    '
+- name: compilation.pass_config.flashinfer_max_size
+  relation: 'When fuse_allreduce_rms is enabled and ROCm aiter ops are not in use, flashinfer_max_size(tp_size) determines
+    the maximum token count for which fusion is applied.
+
+    '
+constraints:
+- fuse_allreduce_rms must not be enabled when Sequence Parallelism (compilation.pass_config.enable_sp) is active on Ascend
+  NPU, as documented in vllm-ascend configuration guide.
+tuning_advice:
+  summary: 'Enable fuse_allreduce_rms on Ascend NPU only when Sequence Parallelism is disabled, to reduce kernel launch overhead
+    and improve per-layer latency.
+
+    '
+  suggested_values:
+  - scenario: 'Standard deployment without Sequence Parallelism on Ascend NPU (v1-ascend or v2-ascend).
+
+      '
+    value: true
+    reason: 'Fuses all-reduce and RMS norm into a single kernel, reducing kernel launch overhead and intermediate data movement,
+      which improves both latency and throughput.
+
+      '
+  - scenario: 'Deployment with Sequence Parallelism enabled on Ascend NPU.
+
+      '
+    value: false
+    reason: 'The vllm-ascend documentation explicitly states that fuse_allreduce_rms conflicts with SP. Enabling both may
+      cause incorrect results or compilation errors.
+
+      '
+  caveats:
+  - 'On Ascend NPU, this pass is disabled by default (False) due to a known conflict with Sequence Parallelism. Always verify
+    that SP is disabled before enabling this fusion.
+
+    '
+  - 'The fusion pass is only effective for models that use RMS normalization followed by an all-reduce operation in tensor-parallel
+    configurations. For models without this pattern, enabling the flag has no effect.
+
+    '
+  - 'The maximum token count for which fusion is applied is determined by the allreduce max size (from flashinfer or aiter
+    ops) divided by (hidden_size * dtype_size). For very large batch sizes, the fusion may not be applied to all tokens.
+
+    '
+  quick_guide: 'Set to true on Ascend NPU when SP is disabled; keep false (default) when SP is enabled.
+
+    '
+analysis_date: '2026-07-06'

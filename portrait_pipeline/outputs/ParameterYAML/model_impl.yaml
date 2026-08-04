@@ -1,0 +1,80 @@
+name: --model-impl
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/model.py:94
+- vllm/config/model.py:293
+- vllm/model_executor/models/registry.py:1135
+value_type: str
+default: auto
+valid_choices:
+- auto
+- vllm
+- transformers
+- terratorch
+cli_example: --model-impl vllm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This switch selects the model implementation used by the engine, so it can change the execution path and its
+  latency, throughput, and memory behavior. The current ModelConfig defines auto as preferring a registered vLLM implementation
+  and falling back to the Transformers implementation when no vLLM implementation exists (vllm/config/model.py:293). The registry
+  forces the Transformers path when transformers is selected, whereas auto attempts that path only when the architecture is
+  not registered (vllm/model_executor/models/registry.py:1135). The pinned vllm-ascend tree contains no model_impl-specific
+  override; actual performance differences therefore depend on the selected model, backend support, and workload and are not
+  quantified here.
+usage_locations:
+- file: vllm/engine/arg_utils.py:827
+  context: Registers --model-impl on the model CLI argument group.
+- file: vllm/config/model.py:293
+  context: Declares the default and documents the auto, vllm, transformers, and terratorch choices.
+- file: vllm/model_executor/models/registry.py:1135
+  context: Resolves a Transformers implementation when transformers is explicitly selected.
+- file: vllm/model_executor/models/registry.py:1148
+  context: Allows the first Transformers fallback only for auto when no registered vLLM architecture is found.
+- file: vllm/model_executor/models/transformers/base.py:151
+  context: Applies Transformers-backend compatibility restrictions, including unsupported MXFP4 quantization.
+related_parameters:
+- name: --model
+  relation: The model architecture determines whether a registered vLLM implementation is available and whether auto can fall
+    back to Transformers.
+- name: --quantization
+  relation: The Transformers backend rejects MXFP4 and GPT-OSS MXFP4 quantization in the current source.
+- name: --tokenizer-mode
+  relation: With tokenizer mode auto, the terratorch model implementation selects tokenizer mode terratorch.
+constraints:
+- vllm, transformers, and terratorch select distinct implementation paths; use a value supported by the requested model and
+  installed dependencies.
+- auto falls back to Transformers only when no registered vLLM architecture is found; it does not force that backend for registered
+  models.
+- The current Transformers backend does not support MXFP4 or GPT-OSS MXFP4 quantization.
+- terratorch selects the TerraTorch implementation and, with tokenizer mode auto, changes the tokenizer mode to terratorch.
+tuning_advice:
+  summary: Keep auto for compatibility when support is uncertain. Use vllm after confirming the architecture is registered
+    if you need to prevent a Transformers fallback, and use transformers only when that backend is required and its feature
+    restrictions are acceptable.
+  suggested_values:
+  - scenario: General deployment when the model's vLLM registration status is unknown.
+    value: auto
+    reason: It first uses the registered vLLM implementation and permits a Transformers fallback only when no registered architecture
+      is found.
+  - scenario: Controlled deployment with a model known to have a registered vLLM implementation.
+    value: vllm
+    reason: It selects the vLLM implementation rather than relying on fallback behavior.
+  - scenario: Compatibility testing or a model that specifically requires the Transformers modeling backend.
+    value: transformers
+    reason: It explicitly resolves the Transformers implementation, making the selected backend unambiguous.
+  caveats:
+  - The performance effect is model- and workload-dependent; the pinned source does not provide a universal throughput, latency,
+    or memory multiplier.
+  - Selecting transformers can make unsupported backend features relevant; the current source rejects MXFP4 and GPT-OSS MXFP4
+    quantization there.
+  - Selecting vllm for an architecture without a usable registered implementation can prevent the compatibility fallback provided
+    by auto.
+  quick_guide: Use auto by default; use vllm only for verified registered support, and validate compatibility before forcing
+    transformers.
+analysis_date: '2026-07-27'

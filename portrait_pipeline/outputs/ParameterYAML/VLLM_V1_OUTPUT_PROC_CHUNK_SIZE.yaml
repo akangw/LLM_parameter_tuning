@@ -1,0 +1,51 @@
+name: VLLM_V1_OUTPUT_PROC_CHUNK_SIZE
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:1133
+value_type: int
+default: 128
+valid_choices: positive integer
+cli_example: VLLM_V1_OUTPUT_PROC_CHUNK_SIZE=64 vllm serve MODEL
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Sets the maximum number of request outputs handled in one pass of the V1 AsyncLLM output task. The pinned implementation
+  reads the value when it creates the output handler, slices each EngineCore output batch into chunks of at most this size,
+  and yields to the asyncio event loop between chunks. Increasing it reduces slicing and event-loop scheduling overhead and
+  can improve throughput, but lets one output-processing task run longer and can increase inter-message latency variance for
+  concurrent streaming requests. Decreasing it yields more often, improving event-loop fairness, but the pinned source warns
+  that values that are too low can hurt TTFT and overall throughput. The vllm-ascend repository neither overrides nor separately
+  consumes this setting, so Ascend deployments using upstream AsyncLLM inherit the same host-side behavior.
+usage_locations: []
+related_parameters: []
+constraints:
+- Must be greater than zero; zero is invalid as a Python range step, while a negative step prevents positive-sized output
+  batches from being processed.
+- Read when the AsyncLLM output handler is created; restart the serving process after changing the environment variable.
+tuning_advice:
+  summary: Tune only for high-concurrency asynchronous serving, balancing streaming fairness against host-side output-processing
+    overhead.
+  suggested_values:
+  - scenario: General-purpose asynchronous serving
+    value: 128
+    reason: The pinned upstream default is the balanced starting point.
+  - scenario: Streaming workloads with excessive inter-message latency variance
+    value: 64
+    reason: A smaller positive chunk yields to the event loop more frequently; benchmark TTFT and throughput before retaining
+      it.
+  - scenario: Throughput-oriented serving where streaming jitter is acceptable
+    value: 256
+    reason: A larger chunk reduces event-loop yields and per-chunk overhead; validate tail and inter-message latency under
+      target concurrency.
+  caveats:
+  - It affects the V1 AsyncLLM output path, not model execution kernels or synchronous output processing.
+  - Oversized chunks can make streaming delivery burstier at high concurrency.
+  - Undersized chunks add asyncio scheduling overhead and can reduce TTFT and aggregate throughput.
+  - Ascend-specific optimum values are not supplied by the pinned vllm-ascend source and require workload-level benchmarking.
+  quick_guide: Start at 128; try 64 for better streaming fairness or 256 for lower host scheduling overhead, changing one
+    step at a time while measuring TTFT, inter-message latency, and throughput.
+analysis_date: '2026-07-29'

@@ -1,0 +1,56 @@
+name: speculative.draft_load_config.device
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: <computed>
+valid_choices: '''"auto" | "cuda" | "cpu" | "npu" | "xpu" | "hpu"'''
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls which device the draft model weights are loaded onto during speculative decoding.
+  On Ascend NPU, the draft model must reside on the NPU to avoid costly CPU-to-NPU data transfers during the proposal phase.
+  If set to "cpu", the draft model runs on the host CPU, which introduces significant latency for each speculative step due
+  to cross-device tensor movement. If set to "npu" (or "auto" resolving to NPU), the draft model shares NPU memory with the
+  target model, reducing communication overhead but increasing total NPU memory pressure. The vllm-ascend plugin''s speculative
+  decoding implementations (AscendEagleProposer, AscendMtpProposer, AscendNgramProposer) all expect the draft model to be
+  on the same device as the target model for optimal performance. Setting this to a device different from the target model''s
+  device will force explicit data transfers in the proposal loop, degrading throughput.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.method
+  relation: The draft model device is only relevant when speculative decoding is enabled via speculative.method.
+- name: device_config.device
+  relation: Defaults to device_config.device; should match the target model's device to avoid cross-device transfers.
+constraints:
+- Must be a valid device string recognized by the PyTorch/CANN runtime on the deployment node.
+- On Ascend NPU, setting this to 'cpu' will cause the draft model to run on the host CPU, severely degrading speculative decoding
+  performance.
+tuning_advice:
+  summary: 'On Ascend NPU, always ensure the draft model is loaded onto the NPU (either explicitly via "npu" or by inheriting
+    the default from device_config.device) to avoid cross-device transfer overhead during speculative decoding.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend NPU deployment with speculative decoding enabled
+    value: '''"auto"'''
+    reason: Inherits the target model's device (typically NPU), ensuring the draft model runs on the same device and avoids
+      cross-device data transfers.
+  - scenario: Explicit NPU device specification
+    value: '''"npu"'''
+    reason: Directly places the draft model on the NPU, matching the target model's device and eliminating host-to-device
+      transfer latency.
+  caveats:
+  - Loading the draft model on NPU increases total NPU memory usage. Ensure sufficient free NPU memory is available to accommodate
+    both the target and draft models simultaneously.
+  - Setting this to 'cpu' will cause every speculative proposal step to incur NPU-to-CPU and CPU-to-NPU data transfers, potentially
+    making speculative decoding slower than non-speculative inference.
+  quick_guide: On Ascend NPU, leave speculative.draft_load_config.device as 'auto' (default) to co-locate the draft model
+    with the target model on the NPU.
+analysis_date: '2026-07-06'

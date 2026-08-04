@@ -1,0 +1,5 @@
+name: VLLM_MORIIO_POST_BATCH_SIZE
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares and parses this environment variable in vllm/envs.py; neither pinned vLLM
+  nor vLLM Ascend contains a current consumer, so changing it cannot affect latency, throughput, or memory.

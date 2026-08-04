@@ -1,0 +1,70 @@
+name: VLLM_MORIIO_QP_PER_TRANSFER
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1480
+value_type: int
+default: 1
+valid_choices: Any value accepted by Python int(); the pinned vLLM source does not perform range validation, though the external
+  MORI RDMA backend may impose additional requirements.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This variable supplies qp_per_transfer to the MORI RdmaBackendConfig created for the MoRIIO connector. It
+  can therefore change the queue-pair parallelism and resource allocation used for remote KV-cache transfers, with possible
+  effects on transfer latency and disaggregated-serving throughput. The effect is limited to the optional MoRIIO RDMA connector:
+  ordinary local serving and deployments using another KV-transfer connector do not read this setting. The pinned vllm-ascend
+  repository contains no MoRIIO implementation, consumer, override, or documentation for the variable, so it is not an Ascend
+  tuning control in the target source revision.'
+usage_locations:
+- file: vllm/envs.py:1480
+  context: Parses the environment value as an integer with a default of 1.
+related_parameters:
+- name: VLLM_MORIIO_POST_BATCH_SIZE
+  relation: Supplies the adjacent post_batch_size field to the same RdmaBackendConfig.
+- name: VLLM_MORIIO_NUM_WORKERS
+  relation: Supplies the adjacent num_worker_threads field to the same RdmaBackendConfig.
+- name: --kv-transfer-config
+  relation: Must select and configure the MoRIIO connector for this backend setup to run.
+constraints:
+- The environment text must be parseable by Python int() or evaluation of the environment accessor raises ValueError.
+- The pinned vLLM code performs no positivity or range validation before forwarding the integer to the external MORI backend.
+- The setting applies only when the optional MORI package is installed and the MoRIIO KV-transfer connector creates its RDMA
+  backend.
+- The pinned vllm-ascend tree has no consumer for this setting.
+tuning_advice:
+  summary: Keep the default of 1 unless an upstream MoRIIO RDMA deployment is transfer-bound and the exact MORI and NIC stack
+    has been benchmarked with another supported value.
+  suggested_values:
+  - scenario: General serving, Ascend serving, or an unbenchmarked MoRIIO deployment
+    value: 1
+    reason: This is the source default; it is inert outside MoRIIO and avoids assuming undocumented limits in the external
+      backend.
+  caveats:
+  - The pinned vLLM sources expose no accepted range and provide no benchmark-backed alternative value.
+  - More queue pairs can consume additional RDMA/NIC resources and need not improve performance once transfer bandwidth or
+    another stage is saturated.
+  - End-to-end benefit depends on KV-transfer sizes, concurrency, topology, NIC capabilities, and the MORI version.
+  - This variable is not a target Ascend control in the pinned vllm-ascend revision.
+  quick_guide: Leave at 1; tune only for an upstream, transfer-bound MoRIIO deployment using measured latency, throughput,
+    and RDMA resource utilization.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - high_concurrency

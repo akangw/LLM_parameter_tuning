@@ -1,0 +1,91 @@
+name: HCCL_BUFFSIZE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:190
+- docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:70
+- docs/source/tutorials/features/long_sequence_context_parallel_multi_node.md:86
+- docs/source/user_guide/feature_guide/large_scale_ep.md:124
+- docs/source/user_guide/feature_guide/large_scale_ep.md:190
+- vllm_ascend/utils.py:1173
+value_type: int
+default: 2048
+valid_choices: Positive integer HCCL buffer size in MiB. The pinned Ascend examples use workload-specific values from 200
+  through 2560; neither pinned repository parses the variable or declares a universal supported range.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'HCCL_BUFFSIZE is an external HCCL setting that sizes the communication cache shared between NPUs. More buffer
+  space can support communication-heavy or long-sequence execution, but it reserves more device memory and therefore leaves
+  less capacity for model state, activations, and KV cache. Too small a value can constrain communication workspace and hurt
+  latency or throughput; too large a value can cause memory pressure or OOM. The pinned Ascend guides deliberately vary it
+  by topology and role: 256 for a disaggregated-prefill producer, 1024 for its decoder, 768 for multi-node long-sequence context
+  parallelism, and 2048 for dynamic chunked pipeline parallelism. The Ascend process-group code also records that MC2 communication-space
+  partitioning is based on HCCL_BUFFSIZE. Other named process groups receive explicit hccl_buffer_size options from vLLM Ascend,
+  so the environment variable''s effective reach is group- and installed-HCCL-dependent. Upstream vLLM has no HCCL_BUFFSIZE
+  reference.'
+usage_locations:
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:190
+  context: Defines the variable as controlling cache size for sharing data between two NPUs and lists it among scenario-specific
+    performance settings.
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:70
+  context: Sets 2048 for the documented dynamic chunked pipeline-parallel launch.
+- file: docs/source/tutorials/features/long_sequence_context_parallel_multi_node.md:86
+  context: Sets 768 for multi-node long-sequence context parallelism alongside the HCCL network-interface and FlashComm settings.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:124
+  context: Sets 256 on a large-scale expert-parallel disaggregated-prefill producer.
+- file: docs/source/user_guide/feature_guide/large_scale_ep.md:190
+  context: Sets 1024 on the matching decoder, demonstrating that the recommended buffer is role-specific even within one deployment.
+- file: vllm_ascend/utils.py:1173
+  context: Builds per-process-group HCCL options; its MC2 exception explains that MC2 operators partition communication space
+    from HCCL_BUFFSIZE, while other named groups can receive explicit buffer sizes.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Higher HCCL buffer reservations reduce device-memory headroom available to vLLM and may require lowering model/KV-cache
+    utilization.
+- name: HCCL_OP_EXPANSION_MODE
+  relation: Many pinned optimized launch recipes set both variables, but operation expansion mode does not determine the buffer
+    size.
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Long-sequence and several model recipes combine FlashComm with a workload-specific HCCL buffer allocation.
+constraints:
+- Export the value before HCCL communicators are initialized, consistently on every participating process for the same communication
+  deployment.
+- Size in MiB and supported bounds are owned by the installed CANN/HCCL release; the pinned vLLM repositories do not validate
+  this environment variable.
+- 'Do not treat 2048 as a universal runtime default: it is the catalog value and the documented dynamic-pipeline setting,
+  while pinned recipes use different values for different models, roles, and topologies.'
+- For named non-MC2 groups, explicit hccl_buffer_size process-group options supplied by vLLM Ascend may take precedence over
+  the environment setting.
+tuning_advice:
+  summary: Start from the exact value in the pinned recipe for the model, topology, and serving role, then benchmark communication
+    latency and throughput while monitoring free NPU memory; avoid increasing it without measured benefit.
+  suggested_values:
+  - scenario: Dynamic chunked pipeline parallelism
+    value: 2048
+    reason: This is the value in the pinned feature launch recipe and matches the task catalog default.
+  - scenario: Multi-node long-sequence context parallelism
+    value: 768
+    reason: This is the pinned context-parallel launch value used with FlashComm1.
+  - scenario: Large-scale EP disaggregated-prefill producer
+    value: 256
+    reason: The pinned optimized PD configuration explicitly assigns this smaller buffer to the prefill role.
+  - scenario: Large-scale EP disaggregated-prefill decoder
+    value: 1024
+    reason: The same pinned configuration assigns a larger buffer to the decode role, where the communication pattern differs.
+  caveats:
+  - The examples are validated configurations, not evidence that each value is optimal on other models, HCCL releases, NPU
+    generations, or networks.
+  - Values in pinned recipes span at least 200 to 2560, so copying the catalog value without matching the scenario can waste
+    memory or limit communication performance.
+  - Measure end-to-end serving metrics and NPU memory together; a throughput gain is not useful if reduced KV-cache capacity
+    causes admission pressure or OOM.
+  quick_guide: Use the deployment guide's value first (256 prefill/1024 decode for the documented large-scale EP PD case,
+    768 for multi-node long context, or 2048 for dynamic pipeline parallelism), run representative load, and change one step
+    at a time while checking latency, throughput, and free NPU memory.
+analysis_date: '2026-08-03'

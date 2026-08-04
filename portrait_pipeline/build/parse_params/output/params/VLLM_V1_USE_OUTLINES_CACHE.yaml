@@ -1,0 +1,65 @@
+name: VLLM_V1_USE_OUTLINES_CACHE
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:1247
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this env var activates an unbounded on-disk cache for compiled outlines (structured output grammars)
+  in the vLLM V1 engine. The cache avoids recompiling the same grammar on repeated requests, which reduces per-request CPU
+  overhead and can improve latency for workloads with a small set of recurring JSON schemas or regex constraints. On Ascend
+  NPU, the benefit is identical to upstream: "it saves CPU-side compilation time but does not affect" NPU kernel execution.
+  The cache is disk-backed (via diskcache) with no eviction policy, so it grows without bound. The default is false (cache
+  disabled), in which case an in-memory LRU cache of size 128 is used instead.
+
+  '
+usage_locations:
+- file: vllm/v1/structured_output/utils.py:182
+  context: 'Checks VLLM_V1_USE_OUTLINES_CACHE to decide whether to create an unbounded diskcache.Cache or fall back to an
+    in-memory LRUCache(maxsize=128) for compiled outlines.
+
+    '
+related_parameters: []
+constraints:
+- The on-disk cache is unbounded and has no eviction policy; it will grow indefinitely and may consume all available disk
+  space if not manually cleaned.
+- The cache is not safe for multi-tenant environments with potentially malicious users, as noted in the source code comments.
+tuning_advice:
+  summary: 'Enable only if you have a stable set of structured output schemas and sufficient disk space; otherwise leave disabled
+    to use the default in-memory LRU cache.
+
+    '
+  suggested_values:
+  - scenario: Production serving with a fixed set of JSON schemas and ample disk space
+    value: true
+    reason: 'Avoids repeated grammar compilation on every request, reducing CPU overhead and tail latency for structured output
+      workloads.
+
+      '
+  - scenario: General-purpose or multi-tenant deployments
+    value: false
+    reason: 'The default in-memory LRU cache (size 128) is safe, bounded, and sufficient for most workloads without risking
+      disk exhaustion.
+
+      '
+  caveats:
+  - The on-disk cache has no size limit and no eviction; monitor disk usage and periodically clean the cache directory if
+    enabled.
+  - The cache is invalidated when the outlines_core package version changes, which may cause a one-time cache clear on upgrade.
+  - This parameter only affects CPU-side grammar compilation time; it does not change NPU kernel performance or memory usage
+    on Ascend hardware.
+  quick_guide: 'Enable (set to "1") only for production deployments with a fixed set of structured output schemas and sufficient
+    disk space; keep disabled otherwise.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,103 @@
+name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:786
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls which Ray-based distributed executor vLLM uses when `distributed_executor_backend="ray"`.
+  When set to 1 (default), vLLM uses `RayExecutorV2`, a message-queue-based executor. When set to 0, vLLM uses `RayDistributedExecutor`,
+  which leverages Ray''s Compiled Graph (previously known as Ray DAG) for communication. The choice of executor backend directly
+  affects how workers communicate during distributed inference, which impacts scheduling overhead, inter-worker latency, and
+  overall throughput. On Ascend NPU, the executor backend interacts with HCCL communication primitives — the compiled-graph
+  backend may have different HCCL integration characteristics compared to the MQ-based V2 backend. Note: "vllm-ascend does
+  not override this parameter, but the underlying HCCL" communication layer on Ascend may behave differently from NCCL on
+  GPU, so the performance tradeoffs between the two backends may differ from upstream GPU behavior.
+
+  '
+usage_locations:
+- file: vllm/v1/executor/abstract.py:61
+  context: 'In the v1 engine executor selection logic, when distributed_executor_backend is "ray", this env var determines
+    whether to instantiate RayExecutorV2 (MQ-based) or RayDistributedExecutor (compiled-graph backend).
+
+    '
+- file: vllm/envs.py:63
+  context: 'Declared as a typed environment variable in the VllmEnv class with default False (but the actual env var default
+    is "1" via the lambda in envs.py:786).
+
+    '
+related_parameters:
+- name: distributed_executor_backend
+  relation: 'This env var only takes effect when distributed_executor_backend is set to "ray". If the backend is "mp", "uni",
+    or a custom Executor subclass, this env var is ignored.
+
+    '
+- name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+  relation: 'When VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0 (compiled-graph backend), this parameter controls the communication channel
+    type (auto/nccl/shm) used between PP stages.
+
+    '
+- name: VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM
+  relation: 'When VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0, this enables GPU communication overlap in the compiled-graph backend.
+
+    '
+- name: VLLM_USE_RAY_WRAPPED_PP_COMM
+  relation: 'When VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0, this controls whether to use vLLM''s pipeline parallelism communicator
+    wrapper or Ray''s native NCCL communicator.
+
+    '
+constraints:
+- This env var only takes effect when distributed_executor_backend is set to "ray".
+- The value must be "0" or "1" (interpreted as boolean).
+tuning_advice:
+  summary: 'On Ascend NPU, test both executor backends to determine which provides better throughput and latency for your
+    specific model and parallelism configuration. The compiled-graph backend (VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0) may offer
+    lower overhead for static computation graphs, while the V2 MQ-based backend (VLLM_USE_RAY_V2_EXECUTOR_BACKEND=1) may be
+    more flexible and stable.
+
+    '
+  suggested_values:
+  - scenario: 'Default deployment on Ascend NPU with tensor parallelism, seeking stability and broad compatibility.
+
+      '
+    value: '1'
+    reason: 'The V2 MQ-based executor is the default and more widely tested path. It avoids potential compatibility issues
+      with Ray''s compiled-graph backend on Ascend HCCL.
+
+      '
+  - scenario: 'Performance-sensitive deployment where the model graph is static and you want to minimize scheduling overhead.
+
+      '
+    value: '0'
+    reason: 'The compiled-graph backend pre-compiles the communication graph, which can reduce per-step scheduling overhead
+      and improve latency for static workloads. Test with HCCL to verify stability on Ascend.
+
+      '
+  caveats:
+  - 'The compiled-graph backend (VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0) is more sensitive to dynamic control flow and may have
+    stricter requirements on graph structure.
+
+    '
+  - 'On Ascend NPU, HCCL communication behavior may differ from NCCL. The compiled-graph backend''s NCCL channel type may
+    not directly map to HCCL — test thoroughly.
+
+    '
+  - 'The V2 MQ-based backend may have higher per-step overhead but is generally more robust for dynamic workloads and speculative
+    decoding.
+
+    '
+  quick_guide: 'Start with the default V2 backend (1). If latency is critical and your workload is static, benchmark with
+    the compiled-graph backend (0) to compare.
+
+    '
+analysis_date: '2026-07-06'

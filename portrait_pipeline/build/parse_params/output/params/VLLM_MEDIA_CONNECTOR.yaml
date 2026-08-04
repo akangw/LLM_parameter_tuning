@@ -1,0 +1,68 @@
+name: VLLM_MEDIA_CONNECTOR
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:873
+value_type: str
+default: http
+valid_choices:
+- http
+- <custom_registered_connector>
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'VLLM_MEDIA_CONNECTOR controls which MediaConnector implementation is used to fetch multimodal media (images,
+  video, audio) from URLs. The default "http" connector fetches media over HTTP/HTTPS. Custom connectors can be registered
+  via @MEDIA_CONNECTOR_REGISTRY.register() and selected by setting this env var to the registered name. The connector is instantiated
+  once per MultiModalContentParser (sync and async variants) and used for every media fetch during request processing. On
+  Ascend NPU, this parameter has the same effect as on GPU — it does not interact with NPU-specific hardware or compilation
+  paths. Performance impact is limited to media fetch latency: "a slow or misconfigured connector can add per-request overhead"
+  when multimodal inputs are present, but it does not affect token generation throughput or NPU memory usage. For text-only
+  workloads, this parameter has zero effect.
+
+  '
+usage_locations:
+- file: vllm/entrypoints/chat_utils.py:932
+  context: Sync MultiModalContentParser loads connector via MEDIA_CONNECTOR_REGISTRY.load(envs.VLLM_MEDIA_CONNECTOR, ...)
+- file: vllm/entrypoints/chat_utils.py:1072
+  context: AsyncMultiModalContentParser loads connector via MEDIA_CONNECTOR_REGISTRY.load(envs.VLLM_MEDIA_CONNECTOR, ...)
+- file: vllm/envs.py:1921
+  context: Listed in compile_factors() ignored_factors set — changes to this env var do NOT invalidate torch.compile cache
+related_parameters:
+- name: VLLM_MEDIA_CACHE
+  relation: Media cache settings affect how fetched media is cached locally, complementing the connector's fetch behavior
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls retry behavior for media fetches performed by the connector
+- name: VLLM_MEDIA_URL_ALLOW_REDIRECTS
+  relation: Controls whether the connector follows HTTP redirects when fetching media
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Sets the timeout for image fetches performed by the connector
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Sets the timeout for video fetches performed by the connector
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Sets the timeout for audio fetches performed by the connector
+constraints:
+- The value must match a registered connector name in MEDIA_CONNECTOR_REGISTRY; using an unregistered name raises an AssertionError
+tuning_advice:
+  summary: 'Keep the default "http" connector unless you have a custom media fetching backend registered. This parameter has
+    negligible performance impact on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Default usage with standard HTTP/HTTPS media URLs
+    value: http
+    reason: The built-in "http" connector handles all standard media fetching needs and is the only connector registered by
+      default
+  - scenario: Custom media fetching backend (e.g., internal object storage, authenticated endpoints)
+    value: <your_registered_connector_name>
+    reason: Register a custom connector via @MEDIA_CONNECTOR_REGISTRY.register() and set this env var to its name to use custom
+      fetch logic
+  caveats:
+  - This parameter only affects multimodal requests with media URLs; text-only workloads are completely unaffected
+  - Changes to VLLM_MEDIA_CONNECTOR do not invalidate the torch.compile cache (it is in the ignored_factors set)
+  - On Ascend NPU, there is no vllm-ascend override or NPU-specific behavior for this parameter
+  quick_guide: Use the default "http" connector unless you have registered a custom media fetching backend
+analysis_date: '2026-07-06'

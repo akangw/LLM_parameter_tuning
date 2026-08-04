@@ -1,0 +1,89 @@
+name: KVTransferConfig.kv_connector_extra_config.use_layerwise
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:75
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:72
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:293
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:400
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:495
+- vllm/config/vllm.py:1120
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_both","kv_connector_extra_config":{"use_layerwise":true}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: For AscendStoreConnector, true changes KV-pool loads and stores from whole-cache handling to layer-by-layer
+  handling. The worker creates layerwise send/receive threads, splits lookup keys by layer, starts retrieval for the first
+  layer and advances it as attention layers execute. This changes transfer overlap, synchronization, request latency, and
+  transient transfer resource use; the result depends on model depth, cache size, storage latency, and hit rate. Layerwise
+  mode also makes the connector require PIECEWISE graph mode, so vLLM overrides another cudagraph mode to PIECEWISE. On the
+  scheduler load path it returns false for asynchronous loading even when load_async is enabled. Consequently this is a functional
+  transfer-layout choice rather than a universally beneficial performance switch and should be benchmarked on the target topology.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:75
+  context: Reports that AscendStore requires PIECEWISE graph mode when the extra configuration enables layerwise operations.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86
+  context: Reads the option with a false default and passes it to the scheduler, worker, and lookup server.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:212
+  context: Makes attention execution wait for each loaded layer only in layerwise mode.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:217
+  context: Sends each produced KV layer through the worker only in layerwise mode.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:72
+  context: Rejects layerwise mode when more than one hybrid KV-cache group is present.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:293
+  context: Prevents the scheduler from reporting an asynchronous load when layerwise mode is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:400
+  context: Selects layerwise send and receive threads instead of the whole-cache transfer threads.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:495
+  context: Starts a per-layer retrieval generator rather than the non-layerwise synchronous or asynchronous load path.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:651
+  context: Builds layer-major lookup keys and coordinates each layer transfer with an event.
+- file: vllm/config/vllm.py:1120
+  context: Upstream configuration asks the connector whether PIECEWISE mode is required and overrides cudagraph_mode when
+    it is.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: Must select AscendStoreConnector (or its deprecated MooncakeConnectorStoreV1 alias) for this connector-specific
+    option to be consumed.
+- name: CompilationConfig.cudagraph_mode
+  relation: Enabling layerwise mode causes vLLM to override this setting to PIECEWISE.
+- name: KVTransferConfig.kv_connector_extra_config.load_async
+  relation: Layerwise mode uses its own per-layer receive path and prevents the scheduler from returning the ordinary asynchronous-load
+    flag.
+- name: KVTransferConfig.kv_role
+  relation: Determines whether the layerwise worker loads, stores, or performs both operations.
+constraints:
+- The value is only consumed by AscendStoreConnector and its deprecated MooncakeConnectorStoreV1 alias.
+- Enabling it requires PIECEWISE graph mode; vLLM overrides another configured cudagraph mode.
+- AscendStore layerwise mode does not support configurations with more than one hybrid KV-cache group and raises NotImplementedError.
+- Layerwise lookup requires every layer-specific key for a block to exist before that block counts as a cache hit.
+tuning_advice:
+  summary: Keep false unless the deployment requires AscendStore's layer-by-layer KV transfer semantics; benchmark true with
+    the actual model and storage backend because it changes graph capture, overlap, and synchronization.
+  suggested_values:
+  - scenario: Baseline AscendStore deployment or latency-sensitive service
+    value: false
+    reason: Preserves whole-cache transfer paths, permits the ordinary asynchronous-load path, and does not force PIECEWISE
+      graph mode.
+  - scenario: Deployment designed and tested for layer-by-layer KV transfer
+    value: true
+    reason: Enables per-layer retrieval and storage so KV movement can be coordinated with layer execution; measure TTFT,
+      throughput, and peak memory because the source establishes the mechanism but not a universal win.
+  caveats:
+  - True overrides a non-PIECEWISE cudagraph_mode to PIECEWISE.
+  - True is incompatible with multiple hybrid KV-cache groups.
+  - A missing layer-specific key makes its corresponding block fail the layerwise cache-hit check.
+  - load_async does not retain its ordinary scheduler behavior in layerwise mode.
+  quick_guide: Use false by default; use true only for a validated AscendStore layerwise design and re-benchmark latency,
+    throughput, and memory.
+analysis_date: '2026-07-31'

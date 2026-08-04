@@ -1,0 +1,72 @@
+name: VLLM_MEDIA_LOADING_THREAD_COUNT
+type: env
+category: parallelism
+scope: vllm
+source_file:
+- vllm/envs.py:76
+- vllm/envs.py:845
+- docs/design/arch_overview.md:89
+- docs/configuration/optimization.md:322
+value_type: int
+default: 8
+valid_choices: positive integer (>= 1)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This environment variable sets the maximum number of CPU worker threads used by each API server process to
+  load media items from request data. The current environment definition parses the value as an integer, defaults it to 8,
+  and states that 1 disables parallel media loading. Thus it can affect multimodal request input-processing latency and throughput
+  when media loading is a bottleneck, but it does not tune model execution on the Ascend NPU. Current architecture documentation
+  places these threads in every API server, and the optimization guide warns that API-server scale-out multiplies their CPU
+  demand. The pinned vllm-ascend repository has no definition, override, or direct reference, so current upstream behavior
+  applies without an Ascend-specific tuning rule. The legacy connector.py usage location is not present in the pinned upstream
+  source and is therefore not carried forward.
+usage_locations:
+- file: vllm/envs.py:845
+  context: Defines the environment parser and default; the adjacent source comment describes the value as the maximum worker
+    count for media-byte loading and says that 1 disables parallel processing.
+- file: docs/design/arch_overview.md:89
+  context: Places multimodal loading in the API server and documents that every API server process uses the CPU-thread count
+    controlled by this variable.
+- file: docs/configuration/optimization.md:322
+  context: Documents eight media-loading threads per API server and warns operators to adjust the count during API-server
+    scale-out to avoid CPU exhaustion.
+related_parameters:
+- name: --api-server-count
+  relation: Each API server has its own media-loading threads, so increasing the API server count multiplies the aggregate
+    thread and CPU demand.
+- name: --data-parallel-size
+  relation: Current architecture documentation says the API server count can scale automatically with data parallel size,
+    indirectly multiplying aggregate media-loading threads.
+constraints:
+- The value must be a positive integer; 1 is the documented way to disable parallel media loading.
+- The environment variable must be set before the vLLM process reads its environment configuration.
+- The setting applies per API server process, so aggregate media-loading threads scale with the number of API servers.
+- It affects request-side media input processing, not model execution or NPU kernel performance.
+tuning_advice:
+  summary: Keep 8 for ordinary multimodal serving. Reduce the per-process count when API-server scale-out would oversubscribe
+    available CPU capacity, and change it only after measuring media-loading time and end-to-end request behavior.
+  suggested_values:
+  - scenario: Default deployment with one API server and multimodal requests
+    value: 8
+    reason: This is the current source default and documented general-purpose behavior.
+  - scenario: Serial media loading or strict CPU-thread budget
+    value: 1
+    reason: The source explicitly documents 1 as disabling parallel processing, minimizing media-loader concurrency at the
+      cost of serialized loading.
+  - scenario: Multiple API servers on a CPU-constrained host
+    value: 2
+    reason: Reducing the per-server count can limit aggregate thread demand; choose the exact value from CPU capacity and
+      measured media-loading latency.
+  caveats:
+  - Text-only requests and workloads whose bottleneck is model execution are unlikely to benefit from increasing this value.
+  - Too few threads can serialize media loading and raise input-processing latency for concurrent multimodal requests.
+  - Too many threads across all API servers can exhaust CPU resources or add contention without increasing throughput.
+  - Network bandwidth, remote-server latency, storage performance, caching, media sizes, and request concurrency can dominate
+    results.
+  - The pinned vllm-ascend source provides no hardware-specific override or recommended value.
+  quick_guide: Keep 8; use 1 for serial loading, or lower the per-server value when API-server scale-out oversubscribes CPUs.
+analysis_date: '2026-08-03'

@@ -1,0 +1,96 @@
+name: CompilationConfig.fast_moe_cold_start
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:691
+- vllm/config/vllm.py:1064
+- vllm/forward_context.py:154
+- vllm/model_executor/models/config.py:43
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: vllm serve <model> --compilation-config '{"fast_moe_cold_start":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+impact_detail: 'Controls a torch.compile cold-start optimization for Mixture-of-Experts models. When enabled, the forward
+  context supplies the pre-collected ordered MoE layer names to MoE custom operators instead of hard-coding layer-name strings
+  into the compiled graph; the source states that this greatly decreases MoE cold-start time when a single decoder forward
+  executes every MoE in initialization order. It does not claim a steady-state throughput or memory benefit. The declared
+  null is resolved during VllmConfig initialization: it normally becomes true, but becomes false whenever speculative decoding
+  is configured. PyTorch versions exposing HAS_OPAQUE_TYPE force it false because the newer hoisted OpaqueObject mechanism
+  supersedes this workaround. The pinned vllm-ascend repository has no direct use or override of this field, so no Ascend-specific
+  benefit is claimed.'
+usage_locations:
+- file: vllm/config/vllm.py:1064
+  context: 'Resolves the nullable setting: forces false when PyTorch opaque-object support is available; otherwise defaults
+    null to true only when speculative decoding is absent.'
+- file: vllm/forward_context.py:154
+  context: Documents the string-specialization problem and, when the effective setting is true, attaches static_all_moe_layers
+    to each ForwardContext for ordered consumption by MoE custom operators.
+- file: vllm/model_executor/models/config.py:43
+  context: Forces the optimization off for Ernie4.5-VL because conditional text and vision MoE branches can violate the required
+    execution order and silently produce incorrect results.
+related_parameters:
+- name: SpeculativeConfig
+  relation: Any configured speculative-decoding draft causes the null default to resolve to false because a draft model may
+    contain additional MoE layers.
+- name: CompilationConfig.static_all_moe_layers
+  relation: Provides the ordered list of MoE layer names installed in ForwardContext when this optimization is enabled.
+- name: CompilationConfig.mode
+  relation: The optimization addresses torch.compile graph cold start and has no useful effect when model execution is not
+    being compiled.
+constraints:
+- Safe use requires the current model to be the only decoder forward pass and requires every MoE custom operator to execute
+  in the same order as its layer was initialized.
+- Violating either ordering assumption can cause silent incorrectness, not merely a performance regression; speculative decoding
+  is therefore conservatively disabled by the automatic null behavior.
+- Ernie4.5-VL disables the setting because conditional text and vision MoE branches do not guarantee the assumed order.
+- On PyTorch builds where HAS_OPAQUE_TYPE is true, VllmConfig forces the effective value to false even if true was requested.
+tuning_advice:
+  summary: Leave the field null so vLLM enables the shortcut only on the legacy torch.compile path where its safety heuristic
+    passes; force a value only with a verified model execution order and a measured startup requirement.
+  suggested_values:
+  - scenario: Standard single-model MoE serving without speculative decoding
+    value: null (automatic)
+    reason: Uses vLLM's conservative automatic resolution, enabling the cold-start shortcut when needed while allowing newer
+      PyTorch opaque-object support to supersede it.
+  - scenario: Verified legacy torch.compile MoE deployment with critical startup latency
+    value: true
+    reason: Can greatly reduce compilation cold-start time when all documented single-forward and fixed-order assumptions
+      are known to hold.
+  - scenario: Speculative decoding, conditional MoE routing, or uncertain execution order
+    value: false
+    reason: Avoids silent layer-name/order mismatches; this is mandatory whenever the optimization's assumptions cannot be
+      proven.
+  caveats:
+  - The gain is a model compilation/startup-latency gain; benchmark first-load and warm-up time separately from steady-state
+    request latency and throughput.
+  - Explicit true bypasses the null default's speculative-decoding safeguard, although model-specific validation or PyTorch
+    opaque-object support may still force the effective value false.
+  - A faster cold start is never worth enabling this setting for a model with conditional, skipped, reordered, or multiple
+    decoder MoE execution because the documented failure mode is silent incorrectness.
+  - The pinned vllm-ascend source contains no direct implementation evidence for this optimization; validate separately before
+    assuming the upstream gain on NPU.
+  quick_guide: Keep null, measure MoE compilation cold-start time, and inspect whether the effective value was forced off.
+    Use true only for the legacy compiled path after verifying one decoder forward and strict initialization-order execution;
+    use false for speculative or conditional MoE paths.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - moe
+  - vlm
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output

@@ -1,0 +1,84 @@
+name: CompilationConfig.pass_config.eliminate_noops
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:127
+- vllm/config/compilation.py:243
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This flag controls whether vLLM adds its NoOpEliminationPass to the post-gradient Inductor pass pipeline.
+  With the default true value, that pass removes redundant reshape chains, same-shape reshapes and slices, and same-shape
+  slice_scatter operations from the compiled FX graph. Besides reducing redundant graph work, this cleanup is required for
+  some quantization and communication fusions to match: the current configuration warns that disabling it can prevent RMSNorm/SiluMul
+  plus quant, attention plus quant, all-reduce plus RMSNorm plus quant, and RMSNorm plus padding fusions from working. The
+  pinned vllm-ascend repository has no override or separate use of this field, so the effective behavior comes from its pinned
+  upstream vLLM dependency.'
+usage_locations:
+- file: vllm/config/compilation.py:127
+  context: Declares the nested boolean with a default of true; PassConfig is nested under CompilationConfig and participates
+    in the compilation configuration hash.
+- file: vllm/config/compilation.py:243
+  context: When false, emits warnings for enabled fusion combinations whose graph matching may fail without reshape/no-op
+    elimination.
+related_parameters:
+- name: CompilationConfig.pass_config.fuse_norm_quant
+  relation: RMSNorm plus quant fusion may fail to match when no-op reshape elimination is disabled.
+- name: CompilationConfig.pass_config.fuse_act_quant
+  relation: SiluMul plus quant fusion may fail to match when no-op reshape elimination is disabled.
+- name: CompilationConfig.pass_config.fuse_attn_quant
+  relation: Attention plus quant fusion may fail to match when no-op reshape elimination is disabled.
+- name: CompilationConfig.pass_config.fuse_allreduce_rms
+  relation: All-reduce plus RMSNorm plus quant fusion may fail to match when no-op reshape elimination is disabled.
+- name: CompilationConfig.pass_config.fuse_act_padding
+  relation: RMSNorm plus padding fusion may fail to match when no-op reshape elimination is disabled.
+constraints:
+- The setting affects the custom post-gradient Inductor pipeline; it does not provide an eager-execution optimization.
+- Disabling it can prevent enabled fusion passes from matching graphs that contain otherwise redundant reshape or slice operations.
+- Changing the value changes PassConfig's hash and therefore the compiled-graph cache identity.
+tuning_advice:
+  summary: Keep the default true value for normal deployments, especially when any dependent fusion is enabled. Disable it
+    only to isolate a compiler-pass correctness issue or to debug graph transformations.
+  suggested_values:
+  - scenario: Normal compiled inference, including quantized or fused configurations
+    value: true
+    reason: Removes redundant graph operations and preserves the graph shapes expected by several fusion matchers.
+  - scenario: Diagnosing a suspected NoOpEliminationPass correctness or compilation issue
+    value: false
+    reason: Omits that transformation from the post-gradient pass pipeline, providing a narrow diagnostic comparison at the
+      cost of possible missed fusions.
+  caveats:
+  - The direct runtime gain depends on whether the captured model graph contains removable reshapes or slices and whether
+    dependent fusions are enabled.
+  - A false value may appear to compile successfully while silently losing fusion opportunities; the current source warns
+    rather than rejecting those combinations.
+  - The pinned source provides no benchmark magnitude, so compare warm steady-state latency and throughput on the target model
+    and shapes if considering a non-default value.
+  quick_guide: Use true in production; use false only for a controlled compiler-debugging A/B test and check logs for missed-fusion
+    warnings.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

@@ -1,0 +1,91 @@
+name: KVTransferConfig.kv_connector_extra_config.prefill_pp_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:152
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:412
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:381
+- docs/source/user_guide/feature_guide/kv_pool.md:373
+value_type: int
+default: 1
+valid_choices: Positive integer equal to the prefill producer's actual pipeline-parallel stage count.
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"consumer_is_to_put":true,"prefill_pp_size":2,"prefill_pp_layer_partition":"30,31"}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: In AscendStore's consumer-side-put path, this value is converted to int and describes the number of pipeline-parallel
+  stages on the prefill producer. If prefill_pp_layer_partition is absent, the consumer derives that many near-even layer-count
+  partitions from num_hidden_layers; if it is present, its number of entries must equal prefill_pp_size. ChunkedTokenDatabase
+  then uses the resulting partitions before store operations to split KV address and size lists and rewrite keys for each
+  producer PP rank. The field does not repartition or resize the running prefill engine. The actual PP topology controls compute
+  and memory distribution and can materially affect latency and throughput; this metadata must match it so each stage's KV
+  slice is stored under the correct rank key. A mismatch can make transferred KV unusable rather than provide a useful independent
+  tuning tradeoff. The pinned upstream vLLM tree contains no use of this extra-config key.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:152
+  context: Reads prefill_pp_size only when kv_role is kv_consumer and consumer_is_to_put is true, validates an explicit partition
+    count against it, or derives a near-even layer-count list of this length.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/config_data.py:412
+  context: Uses the derived or explicit partition list to split KV addresses and sizes and replace the PP-rank component in
+    storage keys.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/kv_transfer.py:381
+  context: Applies the prefill-PP adapter before a KV consumer stores generated KV data in the pool.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:373
+  context: Documents that PP-enabled prefill nodes require prefill_pp_size or prefill_pp_layer_partition for consumer-side
+    put and shows size 2 with the layer counts "30,31".
+related_parameters:
+- name: KVTransferConfig.kv_connector_extra_config.prefill_pp_layer_partition
+  relation: Supplies the exact per-stage layer counts; its entry count must equal prefill_pp_size and its sum must equal num_hidden_layers.
+    When omitted, prefill_pp_size drives the near-even fallback.
+- name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_put
+  relation: prefill_pp_size is read only when this is true on a kv_consumer.
+- name: KVTransferConfig.kv_role
+  relation: The pool-worker path consuming this setting requires kv_role=kv_consumer.
+- name: pipeline_parallel_size
+  relation: Configures the producer's actual pipeline topology; prefill_pp_size must report that stage count but does not
+    change it.
+- name: KVTransferConfig.kv_connector
+  relation: This extra key is implemented by AscendStoreConnector's KV-pool worker and has no matching implementation in the
+    pinned upstream vLLM source.
+constraints:
+- Use a positive integer matching the prefill producer's actual number of PP stages. The implementation converts the value
+  with int(); zero reaches integer division when no explicit partition is supplied, and the source does not provide a separate
+  friendly range validator.
+- When prefill_pp_layer_partition is provided, its parsed entry count must equal prefill_pp_size or worker initialization
+  raises ValueError.
+- The explicit partition counts must sum to model_config.hf_text_config.num_hidden_layers or worker initialization raises
+  ValueError.
+- This setting is consulted only for kv_role=kv_consumer with consumer_is_to_put=true; otherwise no partition list is built
+  from it.
+- A value greater than one must describe a real producer PP layout. It does not launch PP stages or move layers by itself.
+tuning_advice:
+  summary: Set this to the prefill producer's real PP stage count and keep the consumer-side partition metadata synchronized
+    with the producer layout; tune the actual producer topology, then report it here.
+  suggested_values:
+  - scenario: Prefill producer does not use pipeline parallelism
+    value: 1
+    reason: This is the default and leaves the adapter on its single-partition no-op path.
+  - scenario: Prefill producer uses two PP stages with the documented 30/31-layer split
+    value: 2
+    reason: Matches the documented producer stage count and the two entries in prefill_pp_layer_partition="30,31".
+  - scenario: Prefill producer uses N pipeline-parallel stages
+    value: <the producer's actual PP stage count N>
+    reason: The consumer must create one rank-specific key and KV slice per actual producer stage; use an explicit partition
+      string when the producer's layer placement differs from the near-even fallback.
+  caveats:
+  - Increasing this number alone does not increase parallelism, redistribute model memory, or improve performance; the producer
+    must already use the matching PP topology.
+  - If prefill_pp_layer_partition is omitted, the worker assigns num_hidden_layers // prefill_pp_size layers per stage and
+    distributes remainder layers toward stages near the end. Use the fallback only when it exactly matches the producer.
+  - A syntactically valid but incorrect size or fallback layout can split KV addresses at the wrong layer boundaries or label
+    them with nonexistent or incorrect PP ranks.
+  - More producer PP stages can redistribute model memory but add pipeline communication and bubbles. Benchmark end-to-end
+    TTFT, throughput, and per-stage memory on the actual topology; the pinned source supplies no benchmark-derived optimum.
+  - The pinned upstream vLLM repository has no implementation of this key; the behavior is Ascend-specific.
+  quick_guide: Use 1 for a non-PP prefill producer; otherwise set the exact producer PP stage count and ensure the explicit
+    or derived layer counts match every producer rank.
+analysis_date: '2026-07-30'

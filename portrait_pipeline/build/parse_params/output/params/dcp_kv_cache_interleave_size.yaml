@@ -1,0 +1,71 @@
+name: --dcp-kv-cache-interleave-size
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:955
+- vllm/config/parallel.py:315
+- vllm/config/vllm.py:1953
+- vllm/v1/attention/backends/flashinfer.py:599
+value_type: int
+default: 1
+valid_choices: positive integer
+cli_example: --dcp-kv-cache-interleave-size 4
+deprecated: true
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter controls the interleave granularity of KV cache storage across Decode Context Parallel (DCP)
+  ranks. When DCP is enabled (decode_context_parallel_size > 1), the KV cache is distributed across DCP workers. The interleave
+  size determines how many consecutive tokens are stored on the same DCP rank before switching to the next rank. A larger
+  interleave size can improve memory access locality but may reduce load balance across DCP ranks. The parameter is read in
+  the FlashInfer attention backend (vllm/v1/attention/backends/flashinfer.py:599-601) to configure DCP-aware KV cache operations.
+  It is validated in vllm/config/vllm.py:1953-1972 to ensure compatibility with block_size (block_size must be >= and divisible
+  by the interleave size). This parameter is deprecated in favor of --cp-kv-cache-interleave-size, which serves the same purpose
+  for both DCP and PCP (Prefill Context Parallel). When both are set and differ, cp_kv_cache_interleave_size is overridden
+  by dcp_kv_cache_interleave_size with a deprecation warning. On Ascend NPU, the impact is indirect: it affects how KV cache
+  blocks are distributed across NPU memory, which can influence HCCL communication patterns during attention computation.
+  However, since this parameter is deprecated and its effect is superseded by cp_kv_cache_interleave_size, its practical performance
+  impact is low for new deployments.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:315
+  context: Field definition with default value 1 and deprecation notice
+- file: vllm/config/vllm.py:1953-1972
+  context: 'Validation: overrides cp_kv_cache_interleave_size if both set and differ; asserts block_size compatibility'
+- file: vllm/v1/attention/backends/flashinfer.py:599-601
+  context: Read by FlashInfer attention backend to configure DCP KV cache interleaving
+related_parameters:
+- name: --cp-kv-cache-interleave-size
+  relation: Replacement parameter; dcp_kv_cache_interleave_size overrides cp_kv_cache_interleave_size when both are set and
+    differ
+- name: --decode-context-parallel-size
+  relation: DCP must be enabled (value > 1) for this parameter to have any effect
+- name: --block-size
+  relation: block_size must be >= and divisible by the interleave size
+constraints:
+- Only takes effect when --decode-context-parallel-size is greater than 1.
+- block_size must be greater than or equal to and divisible by the effective interleave size (cp_kv_cache_interleave_size
+  after potential override).
+- When both --dcp-kv-cache-interleave-size and --cp-kv-cache-interleave-size are set and differ, cp_kv_cache_interleave_size
+  is silently overridden by dcp_kv_cache_interleave_size.
+tuning_advice:
+  summary: Use --cp-kv-cache-interleave-size instead; this parameter is deprecated and will be removed when PCP is fully supported.
+  suggested_values:
+  - scenario: New deployments on Ascend NPU
+    value: Do not use; use --cp-kv-cache-interleave-size instead
+    reason: This parameter is deprecated. --cp-kv-cache-interleave-size provides the same functionality for both DCP and PCP
+      and is the forward-looking option.
+  - scenario: Legacy DCP-only deployments requiring explicit interleave control
+    value: 1
+    reason: Default value of 1 provides fine-grained interleaving (one token per rank), which maximizes load balance across
+      DCP ranks at the cost of potentially lower memory access locality.
+  caveats:
+  - This parameter is deprecated and will be removed when PCP (Prefill Context Parallel) is fully supported. Migrate to --cp-kv-cache-interleave-size.
+  - Setting this parameter without also setting --decode-context-parallel-size > 1 has no effect.
+  - On Ascend NPU, the interleave size affects HCCL all-gather and reduce-scatter communication patterns during DCP attention.
+    Larger interleave sizes may reduce communication frequency but increase per-communication data volume.
+  quick_guide: Deprecated; migrate to --cp-kv-cache-interleave-size for both DCP and PCP KV cache interleaving control.
+analysis_date: '2026-07-06'

@@ -1,0 +1,90 @@
+name: KVTransferConfig.kv_connector_extra_config.cpu_swap_space_gb
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py
+- vllm/config/kv_transfer.py
+value_type: int
+default: 800
+valid_choices: Positive integer number of GiB; the implementation does not perform explicit range or type validation.
+cli_example: --kv-transfer-config '{"kv_connector":"CPUOffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_swap_space_gb":128}}'
+deprecated: true
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only extra setting is read when the CPUOffloadingConnector metadata server starts. MetadataServer
+  uses 800 GiB when the key is absent and converts the configured GiB value to bytes with value * 1024^3. During CPU KV-cache
+  initialization, that total byte budget is divided across pipeline/tensor-parallel ownership and model layers, then divided
+  by each layer's page_size_bytes to determine num_blocks. A larger value therefore creates more host shared-memory KV blocks
+  and can retain more prefixes, reducing recomputation and potentially improving latency and throughput when prompts reuse
+  cached prefixes. A smaller value reduces host-memory consumption but increases the chance that CPU block allocation fails
+  or cached prefixes are evicted/not retained, reducing offload benefit. The configured capacity does not reserve NPU HBM,
+  but loading and saving useful CPU-resident blocks still incurs host-NPU transfer overhead. This path is inactive unless
+  prefix caching is enabled and CPUOffloadingConnector is selected directly or within MultiConnector.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py
+  context: MetadataServer reads cpu_swap_space_gb, applies the 800 GiB fallback, converts it to bytes, and derives the per-rank/per-layer
+    CPU block count used for shared-memory allocation.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_kv_cache_manager.py
+  context: CPUKVCacheManager builds its block pool from the derived num_cpu_blocks; capacity controls allocation success,
+    retained prefix blocks, and CPU prefix-cache hits.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py
+  context: The connector initializes the metadata service and moves matched KV blocks between shared host memory and NPU cache,
+    making the configured CPU capacity operational.
+- file: vllm/config/kv_transfer.py
+  context: Upstream KVTransferConfig stores arbitrary connector extras and get_from_extra_config returns this key or the Ascend-provided
+    default without validation or coercion.
+- file: docs/source/user_guide/release_notes.md
+  context: States that CPUOffloadingConnector is deprecated and planned for replacement by vLLM CPUOffload.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The value is consumed only for CPUOffloadingConnector, either directly or as an entry in MultiConnector.
+- name: CacheConfig.enable_prefix_caching
+  relation: The metadata server and CPU offload path do not run when prefix caching is disabled.
+- name: KVTransferConfig.kv_connector_extra_config.swap_in_threshold
+  relation: Controls how many additional CPU-cached tokens must be found before the scheduler uses a CPU cache match.
+- name: ParallelConfig.tensor_parallel_size
+  relation: For non-MLA caches the total CPU byte budget is divided by world_size, so greater parallelism reduces blocks available
+    to each rank while keeping the configured budget aggregate.
+- name: ParallelConfig.pipeline_parallel_size
+  relation: MLA cache capacity is divided by pipeline_parallel_size before deriving blocks per layer.
+constraints:
+- Use an integer greater than zero. No explicit validation is present, but zero/negative values cannot produce a usable block
+  pool and non-integer values can fail when passed as a SharedMemory size.
+- Provision enough available host shared memory for the requested aggregate capacity; initialization creates multiprocessing
+  SharedMemory segments for every owned KV-cache layer.
+- The effective number of blocks is floor-divided by parallel ownership, layer count, and page size, so very small budgets
+  can round down to zero blocks.
+- CPUOffloadingConnector is deprecated in the pinned vLLM Ascend release and is planned to be replaced by the upstream CPUOffload
+  feature.
+tuning_advice:
+  summary: Size this as a host-memory budget for reusable CPU KV cache, based on measured prefix reuse and available shared
+    memory; do not accept the 800 GiB default blindly on smaller hosts.
+  suggested_values:
+  - scenario: Memory-constrained host or initial functional validation
+    value: 16
+    reason: A modest explicit budget limits shared-memory exposure while allowing the connector to cache some prefixes; verify
+      the resulting num_cpu_blocks and hit rate before increasing it.
+  - scenario: Production workload with repeated long prefixes
+    value: A positive integer GiB budget derived from available shared memory after reserving OS and application headroom
+    reason: More CPU blocks can raise prefix-cache hit capacity, but the useful value depends on model KV page size, parallelism,
+      prefix reuse, and host-NPU transfer economics rather than a universal constant.
+  - scenario: Host intentionally sized for the implementation default
+    value: 800
+    reason: This preserves current source behavior, but is appropriate only when the shared-memory backing and total host
+      RAM can safely accommodate the aggregate allocation.
+  caveats:
+  - 'Increasing capacity does not guarantee lower latency: workloads without reusable prefixes gain little, while CPU-to-NPU
+    loads and NPU-to-CPU saves still consume transfer bandwidth.'
+  - The source performs no type or bounds check before byte arithmetic and shared-memory creation, so malformed or oversized
+    values fail late during connector initialization.
+  - With MultiConnector, place cpu_swap_space_gb inside the extra config of the CPUOffloadingConnector entry that the metadata
+    helper discovers.
+  - Plan migration because CPUOffloadingConnector is deprecated in the pinned Ascend source documentation.
+  quick_guide: Start with a conservative integer GiB budget, confirm startup logs report the expected cpu swap-space bytes
+    and assigned CPU block count, then increase only while CPU prefix-cache hit rate and end-to-end latency/throughput improve
+    without host-memory pressure.
+analysis_date: '2026-07-30'

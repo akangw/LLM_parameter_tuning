@@ -1,0 +1,59 @@
+name: VLLM_RPC_TIMEOUT
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:929
+- vllm/envs.py:94
+value_type: int
+default: '10000'
+valid_choices: positive integer (milliseconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'VLLM_RPC_TIMEOUT controls the timeout (in milliseconds) for ZMQ RPC calls between the vLLM frontend/API server
+  and the backend engine processes. On Ascend NPU, this timeout applies to simple data operations (as noted in the source
+  comment: "Time in ms for the zmq client to wait for a response from the backend server for simple data operations"). If
+  the timeout is too low, RPC calls may fail prematurely during periods of high system load or when the NPU driver is busy,
+  causing request failures or engine restarts. If set too high, it may delay error detection. This parameter does not directly
+  affect token generation throughput or NPU compute efficiency, but it can impact end-to-end latency under load by causing
+  unnecessary retries or failures. vllm-ascend does not override or modify this parameter; the upstream vLLM ZMQ communication
+  layer is used as-is on Ascend.
+
+  '
+usage_locations:
+- file: vllm/envs.py:94
+  context: 'Type-hinted default declaration: VLLM_RPC_TIMEOUT: int = 10000 (ms)'
+- file: vllm/envs.py:929
+  context: Environment variable definition with default 10000 ms
+related_parameters:
+- name: VLLM_HTTP_TIMEOUT_KEEP_ALIVE
+  relation: Both control timeout behavior in the API server layer, but VLLM_RPC_TIMEOUT governs internal ZMQ RPC calls while
+    VLLM_HTTP_TIMEOUT_KEEP_ALIVE governs external HTTP connections
+constraints:
+- Must be a positive integer representing milliseconds
+tuning_advice:
+  summary: 'The default 10-second timeout is generally sufficient for Ascend NPU deployments. Only increase if you observe
+    ZMQ timeout errors under heavy concurrent load.
+
+    '
+  suggested_values:
+  - scenario: Default / standard deployment
+    value: 10000
+    reason: The default 10-second timeout is adequate for most workloads and avoids premature RPC failures
+  - scenario: High-load production with many concurrent requests causing occasional ZMQ timeouts
+    value: 30000
+    reason: A 30-second timeout provides extra headroom for the NPU driver and backend to respond under load spikes without
+      causing unnecessary request failures
+  - scenario: Development / debugging where fast failure detection is desired
+    value: 5000
+    reason: A shorter 5-second timeout helps quickly surface backend issues during development
+  caveats:
+  - Increasing this timeout does not improve token generation speed or NPU utilization; it only affects how long the frontend
+    waits for backend RPC responses
+  - If timeouts occur frequently, investigate the root cause (e.g., NPU driver contention, memory pressure) rather than solely
+    increasing this value
+  quick_guide: Keep the default 10000 ms unless ZMQ timeout errors appear in logs under load, then increase to 30000 ms
+analysis_date: '2026-07-06'

@@ -1,0 +1,61 @@
+name: VLLM_AUDIO_FETCH_TIMEOUT
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:816
+value_type: int
+default: '10'
+valid_choices: positive integer (seconds)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls the timeout (in seconds) for fetching audio files from URLs when serving
+  multimodal models. It is passed as the `fetch_timeout` parameter to `MediaConnector.load_from_url` and `MediaConnector.load_from_url_async`
+  in `vllm/multimodal/media/connector.py:382`. A higher timeout allows slower audio sources to complete without error, while
+  a lower timeout causes faster failure on unreachable URLs. The performance impact is low because it only affects the initial
+  audio loading phase of a request, not the core model inference throughput or memory usage on Ascend NPU. No vllm-ascend
+  override was found for this parameter.
+
+  '
+usage_locations:
+- file: vllm/multimodal/media/connector.py:382
+  context: Passed as fetch_timeout to load_from_url for synchronous audio fetching
+- file: vllm/multimodal/media/connector.py:397
+  context: Passed as fetch_timeout to load_from_url_async for asynchronous audio fetching
+- file: tests/models/multimodal/generation/test_ultravox.py:71
+  context: Set to 30 in test to allow longer audio fetch times
+- file: tests/models/multimodal/generation/test_voxtral.py:132
+  context: Set to 30 in test to allow longer audio fetch times
+related_parameters:
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Analogous timeout for image fetching (default 5s)
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Analogous timeout for video fetching (default 30s)
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls retry count for failed media fetches; each retry quadruples the timeout
+constraints:
+- Must be a positive integer representing seconds
+tuning_advice:
+  summary: 'Increase this timeout only if audio sources are slow or unreliable; the default of 10 seconds is sufficient for
+    most deployments.
+
+    '
+  suggested_values:
+  - scenario: Default usage with reliable audio sources
+    value: '10'
+    reason: The default 10-second timeout is adequate for typical HTTP-based audio fetching
+  - scenario: Slow or high-latency audio sources (e.g., remote object storage)
+    value: '30'
+    reason: A 30-second timeout accommodates slower network connections or large audio files without premature failure
+  - scenario: Local file-based audio (file:// URLs)
+    value: '5'
+    reason: Local file access is fast; a shorter timeout helps fail quickly on missing files
+  caveats:
+  - This timeout only affects the audio loading phase, not model inference speed on Ascend NPU
+  - Setting an excessively high timeout may cause requests to hang for long periods on unreachable URLs
+  - Works in conjunction with VLLM_MEDIA_FETCH_MAX_RETRIES; each retry quadruples the effective timeout
+  quick_guide: Use the default 10s unless audio sources are slow; increase to 30s for remote storage with high latency
+analysis_date: '2026-07-06'

@@ -1,0 +1,81 @@
+name: --scheduler-reserve-full-isl
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:140
+- vllm/engine/arg_utils.py:589
+- vllm/engine/arg_utils.py:1363
+- vllm/v1/core/sched/scheduler.py:245
+- vllm/v1/core/sched/scheduler.py:711
+- vllm_ascend/core/scheduler_profiling_chunk.py:587
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --scheduler-reserve-full-isl
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When enabled (default), the scheduler checks whether the FULL input sequence length (ISL) of a new request
+  fits in the KV cache before admitting it, rather than only checking the first chunk. This prevents over-admission: without
+  this check, the scheduler might admit a request whose first chunk fits, only to later discover the full sequence cannot
+  be accommodated, causing preemption and KV cache thrashing. The parameter is passed as `full_sequence_must_fit` to `kv_cache_manager.allocate_slots()`
+  in both the upstream v1 scheduler (vllm/v1/core/sched/scheduler.py:711) and the vllm-ascend profiling scheduler (vllm_ascend/core/scheduler_profiling_chunk.py:587).
+  On Ascend NPU, where KV cache memory is managed via CANN and may have different allocation granularity than GPU, preventing
+  over-admission is critical to avoid expensive preemption cycles that involve HCCL communication for KV block swaps. Setting
+  this to false can increase throughput by admitting more requests concurrently, but risks KV cache thrashing under high load
+  with long sequences.
+
+  '
+usage_locations:
+- file: vllm/v1/core/sched/scheduler.py:245
+  context: Stored as self.scheduler_reserve_full_isl from SchedulerConfig
+- file: vllm/v1/core/sched/scheduler.py:711
+  context: Passed to kv_cache_manager.allocate_slots() as full_sequence_must_fit during request scheduling
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:587
+  context: Same usage in vllm-ascend's profiling scheduler; passed to allocate_slots()
+- file: vllm/config/scheduler.py:140
+  context: Field definition in SchedulerConfig with default=True
+- file: vllm/engine/arg_utils.py:589
+  context: EngineArgs field binding to SchedulerConfig.scheduler_reserve_full_isl
+related_parameters:
+- name: --enable-chunked-prefill
+  relation: This parameter is most relevant when chunked prefill is enabled; without chunked prefill, the full ISL check is
+    less critical since requests are not split into chunks.
+- name: --max-num-batched-tokens
+  relation: Limits total tokens per batch; interacts with full ISL reservation by capping how many long-sequence requests
+    can be admitted.
+- name: --max-num-seqs
+  relation: Limits concurrent sequences; full ISL reservation may reduce effective concurrency when sequences are long.
+constraints:
+- This parameter has no effect when chunked prefill is disabled, since requests are always scheduled with their full sequence
+  length.
+tuning_advice:
+  summary: Keep enabled (default) for stable KV cache management on Ascend NPU; disable only if you observe under-utilization
+    and can tolerate occasional preemption.
+  suggested_values:
+  - scenario: Production serving with mixed sequence lengths on Ascend NPU
+    value: true
+    reason: Prevents KV cache thrashing and expensive preemption cycles that involve HCCL communication on Ascend. The default
+      value is safe and recommended.
+  - scenario: High-throughput batch processing with uniform short sequences
+    value: false
+    reason: When all sequences are short and uniform, the full ISL check is unnecessary overhead. Disabling allows the scheduler
+      to pack more requests, improving throughput.
+  - scenario: Debugging or testing scheduler behavior
+    value: false
+    reason: Disabling can help isolate whether KV cache admission is the bottleneck when diagnosing throughput issues.
+  caveats:
+  - Disabling this flag on Ascend NPU may lead to more frequent preemption events, which are more expensive than on GPU due
+    to HCCL-based KV block swaps.
+  - The vllm-ascend profiling scheduler (scheduler_profiling_chunk.py) uses this parameter identically to upstream; no Ascend-specific
+    override exists, but the performance implications are amplified by NPU memory management characteristics.
+  - When disabled, monitor KV cache usage and preemption metrics closely — thrashing can negate any throughput gains from
+    higher concurrency.
+  quick_guide: Keep the default (true) for stable Ascend NPU serving; only disable for uniform short-sequence workloads where
+    KV cache pressure is low.
+analysis_date: '2026-07-06'

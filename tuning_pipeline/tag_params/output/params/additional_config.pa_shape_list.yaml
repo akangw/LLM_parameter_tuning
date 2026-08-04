@@ -1,0 +1,99 @@
+name: additional_config.pa_shape_list
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:209
+- vllm_ascend/attention/utils.py:44
+- vllm_ascend/attention/attention_v1.py:410
+- vllm_ascend/attention/attention_v1.py:1270
+- vllm_ascend/worker/model_runner_v1.py:3252
+- docs/source/user_guide/configuration/additional_config.md:85
+- docs/source/tutorials/models/Qwen3-Dense.md:195
+value_type: list[int]
+default: []
+valid_choices: A list of positive integer runtime decode shapes (batch/token counts) that are also captured by the configured
+  CUDA-graph capture sizes.
+cli_example: --additional-config '{"pa_shape_list":[48,64,72,80]}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This temporary Ascend tuning knob changes attention-operator dispatch for selected decode runtime shapes. When
+  a runtime token count is listed and all eligibility checks pass, vLLM-Ascend uses _npu_paged_attention (PA) instead of npu_fused_infer_attention_score
+  (FIA), including the corresponding graph update and workspace path. This can avoid latency or throughput regressions at
+  profiled concurrency levels where PA outperforms FIA. The default empty list never forces PA. The setting has no effect
+  for speculative decoding, A5 devices, compilation modes other than FULL_DECODE_ONLY, non-decode attention states, or layers
+  with a sliding window.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:209
+  context: Reads the flat list from additional_config and defaults it to an empty list.
+- file: vllm_ascend/attention/utils.py:44
+  context: Tests runtime_shape membership after rejecting speculative decoding, A5 devices, and graph modes other than FULL_DECODE_ONLY.
+- file: vllm_ascend/attention/attention_v1.py:410
+  context: Selects the PA graph-update path for a matching runtime token count; otherwise updates the FIA path.
+- file: vllm_ascend/attention/attention_v1.py:1270
+  context: Dispatches decode-only attention to PA for a matching runtime token count when sliding-window attention is absent.
+- file: vllm_ascend/worker/model_runner_v1.py:3252
+  context: Uses a fixed sequence length during graph capture for matching PA shapes so the PA workspace is sized appropriately.
+- file: docs/source/tutorials/models/Qwen3-Dense.md:195
+  context: Documents the values as batch sizes and explains the temporary PA-for-FIA substitution at profiled concurrency
+    settings.
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: Must be FULL_DECODE_ONLY or every pa_shape_list entry is ignored.
+- name: compilation_config.cudagraph_capture_sizes
+  relation: Should include each selected runtime batch size so that the intended decode graph is captured.
+- name: speculative_config
+  relation: Any enabled speculative configuration disables the PA selection performed by this parameter.
+constraints:
+- Values are runtime decode token counts (batch sizes), not nested dimension vectors.
+- PA selection requires compilation_config.cudagraph_mode to be FULL_DECODE_ONLY.
+- PA selection is disabled when speculative decoding is configured or when running on an Ascend A5 device.
+- The attention forward path additionally requires DecodeOnly state and no sliding window.
+- Configure only positive integer sizes that are valid for and included in the graph-capture workload.
+tuning_advice:
+  summary: Leave the list empty unless profiling identifies specific decode concurrency levels where PA outperforms FIA, then
+    add only those captured batch sizes.
+  suggested_values:
+  - scenario: General or unprofiled workloads
+    value: []
+    reason: Keeps the default FIA dispatch and avoids forcing PA at sizes where it may be slower.
+  - scenario: Profiled Qwen3 decode workload with PA wins at documented sizes
+    value:
+    - 48
+    - 64
+    - 72
+    - 80
+    reason: Demonstrates the documented flat batch-size form; retain only sizes whose PA benefit is reproduced on the actual
+      model and hardware.
+  caveats:
+  - The source describes this as a temporary workaround to be removed once FIA performs better in all relevant cases.
+  - Listing a size does not override the speculative-decoding, device, graph-mode, decode-state, or sliding-window eligibility
+    checks.
+  - Operator performance is model-, hardware-, and concurrency-dependent, so copying example sizes without benchmarking can
+    reduce performance.
+  - Keep cudagraph_capture_sizes aligned with the selected batch sizes and account for graph-capture memory when adding sizes.
+  quick_guide: Profile decode at candidate concurrency levels under FULL_DECODE_ONLY, list only repeatable PA wins, align
+    capture sizes, and compare end-to-end latency and throughput.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

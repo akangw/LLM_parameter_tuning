@@ -1,0 +1,6 @@
+name: VLLM_WEIGHT_OFFLOADING_DISABLE_UVA
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares and parses this environment variable in vllm/envs.py; neither pinned repository
+  consumes it, so changing it cannot affect latency, throughput, or memory usage. The pinned vLLM Ascend source implements
+  its separate UVA-buffer compatibility wrapper without reading this variable.

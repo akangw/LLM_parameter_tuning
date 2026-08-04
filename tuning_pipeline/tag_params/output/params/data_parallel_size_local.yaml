@@ -1,0 +1,107 @@
+name: --data-parallel-size-local
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:986
+- vllm/engine/arg_utils.py:1788
+- vllm/config/parallel.py:428
+- vllm_ascend/worker/worker.py:294
+- vllm_ascend/_310p/worker_310p.py:173
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1584
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1392
+value_type: int
+default: <computed>
+valid_choices: Positive integer no greater than --data-parallel-size; 0 is also handled as a topology signal.
+cli_example: --data-parallel-size 4 --data-parallel-size-local 2
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This option selects how many data-parallel ranks are placed locally within a DP topology. More local DP ranks
+  can increase serving throughput by allowing more replicas to process requests concurrently, but each replica requires its
+  own runtime model and KV-cache allocation, increasing aggregate accelerator memory demand. It also changes node/topology
+  calculations: upstream derives the number of nodes within each DP group from data_parallel_size divided by data_parallel_size_local.
+  On Ascend, for a single-node DP group using neither Ray nor an external launcher, the worker asserts that local_world_size
+  does not exceed the visible NPU count. Mooncake KV-transfer connectors also use this value as their local DP size when constructing
+  their device topology.'
+usage_locations:
+- file: vllm/engine/arg_utils.py:1788
+  context: Infers the local DP size for internal DP load balancing in multi-node mode, or defaults it to the global DP size
+    (or 1 for Ray span packing) when omitted.
+- file: vllm/config/parallel.py:428
+  context: Rejects a local DP size greater than the global data_parallel_size.
+- file: vllm/config/parallel.py:645
+  context: Uses data_parallel_size divided by data_parallel_size_local to derive the nodes within a DP group and thereby local_world_size.
+- file: vllm_ascend/worker/worker.py:294
+  context: Validates local_world_size against visible NPU devices for applicable single-node DP configurations.
+- file: vllm_ascend/_310p/worker_310p.py:173
+  context: Applies the same visible-NPU capacity validation in the 310P worker.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1584
+  context: Sets the Mooncake connector local DP size used in its device-topology calculations.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1392
+  context: Sets the Mooncake hybrid connector local DP size used in its device-topology calculations.
+related_parameters:
+- name: --data-parallel-size
+  relation: Sets the global number of DP ranks; data_parallel_size_local must not exceed it.
+- name: --tensor-parallel-size
+  relation: Together with pipeline parallel size, determines world_size_within_dp used when inferring local DP size.
+- name: --pipeline-parallel-size
+  relation: Together with tensor parallel size, determines world_size_within_dp used when inferring local DP size.
+- name: --data-parallel-rank
+  relation: Enables external DP load balancing; when set, local DP size must be 1 or omitted and the resolved value is 1.
+- name: --data-parallel-hybrid-lb
+  relation: Requires an explicitly resolved local DP size; a size of 1 is converted to external load balancing, while a size
+    equal to global DP disables hybrid mode for a single node.
+- name: --data-parallel-backend
+  relation: Ray span packing defaults local DP size to 1, and Ascend's local device-count check excludes Ray.
+- name: --nnodes
+  relation: Multi-node inference uses nnodes and per-DP world size to infer the local DP size when it is omitted.
+constraints:
+- data_parallel_size_local must be less than or equal to data_parallel_size.
+- When data_parallel_rank or external DP load balancing is used, data_parallel_size_local must be 1 or omitted; the resolved
+  local size is 1.
+- For multi-node deployments, global world_size must be divisible by nnodes.
+- On Ascend single-node DP groups using neither Ray nor external_launcher, local_world_size must not exceed the visible NPU
+  device count.
+tuning_advice:
+  summary: Choose the number of DP ranks that should reside on each node, after confirming both the available NPUs and the
+    memory budget for concurrent replicas.
+  suggested_values:
+  - scenario: Single-node DP deployment with enough NPUs and memory for multiple replicas
+    value: Match the intended local replica count, for example 2
+    reason: Places multiple DP ranks locally so they can serve requests concurrently, subject to the Ascend visible-device
+      check.
+  - scenario: Memory-constrained deployment or one replica per node
+    value: 1
+    reason: Limits the node to one local DP rank and avoids multiplying replica memory requirements on that node.
+  - scenario: Multi-node internal DP load balancing with no explicit topology requirement
+    value: Omit the option
+    reason: Upstream infers it from local_world_size divided by pipeline_parallel_size times tensor_parallel_size, with a
+      minimum of 1.
+  caveats:
+  - Increasing the local size changes placement; it does not reduce the per-replica model or KV-cache footprint.
+  - Ray span packing and external DP load balancing resolve local placement differently from ordinary multiprocessing DP.
+  - Ensure TP times PP times the intended local DP placement fits the visible NPU capacity when the Ascend worker check applies.
+  quick_guide: Set this to the desired DP replicas per node, keep it no larger than global DP size, and verify local NPU count
+    and memory before increasing it.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

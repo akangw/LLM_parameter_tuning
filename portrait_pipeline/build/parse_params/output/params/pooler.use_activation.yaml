@@ -1,0 +1,74 @@
+name: pooler.use_activation
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/model_executor/models/config.py:233
+- vllm/model_executor/models/config.py:576
+value_type: bool
+default: 'True'
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls whether an activation function (typically Tanh) is applied to the final pooled output
+  of embedding/classification models. When enabled, the activation introduces a small additional computation at the output
+  layer. The performance impact is minimal because: "(1) the activation is applied only once per" sequence after pooling,
+  not per token; (2) it operates on a single vector of dimension `hidden_size` (typically 768-4096), which is negligible compared
+  to the transformer forward pass. The parameter does not affect memory usage, parallelism, or communication patterns. On
+  Ascend NPU, the Tanh/ReLU activation is a standard CANN operator with no Ascend-specific performance considerations.
+
+  '
+usage_locations:
+- file: vllm/model_executor/models/config.py:233
+  context: JambaForSequenceClassificationConfig sets use_activation=False when None
+- file: vllm/model_executor/models/config.py:576
+  context: Qwen2ForRewardModelConfig sets use_activation=False when None
+- file: tests/model_executor/test_model_load_with_params.py:51
+  context: Test asserts use_activation is True for BERT embedding model
+- file: tests/model_executor/test_model_load_with_params.py:96
+  context: Test asserts use_activation is True for RoBERTa embedding model
+- file: tests/models/language/pooling/test_pooler_config_init_behaviour.py:27
+  context: Test verifies activation changes pooler output for classification models
+- file: tests/models/language/pooling/test_pooler_config_init_behaviour.py:69
+  context: Test verifies activation changes pooler output for embedding models
+- file: tests/test_config.py:260
+  context: Test asserts default use_activation is True for sentence-transformers model
+related_parameters:
+- name: pooler_config
+  relation: Parent configuration object containing use_activation and other pooler settings
+- name: pooler.normalize
+  relation: Normalization is often applied after activation; both affect final embedding output
+constraints:
+- Must be a boolean value (True or False).
+- When set to None, model-specific config classes may override the default (e.g., Jamba and Qwen2 reward models default to
+  False).
+tuning_advice:
+  summary: 'Use the model''s default activation setting unless you have a specific reason to change it. Disabling activation
+    slightly reduces computation but may change embedding semantics.
+
+    '
+  suggested_values:
+  - scenario: Default behavior for most embedding/classification models
+    value: true
+    reason: Matches the original model's output semantics; most sentence-transformers and BERT-family models use Tanh activation
+      by default.
+  - scenario: Jamba sequence classification or Qwen2 reward models
+    value: false
+    reason: These model configs explicitly set use_activation=False as their default, matching the intended output format.
+  - scenario: When raw logits are needed for downstream processing
+    value: false
+    reason: Disabling activation provides unnormalized raw scores, which may be preferred for certain classification or reward
+      modeling tasks.
+  caveats:
+  - Changing this parameter alters the model output values, which may affect downstream task accuracy if the consuming application
+    expects activated outputs.
+  - On Ascend NPU, there is no hardware-specific advantage to enabling or disabling this parameter — the performance difference
+    is negligible.
+  quick_guide: Keep the default (True for most models, False for Jamba/Qwen2 reward) unless your application requires raw
+    unactivated outputs.
+analysis_date: '2026-07-06'

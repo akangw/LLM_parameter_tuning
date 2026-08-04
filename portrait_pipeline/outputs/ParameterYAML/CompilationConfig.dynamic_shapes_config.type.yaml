@@ -1,0 +1,90 @@
+name: CompilationConfig.dynamic_shapes_config.type
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:308
+- vllm/config/compilation.py:332
+- docs/design/torch_compile.md:37
+- vllm_ascend/platform.py:487
+value_type: str
+default: backed
+valid_choices:
+- backed
+- unbacked
+- backed_size_oblivious
+cli_example: -cc.dynamic_shapes_config.type=backed_size_oblivious
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This field determines how the dimensions declared dynamic by a model''s support_torch_compile decorator are
+  represented during the first compiled call. The backed default uses torch._dynamo.mark_dynamic, allowing guards and unconditional
+  0/1 specialization; vLLM normally drops those guards, which preserves optimization opportunities but can be unsound if a
+  dropped guard was material. Unbacked instead uses mark_unbacked, preventing guards and 0/1 specialization but potentially
+  selecting more general kernels, missing optimizations, introducing operations such as clones, or raising a data-dependent
+  error when code requires a symbolic value. The experimental backed_size_oblivious mode keeps backed inputs but enables PyTorch''s
+  backed_size_oblivious tracing behavior, reducing specialization where explicit unbacked handling exists. These choices can
+  therefore change compiled-kernel latency, throughput, and intermediate memory use. The nested config also participates in
+  the compilation hash, so changing the type selects a distinct artifact cache and can add cold compilation work. Ascend does
+  not override this field: when the platform retains VLLM_COMPILE mode, the shared vLLM decorator logic runs before graphs
+  are passed to the AscendCompiler, so the semantic trade-offs apply even though the downstream compiler is NPU-specific.'
+usage_locations:
+- file: vllm/config/compilation.py:785
+  context: Includes the complete DynamicShapesConfig, including this field, in the compilation configuration hash used to
+    separate cached artifacts.
+- file: vllm_ascend/platform.py:487
+  context: Keeps VLLM_COMPILE active for Ascend piecewise graph mode and installs the Ascend compiler, so the shared upstream
+    tracing and dynamic-shape wrapper remains on the NPU compilation path.
+related_parameters:
+- name: CompilationConfig.dynamic_shapes_config.evaluate_guards
+  relation: Requests retention and evaluation of dynamic-shape guards for debugging; it is incompatible with unbacked and
+    has additional bytecode-hook and AOT limitations.
+- name: CompilationConfig.mode
+  relation: The type affects the support_torch_compile wrapper only when model compilation is active; eager or disabled compilation
+    bypasses this tuning.
+- name: CompilationConfig.backend
+  relation: Determines the compiler that receives the graph produced under the selected dynamic-shape semantics; Ascend normally
+    selects AscendCompiler.
+- name: VLLM_USE_AOT_COMPILE
+  relation: Selects ahead-of-time compilation and cache loading, while the type remains part of the configuration hash and
+    controls first-trace shape semantics when a cached artifact is unavailable.
+constraints:
+- Accepted serialized values are exactly backed, unbacked, and backed_size_oblivious.
+- Unbacked cannot be combined with CompilationConfig.dynamic_shapes_config.evaluate_guards=true because unbacked symbolic
+  dimensions do not add guards.
+- Guard evaluation requires VLLM_USE_BYTECODE_HOOK=0; the pinned tests also exclude its backed plus AOT combination.
+- A dynamic shape with a named shape_id requires PyTorch 2.11 or newer; the decorator raises at runtime on older versions.
+- backed_size_oblivious is an experimental PyTorch mode and may be deprecated or change behavior.
+- The field has no runtime effect when compilation is disabled or the model is not wrapped by support_torch_compile.
+tuning_advice:
+  summary: Keep backed for normal performance-oriented serving. Use the stricter modes to resolve or reduce unsafe dynamic-shape
+    guard behavior, then benchmark the resulting compiled path on the target model and hardware.
+  suggested_values:
+  - scenario: Normal production serving with stable, validated shapes
+    value: backed
+    reason: It is the default and retains the most compiler optimization opportunity, although vLLM's dropped-guard design
+      requires correctness validation across representative shapes.
+  - scenario: Guard-related failures where a balance between safety and performance is desired
+    value: backed_size_oblivious
+    reason: It reduces common 0/1 specialization by treating backed symbols as unbacked where PyTorch has explicit support,
+      while usually sacrificing less optimization opportunity than fully unbacked shapes.
+  - scenario: Debugging suspected unsound dropped guards or requiring the strongest no-guard guarantee
+    value: unbacked
+    reason: Unbacked symbolic dimensions cannot acquire guards or 0/1 specialization, making guard assumptions easier to isolate.
+  caveats:
+  - The safest shape semantics are not necessarily the fastest; unbacked can choose general paths, miss optimizations, or
+    introduce extra copies.
+  - Unbacked can raise data-dependent errors when traced code branches on a symbolic value without explicit unbacked handling.
+  - backed_size_oblivious still does not guarantee that no guard will be created, especially in user code or custom compiler
+    passes.
+  - Ascend uses the same tracing choice but a different downstream compiler, so CUDA or Inductor benchmark results do not
+    predict NPU performance; test the exact CANN, torch-npu, model, shapes, and concurrency.
+  - Switching the value invalidates reuse of artifacts keyed by the prior DynamicShapesConfig and may increase the next startup
+    or warm-up time.
+  quick_guide: Start with backed. If varying input shapes expose a suspected guard-related correctness or recompilation issue,
+    test backed_size_oblivious, then unbacked if a strict no-guard diagnosis is needed. Compare cold compile time, steady-state
+    latency, throughput, and peak memory before retaining a non-default mode.
+analysis_date: '2026-07-30'

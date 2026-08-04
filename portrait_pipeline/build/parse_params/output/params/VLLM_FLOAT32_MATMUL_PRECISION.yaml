@@ -1,0 +1,69 @@
+name: VLLM_FLOAT32_MATMUL_PRECISION
+type: env
+category: hardware
+scope: vllm
+source_file:
+- vllm/envs.py:520
+- vllm/envs.py:83
+value_type: str
+default: highest
+valid_choices:
+- highest
+- high
+- medium
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls the precision mode used by PyTorch for float32 matrix multiplications via
+  torch.set_float32_matmul_precision(). On Ascend NPU, this setting is applied in the v1 worker initialization path (vllm/v1/worker/gpu_worker.py:124-125)
+  and affects all subsequent matmul operations in the model forward pass. The three modes map to: ''highest'' (full IEEE FP32,
+  no precision loss), ''high'' (TF32 tensor cores on CUDA, but on Ascend NPU this may fall back to FP32 or use a CANN-specific
+  fast path depending on the operator), and ''medium'' (bfloat16-like precision for matmul accumulation). On Ascend NPU, the
+  actual behavior depends on the CANN operator implementation and the specific Da Vinci architecture support for mixed-precision
+  matmul. Lower precision modes can significantly accelerate matrix multiplications at the cost of numerical accuracy, directly
+  affecting both token generation latency and overall throughput. No vllm-ascend override was found for this parameter, so
+  the upstream vLLM behavior applies as-is on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_worker.py:124
+  context: Worker.__init__ reads VLLM_FLOAT32_MATMUL_PRECISION and calls torch.set_float32_matmul_precision()
+- file: vllm/envs.py:520
+  context: Environment variable definition with env_with_choices, default 'highest', valid choices ['highest', 'high', 'medium']
+- file: vllm/envs.py:83
+  context: 'Type annotation: Literal[''highest'', ''high'', ''medium''] with default ''highest'''
+related_parameters:
+- name: VLLM_TARGET_DEVICE
+  relation: Determines the backend device; on Ascend NPU the actual matmul precision behavior depends on CANN operator support
+    for the selected precision mode
+constraints:
+- Must be one of 'highest', 'high', or 'medium' (case-insensitive)
+tuning_advice:
+  summary: 'On Ascend NPU, start with ''highest'' for accuracy-critical workloads and only lower to ''high'' or ''medium''
+    if throughput benchmarks show measurable gains without unacceptable output quality degradation.
+
+    '
+  suggested_values:
+  - scenario: Production serving where numerical accuracy is critical (e.g., code generation, math reasoning)
+    value: highest
+    reason: Ensures full IEEE FP32 precision for all matmul operations, avoiding any risk of accuracy degradation from mixed-precision
+      accumulation on Ascend NPU
+  - scenario: High-throughput serving where slight precision loss is acceptable (e.g., chat, summarization)
+    value: high
+    reason: May enable faster matmul execution on Ascend NPU if CANN operators support TF32-like fast paths; test output quality
+      before deploying
+  - scenario: Maximum throughput with tolerance for reduced precision
+    value: medium
+    reason: Uses bfloat16-like accumulation for matmul, potentially offering the highest throughput on Ascend NPU at the cost
+      of numerical accuracy
+  caveats:
+  - On Ascend NPU, the actual performance gain from lowering precision depends on whether the CANN operator library implements
+    optimized kernels for 'high' and 'medium' modes — benchmark before deploying
+  - Lower precision modes may cause subtle output quality differences; always validate model outputs when changing this setting
+  - This setting only affects float32 matmul operations; other operations (e.g., attention, layer norm) are not affected
+  quick_guide: Use 'highest' for accuracy, 'high' for balanced performance, 'medium' for maximum speed — benchmark on Ascend
+    NPU to confirm actual gains
+analysis_date: '2026-07-06'

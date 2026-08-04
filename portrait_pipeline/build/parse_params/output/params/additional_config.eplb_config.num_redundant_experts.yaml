@@ -1,0 +1,102 @@
+name: additional_config.eplb_config.num_redundant_experts
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm_ascend/ascend_config.py:635
+- vllm/config/parallel.py:461
+value_type: int
+default: 0
+valid_choices: non-negative integer
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls the number of redundant (physical) experts added beyond the model''s logical expert
+  count in MoE (Mixture of Experts) models. It directly affects the Expert Parallelism Load Balancing (EPLB) mechanism on
+  Ascend NPUs. The total physical expert count becomes `n_logical_experts + num_redundant_experts`, and each EP rank gets
+  `n_physical_experts // ep_size` local experts. Redundant experts allow the EPLB algorithm to replicate heavily-loaded experts
+  across multiple NPUs, reducing token dispatch imbalance and improving throughput. However, each redundant expert consumes
+  additional NPU memory for its weight parameters. On Ascend, this is consumed in `vllm_ascend/models/deepseek_v4.py:265-268`
+  and `vllm_ascend/eplb/core/eplb_utils.py:76-92`, where `n_redundant` is used to generate global expert placements and logical-to-physical
+  mapping tensors. The parameter is only effective when EPLB is enabled (`enable_eplb=True` or `dynamic_eplb=True`). When
+  EPLB is disabled, setting a non-zero value raises a `ValueError` in `vllm/config/parallel.py:461-467`. During elastic EP
+  scaling, the value is dynamically recomputed in `vllm/distributed/elastic_ep/elastic_execute.py:167-169` and `:353-355`.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:635
+  context: Default value definition in EplbConfig._defaults dict
+- file: vllm_ascend/ascend_config.py:670-674
+  context: 'Validation: must be int and >= 0'
+- file: vllm_ascend/eplb/core/eplb_utils.py:76
+  context: Read as n_redundant when dynamic_eplb is enabled; used to generate global_placement
+- file: vllm_ascend/models/deepseek_v4.py:265-268
+  context: Sets n_physical_experts = n_logical_experts + n_redundant_experts for Ascend DeepSeek V4
+- file: vllm/config/parallel.py:461-467
+  context: 'Validation: raises ValueError if > 0 but EPLB is not enabled'
+- file: vllm/model_executor/models/deepseek_v2.py:288-291
+  context: Sets n_physical_experts for upstream DeepSeek V2/V3 models
+- file: vllm/model_executor/models/afmoe.py:107-110
+  context: Sets n_physical_experts for AFMoE models
+- file: vllm/model_executor/models/ernie45_moe.py:150-153
+  context: Sets n_physical_experts for Ernie 4.5 MoE models
+- file: vllm/model_executor/models/AXK1.py:141-144
+  context: Sets n_physical_experts for AXK1 models
+- file: vllm/distributed/elastic_ep/elastic_execute.py:167-169
+  context: Dynamically recomputed during elastic EP scale-up from physical/logical expert counts
+- file: vllm/distributed/elastic_ep/elastic_execute.py:353-355
+  context: Dynamically recomputed during elastic EP scale-down from physical/logical expert counts
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must be True for num_redundant_experts to take effect; otherwise raises ValueError
+- name: parallel_config.enable_eplb
+  relation: Must be True for num_redundant_experts to take effect; upstream validation enforces this
+- name: parallel_config.enable_expert_parallel
+  relation: EPLB requires expert parallelism to be enabled
+- name: parallel_config.tensor_parallel_size
+  relation: Documentation recommends num_redundant_experts match tensor_parallel_size
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Controls which EPLB balancing algorithm uses the redundant experts
+constraints:
+- num_redundant_experts must be a non-negative integer
+- num_redundant_experts must be 0 when EPLB is not enabled (enable_eplb=False), otherwise a ValueError is raised
+- EPLB must be used with expert parallelism (ep_size > 1), otherwise an assertion fails
+- num_redundant_experts must not exceed the number of available GPUs, otherwise system failure occurs
+tuning_advice:
+  summary: 'Set num_redundant_experts equal to the tensor-parallel size (tp_size) to provide one redundant expert slot per
+    GPU, enabling effective load balancing for MoE models on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Standard MoE deployment with EPLB enabled (e.g., DeepSeek-V2/V3 on 8 or 16 NPUs)
+    value: tensor_parallel_size
+    reason: 'Documentation recommends matching tensor-parallel size to ensure sufficient redundancy. Each redundant expert
+      slot allows the EPLB algorithm to replicate a hot expert onto another NPU, reducing token dispatch skew and improving
+      throughput.
+
+      '
+  - scenario: EPLB disabled or expert_parallel not used
+    value: 0
+    reason: 'Required by validation; non-zero value with EPLB disabled raises ValueError. Redundant experts have no effect
+      without the EPLB balancing mechanism.
+
+      '
+  - scenario: Memory-constrained deployment where expert weights are large
+    value: 0 or a small value (1-2)
+    reason: 'Each redundant expert adds a full copy of expert weights, increasing NPU memory usage. If memory is tight, reduce
+      or disable redundant experts and accept potential load imbalance.
+
+      '
+  caveats:
+  - Each redundant expert consumes additional NPU memory equal to one expert's weight parameters
+  - Setting num_redundant_experts > available GPUs causes system failure per documentation
+  - During elastic EP scaling, this value is dynamically recomputed and should not be manually set
+  - The parameter only affects models with MoE layers (DeepSeek-V2/V3/V4, AFMoE, Ernie 4.5 MoE, AXK1)
+  - On Ascend, the vllm-ascend plugin's EplbConfig class manages this parameter; upstream vLLM validation still applies
+  quick_guide: 'Set num_redundant_experts = tensor_parallel_size when EPLB is enabled; set to 0 otherwise.
+
+    '
+analysis_date: '2026-07-06'

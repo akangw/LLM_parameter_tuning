@@ -1,0 +1,71 @@
+name: VLLM_SKIP_P2P_CHECK
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:974
+- vllm/envs.py:106
+- vllm/distributed/device_communicators/custom_all_reduce.py:35
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls whether vLLM performs an actual GPU peer-to-peer (P2P) access check during
+  custom allreduce initialization. When VLLM_SKIP_P2P_CHECK is true (the default), vLLM trusts the driver''s P2P capability
+  report and skips the runtime verification via gpu_p2p_access_check(). When set to false, vLLM performs an explicit P2P access
+  test between each pair of GPUs in the world. On Ascend NPU, this code path is in the upstream vllm custom_all_reduce module,
+  which is GPU-specific (uses torch.cuda). vllm-ascend does not override or reference this variable — it uses HCCL-based communication
+  instead of custom allreduce. Therefore, this parameter has minimal impact on Ascend NPU: the custom allreduce path is typically
+  not exercised on Ascend hardware, making the P2P check irrelevant for most Ascend deployments. However, if custom allreduce
+  is somehow enabled on Ascend (unusual), setting this to false would add a small initialization-time overhead from the P2P
+  verification loop.
+
+  '
+usage_locations:
+- file: vllm/distributed/device_communicators/custom_all_reduce.py:35
+  context: 'In _can_p2p(), if VLLM_SKIP_P2P_CHECK is true, skips the actual P2P access check and directly returns the driver-reported
+    P2P capability. If false, calls gpu_p2p_access_check() for each peer GPU pair.
+
+    '
+related_parameters:
+- name: VLLM_DISABLE_PYNCCL
+  relation: 'Both affect custom allreduce behavior. VLLM_DISABLE_PYNCCL disables pynccl entirely (falling back to torch.distributed),
+    while VLLM_SKIP_P2P_CHECK only affects the P2P verification step within custom allreduce initialization.
+
+    '
+constraints:
+- This parameter only affects the custom allreduce communication path, which is GPU-specific and typically not used on Ascend
+  NPU.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has negligible performance impact because vllm-ascend uses HCCL-based communication
+    rather than custom allreduce. Leave at the default (true).
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: true
+    reason: 'vllm-ascend uses HCCL for inter-device communication, not custom allreduce. The P2P check is irrelevant and setting
+      it to false only adds unnecessary initialization overhead if the custom allreduce path is accidentally triggered.
+
+      '
+  caveats:
+  - 'This parameter is GPU-specific (torch.cuda.can_device_access_peer). On Ascend NPU, the custom allreduce module is not
+    the primary communication mechanism — HCCL handles collective operations. Changing this value is unlikely to have any
+    measurable effect.
+
+    '
+  - 'If you are debugging hangs during initialization on Ascend, this parameter is NOT the right place to look. Focus on HCCL
+    environment variables (e.g., HCCL_CONNECT_TIMEOUT, HCCL_EXEC_TIMEOUT) instead.
+
+    '
+  quick_guide: 'Leave at default (true) on Ascend NPU — the custom allreduce P2P check is not relevant to HCCL-based communication.
+
+    '
+analysis_date: '2026-07-06'

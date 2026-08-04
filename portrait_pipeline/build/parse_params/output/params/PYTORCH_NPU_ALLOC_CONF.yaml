@@ -1,0 +1,86 @@
+name: PYTORCH_NPU_ALLOC_CONF
+type: env
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/platform.py:655
+- vllm_ascend/device_allocator/camem.py:150
+value_type: str
+default: expandable_segments:True
+valid_choices: 'comma-separated key:value pairs; supported keys: expandable_segments, max_split_size_mb, garbage_collection_threshold,
+  page_size'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This environment variable controls the NPU memory allocator behavior in PyTorch Ascend. vllm-ascend automatically
+  sets it to "expandable_segments:True" by default (platform.py:655) when sleep mode is not enabled. The expandable segments
+  feature allows the allocator to grow memory segments dynamically, reducing memory fragmentation and OOM errors during inference.
+  However, it is incompatible with max_split_size_mb and garbage_collection_threshold (platform.py:659-660) — if either is
+  present, expandable_segments is not appended. The CaMemAllocator (camem.py:150) explicitly asserts that expandable_segments:True
+  is NOT set, as it conflicts with the memory pool mechanism. The documentation also shows that max_split_size_mb can be used
+  as an alternative strategy to reduce fragmentation by preventing large block splits (optimization_and_tuning.md:150). The
+  choice between expandable_segments and max_split_size_mb directly impacts memory utilization efficiency and can determine
+  whether a model fits in NPU memory at all.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:655
+  context: 'Default setting: appends expandable_segments:True if not already present and no conflicting keys exist'
+- file: vllm_ascend/device_allocator/camem.py:150
+  context: 'CaMemAllocator initialization: asserts expandable_segments:True is NOT set (incompatible with memory pool)'
+- file: tests/e2e/conftest.py:497
+  context: 'Test fixture: explicitly sets expandable_segments:True for PD-disaggregated server tests'
+- file: tests/e2e/conftest.py:636
+  context: 'Test fixture: explicitly sets expandable_segments:True for EPD server tests'
+- file: tests/e2e/pull_request/four_card/long_sequence/test_basic.py:119
+  context: 'Test: sets expandable_segments:True for DeepSeek V4 DSA CP test'
+- file: tests/e2e/pull_request/four_card/long_sequence/test_basic.py:396
+  context: 'Test: sets expandable_segments:True for Qwen3-VL multimodal test'
+- file: tests/e2e/pull_request/four_card/test_deepseek_v4.py:24
+  context: 'Test: sets expandable_segments:True at module level for DeepSeek V4 tests'
+- file: tests/e2e/weekly/single_node/models/test_qwen3_30b_acc.py:88
+  context: 'Test: sets expandable_segments:True for Qwen3-30B accuracy test'
+related_parameters:
+- name: enable_sleep_mode
+  relation: When enable_sleep_mode is True, vllm-ascend skips setting PYTORCH_NPU_ALLOC_CONF entirely (platform.py:654)
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: Often set together in test configurations; both affect memory and communication patterns
+constraints:
+- expandable_segments:True cannot be used together with max_split_size_mb or garbage_collection_threshold
+- expandable_segments:True is incompatible with CaMemAllocator (memory pool); using both will raise an AssertionError
+- vllm-ascend does not set this environment variable when enable_sleep_mode is True (RL sleep scenarios)
+tuning_advice:
+  summary: 'Use expandable_segments:True (the vllm-ascend default) for most inference workloads to reduce memory fragmentation;
+    switch to max_split_size_mb only when using CaMemAllocator or when expandable_segments causes issues.
+
+    '
+  suggested_values:
+  - scenario: Standard inference (default vllm-ascend behavior)
+    value: expandable_segments:True
+    reason: vllm-ascend automatically applies this; it reduces memory fragmentation and helps avoid OOM errors during inference
+  - scenario: Using CaMemAllocator (memory pool)
+    value: max_split_size_mb:256
+    reason: expandable_segments is incompatible with CaMemAllocator; max_split_size_mb prevents large block splits and reduces
+      fragmentation as an alternative
+  - scenario: Model quantization (e.g., W8A8)
+    value: expandable_segments:False
+    reason: Documentation explicitly recommends setting expandable_segments:False during quantization workflows
+  - scenario: Large models with memory fragmentation issues
+    value: max_split_size_mb:256
+    reason: Prevents the native allocator from splitting blocks larger than 256MB, reducing fragmentation for borderline OOM
+      workloads
+  - scenario: RL scenarios with sleep mode enabled
+    value: (not set by vllm-ascend)
+    reason: vllm-ascend skips setting this variable when enable_sleep_mode is True; user should configure manually if needed
+  caveats:
+  - expandable_segments:True and max_split_size_mb are mutually exclusive — setting both will cause expandable_segments to
+    NOT be applied
+  - CaMemAllocator (memory pool) explicitly rejects expandable_segments:True with an assertion error
+  - The default value is only applied when enable_sleep_mode is False; RL sleep mode users must configure manually
+  - page_size can be combined with expandable_segments (e.g., 'page_size:1g,expandable_segments:True')
+  quick_guide: Keep the default expandable_segments:True for most cases; use max_split_size_mb:256 only if using CaMemAllocator
+    or experiencing OOM with expandable segments.
+analysis_date: '2026-07-06'

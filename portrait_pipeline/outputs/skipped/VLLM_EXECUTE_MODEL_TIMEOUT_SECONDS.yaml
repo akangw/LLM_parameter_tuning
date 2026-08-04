@@ -1,0 +1,7 @@
+name: VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS
+type: env
+performance_impact: none
+skip_reason: At the pinned vLLM commit this environment variable is declared and parsed in vllm/envs.py, but no executor or
+  other runtime code reads it; the legacy multiprocessing-executor call sites are no longer present. The pinned vllm-ascend
+  tree exports large values in deployment documentation and one test configuration, but its package code likewise has no consumer.
+  Thus changing the variable has no latency, throughput, or memory effect in the pinned sources.

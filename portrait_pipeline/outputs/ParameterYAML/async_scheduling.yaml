@@ -1,0 +1,81 @@
+name: --async-scheduling
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/config/scheduler.py:146
+- vllm/config/scheduler.py:170
+- vllm/config/vllm.py:818
+- vllm/config/vllm.py:844
+- vllm_ascend/core/recompute_scheduler.py:88
+- vllm_ascend/worker/model_runner_v1.py:404
+- vllm_ascend/worker/pcp_utils.py:896
+- vllm_ascend/spec_decode/llm_base_proposer.py:120
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+cli_example: --async-scheduling
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Async scheduling overlaps CPU-side scheduling of the next step with current device execution, reducing gaps
+  in NPU utilization and affecting both latency and throughput. A null value invokes current vLLM auto-selection: it enables
+  async scheduling unless the model, speculative method, padded-drafter setting, or executor backend is incompatible. The
+  target vllm-ascend source consumes the resolved value in its recompute scheduler, model runner, PCP path, and speculative-decoding
+  proposer, so this is not merely an upstream GPU setting.'
+usage_locations:
+- file: vllm/config/scheduler.py:146
+  context: Defines the nullable option and documents the utilization, latency, and throughput effect.
+- file: vllm/config/vllm.py:818
+  context: Checks executor and speculative-decoding compatibility when explicitly enabled.
+- file: vllm/config/vllm.py:844
+  context: Resolves the null default automatically and disables it for incompatible configurations.
+- file: vllm_ascend/core/recompute_scheduler.py:88
+  context: Selects the Ascend asynchronous recompute scheduler when the resolved value is true.
+- file: vllm_ascend/worker/model_runner_v1.py:404
+  context: Propagates asynchronous scheduling state into the Ascend PCP manager.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:120
+  context: Uses the flag to coordinate Ascend speculative-decoding state.
+related_parameters:
+- name: --speculative-config
+  relation: Only supported speculative methods can be combined with async scheduling.
+- name: speculative_config.disable_padded_drafter_batch
+  relation: A true value is incompatible with async scheduling.
+- name: --distributed-executor-backend
+  relation: The selected executor must advertise async-scheduling support.
+- name: --disable-nccl-for-dp-synchronization
+  relation: Its automatic value changes when async scheduling is enabled.
+constraints:
+- Explicit async scheduling requires an executor backend whose executor class reports async-scheduling support.
+- With speculative decoding, explicit async scheduling supports EAGLE, MTP, draft-model, or NGram-GPU methods; other methods
+  raise a configuration error.
+- Async scheduling cannot be combined with speculative_config.disable_padded_drafter_batch=true.
+tuning_advice:
+  summary: Keep the null auto-selection for general Ascend serving, and force true only after confirming executor and speculative-decoding
+    compatibility.
+  suggested_values:
+  - scenario: General generation serving on the target Ascend stack
+    value: <unset>
+    reason: The current vLLM configuration enables async scheduling when supported and automatically disables it for known
+      incompatible paths.
+  - scenario: EAGLE speculative decoding after compatibility validation
+    value: true
+    reason: The target vllm-ascend documentation and source include explicit asynchronous scheduling integration for the speculative-decoding
+      and model-runner paths.
+  - scenario: Pooling model or unsupported executor/speculative method
+    value: false
+    reason: Current vLLM disables the feature for these paths because it is unsupported or can negatively affect pooling performance.
+  caveats:
+  - The null default is not equivalent to false; its effective value is resolved after the executor, model runner, and speculative
+    configuration are known.
+  - Enabling the option changes Ascend scheduler and draft-token state handling, so failures in those paths can be worked
+    around by disabling it.
+  - Source code establishes expected overlap but not the gain for a specific workload; compare throughput and tail latency
+    on the target hardware before forcing a value.
+  quick_guide: Start with the null default, verify the log reports asynchronous scheduling enabled, and force false only for
+    an incompatible or regressing workload.
+analysis_date: '2026-07-24'

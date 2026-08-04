@@ -1,0 +1,80 @@
+name: VLLM_ALLOW_RUNTIME_LORA_UPDATING
+type: env
+category: model
+scope: vllm
+source_file:
+- vllm/envs.py:964
+value_type: bool
+default: false
+valid_choices:
+- 'true'
+- '1'
+- 'false'
+- '0'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This environment variable enables dynamic loading and unloading of LoRA adapters at runtime via the API server
+  (POST /v1/load_lora_adapter, POST /v1/unload_lora_adapter). When enabled, the server can resolve unrecognized model names
+  by attempting to load them as LoRA adapters from local cache (VLLM_LORA_RESOLVER_CACHE_DIR) or remote HF repos (VLLM_LORA_RESOLVER_HF_REPO_LIST).
+  The primary performance impact is on memory: enabling runtime LoRA updating requires reserving additional GPU/NPU memory
+  headroom for potential new adapter weights, and each loaded adapter consumes memory proportional to its rank and the base
+  model''s layer sizes. There is also a minor latency impact on first-use of an unrecognized model name, as the adapter must
+  be downloaded and loaded synchronously. On Ascend NPU, the memory overhead of LoRA adapters follows the same pattern as
+  GPU, but the available device memory may be more constrained, making the memory reservation more impactful. This parameter
+  does not directly affect compute throughput for requests that use already-loaded adapters.
+
+  '
+usage_locations:
+- file: vllm/entrypoints/cli/serve.py:261
+  context: Raises ValueError if VLLM_ALLOW_RUNTIME_LORA_UPDATING is true with api_server_count > 1
+- file: vllm/entrypoints/openai/engine/serving.py:432
+  context: Enables runtime LoRA resolution for unrecognized model names in chat/completion endpoints
+- file: vllm/entrypoints/pooling/base/serving.py:236
+  context: Enables runtime LoRA resolution for unrecognized model names in pooling endpoints
+- file: vllm/entrypoints/serve/lora/api_router.py:27
+  context: Guards registration of /v1/load_lora_adapter and /v1/unload_lora_adapter API routes
+- file: vllm/envs.py:950
+  context: Referenced as prerequisite for VLLM_LORA_RESOLVER_CACHE_DIR and VLLM_LORA_RESOLVER_HF_REPO_LIST
+related_parameters:
+- name: VLLM_LORA_RESOLVER_CACHE_DIR
+  relation: Only effective when VLLM_ALLOW_RUNTIME_LORA_UPDATING is enabled; specifies local directory for LoRA adapter lookup
+- name: VLLM_LORA_RESOLVER_HF_REPO_LIST
+  relation: Only effective when VLLM_ALLOW_RUNTIME_LORA_UPDATING is enabled; specifies remote HF repos for LoRA adapter lookup
+- name: VLLM_PLUGINS
+  relation: Plugins must be enabled for LoRA resolver cache and HF repo list to work
+- name: --enable-lora
+  relation: LoRA support must be enabled at engine level for runtime LoRA updating to function
+- name: --max-cpu-loras
+  relation: Limits the number of LoRA adapters that can be stored in CPU memory, affecting how many can be dynamically loaded
+- name: --max-lora-rank
+  relation: Determines the maximum rank of LoRA adapters, affecting memory consumption per adapter
+constraints:
+- VLLM_ALLOW_RUNTIME_LORA_UPDATING cannot be used with api_server_count > 1 (raises ValueError)
+- LoRA support must be enabled via --enable-lora for runtime LoRA updating to work
+- VLLM_LORA_RESOLVER_CACHE_DIR and VLLM_LORA_RESOLVER_HF_REPO_LIST have no effect unless VLLM_ALLOW_RUNTIME_LORA_UPDATING
+  is enabled
+tuning_advice:
+  summary: Enable only for development or dynamic LoRA scenarios; disable in production to avoid memory overhead and API surface
+    expansion.
+  suggested_values:
+  - scenario: Production deployment with fixed LoRA adapters
+    value: 'false'
+    reason: Avoids unnecessary memory reservation and eliminates the runtime LoRA API surface, reducing attack surface and
+      resource unpredictability
+  - scenario: Development or evaluation requiring frequent LoRA adapter changes without server restart
+    value: 'true'
+    reason: Allows adding and removing LoRA adapters via API without restarting the server, speeding up iteration
+  caveats:
+  - Enabling this adds POST /v1/load_lora_adapter and POST /v1/unload_lora_adapter endpoints, which the upstream code explicitly
+    warns should ONLY be used for local development
+  - On Ascend NPU, device memory is often more constrained than on GPU; each dynamically loaded LoRA adapter consumes additional
+    NPU memory, so monitor memory usage carefully when enabling this feature
+  - Runtime LoRA resolution (via VLLM_LORA_RESOLVER_CACHE_DIR or VLLM_LORA_RESOLVER_HF_REPO_LIST) adds latency to the first
+    request using an unrecognized model name, as the adapter must be located and loaded synchronously
+  - This feature is incompatible with multi-API-server deployments (api_server_count > 1)
+  quick_guide: Set to "true" only for local development with dynamic LoRA loading; keep disabled ("false") in production.
+analysis_date: '2026-07-06'

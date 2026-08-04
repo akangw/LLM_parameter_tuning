@@ -1,0 +1,59 @@
+name: DS_WORKER_ADDR
+type: env
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:30
+value_type: str
+default: <required>
+valid_choices: '''<host>:<port> format string'''
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'DS_WORKER_ADDR is the network address of the Yuanrong Datasystem worker process. It is consumed by the YuanrongBackend
+  (the Ascend KV cache offloading backend) to establish a HeteroClient connection for remote KV cache transfer. Without this
+  variable set, the YuanrongBackend initialization raises a ValueError at startup, preventing vLLM from launching. When correctly
+  configured, it enables disaggregated KV cache storage across nodes, directly affecting prefill-decode disaggregation throughput
+  and end-to-end latency by determining whether KV cache blocks can be transferred to/from remote storage.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:30
+  context: Read from environment in YuanrongConfig.load_from_env()
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:105
+  context: Used to initialize YuanrongBackend and create HeteroClient connection
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:109
+  context: Parsed into host and port for HeteroClient constructor
+related_parameters:
+- name: DS_ENABLE_EXCLUSIVE_CONNECTION
+  relation: Companion env var controlling HeteroClient connection mode
+- name: DS_ENABLE_REMOTE_H2D
+  relation: Companion env var enabling remote host-to-device transfer
+- name: PYTHONHASHSEED
+  relation: Must be set to 0 across all nodes for consistent hash generation when using Yuanrong backend
+constraints:
+- DS_WORKER_ADDR must be set before starting vLLM when using the Yuanrong KV cache backend; otherwise vLLM will fail to start
+  with a ValueError.
+- DS_WORKER_ADDR must be in '<host>:<port>' format; invalid formats will raise a ValueError during backend initialization.
+- DS_WORKER_ADDR must match the local dscli start --worker_address value on the same node.
+tuning_advice:
+  summary: Set DS_WORKER_ADDR to the same host:port used when starting the local Yuanrong Datasystem worker via dscli.
+  suggested_values:
+  - scenario: Single-node Yuanrong Datasystem deployment
+    value: '''"127.0.0.1:31501"'''
+    reason: Matches the default dscli worker port; localhost avoids network overhead for single-node setups.
+  - scenario: Multi-node disaggregated prefill-decode deployment
+    value: '''"<NODE_IP>:31501"'''
+    reason: Each node must point to its own local worker; using the node's actual IP ensures correct routing in distributed
+      topologies.
+  caveats:
+  - DS_WORKER_ADDR must be set on every node running vLLM with the Yuanrong backend, and each node's value should point to
+    its own local worker address.
+  - The Yuanrong Datasystem worker must already be running (via dscli start) before vLLM starts, or the connection will fail.
+  - PYTHONHASHSEED=0 must also be set across all nodes to guarantee consistent hash-based KV cache routing.
+  quick_guide: Set DS_WORKER_ADDR to the local dscli worker address (e.g., 127.0.0.1:31501) before launching vLLM with the
+    Yuanrong KV cache backend.
+analysis_date: '2026-07-06'

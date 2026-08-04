@@ -1,0 +1,7 @@
+name: --kv-cache-dtype-skip-layers
+type: cli
+performance_impact: none
+skip_reason: In the pinned upstream source this list is accepted by EngineArgs and copied into CacheConfig (vllm/engine/arg_utils.py
+  and vllm/config/cache.py), but no runtime code reads it to select a cache dtype or change allocation. The pinned vLLM-Ascend
+  repository has no references to the option. Therefore it has no verified latency, throughput, or memory effect in these
+  pinned sources.

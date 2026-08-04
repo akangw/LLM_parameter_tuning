@@ -1,0 +1,7 @@
+name: KVTransferConfig.kv_ip
+type: nested
+performance_impact: none
+skip_reason: The field is declared with default 127.0.0.1 in the pinned upstream KVTransferConfig, but no code, documentation,
+  or example in either pinned vLLM or vLLM Ascend repository reads or otherwise consumes kv_ip. Current connector implementations
+  use other fields such as kv_port or derive their host address independently, so changing kv_ip has no latency, throughput,
+  or memory effect in the pinned sources.

@@ -1,0 +1,7 @@
+name: --numa-bind
+type: cli
+performance_impact: none
+skip_reason: No latency, throughput, or memory effect is implemented by this flag in the pinned sources. In pinned vLLM it
+  is defined and copied into ParallelConfig, but there is no runtime consumer. On Ascend, platform.py resets numa_bind to
+  false and only setdefaults additional_config.enable_cpu_binding to true; AscendConfig already defaults enable_cpu_binding
+  to true, so the flag does not change CPU-binding behavior (and an explicit false remains false).

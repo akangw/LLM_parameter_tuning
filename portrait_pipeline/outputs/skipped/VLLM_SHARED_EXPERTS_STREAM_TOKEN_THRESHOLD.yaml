@@ -1,0 +1,7 @@
+name: VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD
+type: env
+performance_impact: none
+skip_reason: The pinned upstream source only declares and parses this environment variable in vllm/envs.py:1687; there are
+  no current runtime reads that use its value. In addition, the pinned Ascend platform unconditionally sets VLLM_DISABLE_SHARED_EXPERTS_STREAM=1
+  in vllm_ascend/platform.py:32, disabling the related separate-stream path. Consequently this threshold cannot affect latency,
+  throughput, or memory on the target Ascend runtime.

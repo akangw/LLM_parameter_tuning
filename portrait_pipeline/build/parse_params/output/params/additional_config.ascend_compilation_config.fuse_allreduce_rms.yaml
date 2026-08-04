@@ -1,0 +1,87 @@
+name: additional_config.ascend_compilation_config.fuse_allreduce_rms
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:487
+- vllm_ascend/ascend_config.py:382
+- vllm_ascend/ascend_config.py:396
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, this parameter activates the MatmulAllReduceAddRMSNormPass graph fusion pass (vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py).
+  This pass fuses the allreduce communication operation with the subsequent AddRMSNorm computation into a single optimized
+  kernel on Ascend NPU. The fusion eliminates intermediate memory round-trips and reduces kernel launch overhead by combining
+  the cross-device reduction (allreduce) with the element-wise normalization (AddRMSNorm) that typically follows it in transformer
+  layers. Additionally, when npugraph_ex is enabled, enabling this flag injects the ALLREDUCE_NORM_FUSE_THRESHOLD as a compile
+  range split point, which guides the graph compiler to partition the computation graph at the fusion boundary for more effective
+  operator fusion. The net effect is reduced communication-computation serialization and improved throughput, especially at
+  larger tensor-parallel sizes where allreduce latency is significant.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:487
+  context: Parameter definition in AscendCompilationConfig.__init__ with default False
+- file: vllm_ascend/ascend_config.py:382
+  context: Checked in update_compile_ranges_split_points when enable_npugraph_ex is True; injects ALLREDUCE_NORM_FUSE_THRESHOLD
+    as compile range split point
+- file: vllm_ascend/ascend_config.py:396
+  context: 'Checked in update_compile_ranges_split_points when enable_npugraph_ex is False; reads from additional_config dict
+    with default True (note: different default than the class init)'
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+  context: Registers MatmulAllReduceAddRMSNormPass in the graph fusion pass pipeline when enabled
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: fuse_allreduce_rms requires npugraph_ex to be enabled for the compile range split point injection path; the fusion
+    pass itself is registered independently of npugraph_ex
+- name: compilation_config.pass_config.enable_sp
+  relation: Sequence parallelism (SP) conflicts with fuse_allreduce_rms; the documentation explicitly states it is disabled
+    by default due to SP conflicts
+constraints:
+- fuse_allreduce_rms is incompatible with sequence parallelism (SP); enabling both may cause correctness issues or degraded
+  performance.
+tuning_advice:
+  summary: 'Enable fuse_allreduce_rms for throughput gains in tensor-parallel deployments without sequence parallelism, but
+    disable it when using SP or when correctness issues arise.
+
+    '
+  suggested_values:
+  - scenario: Tensor-parallel inference (TP >= 2) without sequence parallelism
+    value: true
+    reason: 'Fuses allreduce and AddRMSNorm into a single kernel, reducing communication overhead and improving throughput
+      on multi-NPU setups where allreduce latency is a bottleneck.
+
+      '
+  - scenario: Sequence parallelism (SP) is enabled
+    value: false
+    reason: 'The documentation explicitly states fuse_allreduce_rms is disabled by default due to conflicts with SP. Enabling
+      both may cause incorrect results or compilation errors.
+
+      '
+  - scenario: Single-NPU deployment (TP = 1)
+    value: false
+    reason: 'Without tensor parallelism there is no allreduce operation to fuse, so the pass has no effect and enabling it
+      adds unnecessary graph compilation complexity.
+
+      '
+  caveats:
+  - The default value differs between the class constructor (False) and the dict-based fallback path in update_compile_ranges_split_points
+    (True). This inconsistency means the effective default depends on how the configuration is passed — always set this explicitly
+    to avoid surprises.
+  - Enabling this pass adds the ALLREDUCE_NORM_FUSE_THRESHOLD as a compile range split point, which may increase graph compilation
+    time on first run.
+  - 'This is an experimental optimization pass added in PR #5034; test thoroughly in your deployment before enabling in production.'
+  quick_guide: 'Set to true for TP >= 2 without SP to reduce allreduce latency; keep false (default) when using sequence parallelism
+    or single-NPU setups.
+
+    '
+analysis_date: '2026-07-06'

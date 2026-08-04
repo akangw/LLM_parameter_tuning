@@ -1,0 +1,65 @@
+name: VLLM_MEDIA_FETCH_MAX_RETRIES
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:834
+- vllm/envs.py:74
+- vllm/connections.py:122
+- vllm/connections.py:168
+value_type: int
+default: '3'
+valid_choices: any positive integer (minimum 1 enforced at runtime)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter controls the maximum number of retry attempts when fetching media files (images, audio, video)
+  from URLs during multimodal inference. Each retry quadruples the per-attempt timeout (backoff factor of 4), so higher values
+  increase the total time vLLM will wait for a slow or intermittently failing media source before giving up. On Ascend NPU,
+  this affects end-to-end request latency for multimodal models (e.g., vision- language models) when media is fetched from
+  remote URLs. It does not affect compute throughput on the NPU itself — the NPU is idle during media fetch. The minimum value
+  is clamped to 1 at runtime in vllm/connections.py:122 and vllm/connections.py:168 via `max(envs.VLLM_MEDIA_FETCH_MAX_RETRIES,
+  1)`. No vllm-ascend override exists; behavior is identical to upstream vLLM.
+
+  '
+usage_locations:
+- file: vllm/connections.py:122
+  context: Sync retry decorator `_sync_retry` reads the env var to determine max retries for media fetching.
+- file: vllm/connections.py:168
+  context: Async retry decorator `_async_retry` reads the env var to determine max retries for media fetching.
+related_parameters:
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Base timeout for image fetches; each retry multiplies this by 4^attempt.
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Base timeout for video fetches; each retry multiplies this by 4^attempt.
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: Base timeout for audio fetches; each retry multiplies this by 4^attempt.
+- name: VLLM_MEDIA_URL_ALLOW_REDIRECTS
+  relation: Controls whether HTTP redirects are followed during media fetch; may affect retry behavior.
+constraints:
+- The value is clamped to a minimum of 1 at runtime; setting it to 0 or negative still results in at least 1 attempt.
+tuning_advice:
+  summary: 'For multimodal models on Ascend NPU, keep the default (3) unless media sources are known to be unreliable, in
+    which case a higher value (5-7) can improve request success rate at the cost of increased tail latency.
+
+    '
+  suggested_values:
+  - scenario: Stable, low-latency media sources (e.g., local network or CDN)
+    value: 3
+    reason: Default value provides reasonable resilience without excessive wait time on transient failures.
+  - scenario: Unreliable or high-latency media sources
+    value: 5
+    reason: Additional retries increase the chance of successful fetch; the exponential backoff (4x per retry) means total
+      wait time grows significantly, so values above 7 are rarely beneficial.
+  - scenario: Media is always pre-cached or served from local storage
+    value: 1
+    reason: No retries needed; minimizes latency on the rare failure by failing fast.
+  caveats:
+  - Each retry quadruples the timeout, so setting this to a high value (e.g., 10) can cause requests to hang for minutes on
+    a persistently failing URL.
+  - This parameter only affects multimodal models that fetch media from URLs; it has no effect on text-only inference workloads.
+  - No Ascend-specific override exists; behavior is identical to upstream vLLM on GPU.
+  quick_guide: Use default (3) for most deployments; increase to 5-7 only if media sources are unreliable.
+analysis_date: '2026-07-06'

@@ -1,0 +1,7 @@
+name: EPLBConfig.window_size
+type: nested
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source, this field is declared and documented as an EPLB expert-load recording window
+  but has no runtime consumer, so changing it does not alter latency, throughput, or memory in the pinned implementation.
+  The pinned vLLM Ascend implementation likewise does not consume this upstream field; its separate dynamic-EPLB path controls
+  load collection with the Ascend-specific expert_heat_collection_interval setting.

@@ -1,0 +1,86 @@
+name: VLLM_USE_SIMPLE_KV_OFFLOAD
+type: env
+category: kv_cache
+scope: both
+source_file:
+- vllm/envs.py:1784
+- vllm/config/vllm.py:682
+- vllm_ascend/distributed/kv_transfer/__init__.py:67
+- vllm_ascend/distributed/kv_transfer/kv_pool/simple_cpu_offload/simple_cpu_offload_connector.py:24
+- vllm_ascend/simple_kv_offload/worker.py:72
+- vllm_ascend/simple_kv_offload/copy_backend.py:24
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: For native CPU KV offloading, a false value selects OffloadingConnector and a true value selects SimpleCPUOffloadConnector
+  while preserving the configured CPU byte budget. On Ascend, the latter connector name is conditionally replaced with AscendSimpleCPUOffloadConnector
+  when the corresponding upstream simple-offload module is available. The Ascend implementation retains the upstream scheduler
+  but allocates CPU block mirrors and moves NPU KV blocks with an NPU-specific batched asynchronous-copy backend and separate
+  torch.npu load/store streams. Selecting this path therefore changes CPU-memory management and the transfer/scheduling implementation
+  on the request path, which can alter available KV capacity, transfer latency, and serving throughput. The pinned sources
+  provide no benchmark proving that either connector is universally faster.
+usage_locations:
+- file: vllm/config/vllm.py:697
+  context: Chooses SimpleCPUOffloadConnector instead of OffloadingConnector when native KV offloading is active, then passes
+    the configured offload capacity as cpu_bytes_to_use.
+- file: vllm_ascend/distributed/kv_transfer/__init__.py:67
+  context: Conditionally replaces the registered upstream SimpleCPUOffloadConnector with the Ascend NPU adaptation.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/simple_cpu_offload/simple_cpu_offload_connector.py:24
+  context: Reuses the upstream simple-offload connector and scheduler while substituting the Ascend worker-side handler.
+- file: vllm_ascend/simple_kv_offload/worker.py:116
+  context: Derives the number of CPU blocks from the configured byte capacity and per-block size, then allocates CPU mirrors
+    for the unique NPU KV tensors.
+- file: vllm_ascend/simple_kv_offload/worker.py:150
+  context: Creates independent NPU load and store streams for KV transfers; these streams do not support the CUDA connector's
+    explicit low-priority hint.
+- file: vllm_ascend/simple_kv_offload/copy_backend.py:24
+  context: Runs batched NPU DMA copies on a worker thread for the Ascend simple-offload path.
+related_parameters:
+- name: kv_offloading_size
+  relation: Must be non-null for any KV offloading configuration to be created; it supplies the CPU byte capacity used by
+    the selected native connector.
+- name: kv_offloading_backend
+  relation: This environment variable is consulted only for the native backend. The lmcache backend selects its own connector.
+- name: enable_prefix_caching
+  relation: The Ascend simple connector inherits behavior that leaves its worker and scheduler handlers disabled when prefix
+    caching is off.
+constraints:
+- Has no effect when kv_offloading_size is unset.
+- Has no effect when kv_offloading_backend is not native.
+- The value is parsed with int(); non-integer strings fail during environment parsing, zero is false, and any nonzero integer
+  is true.
+- On Ascend, the NPU-specific override is registered only when the upstream vllm.v1.simple_kv_offload module is importable.
+- The Ascend simple connector is a no-op when prefix caching is disabled because it does not construct worker or scheduler
+  handlers.
+tuning_advice:
+  summary: Keep the default connector unless testing on the target workload shows that the simple connector's block-mirror
+    and batched NPU-copy design improves the desired latency or throughput within the available host-memory budget.
+  suggested_values:
+  - scenario: Stable production deployment without comparative measurements for the simple connector
+    value: '0'
+    reason: Retains the default native OffloadingConnector path and avoids opting into a distinct transfer implementation.
+  - scenario: Native CPU KV offloading with prefix caching on Ascend, after validating connector availability and benchmarking
+    value: '1'
+    reason: Selects the Ascend-adapted simple connector, which uses CPU block mirrors and batched asynchronous NPU copies
+      on dedicated transfer streams.
+  caveats:
+  - Value 1 does not enable offloading by itself; kv_offloading_size must be set and kv_offloading_backend must remain native.
+  - Host-memory capacity and NPU-to-host transfer cost still govern the usable offload size; increasing offloaded capacity
+    can trade device-memory relief for transfer latency and host-memory pressure.
+  - The Ascend worker warns and falls back to non-pinned CPU allocations when pinned memory is unavailable, which may reduce
+    transfer throughput.
+  - Ascend transfer streams lack the low-priority hint used by the CUDA implementation, so overlap and contention should be
+    measured under the intended compute workload.
+  - The current pinned source documents implementation differences but no comparative performance results.
+  quick_guide: Configure native kv_offloading_size first; leave this at 0 as the baseline, then test 1 with prefix caching
+    enabled and compare throughput, tail latency, host memory, and correctness on the target Ascend system.
+analysis_date: '2026-07-29'

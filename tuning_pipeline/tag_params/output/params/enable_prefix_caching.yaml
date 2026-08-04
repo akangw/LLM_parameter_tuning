@@ -1,0 +1,99 @@
+name: --enable-prefix-caching
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1092
+- vllm/config/cache.py:91
+- vllm_ascend/patch/platform/patch_kv_cache_utils.py:53
+- vllm_ascend/patch/platform/patch_mamba_config.py:113
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --enable-prefix-caching
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Automatic Prefix Caching reuses KV cache for a request whose prompt shares a prefix with an existing request,
+  avoiding computation of the shared tokens (docs/features/automatic_prefix_caching.md:5). The CLI initially defaults to null,
+  then EngineArgs resolves that value before constructing CacheConfig; CacheConfig itself defaults enable_prefix_caching to
+  true (vllm/engine/arg_utils.py:1092, vllm/engine/arg_utils.py:2334, vllm/config/cache.py:91). Thus, shared-prefix workloads
+  can reduce prefill/TTFT latency and raise throughput, while unique-prefix workloads pay cache-hash work with little reuse.
+  On Ascend hybrid KV-cache groups, disabling it makes the hash block size equal the scheduler block size, whereas enabling
+  it selects the greatest common divisor of group block sizes for finer-grained prefix hashes (vllm_ascend/patch/platform/patch_kv_cache_utils.py:53).
+  For Mamba cache groups, the Ascend V1 runner reserves up to max_num_blocks_per_req when it is enabled but only one Mamba
+  block otherwise, increasing the per-request allocation requirement (vllm_ascend/worker/model_runner_v1.py:4252). The Ascend
+  CPU-offload connector also leaves scheduler and worker connectors unset when prefix caching is disabled (vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py:69).
+usage_locations:
+- file: vllm/engine/arg_utils.py:2334
+  context: Resolves the CLI null default to the platform/model default before CacheConfig is created.
+- file: vllm/config/cache.py:91
+  context: Defines the CacheConfig default as enabled.
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:53
+  context: Chooses scheduler-size hashing when disabled and GCD hash granularity for hybrid groups when enabled.
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:113
+  context: With Mamba align mode and caching enabled, sets mamba_block_size to block_size.
+- file: vllm_ascend/worker/model_runner_v1.py:4252
+  context: Expands Mamba blocks per request to the maximum when caching is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/cpu_offload_connector.py:69
+  context: Does not construct CPU-offload scheduler or worker connectors when caching is disabled.
+related_parameters:
+- name: --prefix-caching-hash-algo
+  relation: Selects the hash algorithm used to identify reusable prefix blocks.
+- name: --block-size
+  relation: Influences cache-block and hash granularity; Ascend uses it to align Mamba blocks in align mode.
+- name: --mamba-cache-mode
+  relation: On Ascend, align mode together with enabled prefix caching sets mamba_block_size to block_size.
+- name: --kv-cache-memory-bytes
+  relation: Bounds the KV-cache capacity available for retained and reusable prefix blocks.
+constraints:
+- On Ascend CPU offloading, a Mamba model with prefix caching enabled raises NotImplementedError during KV-cache-spec construction.
+- Ascend disables prefix caching at attention-layer initialization for TRITON_MLA and FLASHINFER backends.
+- The CLI's apparent null default is resolved before CacheConfig construction; the normal CacheConfig default is true.
+tuning_advice:
+  summary: Enable it for repeated system prompts, shared RAG context, or other workloads with long common prefixes; disable
+    it when prompts are mostly unique or when Ascend-specific constraints make it unsupported.
+  suggested_values:
+  - scenario: Transformer inference with substantial repeated prompt prefixes
+    value: true
+    reason: Reusing the matching KV prefix skips shared prefill computation, improving TTFT and throughput.
+  - scenario: Mostly unique prompts with negligible reusable context
+    value: false
+    reason: Avoids prefix-hash and cache-management work that is unlikely to produce reuse.
+  - scenario: Ascend CPU offload with Mamba layers
+    value: false
+    reason: The current CPU-offload connector raises NotImplementedError if Mamba layers are present while prefix caching
+      is enabled.
+  caveats:
+  - Enabling the setting can increase Mamba per-request cache allocation on Ascend because the runner uses max_num_blocks_per_req
+    instead of one block.
+  - On Ascend TRITON_MLA or FLASHINFER attention backends, the attention layer forcibly turns the setting off.
+  - Benefits depend on matching prefixes and cache capacity; it is not a general speedup for unrelated prompts.
+  quick_guide: Keep the default enabled for shared-prefix transformer traffic; explicitly disable it for unique-prefix traffic
+    or Ascend CPU-offload Mamba deployments.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

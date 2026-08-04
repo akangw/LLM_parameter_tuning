@@ -1,0 +1,102 @@
+name: --distributed-executor-backend
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/parallel.py:228
+- vllm/engine/arg_utils.py:919
+- vllm_ascend/worker/worker.py:297
+- vllm_ascend/worker/model_runner_v1.py:1819
+value_type: str
+default: None
+valid_choices:
+- mp
+- ray
+- uni
+- external_launcher
+- <custom executor class string>
+cli_example: --distributed-executor-backend mp
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter determines which executor backend vLLM uses to manage distributed worker processes. On Ascend\
+  \ NPU, the choice directly affects process launch overhead, inter-process communication efficiency, and compatibility with\
+  \ advanced parallelism features (data parallel, pipeline parallel, external launcher mode).\nKey mechanisms: 1. \"mp\" (multiprocessing):\
+  \ Uses Python multiprocessing to spawn workers on a single\n   node. Lowest overhead for single-node deployments. On Ascend,\
+  \ this is the default\n   when tp_size * pp_size <= visible NPU count. The vllm-ascend worker\n   (vllm_ascend/worker/worker.py:297)\
+  \ checks that local_world_size does not exceed\n   visible NPU count when using mp with data parallel.\n\n2. \"ray\": Uses\
+  \ Ray for distributed orchestration. Required for multi-node deployments.\n   Adds Ray's scheduling and serialization overhead\
+  \ but enables cross-node parallelism.\n   On Ascend, Ray must be manually installed and configured.\n\n3. \"external_launcher\"\
+  : An Ascend-specific mode where workers are launched externally\n   (e.g., by torchrun or a cluster scheduler). This is\
+  \ critical for multi-node Ascend\n   deployments and data-parallel setups. The vllm-ascend worker\n   (vllm_ascend/worker/worker.py:297)\
+  \ explicitly checks for this mode when\n   data_parallel_size > 1. In v1 model runner\n   (vllm_ascend/worker/model_runner_v1.py:1819),\
+  \ external_launcher mode triggers\n   dummy runs to keep DP workers synchronized when no tokens are scheduled.\n\n4. \"\
+  uni\": Single-process executor for single-NPU deployments. Lowest overhead but\n   no parallelism.\n\nThe executor backend\
+  \ is resolved in vllm/v1/executor/abstract.py:51-92. The choice cascades to affect how model weights are loaded, how NCCL/HCCL\
+  \ groups are initialized, and how collective operations are coordinated. On Ascend, using the wrong backend can cause HCCL\
+  \ initialization failures or silent performance degradation due to suboptimal process placement.\n"
+usage_locations:
+- file: vllm/v1/executor/abstract.py:51
+  context: Executor class resolution — maps backend string to executor class
+- file: vllm_ascend/worker/worker.py:297
+  context: Validates local_world_size against visible NPU count for mp backend with DP
+- file: vllm_ascend/worker/model_runner_v1.py:1819
+  context: Triggers dummy run for DP synchronization in external_launcher mode
+- file: vllm_ascend/worker/worker.py:459
+  context: Asserts external_launcher is not used with PP send on non-last rank
+- file: vllm/v1/engine/llm_engine.py:72
+  context: Checks for external_launcher DP mode to skip internal DP group init
+- file: vllm/config/speculative.py:913
+  context: Propagated to draft model parallel config for speculative decoding
+related_parameters:
+- name: --tensor-parallel-size
+  relation: tp_size * pp_size determines whether mp backend is auto-selected
+- name: --pipeline-parallel-size
+  relation: pp_size affects backend auto-selection; external_launcher has PP restrictions
+- name: --data-parallel-size
+  relation: DP > 1 requires mp, ray, or external_launcher backend on Ascend
+- name: --data-parallel-backend
+  relation: Separate backend for data-parallel communication; must be compatible with executor backend
+- name: --nnodes
+  relation: Multi-node deployments require ray or external_launcher backend
+constraints:
+- When using mp backend with data_parallel_size > 1 and data_parallel_size_local > 0 on a single node, local_world_size must
+  not exceed the number of visible NPU devices.
+- external_launcher backend cannot be used with pipeline parallel on non-last PP ranks.
+- Multi-node deployments (nnodes > 1) require ray or external_launcher backend; mp only works on a single node.
+- Ray backend requires Ray to be installed and a Ray cluster to be running for multi-node.
+tuning_advice:
+  summary: Use mp for single-node Ascend deployments, external_launcher for multi-node or data-parallel setups, and avoid
+    ray unless Ray infrastructure is already in place.
+  suggested_values:
+  - scenario: Single-node, single or multi-NPU (tp/pp only, no DP)
+    value: mp
+    reason: Lowest overhead; no external dependency; vllm-ascend auto-selects mp when tp_size * pp_size <= visible NPU count.
+      Direct process management avoids Ray serialization costs.
+  - scenario: Single-node with data parallel (DP > 1)
+    value: mp
+    reason: vllm-ascend supports mp with DP on a single node. Ensure local_world_size <= visible NPU count. Avoids Ray overhead
+      for single-node DP.
+  - scenario: Multi-node Ascend cluster (with or without DP)
+    value: external_launcher
+    reason: Required for multi-node Ascend deployments. Workers are launched by torchrun or cluster scheduler, enabling proper
+      HCCL initialization across nodes. Used in vllm-ascend examples (offline_external_launcher.py, offline_weight_load.py).
+  - scenario: Multi-node with existing Ray cluster
+    value: ray
+    reason: Only use if Ray is already deployed and configured for the Ascend cluster. Adds serialization overhead but provides
+      fault tolerance and dynamic resource management.
+  caveats:
+  - external_launcher mode on Ascend requires workers to be launched externally (e.g., via torchrun). vLLM will not spawn
+    workers itself in this mode.
+  - When using external_launcher with DP, vllm-ascend performs dummy runs to keep workers synchronized when no tokens are
+    scheduled — this adds minor overhead but prevents desynchronization.
+  - Ray backend adds serialization/deserialization overhead for tensor transfers between workers, which can reduce throughput
+    compared to mp on single-node Ascend deployments.
+  - The vllm-ascend worker asserts that external_launcher is not used with PP on non-last ranks (worker.py:459), limiting
+    PP compatibility in external_launcher mode.
+  quick_guide: For single-node Ascend, use mp (or omit the flag to auto-select). For multi-node Ascend, use external_launcher
+    with torchrun.
+analysis_date: '2026-07-06'

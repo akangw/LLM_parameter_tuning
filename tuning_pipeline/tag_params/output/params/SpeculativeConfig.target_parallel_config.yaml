@@ -1,0 +1,137 @@
+name: SpeculativeConfig.target_parallel_config
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/config/speculative.py
+- vllm/engine/arg_utils.py
+- docs/features/speculative_decoding/README.md
+- docs/source/user_guide/feature_guide/speculative_decoding.md
+- vllm_ascend/spec_decode/llm_base_proposer.py
+- tests/ut/spec_decode/a2/test_eagle_proposer.py
+value_type: dict
+default: null
+valid_choices: Internal ParallelConfig for the target model, injected by EngineArgs; it is not a user-facing speculative_config
+  value
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field is an internal reference to the target model's resolved ParallelConfig, not a separate speculative-decoding
+  knob. EngineArgs injects the same ParallelConfig used by the main model. Its tensor- and pipeline-parallel degrees determine
+  how target weights and compute are sharded, the per-device memory footprint, and the collective communication incurred by
+  every target-model verification step, so the referenced settings can have a high end-to-end latency, throughput, and memory
+  impact. SpeculativeConfig also uses target tensor parallelism as the default and allowed upper choice for a separately loaded
+  draft model, and copies target pipeline, executor, loading, custom-all-reduce, profiling, and placement settings into the
+  generated draft ParallelConfig. For n-gram and extract-hidden-states methods the draft parallel config directly aliases
+  this object. On Ascend, the documented EAGLE path supports a tensor-parallel target with a TP=1 draft by patching a separate
+  single-rank draft TP group; this does not make target_parallel_config itself user-settable.
+usage_locations:
+- file: vllm/engine/arg_utils.py
+  context: create_engine_config builds the target ParallelConfig, then create_speculative_config injects that exact object
+    into SpeculativeConfig; the comment states that it is not obtained from the --speculative-config CLI argument.
+- file: vllm/config/speculative.py
+  context: Post-initialization aliases target_parallel_config as draft_parallel_config for n-gram and extract-hidden-states
+    methods, or passes it to draft-TP validation and draft ParallelConfig construction for a model-based proposer.
+- file: vllm/config/speculative.py
+  context: _verify_and_get_draft_tp defaults most draft models to target TP and restricts an explicit draft TP to 1 or the
+    target tensor-parallel size.
+- file: vllm/config/speculative.py
+  context: create_draft_parallel_config copies target pipeline parallelism, executor backend, loading-worker limit, custom-all-reduce
+    setting, profiling flag, and placement group while substituting the validated draft tensor-parallel size.
+- file: docs/features/speculative_decoding/README.md
+  context: Upstream documentation lists target_parallel_config among internal fields populated by vLLM and not intended to
+    be supplied by users.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md
+  context: Ascend documents EAGLE with target tensor_parallel_size=4 and draft_tensor_parallel_size=1, establishing that the
+    main target can be tensor-parallel while the EAGLE draft runs without tensor parallelism.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py
+  context: Ascend compares the active target parallel_config TP with the resolved draft TP and patches a single-rank draft
+    tensor-parallel group when they differ, implementing the documented EAGLE asymmetric-TP path.
+- file: tests/ut/spec_decode/a2/test_eagle_proposer.py
+  context: Ascend's standalone draft-model initialization fixture forces both internal target and draft ParallelConfig TP
+    sizes to 1 and records that unequal target/draft TP is not yet supported for that path.
+related_parameters:
+- name: ParallelConfig.tensor_parallel_size
+  relation: This target setting controls target-model sharding and is the default and one of only two valid resolved TP choices
+    for a separate draft model.
+- name: ParallelConfig.pipeline_parallel_size
+  relation: This target setting controls target pipeline sharding and is copied unchanged into a generated draft ParallelConfig.
+- name: SpeculativeConfig.draft_tensor_parallel_size
+  relation: The supported user-facing speculative option may resolve to 1 or target TP; when omitted, it normally inherits
+    target TP.
+- name: SpeculativeConfig.draft_parallel_config
+  relation: This object either aliases target_parallel_config or is constructed by copying its non-TP execution settings and
+    replacing TP with the resolved draft value.
+- name: ParallelConfig.distributed_executor_backend
+  relation: The target executor backend is copied into the separately generated draft parallel configuration.
+- name: SpeculativeConfig.method
+  relation: Determines whether target parallelism is directly aliased for the draft or used to validate and construct a separate
+    draft configuration.
+constraints:
+- target_parallel_config is required engine state and is injected after the target ParallelConfig is built; users should not
+  put it in --speculative-config or a speculative_config mapping.
+- For a separately loaded draft model, draft tensor parallelism must be 1 or equal to target_parallel_config.tensor_parallel_size.
+- If draft_tensor_parallel_size is omitted, most draft model types inherit target TP; mlp_speculator is forced to draft TP=1.
+- N-gram and extract-hidden-states methods alias this object as draft_parallel_config rather than creating an independently
+  parallelized draft worker.
+- Ascend EAGLE supports the documented asymmetric case of a tensor-parallel target and TP=1 draft via a patched draft TP group;
+  its draft model must run with draft_tensor_parallel_size=1.
+- Ascend's standalone draft-model unit path still records unequal target and draft TP as unsupported, so EAGLE's asymmetric-TP
+  behavior must not be generalized to every speculative method.
+tuning_advice:
+  summary: Leave target_parallel_config engine-managed. Tune the main model's normal parallel options, then tune the exposed
+    draft_tensor_parallel_size where supported and benchmark the complete speculative workload.
+  suggested_values:
+  - scenario: Any normal engine construction
+    value: automatic injection of the active target ParallelConfig
+    reason: This keeps target execution and speculative validation consistent and is the only supported way to populate the
+      internal field.
+  - scenario: Ascend EAGLE with a target model that benefits from TP
+    value: target TP sized for the main model; draft_tensor_parallel_size=1
+    reason: Ascend explicitly documents a TP=4 target with a single-rank EAGLE draft and installs a separate draft TP group
+      for this mismatch.
+  - scenario: Separate draft model outside the documented Ascend EAGLE path
+    value: automatic target config; start with matching target and draft TP
+    reason: Matching TP is the conservative supported configuration where the backend does not explicitly implement asymmetric
+      target/draft groups.
+  - scenario: N-gram or extract-hidden-states speculation
+    value: automatic alias for draft_parallel_config
+    reason: These methods reuse target parallel state and expose no reason to construct or mutate this internal object independently.
+  caveats:
+  - More target TP reduces weight memory per device and may increase compute capacity, but collective overhead can worsen
+    latency or throughput, especially for small batches; benchmark the real request mix.
+  - A TP=1 draft can avoid draft collectives but concentrates draft weights and temporary state on one device.
+  - Changing the injected object independently can make target execution, draft construction, and distributed process groups
+    inconsistent.
+  - Ascend's support for target TP different from draft TP is method-specific; the documented EAGLE support does not prove
+    support for a standalone draft-model proposer.
+  quick_guide: Do not set this field. Choose tensor and pipeline parallelism for the target model through the ordinary engine
+    options, let EngineArgs inject the resulting ParallelConfig, and measure end-to-end speculative throughput, inter-token
+    latency, and peak device memory. On Ascend EAGLE, keep the draft at TP=1 while sizing target TP for the main model. For
+    other model-based proposers, prefer matching target/draft TP unless current backend documentation explicitly supports
+    an asymmetric configuration.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

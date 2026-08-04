@@ -1,0 +1,14 @@
+{
+  "state": "handoff_ready",
+  "updated_at": "2026-08-04T16:50:07+08:00",
+  "tagged_params": "tag_params/output/params",
+  "tag_audit": "tag_params/output/audit.json",
+  "search_limits": "search_limits",
+  "search_limits_summary": {
+    "active": 12,
+    "reserve": 4,
+    "fixed": 6,
+    "rejected": 1
+  },
+  "finished_at": "2026-08-04T16:50:07+08:00"
+}

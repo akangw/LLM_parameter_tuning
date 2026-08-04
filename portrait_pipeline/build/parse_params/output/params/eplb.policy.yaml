@@ -1,0 +1,76 @@
+name: eplb.policy
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/distributed/eplb/eplb_state.py:438
+- vllm_ascend/eplb/core/eplb_worker.py:26
+value_type: int
+default: '0'
+valid_choices: 0 (default), 1 (plb), 2 (swift), 3 (flashlb)
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter selects the expert parallel load balancing (EPLB) policy used to redistribute expert weights
+  across NPUs/GPUs in MoE models. The policy directly controls how expert-to-device mappings are computed from workload statistics,
+  which in turn determines inter-device communication volume and expert load balance. On Ascend NPU, the vllm-ascend plugin
+  provides its own policy implementations (policy_factory.py) that override the upstream vLLM policies. Policy 3 (flashlb)
+  triggers a warm-up phase and uses a multi-stage algorithm (multi_stage=True in EplbWorker). Poor load balance causes some
+  NPUs to be overloaded while others idle, directly reducing throughput. The rebalance algorithm''s quality (measured by imbalance
+  ratio, tested to be ≤1.08 for swift and ≤1.1 for flashlb) determines how evenly expert computation is distributed, which
+  is critical for large MoE models like DeepSeek-V2/V3 running on multi-NPU Ascend clusters.
+
+  '
+usage_locations:
+- file: vllm_ascend/eplb/core/eplb_worker.py:26
+  context: PolicyFactory.generate_policy(policy_type) creates the policy instance; policy_type==3 sets multi_stage=True
+- file: vllm_ascend/eplb/core/eplb_worker.py:355
+  context: policy_type==3 triggers flashlb warm_up() before the worker loop
+- file: vllm/distributed/eplb/eplb_state.py:438
+  context: 'Upstream: policy_type read from parallel_config.eplb_config.policy, used to select from EPLB_POLICIES dict'
+- file: vllm/distributed/eplb/async_worker.py:66
+  context: 'Upstream: eplb_state.policy.rebalance_experts() called to compute new physical-to-logical maps'
+- file: tests/ut/eplb/core/policy/test_policy_factory.py:6
+  context: 'Ascend test: validates swift (policy=2) and flashlb (policy=3) rebalance quality'
+related_parameters:
+- name: eplb.step_interval
+  relation: Determines how frequently the selected policy is invoked to rebalance experts
+- name: eplb.window_size
+  relation: Controls the size of the expert load window fed into the policy's rebalance algorithm
+- name: eplb.communicator
+  relation: The communication backend used to exchange expert weights after rebalancing; policy choice affects communication
+    pattern
+constraints:
+- policy must be one of 0, 1, 2, or 3; other values will cause PolicyFactory to fail
+- policy=3 (flashlb) requires the flashlb warm_up() to complete before rebalancing can begin
+- policy=3 (flashlb) uses a multi-stage algorithm that may have different memory requirements than other policies
+tuning_advice:
+  summary: For Ascend NPU, use policy=2 (swift) for best balance quality or policy=3 (flashlb) for multi-stage optimization;
+    avoid policy=0 (default/no-op) in production MoE deployments.
+  suggested_values:
+  - scenario: Production MoE inference on Ascend NPU with balanced expert distribution needed
+    value: '2'
+    reason: Swift policy achieves the best imbalance ratio (≤1.08 in tests), providing the most even expert load distribution
+      across NPUs
+  - scenario: Large-scale multi-node Ascend deployment requiring advanced multi-stage rebalancing
+    value: '3'
+    reason: FlashLB policy supports multi-stage rebalancing with warm-up, suitable for complex topologies; achieves imbalance
+      ≤1.1
+  - scenario: Debugging or single-NPU deployment where EPLB is not needed
+    value: '0'
+    reason: Default policy performs no rebalancing, avoiding unnecessary overhead when expert parallelism is not used
+  caveats:
+  - Policy 3 (flashlb) requires a warm-up phase that adds initialization overhead; use only when the multi-stage algorithm
+    provides measurable benefit over policy 2
+  - The vllm-ascend plugin uses its own PolicyFactory and policy implementations; upstream vLLM policy classes (e.g., DefaultEplbPolicy)
+    are not used on Ascend
+  - Expert load imbalance directly causes NPU idle time in tensor-parallel + expert-parallel configurations; selecting an
+    appropriate policy is critical for throughput
+  - Policy effectiveness depends on accurate expert workload statistics collected over the configured window_size; too small
+    a window may cause unstable rebalancing
+  quick_guide: Set eplb.policy=2 for best load balance on Ascend NPU; use policy=3 only if multi-stage rebalancing is needed
+    for very large clusters.
+analysis_date: '2026-07-06'

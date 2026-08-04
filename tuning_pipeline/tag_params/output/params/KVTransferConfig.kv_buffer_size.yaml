@@ -1,0 +1,112 @@
+name: KVTransferConfig.kv_buffer_size
+type: nested
+category: communication
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:37
+- docs/design/p2p_nccl_connector.md:15
+- docs/design/p2p_nccl_connector.md:59
+- docs/design/p2p_nccl_connector.md:76
+- vllm_ascend/platform.py:1004
+value_type: float
+default: 1000000000.0
+valid_choices: positive number of bytes
+cli_example: --kv-transfer-config '{"kv_connector":"P2pNcclConnector","kv_role":"kv_consumer","kv_buffer_size":8000000000}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This connector-specific value sizes the accelerator-memory buffer used to stage transferred KV cache, in bytes.
+  For the documented upstream P2pNcclConnector decode path, a buffer that is too small overflows received KV into a local
+  tensor memory pool, adding PCIe traffic and latency; loss under a transfer burst can require prefill recomputation and sharply
+  increase TTFT. A buffer that is too large reserves memory that inference could otherwise use for KV cache, reducing the
+  available batch size and output throughput. The field declaration recommends 1 GB, while the P2P NCCL design guide gives
+  a workload- and role-specific rule of roughly 5% to 10% of device memory and uses 10% as its empirical baseline. On vllm-ascend,
+  platform configuration resets every non-default value to 1e9, so this is not an effective Ascend tuning control.
+usage_locations:
+- file: vllm/config/kv_transfer.py:37
+  context: Declares the byte-count buffer-size field with a 1e9 default and identifies it as a TorchDistributedConnector setting.
+- file: docs/design/p2p_nccl_connector.md:15
+  context: Describes the decode receiver staging transferred KV in a GPU-memory buffer sized by this parameter, with overflow
+    going to a local tensor memory pool.
+- file: docs/design/p2p_nccl_connector.md:59
+  context: Explains the memory-versus-batch-size tradeoff and recommends sizing the P2P buffer at about 5% to 10% of device
+    memory.
+- file: docs/design/p2p_nccl_connector.md:76
+  context: Documents that undersizing increases tensor-pool latency while oversizing reduces inference KV capacity, batch
+    size, and throughput.
+- file: vllm_ascend/platform.py:1004
+  context: Treats this NCCL-oriented setting as incompatible with the Ascend backend and resets any non-default value to 1e9.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: The selected connector determines whether this field is consumed; the documented performance tradeoff is for P2pNcclConnector.
+- name: KVTransferConfig.kv_buffer_device
+  relation: Buffer device selects placement, while this parameter selects the capacity at that placement.
+- name: KVTransferConfig.kv_role
+  relation: Consumers need receive buffering, while producers in PUT or PUT_ASYNC mode can use a minimal buffer because they
+    do not receive KV.
+- name: KVTransferConfig.kv_connector_extra_config.send_type
+  relation: GET requires producer-side receive/storage capacity, whereas PUT and PUT_ASYNC do not require that producer buffer.
+- name: max_num_seqs
+  relation: Larger producer batches can create transfer bursts that exceed the consumer buffer and increase fallback or recomputation
+    risk.
+constraints:
+- Interpret the value as a positive number of bytes even though the configuration field is typed as float.
+- The setting has an effect only when the selected KV connector consumes it; the pinned performance guidance is specific to
+  P2pNcclConnector.
+- Decode consumers need receive-buffer capacity in PUT, PUT_ASYNC, and GET modes; prefill producers need it in GET mode but
+  not in PUT or PUT_ASYNC mode.
+- Size the buffer within available accelerator memory because it competes with inference KV-cache capacity.
+- On vllm-ascend every value other than 1e9 is overwritten with 1e9 during platform configuration.
+tuning_advice:
+  summary: Keep 1 GB on Ascend. For an upstream P2P NCCL deployment, size each endpoint by role and measured transfer bursts,
+    starting near 5% to 10% of device memory for a receiving endpoint rather than applying one value to every process.
+  suggested_values:
+  - scenario: Ascend NPU deployment
+    value: 1000000000.0
+    reason: The Ascend platform enforces this value and discards any alternative.
+  - scenario: Upstream P2P NCCL decode consumer
+    value: 5% to 10% of device memory in bytes
+    reason: The design guide identifies this as the typical range and an empirical 10% baseline for balancing receive-buffer
+      hits against inference KV capacity.
+  - scenario: Upstream P2P NCCL prefill producer using PUT or PUT_ASYNC
+    value: 1
+    reason: The design guide says this endpoint does not need to receive KV in these modes, so a substantive receive buffer
+      is unnecessary.
+  - scenario: Upstream P2P NCCL prefill producer using GET
+    value: benchmark from the 5% to 10% receiving-endpoint baseline
+    reason: GET requires the producer to retain KV for retrieval, so it needs real buffer capacity and must be sized for its
+      workload.
+  caveats:
+  - Increasing the value can lower spill or recomputation latency while simultaneously reducing inference batch capacity and
+    throughput.
+  - A larger max_num_seqs can create a larger simultaneous KV transfer burst and require more receiving capacity.
+  - The 5% to 10% guidance is empirical and connector-specific; benchmark TTFT, output throughput, peak device memory, spill
+    frequency, and recomputation together.
+  - The configuration declaration recommends 1 GB, whereas the P2P design guide recommends a percentage of memory; choose
+    based on the active connector and role.
+  quick_guide: Use 1e9 on Ascend. Upstream, use 1 byte for a non-GET producer, otherwise begin at 5% of device memory, test
+    up to 10%, and retain the smallest value that avoids harmful spill or recomputation without reducing batch throughput.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,80 @@
+name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:420
+value_type: int
+default: 0
+valid_choices: 0 or a positive integer that divides data_parallel_size
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter controls the tensor parallel size specifically for the embedding layer in MoE models on Ascend
+  NPU. When set to a value > 0, it creates a dedicated communication group (_EMBED_TP) via _create_or_get_group in parallel_state.py,
+  which partitions the embedding weight across the specified number of NPUs. This reduces per-device memory footprint for
+  the embedding table and can improve throughput by overlapping embedding lookups across devices. However, it introduces all-reduce
+  communication overhead for the embedding output. The parameter only takes effect for MoE models (is_moe=True); for dense
+  models, setting any finegrained_tp_config value > 0 raises an AssertionError. The embedding_tp_size must divide data_parallel_size
+  evenly, otherwise an AssertionError is raised. The embedding_tp_enable() utility function in vllm_ascend/utils.py gates
+  Ascend-specific embedding code paths based on this parameter.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:420
+  context: Parsed from finegrained_tp_config dict with default 0
+- file: vllm_ascend/ascend_config.py:447-448
+  context: Logged as enabled config when > 0
+- file: vllm_ascend/ascend_config.py:451-467
+  context: 'Validated: must be MoE model and must divide data_parallel_size'
+- file: vllm_ascend/distributed/parallel_state.py:137
+  context: Read to create _EMBED_TP communication group via _create_or_get_group
+- file: vllm_ascend/distributed/parallel_state.py:146-147
+  context: Initializes _EMBED_TP group when embedding_tp_size > 0
+- file: vllm_ascend/utils.py:966-967
+  context: embedding_tp_enable() returns True when this value > 0
+related_parameters:
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling finegrained TP parameter; shares the same MoE-only and data_parallel_size divisibility constraints
+- name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+  relation: Sibling finegrained TP parameter; shares the same MoE-only and data_parallel_size divisibility constraints
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Sibling finegrained TP parameter; additionally requires graph mode and PD D-node scenario
+- name: parallel_config.data_parallel_size
+  relation: embedding_tensor_parallel_size must divide data_parallel_size evenly
+- name: model_config.is_moe
+  relation: All finegrained TP parameters require is_moe=True; otherwise AssertionError is raised
+constraints:
+- embedding_tensor_parallel_size must be 0 (disabled) or a positive integer.
+- embedding_tensor_parallel_size can only be enabled for MoE models (is_moe=True).
+- embedding_tensor_parallel_size must divide data_parallel_size evenly (data_parallel_size % embedding_tensor_parallel_size
+  == 0).
+tuning_advice:
+  summary: 'Enable embedding tensor parallelism for large-vocabulary MoE models on Ascend NPU to reduce per-device embedding
+    memory and improve throughput, but ensure the value divides data_parallel_size evenly.
+
+    '
+  suggested_values:
+  - scenario: Small MoE model with modest vocabulary (<50K tokens)
+    value: 0
+    reason: Embedding memory is not a bottleneck; disabling avoids unnecessary all-reduce communication overhead.
+  - scenario: Large MoE model with large vocabulary (>100K tokens) and data_parallel_size >= 4
+    value: 2
+    reason: Splits embedding across 2 NPUs within each data-parallel group, halving per-device embedding memory while keeping
+      communication overhead manageable.
+  - scenario: Very large MoE model with huge vocabulary (>250K tokens) and data_parallel_size >= 8
+    value: 4
+    reason: Further reduces per-device embedding memory at the cost of increased all-reduce communication; beneficial when
+      embedding memory dominates.
+  caveats:
+  - This parameter is Ascend-specific and has no effect in upstream vLLM.
+  - Only works for MoE models; setting any finegrained TP value on dense models raises an AssertionError.
+  - Introduces additional all-reduce communication for embedding outputs, which may hurt latency if embedding size is small.
+  - Must coordinate with other finegrained TP parameters (lmhead, mlp, oproj) to ensure all values divide data_parallel_size.
+  - The embedding_tp_size value should typically be less than or equal to the global tensor_parallel_size to avoid over-partitioning.
+  quick_guide: Set to 2 or 4 for large-vocabulary MoE models when data_parallel_size >= 4; leave at 0 for dense models or
+    small vocabularies.
+analysis_date: '2026-07-06'

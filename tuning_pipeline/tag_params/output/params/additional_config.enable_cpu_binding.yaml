@@ -1,0 +1,107 @@
+name: additional_config.enable_cpu_binding
+type: nested
+category: hardware
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:135
+- vllm_ascend/worker/worker.py:573
+- vllm_ascend/cpu_binding.py:327
+- vllm_ascend/platform.py:1092
+- docs/source/user_guide/feature_guide/cpu_binding.md:1
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"enable_cpu_binding": false}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: On ARM-based Ascend servers, enabling this option runs the Ascend-native CPU allocator after worker warmup.
+  The allocator derives per-NPU CPU pools from the process cpuset and either NPU topology affinity or deterministic global
+  logical-NPU slicing, then pins the worker and key runtime threads, optionally migrates memory pages, and binds NPU interrupts
+  when permissions and host tools allow it. This can reduce remote-NUMA traffic, scheduler movement, and contention, improving
+  latency stability and making multi-worker throughput more predictable. Disabling it avoids those affinity actions but may
+  increase host-side latency, tail jitter, or throughput variability on busy multi-socket ARM systems. It does not change
+  model execution or numerical results, and it is skipped on non-ARM hosts.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:135
+  context: Reads the nested option from additional_config with a default of true.
+- file: vllm_ascend/worker/worker.py:573
+  context: Gates the post-warmup bind_cpus call; failures are caught per rank and logged so inference continues without CPU
+    binding.
+- file: vllm_ascend/cpu_binding.py:327
+  context: Builds per-NPU CPU pools using global slicing for A3 or topology affinity for other devices, with global slicing
+    as the fallback when topology is unavailable.
+- file: vllm_ascend/cpu_binding.py:432
+  context: Pins the worker and ACL/release threads and then attempts to migrate the process memory pages to the selected NUMA
+    node.
+- file: vllm_ascend/cpu_binding.py:445
+  context: Attempts per-NPU IRQ affinity when the host exposes writable IRQ controls.
+- file: vllm_ascend/platform.py:1092
+  context: Adapts upstream numa_bind on Ascend by clearing it and supplying a true default for enable_cpu_binding without
+    overriding an explicitly configured value.
+- file: docs/source/user_guide/feature_guide/cpu_binding.md:1
+  context: Documents the default, performance benefits, requirements, limitations, disable examples, and troubleshooting guidance.
+related_parameters:
+- name: parallel_config.numa_bind
+  relation: On Ascend, a true numa_bind value is cleared and converted to an enable_cpu_binding true default. Because the
+    adapter uses setdefault, an explicit enable_cpu_binding false value remains false.
+- name: parallel_config.numa_bind_nodes
+  relation: Ascend ignores and clears this upstream GPU-oriented setting because its native allocator derives CPU pools from
+    NPU topology or logical NPU IDs.
+- name: parallel_config.numa_bind_cpus
+  relation: Ascend ignores and clears this upstream custom CPU-list setting because its native allocator computes the binding
+    pool automatically.
+constraints:
+- This option is implemented only by vllm-ascend and does not control upstream GPU NUMA binding.
+- CPU binding runs only on ARM; bind_cpus returns without applying affinity on x86 and other non-ARM architectures.
+- Each final NPU pool needs at least five allowed CPUs for two IRQ slots, at least one main-worker CPU, one ACL-thread CPU,
+  and one release-thread CPU.
+- The process Cpus_allowed_list is the eligibility boundary, so container or service cpusets must expose enough suitably distributed
+  CPUs.
+- Memory migration requires migratepages; without it, thread affinity still applies but memory locality and its latency or
+  throughput benefit may be worse.
+- IRQ affinity additionally requires writable /proc/irq and resolvable NPU PCI/IRQ information; otherwise that part is skipped.
+tuning_advice:
+  summary: Keep the true default on adequately provisioned ARM Ascend servers, and disable it only when host CPU affinity
+    is intentionally managed elsewhere or measurements show that the automatic allocation is unsuitable.
+  suggested_values:
+  - scenario: Multi-socket ARM Ascend serving with sufficient CPUs per NPU
+    value: true
+    reason: Enables the documented topology-aware isolation and locality behavior intended to stabilize latency and multi-worker
+      throughput.
+  - scenario: Externally managed affinity policy or an unsuitable constrained cpuset
+    value: false
+    reason: Avoids applying the automatic thread, memory, and IRQ placement when a host or container policy must retain full
+      control; compare end-to-end performance before keeping this override.
+  caveats:
+  - The benefit depends on socket topology, NPU placement, workload concurrency, and cpuset layout; benchmark representative
+    traffic.
+  - On x86 hosts the implementation skips binding, so changing this value should not produce the ARM optimization.
+  - Missing migratepages reduces the completeness of NUMA placement but does not disable CPU thread affinity.
+  - Binding exceptions are caught by the worker, which continues after logging that binding was skipped for the rank.
+  - The allocator may stop irqbalance when permitted in order to apply IRQ affinity; account for host-wide IRQ policy before
+    enabling that capability.
+  quick_guide: Start with true on ARM Ascend. Verify at least five allowed CPUs per logical NPU and inspect the allocation
+    logs, then retain false only if an external affinity policy or measured end-to-end results justify disabling it.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

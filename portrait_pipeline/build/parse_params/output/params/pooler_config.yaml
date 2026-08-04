@@ -1,0 +1,65 @@
+name: --pooler-config
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:817
+- vllm/config/model.py:315
+value_type: dict
+default: 'null'
+valid_choices: 'null'
+cli_example: '--pooler-config ''{"seq_pooling_type": "MEAN", "use_activation": false}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter configures output pooling behavior for embedding/pooling models (e.g., sentence-transformers).
+  On Ascend NPU, its primary performance impact is indirect: when pooler_config is set (non-null), vLLM automatically downgrades
+  CUDA graph mode from FULL to PIECEWISE (see vllm/config/vllm.py:1085-1091). PIECEWISE mode captures fewer operations in
+  static graphs, which can reduce throughput compared to FULL CUDA graphs. Additionally, pooler_config controls chunked processing
+  (enable_chunked_processing) which affects how embeddings are computed for long sequences — chunking reduces peak memory
+  but may increase total computation. The parameter itself does not directly control any Ascend-specific hardware feature;
+  it is a pure upstream vLLM parameter with no vllm-ascend override detected in the provided context.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:315
+  context: Field definition in ModelConfig — PoolerConfig | None, controls output pooling behavior
+- file: vllm/config/vllm.py:1085
+  context: When pooler_config is not None, CUDA graph mode is downgraded from FULL to PIECEWISE
+- file: vllm/entrypoints/pooling/embed/io_processor.py:51
+  context: Assertion that pooler_config is not None for EmbedIOProcessor; reads enable_chunked_processing
+- file: vllm/engine/arg_utils.py:1560
+  context: Passed to ModelConfig constructor during engine initialization
+related_parameters:
+- name: --compilation-config
+  relation: pooler_config being non-null forces cudagraph_mode to PIECEWISE, overriding compilation config settings
+- name: --enforce-eager
+  relation: If enforce_eager is True, CUDA graphs are already disabled, so pooler_config's graph downgrade has no additional
+    effect
+constraints:
+- pooler_config must be a valid PoolerConfig dictionary or null; invalid keys will cause a validation error
+- pooler_config is only meaningful for pooling/embedding models; for generative models it should remain null
+tuning_advice:
+  summary: Only set pooler_config when deploying embedding/pooling models; be aware it disables full CUDA graphs on Ascend
+  suggested_values:
+  - scenario: Deploying a generative (non-pooling) model
+    value: null (omit the flag)
+    reason: pooler_config is only relevant for pooling models; setting it unnecessarily triggers CUDA graph downgrade
+  - scenario: Deploying an embedding model with default pooling
+    value: null (omit the flag)
+    reason: vLLM auto-infers pooling configuration from the model's HuggingFace config; explicit config is only needed for
+      overrides
+  - scenario: Deploying an embedding model requiring non-default pooling (e.g., MEAN pooling with activation disabled)
+    value: '''{"seq_pooling_type": "MEAN", "use_activation": false}'''
+    reason: Explicitly set pooling type and activation behavior when the model requires non-standard pooling
+  caveats:
+  - Setting pooler_config forces CUDA graph mode to PIECEWISE on Ascend NPU, which may reduce throughput compared to FULL
+    mode
+  - If enforce_eager is already True, the CUDA graph downgrade has no additional performance impact
+  - Chunked processing (enable_chunked_processing in PoolerConfig) trades memory for computation — useful for long sequences
+    but adds overhead
+  quick_guide: Omit --pooler-config unless deploying embedding models that need non-default pooling; it disables full CUDA
+    graphs on Ascend
+analysis_date: '2026-07-06'

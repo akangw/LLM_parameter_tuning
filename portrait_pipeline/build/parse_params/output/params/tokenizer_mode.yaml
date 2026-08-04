@@ -1,0 +1,99 @@
+name: --tokenizer-mode
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:768
+- vllm/config/model.py:130
+value_type: str
+default: auto
+valid_choices:
+- auto
+- hf
+- slow
+- mistral
+- deepseek_v32
+- deepseek_v4
+- qwen_vl
+- fastokens
+cli_example: --tokenizer-mode auto
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'The tokenizer mode controls which tokenizer implementation is used for encoding/decoding text. On Ascend NPU,
+  the tokenizer runs on the host CPU, not on the NPU itself, so its direct impact on NPU compute performance is minimal. However,
+  the choice of tokenizer can affect end-to-end latency and throughput in two ways: "(1) Different tokenizer backends have
+  different" encoding/decoding speeds — the "fastokens" Rust-based backend or HuggingFace fast tokenizers can be significantly
+  faster than the "slow" Python tokenizer for high-throughput scenarios. (2) Model-specific tokenizers like "deepseek_v4"
+  or "deepseek_v32" are required for correct tokenization of certain models (e.g., DeepSeek-V4 with MTP speculative decoding
+  on Ascend), and using the wrong mode will produce incorrect results or errors. The tokenizer_mode is excluded from the model
+  computation graph hash (vllm/config/model.py:358), confirming it does not affect the NPU compute graph. On Ascend, the vllm-ascend
+  plugin does not override this parameter — it passes through to the upstream vLLM tokenizer selection logic. The parameter
+  is used identically in both v1 and v2 worker paths since tokenization happens before dispatch.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1518
+  context: Passed to ModelConfig constructor during engine initialization
+- file: vllm/config/model.py:130
+  context: ModelConfig field definition with docstring describing all valid modes
+- file: vllm/config/speculative.py:628
+  context: Copied from target model config to draft model config for speculative decoding
+- file: vllm/benchmarks/throughput.py:915
+  context: Auto mode overridden to 'hf' for non-vllm backends (hf/mii) since mistral_common is vllm-only
+- file: vllm/benchmarks/serve.py:1722
+  context: Used when creating tokenizer for benchmark serve requests
+- file: vllm_ascend/tests/e2e/conftest.py:923
+  context: VllmRunner test fixture defaults to 'auto'
+- file: vllm_ascend/tests/e2e/pull_request/four_card/test_deepseek_v4.py:55
+  context: DeepSeek-V4 Ascend tests explicitly set tokenizer_mode='deepseek_v4'
+related_parameters:
+- name: --tokenizer
+  relation: Specifies which tokenizer to load; tokenizer_mode controls how it is loaded (fast/slow/custom)
+- name: --skip-tokenizer-init
+  relation: When set, tokenizer_mode is set to None and no tokenizer is loaded
+- name: --trust-remote-code
+  relation: Required for some custom tokenizer modes that need to execute remote code
+constraints:
+- The 'mistral' mode requires the mistral_common package to be installed.
+- The 'fastokens' mode requires the fastokens package to be installed.
+- The 'deepseek_v4' mode is required for DeepSeek-V4 models to ensure correct tokenization.
+- The 'deepseek_v32' mode is required for DeepSeek-V3.2 models to ensure correct tokenization.
+- The 'qwen_vl' mode is required for Qwen-VL multimodal models.
+- When using non-vllm backends (hf, mii), 'auto' mode is overridden to 'hf' because mistral_common is only supported in vllm.
+tuning_advice:
+  summary: Use 'auto' for most models; only change to model-specific modes when required by the model architecture (e.g.,
+    'deepseek_v4' for DeepSeek-V4 on Ascend).
+  suggested_values:
+  - scenario: Standard HuggingFace models (Llama, Qwen, etc.) on Ascend
+    value: auto
+    reason: Auto-detection selects the fastest available tokenizer (fast HF tokenizer or mistral_common for Mistral models)
+      with no manual configuration needed.
+  - scenario: DeepSeek-V4 models on Ascend NPU
+    value: deepseek_v4
+    reason: DeepSeek-V4 requires its custom tokenizer for correct tokenization; using 'auto' or 'hf' will produce incorrect
+      results. This is validated in vllm-ascend e2e tests.
+  - scenario: DeepSeek-V3.2 models on Ascend NPU
+    value: deepseek_v32
+    reason: DeepSeek-V3.2 has its own tokenizer format that differs from standard HF tokenizers.
+  - scenario: Maximum throughput benchmarks where tokenization is a bottleneck
+    value: fastokens
+    reason: The Rust-based fastokens backend provides the fastest tokenization speed, reducing CPU-side overhead during high-throughput
+      serving. Requires installing the fastokens package.
+  - scenario: Debugging tokenization issues or when fast tokenizer produces incorrect results
+    value: slow
+    reason: The slow Python tokenizer is the reference implementation and can help isolate whether issues are caused by the
+      fast tokenizer.
+  caveats:
+  - Tokenization runs on the host CPU, not the Ascend NPU, so tokenizer_mode does not directly affect NPU compute performance
+    — only end-to-end latency through CPU-side encoding/decoding overhead.
+  - Using the wrong tokenizer_mode for a model (e.g., 'auto' for DeepSeek-V4) will cause incorrect tokenization and garbled
+    output, not an explicit error.
+  - The 'fastokens' backend requires a separate package installation and may not be available in all environments.
+  - On Ascend, vllm-ascend does not modify or override tokenizer_mode behavior — all modes work as documented in upstream
+    vLLM.
+  quick_guide: Stick with 'auto' unless your model documentation explicitly requires a specific tokenizer mode (e.g., DeepSeek-V4
+    needs 'deepseek_v4').
+analysis_date: '2026-07-06'

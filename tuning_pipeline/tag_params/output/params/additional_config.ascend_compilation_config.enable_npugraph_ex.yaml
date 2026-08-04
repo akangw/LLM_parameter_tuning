@@ -1,0 +1,123 @@
+name: additional_config.ascend_compilation_config.enable_npugraph_ex
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:483
+- vllm_ascend/platform.py:501
+- vllm_ascend/compilation/compiler_interface.py:47
+- vllm_ascend/compilation/compiler_interface.py:125
+- vllm_ascend/compilation/compiler_interface.py:259
+- docs/source/user_guide/configuration/additional_config.md:128
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":false}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This switch selects the compiler used for Ascend FX graphs. When true, the Ascend compiler sends the graph
+  to npugraph_ex, or to its TorchAir-compatible fallback when npugraph_ex cannot be imported, and configures a reduce-overhead
+  ACL-graph path with eager graph execution before capture and reinplace disabled. That path can reduce Python and kernel-launch
+  overhead, cache compiled graph code, and enables the separate static-kernel feature, so it can materially improve steady-state
+  latency and throughput at the cost of graph compilation/capture time and backend artifacts. When false, the compiler instead
+  applies the configured Ascend graph-fusion pass manager and returns that transformed FX graph without the npugraph_ex/TorchAir
+  graph backend. The choice therefore changes compilation, capture, caching, and transient memory behavior rather than model
+  weights or KV-cache capacity. Ascend forcibly changes the value to false for cudagraph mode NONE, every mode requiring piecewise
+  compilation, and unsupported NPU cudagraph modes; only full-cudagraph modes retain a user-supplied true value.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:483
+  context: Defines the nested boolean with a true default and stores it in AscendCompilationConfig.
+- file: vllm_ascend/ascend_config.py:520
+  context: Requires this switch to remain true whenever static-kernel generation is enabled.
+- file: vllm_ascend/platform.py:501
+  context: Disables the switch when cudagraph mode is NONE and disables compilation mode at the same time.
+- file: vllm_ascend/platform.py:504
+  context: Configures piecewise compilation and then forces this switch false for every mode that requires piecewise compilation.
+- file: vllm_ascend/platform.py:530
+  context: Preserves the graph path for modes with full cudagraphs, while the following fallback branch disables it for unsupported
+    modes.
+- file: vllm_ascend/compilation/compiler_interface.py:221
+  context: Includes the effective boolean in the Ascend compiler cache hash, keeping artifacts from the two compiler paths
+    separate.
+- file: vllm_ascend/compilation/compiler_interface.py:259
+  context: Dispatches true to npugraph_ex_compile and false to fusion_pass_compile.
+- file: vllm_ascend/compilation/compiler_interface.py:125
+  context: Implements the npugraph_ex backend, TorchAir import fallback, ACL-graph configuration, and optional compiled-code
+    cache used by the true path.
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: NONE and any mode requiring piecewise compilation force this switch to false; a supported mode with full cudagraphs
+    is required to retain true.
+- name: compilation_config.mode
+  relation: Ascend changes compilation mode to NONE when cudagraph mode is NONE or unsupported, which also disables this graph
+    backend.
+- name: additional_config.ascend_compilation_config.enable_static_kernel
+  relation: Static-kernel generation requires this switch to be true and raises an assertion during configuration otherwise.
+- name: additional_config.ascend_compilation_config.fuse_norm_quant
+  relation: Controls an Ascend fusion pass independently; disabling npugraph_ex still runs the fusion-pass compiler rather
+    than disabling every graph fusion.
+- name: additional_config.ascend_compilation_config.fuse_qknorm_rope
+  relation: Controls another independent pass consumed by the fallback fusion-pass path.
+- name: additional_config.ascend_compilation_config.fuse_allreduce_rms
+  relation: Affects fusion-pass registration and compile-range split-point handling; its behavior must be evaluated together
+    with the selected compiler path.
+constraints:
+- enable_static_kernel=true requires enable_npugraph_ex=true; the typed configuration asserts this dependency during initialization.
+- CUDAGraphMode.NONE overrides a supplied true value to false and sets compilation mode to NONE.
+- Every cudagraph mode whose upstream enum requires piecewise compilation overrides a supplied true value to false after configuring
+  splitting ops and capture sizes.
+- An unsupported NPU cudagraph mode falls back to NONE and forces this switch false.
+- A true value does not require the npugraph_ex Python package specifically; the implementation catches ImportError and uses
+  the TorchAir NPU backend.
+tuning_advice:
+  summary: Keep the default true for a supported full-cudagraph production setup, and compare end-to-end warm and steady-state
+    results before changing it; use false for compiler isolation or when the selected cudagraph mode forces it.
+  suggested_values:
+  - scenario: Supported FULL or FULL_DECODE_ONLY production deployment
+    value: true
+    reason: Retains the NPU graph compiler and ACL-graph capture path intended to reduce steady-state dispatch overhead and
+      unlock static kernels.
+  - scenario: Diagnosing NPU graph compilation, capture, or cache failures
+    value: false
+    reason: Selects the simpler fusion-pass compiler, which isolates problems in the npugraph_ex/TorchAir graph backend while
+      preserving configured graph-fusion passes.
+  - scenario: cudagraph mode NONE, PIECEWISE, or another piecewise mode
+    value: false
+    reason: The Ascend platform overrides true in these modes, so explicitly using false reflects the effective configuration
+      and avoids misleading expectations.
+  caveats:
+  - 'Benchmark startup and warmup as well as steady state: graph compilation, capture, static-kernel compilation, and cache
+    creation can add one-time cost even when later requests are faster.'
+  - Performance depends on model graph, shapes, capture sizes, software versions, and workload; selecting the graph backend
+    does not guarantee a gain for every deployment.
+  - The memory scope concerns graph-capture state, compiler intermediates, and cached artifacts, not a documented increase
+    in available weight or KV-cache memory.
+  - The documentation also lists a top-level enable_npugraph_ex entry with a false default, but this portrait concerns the
+    nested ascend_compilation_config field whose source and nested documentation both default to true.
+  quick_guide: Use true with supported full cudagraphs, retain it only after measuring warmup and steady-state behavior, and
+    use false for troubleshooting or any mode where Ascend forces the graph backend off.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

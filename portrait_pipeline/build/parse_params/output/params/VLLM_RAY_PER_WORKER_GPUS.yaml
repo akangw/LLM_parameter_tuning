@@ -1,0 +1,68 @@
+name: VLLM_RAY_PER_WORKER_GPUS
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:1142
+value_type: float
+default: '1.0'
+valid_choices: any positive float (typically 0 < value <= 1.0 for fractional GPU sharing)
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This environment variable controls the number of GPUs (or NPUs on Ascend) requested per Ray worker actor.
+  When set to a fractional value (e.g., 0.5), Ray can schedule multiple vLLM worker actors on a single physical device, enabling
+  GPU/NPU sharing and co-location of other Ray actors on the same device. This directly affects resource allocation and scheduling
+  density: "a lower value allows more workers per device, potentially increasing" overall throughput through better device
+  utilization, but may cause memory contention if multiple workers compete for the same device memory. On Ascend NPU, the
+  same mechanism applies — the value is read in vllm/v1/executor/ray_executor.py:152 and vllm/v1/executor/ray_executor_v2.py:243
+  to determine the `num_gpus` (or equivalent NPU resource) requested per Ray actor. No vllm-ascend override was found, so
+  the upstream behavior applies directly to Ascend deployments using Ray.
+
+  '
+usage_locations:
+- file: vllm/v1/executor/ray_executor.py:152
+  context: Reads VLLM_RAY_PER_WORKER_GPUS to set num_gpus for Ray actor resource allocation in v1 executor
+- file: vllm/v1/executor/ray_executor_v2.py:243
+  context: Reads VLLM_RAY_PER_WORKER_GPUS to determine device resource requirements per actor in v2 executor
+- file: examples/rl/rlhf_ipc.py:46
+  context: Example usage setting VLLM_RAY_PER_WORKER_GPUS=0.4 to fit two LLM instances on one GPU
+related_parameters:
+- name: VLLM_RAY_BUNDLE_INDICES
+  relation: Used together to precisely control which device indices each Ray worker binds to when sharing devices
+- name: tensor_parallel_size
+  relation: Total devices requested per worker = VLLM_RAY_PER_WORKER_GPUS; must be sufficient to accommodate tensor_parallel_size
+constraints:
+- VLLM_RAY_PER_WORKER_GPUS must be a positive float value
+- When using fractional values for device sharing, VLLM_RAY_BUNDLE_INDICES should typically be set to control which specific
+  device each worker uses
+tuning_advice:
+  summary: 'Set VLLM_RAY_PER_WORKER_GPUS to a fractional value (e.g., 0.5) to enable multiple vLLM workers to share a single
+    Ascend NPU, improving overall throughput when the model does not fully saturate the NPU''s compute or memory bandwidth.
+
+    '
+  suggested_values:
+  - scenario: Single model instance per NPU (default, no sharing)
+    value: '1.0'
+    reason: Each Ray worker gets exclusive access to one full NPU, avoiding memory contention and ensuring predictable performance
+  - scenario: Multiple small model instances sharing one NPU to increase serving density
+    value: '0.5'
+    reason: Allows two workers per NPU; useful when model memory footprint is small relative to NPU memory and throughput
+      per instance is not compute-bound
+  - scenario: Co-locating vLLM with other Ray actors on the same NPU
+    value: '0.3'
+    reason: Reserves a fraction of the NPU for vLLM while leaving the remainder for other Ray tasks, as demonstrated in the
+      RLHF IPC example
+  caveats:
+  - Fractional GPU/NPU sharing can lead to memory contention if the combined memory usage of co-located workers exceeds the
+    physical device memory
+  - On Ascend NPU, ensure that the total number of workers × VLLM_RAY_PER_WORKER_GPUS does not exceed the available NPU count,
+    otherwise Ray scheduling will stall
+  - When using fractional values, always pair with VLLM_RAY_BUNDLE_INDICES to explicitly control device binding and avoid
+    unintended device overlaps
+  quick_guide: Use 1.0 for dedicated NPU per worker; use fractional values (e.g., 0.5) only when you need to pack multiple
+    workers onto one Ascend NPU and have sufficient device memory
+analysis_date: '2026-07-06'

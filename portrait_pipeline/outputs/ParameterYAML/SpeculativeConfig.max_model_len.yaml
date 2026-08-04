@@ -1,0 +1,76 @@
+name: SpeculativeConfig.max_model_len
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:114
+- vllm/config/speculative.py:624
+- vllm/config/speculative.py:752
+- vllm/config/speculative.py:804
+- vllm_ascend/worker/model_runner_v1.py:2243
+value_type: int
+default: null
+valid_choices: A positive integer greater than or equal to 1, or null.
+cli_example: --speculative-config '{"model":"<draft-model>","num_speculative_tokens":3,"max_model_len":4096}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This nested option caps the draft model's effective sequence length for model-based speculative decoding. When
+  unset, vLLM uses the smaller of the draft model's discovered maximum length and the target model's maximum length. An explicit
+  smaller value makes requests stop receiving draft-token proposals as they approach that boundary, while target-model decoding
+  can continue. This can reduce speculative-decoding coverage for long sequences, increasing decode latency and reducing throughput
+  relative to a drafter that remains active. It is primarily a testing control for the skip-speculation path, not a general-purpose
+  way to change the served model's context length. The pinned Ascend runner directly checks the effective drafter limit before
+  proposing tokens, so it inherits this behavior.
+usage_locations:
+- file: vllm/config/speculative.py:114
+  context: Defines the optional integer field with a minimum accepted value of 1.
+- file: vllm/config/speculative.py:624
+  context: Passes the value into construction of the draft model's ModelConfig.
+- file: vllm/config/speculative.py:752
+  context: Replaces the draft ModelConfig maximum with the verified effective draft limit.
+- file: vllm/config/speculative.py:804
+  context: Selects the explicit value, or otherwise the minimum of draft and target limits, and rejects an explicit limit
+    above either model's capacity.
+- file: vllm_ascend/worker/model_runner_v1.py:2243
+  context: Skips draft-token proposal when the current maximum sequence length plus speculative tokens would exceed the effective
+    drafter limit.
+related_parameters:
+- name: SpeculativeConfig.model
+  relation: This limit is applied when a separate draft model is configured; methods without that draft-model construction
+    path do not use this override.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Ascend adds this lookahead count to the current sequence length when deciding whether the input still fits in
+    the drafter.
+- name: ModelConfig.max_model_len
+  relation: The target model limit is an upper bound on the effective draft limit and continues to govern the served request
+    context.
+constraints:
+- An explicit value must be an integer greater than or equal to 1.
+- An explicit value cannot exceed the draft model's discovered max_model_len.
+- An explicit value cannot exceed the target model's max_model_len.
+- When null, the effective draft limit is min(draft_model_max_model_len, target_model_max_model_len).
+- The option affects the separate draft-model path; it does not enlarge either model's supported context.
+tuning_advice:
+  summary: Leave this null for production unless deliberately testing or restricting the point at which long sequences stop
+    using the drafter.
+  suggested_values:
+  - scenario: Normal production speculative decoding
+    value: <unset>
+    reason: Automatically preserves speculative coverage up to the smaller safe capacity of the draft and target models.
+  - scenario: Testing fallback after the drafter sequence limit
+    value: 4096
+    reason: Provides a concrete lower boundary at which sufficiently long sequences exercise the skip-speculation path; choose
+      a value below both model limits.
+  caveats:
+  - Lower values reduce the portion of long generations accelerated by speculative decoding and can hurt latency and throughput.
+  - The best test boundary depends on prompt lengths and num_speculative_tokens because the fit check includes the speculative
+    lookahead.
+  - This setting does not increase the target model context window and cannot be set above either model's verified capacity.
+  - Methods that reuse the target configuration or do not instantiate a separate draft model do not follow the model-based
+    override path described here.
+  quick_guide: Keep null in production; set a smaller positive integer only to test or intentionally trigger drafter fallback
+    for long sequences.
+analysis_date: '2026-07-31'

@@ -1,0 +1,121 @@
+name: --worker-cls
+type: cli
+category: hardware
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1070
+- vllm/config/parallel.py:244
+- vllm_ascend/platform.py:556
+value_type: str
+default: auto
+valid_choices:
+- auto
+- vllm_ascend.worker.worker.NPUWorker
+- vllm_ascend._310p.worker_310p.NPUWorker310
+- vllm_ascend.xlite.xlite_worker.XliteWorker
+- vllm.v1.worker.gpu_worker.Worker
+- vllm.v1.worker.cpu_worker.CPUWorker
+- <any fully-qualified Python class name>
+cli_example: --worker-cls auto
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'This parameter determines which Worker class is instantiated to execute model inference on each device. On
+  Ascend NPU, vllm-ascend silently overrides the "auto" default to select an NPU-optimized worker (NPUWorker, NPUWorker310,
+  or XliteWorker) instead of the upstream GPU Worker. The worker class controls the entire model execution path: how attention
+  is computed, how KV cache is managed, how communication collectives are invoked, and which Ascend-specific optimizations
+  (e.g., custom ops, NPU graph capture) are active. Choosing the wrong worker class will either crash (if the class is incompatible
+  with Ascend hardware) or silently fall back to suboptimal code paths, severely degrading throughput and latency. The vllm-ascend
+  platform module (vllm_ascend/platform.py:556-566) overrides worker_cls when set to "auto" based on device type (310P vs
+  other Ascend) and whether Xlite is enabled.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:556-566
+  context: 'vllm-ascend overrides worker_cls="auto" to NPUWorker310 (310P devices), XliteWorker (when xlite_graph_config.enabled),
+    or NPUWorker (default Ascend).
+
+    '
+- file: vllm/v1/worker/worker_base.py:242-251
+  context: 'V1 worker initialization resolves worker_cls string to a class via resolve_obj_by_qualname and instantiates it.
+
+    '
+- file: vllm/platforms/cuda.py:226-227
+  context: 'CUDA platform sets worker_cls="auto" to vllm.v1.worker.gpu_worker.Worker.
+
+    '
+- file: vllm/platforms/rocm.py:750-751
+  context: 'ROCm platform sets worker_cls="auto" to vllm.v1.worker.gpu_worker.Worker.
+
+    '
+- file: vllm/platforms/cpu.py:142-143
+  context: 'CPU platform sets worker_cls="auto" to vllm.v1.worker.cpu_worker.CPUWorker.
+
+    '
+related_parameters:
+- name: --worker-extension-cls
+  relation: 'worker_extension_cls is dynamically inherited by the worker class to inject additional attributes and methods
+    for collective_rpc calls.
+
+    '
+- name: --distributed-executor-backend
+  relation: 'The executor backend (mp/ray/uni) determines how workers are launched; the worker_cls must be compatible with
+    the chosen executor.
+
+    '
+- name: VLLM_ASCEND_ENABLE_XLITE (or xlite_graph_config.enabled)
+  relation: 'When Xlite is enabled, vllm-ascend automatically selects XliteWorker as the worker class, overriding any user-specified
+    value.
+
+    '
+constraints:
+- worker_cls must be a fully-qualified Python class name string (e.g., 'vllm_ascend.worker.worker.NPUWorker'); passing a class
+  object directly is no longer supported.
+- On Ascend NPU, the worker class must be compatible with the Da Vinci architecture and CANN runtime; using the upstream GPU
+  Worker will fail.
+- When ASCEND_LAUNCH_BLOCKING=1, ACL graph capture is incompatible; the worker must not use NPU graph modes.
+tuning_advice:
+  summary: 'Leave --worker-cls at its default "auto" on Ascend NPU — vllm-ascend automatically selects the correct NPU-optimized
+    worker for your hardware.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend NPU (910B, A3, etc.)
+    value: auto
+    reason: 'vllm-ascend automatically resolves to vllm_ascend.worker.worker.NPUWorker, which includes Ascend-specific custom
+      ops, NPU graph capture, and HCCL communication optimizations.
+
+      '
+  - scenario: Ascend 310P devices
+    value: auto
+    reason: 'vllm-ascend automatically resolves to vllm_ascend._310p.worker_310p.NPUWorker310, which is optimized for the
+      310P''s lower memory and compute characteristics.
+
+      '
+  - scenario: openEuler Xlite virtualization enabled
+    value: auto
+    reason: 'vllm-ascend automatically resolves to vllm_ascend.xlite.xlite_worker.XliteWorker, which integrates with the Xlite
+      graph virtualization framework for improved resource sharing.
+
+      '
+  - scenario: Custom worker class for research or debugging
+    value: <fully.qualified.CustomWorker>
+    reason: 'Advanced users can inject custom behavior by specifying a fully-qualified class name. The class must be importable
+      and compatible with the Ascend platform''s execution model.
+
+      '
+  caveats:
+  - Manually setting --worker-cls to a GPU worker class (e.g., vllm.v1.worker.gpu_worker.Worker) on Ascend NPU will cause
+    runtime errors or silently produce incorrect results.
+  - The vllm-ascend platform module overrides worker_cls only when it is set to 'auto'; if you specify a custom value, vllm-ascend
+    will NOT validate or override it — you are responsible for ensuring compatibility.
+  - Different worker classes may have different memory footprints and performance characteristics; switching workers can significantly
+    change peak memory usage and throughput.
+  quick_guide: 'Use --worker-cls auto (the default) on Ascend NPU; vllm-ascend handles hardware-specific worker selection
+    automatically.
+
+    '
+analysis_date: '2026-07-06'

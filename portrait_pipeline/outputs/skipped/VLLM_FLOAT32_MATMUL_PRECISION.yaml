@@ -1,0 +1,7 @@
+name: VLLM_FLOAT32_MATMUL_PRECISION
+type: env
+performance_impact: none
+skip_reason: In the pinned current vLLM source this environment variable is type-declared and parsed in vllm/envs.py, but
+  no worker or other runtime code reads it or calls torch.set_float32_matmul_precision from it. The pinned vllm-ascend source
+  likewise contains no reference to or override for the variable. Changing it therefore cannot affect latency, throughput,
+  or memory in the target runtime.

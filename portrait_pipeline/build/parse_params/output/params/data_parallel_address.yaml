@@ -1,0 +1,68 @@
+name: --data-parallel-address
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:992
+value_type: str
+default: 'null'
+valid_choices: any valid IP address or hostname string
+cli_example: --data-parallel-address 192.168.1.100
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter specifies the IP address or hostname of the head node in a data-parallel cluster. It is used
+  to establish network connections (torch distributed group and ZMQ sockets) between data-parallel replicas running on different
+  nodes. The address itself does not directly affect computation or memory usage, but an incorrect or suboptimal address (e.g.,
+  a slow network interface) can cause connection failures or increased communication latency between replicas, indirectly
+  impacting end-to-end throughput and request latency. On Ascend NPU, this parameter is used identically to upstream vLLM
+  — vllm-ascend does not override or modify its behavior. The parameter is only relevant for multi-node data-parallel deployments
+  (e.g., MoE models with expert parallelism across nodes). In single-node setups or when data_parallel_size=1, this parameter
+  has no effect.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1866
+  context: If data_parallel_address is None, auto-detects from ray backend or falls back to master_addr; otherwise uses the
+    user-provided value.
+- file: vllm/engine/arg_utils.py:472
+  context: Declared as a nullable string field in EngineArgs with default None.
+related_parameters:
+- name: --data-parallel-size
+  relation: Must be >1 for this parameter to have any effect; defines the number of data-parallel replicas.
+- name: --data-parallel-rpc-port
+  relation: Works together with data-parallel-address to establish RPC communication between replicas.
+- name: --data-parallel-backend
+  relation: When set to 'ray', the address is auto-detected if not provided; when 'mp', falls back to --master-addr.
+- name: --master-addr
+  relation: Used as fallback for data-parallel-address when data-parallel-backend is 'mp' and no explicit address is set.
+- name: --nnodes
+  relation: Multi-node data-parallel deployments require nnodes > 1; address is used for cross-node communication.
+constraints:
+- Must be a valid IP address or resolvable hostname reachable from all data-parallel worker nodes.
+- Only meaningful when --data-parallel-size is greater than 1 and deployment spans multiple nodes.
+tuning_advice:
+  summary: Set to the IP address of the network interface used for inter-node communication; use a high-speed network interface
+    (e.g., RoCE, InfiniBand) for best performance on Ascend clusters.
+  suggested_values:
+  - scenario: Single-node data-parallel deployment
+    value: null (leave unset)
+    reason: The parameter is not needed for single-node setups; vLLM will use local IPC transport automatically.
+  - scenario: Multi-node deployment with high-speed interconnect (RoCE/IB)
+    value: IP address of the high-speed network interface
+    reason: Ensures data-parallel synchronization traffic uses the fastest available network path, minimizing communication
+      overhead.
+  - scenario: Multi-node deployment with Ray backend
+    value: null (leave unset)
+    reason: Ray backend auto-detects the host IP; manual setting is only needed if auto-detection picks the wrong interface.
+  caveats:
+  - Using a slow or congested network interface for data-parallel communication can significantly increase synchronization
+    latency between replicas, reducing overall throughput.
+  - On Ascend clusters, ensure the specified address corresponds to the HCCL-compatible network interface to avoid routing
+    issues.
+  - This parameter has no effect on single-node deployments or when data_parallel_size=1.
+  quick_guide: For multi-node Ascend deployments, set --data-parallel-address to the IP of your high-speed network interface
+    (e.g., RoCE); leave unset for single-node or Ray-based setups.
+analysis_date: '2026-07-06'

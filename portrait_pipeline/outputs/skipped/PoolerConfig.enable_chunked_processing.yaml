@@ -1,0 +1,6 @@
+name: PoolerConfig.enable_chunked_processing
+type: nested
+performance_impact: none
+skip_reason: In the pinned sources this field is only declared in vllm/config/pooler.py; neither vLLM nor vLLM Ascend contains
+  a runtime consumer for enable_chunked_processing. Changing it therefore does not alter latency, throughput, or memory behavior
+  in these revisions.

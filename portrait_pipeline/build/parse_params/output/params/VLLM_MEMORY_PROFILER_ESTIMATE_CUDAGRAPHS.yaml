@@ -1,0 +1,83 @@
+name: VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/envs.py:1768
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This environment variable controls whether CUDA graph memory estimation is applied during the memory profiling
+  phase of vLLM initialization. When enabled (default), the profiler measures the additional GPU memory consumed by CUDA graphs
+  and subtracts this from the available KV cache budget. This results in more accurate KV cache allocation, preventing OOM
+  errors at the cost of slightly reduced KV cache capacity. When disabled, CUDA graph memory is not accounted for, which may
+  lead to a larger KV cache allocation but risks OOM when CUDA graphs are actually instantiated.
+
+  On Ascend NPU, the behavior depends on whether the vllm-ascend plugin uses CUDA graph equivalents (NPU graphs via CANN).
+  The code path in vllm/v1/worker/gpu_worker.py shows that cudagraph_memory_estimate is only computed when the platform is
+  CUDA (line 403: `current_platform.is_cuda()`). On Ascend NPU, this condition is false, so `cudagraph_memory_estimate` remains
+  0 regardless of this env var setting. However, the env var still affects the logging logic at line 471, which may print
+  misleading suggestions about adjusting --gpu-memory-utilization.
+
+  The vllm-ascend plugin does not override or redefine this env var. Its effect on Ascend is therefore limited to the logging
+  path, but the memory estimation itself is a no-op because the CUDA graph profiling code is guarded by `is_cuda()`.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_worker.py:423
+  context: 'Controls whether the profiled cudagraph_memory_estimate is applied to the non-KV-cache memory calculation. When
+    false, cudagraph_memory_estimate is set to 0, effectively ignoring CUDA graph memory in the KV cache budget.
+
+    '
+- file: vllm/v1/worker/gpu_worker.py:471
+  context: 'Controls whether a log message is printed suggesting the user adjust --gpu-memory-utilization to compensate for
+    CUDA graph memory overhead.
+
+    '
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: 'The log message at vllm/v1/worker/gpu_worker.py:471 suggests adjusting --gpu-memory-utilization based on the
+    CUDA graph memory estimate when this env var is enabled.
+
+    '
+- name: compilation_config.cudagraph_mode
+  relation: 'CUDA graph memory profiling only occurs when cudagraph_mode is not NONE and the platform is CUDA. On Ascend,
+    this condition is never met.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'On Ascend NPU, this env var has no effect on memory profiling because CUDA graph estimation is guarded by `is_cuda()`.
+    It can be left at default or disabled without impact.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: true
+    reason: 'The default value has no functional impact on Ascend since CUDA graph memory profiling is skipped. Keeping it
+      at default avoids unnecessary configuration changes.
+
+      '
+  caveats:
+  - 'On Ascend NPU, the log message suggesting adjustment of --gpu-memory-utilization (line 471-488 in gpu_worker.py) will
+    not appear because cudagraph_memory_estimate is always 0, so the condition `cudagraph_memory_estimate > 0` at line 467
+    is never satisfied.
+
+    '
+  - 'If vllm-ascend ever implements NPU graph memory profiling, this env var would become relevant. Currently, NPU graph memory
+    is not separately profiled.
+
+    '
+  quick_guide: 'Leave at default (true) on Ascend NPU — the CUDA graph memory estimation code path is not executed on non-CUDA
+    platforms.
+
+    '
+analysis_date: '2026-07-06'

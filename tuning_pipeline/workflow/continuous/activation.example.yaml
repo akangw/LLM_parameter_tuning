@@ -1,0 +1,12 @@
+# Copy to activation.approved.yaml only after checking the real remote image.
+approved: false
+approved_at: null
+approved_by: null
+target:
+  image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+evidence:
+  image_digest: null
+  package_versions: null
+  source_commit_probe: null

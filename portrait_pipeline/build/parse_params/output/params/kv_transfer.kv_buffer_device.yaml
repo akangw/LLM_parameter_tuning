@@ -1,0 +1,85 @@
+name: kv_transfer.kv_buffer_device
+type: nested
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:72
+- vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:303
+value_type: str
+default: cuda
+valid_choices:
+- cuda
+- cpu
+- xpu
+cli_example: '''--kv-transfer-config {"kv_buffer_device":"cpu"}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls where the KV cache buffer resides during KV transfer operations (e.g., disaggregated
+  prefill-decode via NIXL or Mooncake connectors). When set to "cpu", the connector allocates host-side buffers and transfers
+  KV data through CPU memory, which adds PCIe/NPU-to-host copy overhead on every transfer but frees device memory. When set
+  to "cuda" (or "npu" on Ascend), the buffer stays on the accelerator device, enabling direct device-to-device transfers with
+  lower latency but consuming precious NPU HBM. On Ascend NPU, the vllm-ascend documentation shows "npu" as a valid value
+  for MooncakeConnectorV1, indicating Ascend-specific device memory semantics. The choice directly affects KV transfer latency
+  (impacting end-to-end request latency in disaggregated serving) and device memory pressure (impacting max batch size and
+  throughput).
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:72
+  context: Determines whether to use host-side buffer for KV transfer based on kv_buffer_device value.
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:303
+  context: Stores kv_buffer_device and validates it against supported device/memory type combinations.
+- file: tests/v1/kv_connector/unit/test_nixl_connector.py:365
+  context: Test overrides kv_buffer_device to "cpu" for non-GPU test environments.
+- file: tests/v1/kv_connector/unit/test_nixl_connector.py:1793
+  context: Test verifies that kv_buffer_device config is correctly passed to NixlConnector.
+related_parameters:
+- name: kv_transfer.kv_connector
+  relation: The kv_buffer_device is only meaningful when a KV connector (e.g., NixlConnector, MooncakeConnectorV1) is configured
+    for disaggregated serving.
+- name: kv_transfer.kv_role
+  relation: Both kv_producer (prefill) and kv_consumer (decode) instances must use compatible kv_buffer_device settings for
+    successful KV transfer.
+constraints:
+- kv_buffer_device must be one of "cuda", "cpu", or "xpu" as defined by the upstream vLLM KV transfer config.
+- The chosen kv_buffer_device must be supported by the current platform's device type; unsupported combinations will raise
+  a RuntimeError.
+- On Ascend NPU, "npu" is used as the device identifier in vllm-ascend documentation, which maps to the device memory buffer
+  path.
+tuning_advice:
+  summary: 'Use device-side buffer ("cuda"/"npu") for lowest KV transfer latency when NPU HBM is sufficient; switch to "cpu"
+    only when device memory is constrained and transfer latency is tolerable.
+
+    '
+  suggested_values:
+  - scenario: Disaggregated prefill-decode with ample NPU HBM (e.g., >= 80% free after model loading)
+    value: npu
+    reason: 'Keeps KV cache buffer on NPU device memory, enabling direct device-to-device transfers via HCCL or RDMA without
+      CPU bounce buffers. This minimizes transfer latency and maximizes throughput for KV cache handoff between prefill and
+      decode instances.
+
+      '
+  - scenario: Disaggregated serving with tight NPU HBM budget or large models
+    value: cpu
+    reason: 'Offloads KV buffer to host memory, freeing NPU HBM for model weights and activations. The tradeoff is increased
+      transfer latency due to device-to-host and host-to-device copies, but this may be acceptable if KV transfer is not on
+      the critical path or if batch sizes would otherwise be severely limited.
+
+      '
+  caveats:
+  - On Ascend NPU, using "cpu" for kv_buffer_device adds PCIe copy overhead for every KV transfer, which can become a bottleneck
+    at high request rates.
+  - The vllm-ascend MooncakeConnectorV1 uses "npu" as the device identifier; using "cuda" may not be recognized and could
+    cause errors.
+  - kv_buffer_device must be consistent across all instances in a disaggregated serving cluster; mixing "cpu" and "npu" will
+    cause transfer failures.
+  - When kv_buffer_device is "cpu", additional host memory is consumed proportional to the KV cache size, which may compete
+    with other host-side buffers.
+  quick_guide: 'For Ascend NPU disaggregated serving, use "npu" unless NPU HBM is insufficient, then fall back to "cpu".
+
+    '
+analysis_date: '2026-07-06'

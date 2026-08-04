@@ -1,0 +1,58 @@
+name: VLLM_V1_OUTPUT_PROC_CHUNK_SIZE
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:1133
+value_type: int
+default: '128'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls the maximum number of requests processed per asyncio task iteration in the V1 AsyncLLM output handler.
+  When the engine core produces outputs, they are split into chunks of at most this size before being dispatched to individual
+  AsyncStream objects. A larger chunk size reduces per-iteration overhead and can improve throughput, but increases the time
+  spent in a single asyncio task, which can cause higher variance in inter-message latencies for streaming responses. A smaller
+  chunk size yields more consistent per-token delivery latency at the cost of increased scheduling overhead and potentially
+  lower overall throughput. This parameter only affects the V1 engine path and is read in vllm/v1/engine/async_llm.py:654
+  during output handler setup.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/async_llm.py:654
+  context: Read to determine chunk size for splitting engine core outputs before processing per-stream
+- file: vllm/v1/engine/async_llm.py:671
+  context: Used in the for-loop that slices engine_core_outputs into chunks for iterative processing
+related_parameters:
+- name: VLLM_ENABLE_V1_MULTIPROCESSING
+  relation: Both are V1 engine path parameters; V1 must be enabled for this parameter to take effect
+constraints:
+- Must be a positive integer; non-positive values will cause the output processing loop to behave incorrectly
+tuning_advice:
+  summary: 'Balance between throughput and streaming latency fairness by adjusting the output processing chunk size based
+    on request concurrency and latency sensitivity.
+
+    '
+  suggested_values:
+  - scenario: High-concurrency streaming with strict latency fairness requirements
+    value: '64'
+    reason: Smaller chunks ensure more frequent yielding to the event loop, reducing inter-message latency variance
+  - scenario: Batch inference or offline throughput maximization
+    value: '512'
+    reason: Larger chunks amortize per-iteration overhead, improving tokens-per-second throughput
+  - scenario: Default balanced setting for moderate concurrency
+    value: '128'
+    reason: The upstream default provides a reasonable balance for most workloads
+  caveats:
+  - This parameter only affects the V1 engine path; it has no effect when using the V0 engine
+  - On Ascend NPU, the optimal value may differ from GPU due to different CPU-NPU communication characteristics and asyncio
+    scheduling behavior
+  - Setting this too high can cause noticeable 'burstiness' in streaming token delivery
+  - Setting this too low increases CPU scheduling overhead and may reduce maximum throughput
+  quick_guide: Start with the default 128; reduce to 64 if streaming latency variance is high; increase to 256-512 for batch
+    throughput workloads
+analysis_date: '2026-07-06'

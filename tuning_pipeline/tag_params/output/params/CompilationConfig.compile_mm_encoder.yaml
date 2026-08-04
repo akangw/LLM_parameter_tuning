@@ -1,0 +1,86 @@
+name: CompilationConfig.compile_mm_encoder
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:509
+- docs/design/torch_compile_multimodal.md:16
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --compilation-config='{"compile_mm_encoder":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Setting this field to true enables torch.compile for multimodal encoder components whose classes opt in through
+  support_torch_compile with enable_if=should_torch_compile_mm_encoder and is_encoder=True. The pinned design document reports
+  about a 4.5% end-to-end performance improvement for the Qwen2.5-VL vision block, at the cost of increased compilation time.
+  False leaves the encoder in its uncompiled execution path. The effect is model- and backend-dependent: the configuration
+  documentation says support is limited to selected models and platforms, while the Transformers modeling backend treats encoder
+  compilation as experimental.'
+usage_locations:
+- file: vllm/model_executor/models/qwen2_5_vl.py:424
+  context: Gates torch compilation of Qwen2.5-VL vision blocks; the decorator marks the component as an encoder and supplies
+    dynamic dimensions.
+- file: vllm/model_executor/models/mllama4.py:459
+  context: Gates torch compilation of the mLLaMA4 vision encoder.
+- file: vllm/model_executor/models/transformers/multimodal.py:310
+  context: When enabled for the Transformers modeling backend, validates support and dynamically decorates the inferred vision
+    encoder class for compilation.
+- file: vllm/config/vllm.py:383
+  context: Includes multimodal configuration in the vLLM configuration hash when encoder compilation is enabled, so compilation
+    cache identity reflects the encoder graph inputs.
+related_parameters:
+- name: CompilationConfig.mode
+  relation: Selects the torch.compile approach inherited by the multimodal encoder.
+- name: CompilationConfig.backend
+  relation: Selects the compilation backend used by the inherited compilation configuration.
+- name: CompilationConfig.cudagraph_mm_encoder
+  relation: Separately controls CUDA graph capture for the multimodal encoder; the design document says the interaction with
+    encoder compilation is currently unspecified.
+constraints:
+- Only encoder classes decorated with enable_if=should_torch_compile_mm_encoder are affected; unsupported model implementations
+  receive no compile benefit.
+- The pinned configuration documentation identifies Qwen2.5-VL and mLLaMA4 as supported on selected platforms and states that
+  other models are not yet broadly supported or tested.
+- For the Transformers modeling backend, Transformers 5.0.0 or newer is required, the inferred encoder must differ from the
+  whole model, and the encoder must satisfy the documented tensor-input and dynamic-dimension assumptions.
+tuning_advice:
+  summary: Enable only for a supported multimodal model after measuring steady-state gains against compilation warm-up and
+    compatibility risk.
+  suggested_values:
+  - scenario: Supported Qwen2.5-VL or mLLaMA4 production workload
+    value: true
+    reason: Compiles opted-in vision encoder components; pinned documentation reports about a 4.5% end-to-end improvement
+      for Qwen2.5-VL.
+  - scenario: Unsupported model, startup-sensitive service, or troubleshooting
+    value: false
+    reason: Preserves the default uncompiled encoder path, avoids added compilation time, and is the documented first step
+      when diagnosing compilation failures.
+  caveats:
+  - Compilation adds warm-up time, so short-lived or infrequently used deployments may not amortize the startup cost.
+  - Dynamic image sizes, untraceable operations, and data-dependent control flow can cause graph breaks or compilation failures.
+  - Transformers-backend support is explicitly experimental and relies on the inferred encoder being torch-compilable with
+    compatible input type hints and dynamic dimensions.
+  - The pinned vllm-ascend repository contains no implementation or override for this parameter, so this profile does not
+    claim an Ascend-specific performance benefit.
+  quick_guide: Keep false by default; set true for a supported model, benchmark after warm-up, and revert to false if compilation
+    fails or does not improve the target workload.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

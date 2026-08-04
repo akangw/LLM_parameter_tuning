@@ -1,0 +1,72 @@
+name: kv_transfer_config.kv_connector_extra_config.load_async
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:81
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether KV cache loading from the remote KV pool (AscendStore) is performed asynchronously.
+  When set to true, the consumer (decode) node initiates KV cache transfers without blocking the main inference loop, allowing
+  computation to overlap with data movement over the network (e.g., Mooncake transfer). This directly reduces the time-to-first-token
+  (TTFT) latency in PD-disaggregated deployments where the decode node must fetch KV cache from a remote prefill node. The
+  parameter is read in both PoolScheduler (line 81) and PoolWorker (line 99) of vllm-ascend, and is passed to the underlying
+  KV connector implementation. The documentation explicitly recommends enabling this (load_async=true) for PD-colocated Mooncake
+  multi-instance deployments to improve end-to-end latency.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:81
+  context: Read from kv_connector_extra_config dict to set self.load_async attribute on PoolScheduler
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:99
+  context: Read from kv_connector_extra_config dict to set self.load_async attribute on PoolWorker
+related_parameters:
+- name: kv_transfer_config.kv_connector
+  relation: Must be set to a connector that supports async loading (e.g., MooncakeConnectorStoreV1) for this parameter to
+    have effect
+- name: kv_transfer_config.kv_role
+  relation: Only meaningful when kv_role includes consumer (kv_both or kv_consumer), as loading only occurs on consumer/decode
+    nodes
+- name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_load
+  relation: consumer_is_to_load must be true for KV cache loading to occur; load_async controls whether that loading is synchronous
+    or asynchronous
+- name: kv_transfer_config.kv_connector_extra_config.backend
+  relation: The backend (mooncake, memcache, yuanrong) must support asynchronous transfer operations for load_async to be
+    effective
+constraints:
+- load_async requires a KV connector backend that supports asynchronous transfers (e.g., mooncake)
+- load_async only takes effect when the node acts as a KV consumer (kv_role includes consumer functionality)
+tuning_advice:
+  summary: Enable load_async in PD-disaggregated deployments to overlap KV cache transfer with computation and reduce TTFT
+    latency
+  suggested_values:
+  - scenario: PD-disaggregated deployment with Mooncake backend (production)
+    value: 'true'
+    reason: Asynchronous loading hides network transfer latency by overlapping KV cache fetch with model computation, reducing
+      time-to-first-token
+  - scenario: Single-node or non-disaggregated deployment
+    value: 'false'
+    reason: KV transfer is not used in non-disaggregated setups; enabling async loading has no effect and adds unnecessary
+      configuration complexity
+  - scenario: Debugging or testing KV transfer correctness
+    value: 'false'
+    reason: Synchronous loading simplifies debugging by ensuring KV cache is fully loaded before computation proceeds, making
+      error attribution easier
+  caveats:
+  - Asynchronous loading may increase peak memory usage slightly due to double-buffering of KV cache blocks during transfer
+  - The actual performance gain depends on network bandwidth and latency between prefill and decode nodes; on very fast interconnects
+    the benefit may be marginal
+  - Must ensure the underlying KV connector backend (e.g., Mooncake) properly implements async transfer semantics
+  quick_guide: Set load_async=true in PD-disaggregated Mooncake deployments to reduce TTFT; keep false for debugging or non-disaggregated
+    setups
+analysis_date: '2026-07-06'

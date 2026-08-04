@@ -1,0 +1,73 @@
+name: --enable-mm-embeds
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:97
+- vllm/engine/arg_utils.py:1174
+- vllm/config/model.py:325
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --enable-mm-embeds
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: 'When enabled, this flag allows multimodal models to accept pre-computed embeddings (e.g., image_embeds, video_embeds)
+  directly as input, bypassing the multimodal encoder tower. The primary performance effect is memory-related: when combined
+  with `--limit-mm-per-prompt` set to 0 for a modality, the encoder modules for that modality are not loaded, saving GPU/NPU
+  memory. Additionally, encoder profiling is skipped (vllm/v1/worker/gpu_model_runner.py:5909), reducing startup time. At
+  runtime, embedding inputs skip modality count validation (vllm/entrypoints/chat_utils.py:641), which has negligible performance
+  impact. The flag itself does not directly affect token generation throughput or latency; its memory savings are only realized
+  when modality limits are set to 0. On Ascend NPU, the memory savings from not loading encoder weights can be significant
+  for large vision encoders, but the mechanism is identical to upstream vLLM — vllm-ascend does not override or alter this
+  parameter''s behavior.
+
+  '
+usage_locations:
+- file: vllm/config/multimodal.py:97
+  context: Field definition with default False; controls whether multimodal embeddings are accepted as input
+- file: vllm/engine/arg_utils.py:1174
+  context: CLI argument registration under MultiModalConfig group
+- file: vllm/config/model.py:325
+  context: InitVar passed to ModelConfig.__post_init__ for multimodal configuration
+- file: vllm/v1/worker/gpu_model_runner.py:5909
+  context: Skips encoder profiling when enable_mm_embeds=True and all modality limits are 0
+- file: vllm/entrypoints/chat_utils.py:637-641
+  context: Bypasses item count validation for *_embeds content types when enabled with limit=0
+- file: vllm/multimodal/encoder_budget.py:67
+  context: Determines embed_only_modalities set for modalities with limit=0 when enabled
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: When set to 0 for a modality with --enable-mm-embeds, encoder modules for that modality are not loaded, saving
+    memory
+- name: --language-model-only
+  relation: Alternative way to disable all multimodal inputs; --enable-mm-embeds is more granular, allowing embedding inputs
+    while skipping encoder loading
+constraints:
+- Only effective for multimodal models; has no effect on text-only models
+- Embedding inputs must have correct shapes matching the model's expected dimensions, or the engine may crash
+tuning_advice:
+  summary: Enable only if you need to pass pre-computed multimodal embeddings and want to save encoder memory by setting modality
+    limits to 0
+  suggested_values:
+  - scenario: Serving a multimodal model with pre-computed embeddings (no live encoder needed)
+    value: 'True'
+    reason: 'Combined with --limit-mm-per-prompt ''{"image": 0}'', avoids loading the vision encoder entirely, saving significant
+      NPU memory for the LLM backbone'
+  - scenario: Standard multimodal inference with raw images/video/audio inputs
+    value: 'False'
+    reason: Encoder must be loaded to process raw multimodal inputs; enabling this flag provides no benefit and adds unnecessary
+      embedding input paths
+  caveats:
+  - Memory savings only occur when --limit-mm-per-prompt is set to 0 for the target modality; enabling the flag alone without
+    adjusting limits has no memory benefit
+  - Incorrect embedding shapes passed by untrusted clients can crash the vLLM engine — only enable for trusted users
+  - On Ascend NPU, encoder memory savings are identical to GPU; no Ascend-specific tuning is required
+  quick_guide: Set --enable-mm-embeds only when using pre-computed embeddings with --limit-mm-per-prompt set to 0 for the
+    target modality to skip encoder loading
+analysis_date: '2026-07-06'

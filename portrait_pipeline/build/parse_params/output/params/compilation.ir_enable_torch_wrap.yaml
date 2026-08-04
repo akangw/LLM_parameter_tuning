@@ -1,0 +1,70 @@
+name: compilation.ir_enable_torch_wrap
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/vllm.py:992
+value_type: bool
+default: <computed>
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether vLLM''s custom IR (intermediate representation) operators are wrapped as torch
+  custom ops during the forward pass. When True, torch custom op wrapping is enabled, which provides a stable interface for
+  torch.compile''s Inductor backend to recognize and apply custom lowering rules. When False, wrapping is disabled, allowing
+  Dynamo to trace the selected implementation directly or avoiding torch custom op overhead in eager mode.
+
+  The default is computed at runtime (vllm/config/vllm.py:992-996): it is set to True only when compilation mode is VLLM_COMPILE
+  AND backend is "inductor"; otherwise it defaults to False. On CPU platforms, it is explicitly forced to False (vllm/platforms/cpu.py:179).
+
+  On Ascend NPU, the impact is indirect and limited. The parameter is consumed in vllm/forward_context.py:327 via `vllm.ir.enable_torch_wrap()`,
+  which sets a global context flag. This flag affects how torch.compile traces and lowers vLLM''s custom IR operators. Since
+  vllm-ascend does not override or modify this parameter, the upstream behavior applies. However, Ascend''s CANN compiler
+  stack and torch_npu backend may not benefit from the same custom op wrapping optimizations that are designed for CUDA/Inductor.
+  The performance effect is therefore marginal on Ascend — it primarily affects compilation overhead and trace fidelity rather
+  than steady-state inference throughput or latency.
+
+  '
+usage_locations:
+- file: vllm/forward_context.py:327
+  context: Passed to vllm.ir.enable_torch_wrap() context manager during forward pass execution
+- file: vllm/config/vllm.py:992
+  context: Default value computed based on compilation mode and backend during config validation
+- file: vllm/platforms/cpu.py:179
+  context: Explicitly set to False for CPU platform defaults
+related_parameters:
+- name: compilation_config.mode
+  relation: Default value depends on mode being VLLM_COMPILE
+- name: compilation_config.backend
+  relation: Default value depends on backend being 'inductor'
+- name: compilation_config.custom_ops
+  relation: Custom op wrapping interacts with custom op selection for torch.compile lowering
+constraints:
+- ir_enable_torch_wrap is only meaningful when compilation mode is VLLM_COMPILE and backend is inductor
+tuning_advice:
+  summary: 'On Ascend NPU, leave this parameter at its default (auto-computed). There is no evidence that toggling it provides
+    measurable performance benefits on Ascend hardware.
+
+    '
+  suggested_values:
+  - scenario: Default behavior (recommended for all Ascend deployments)
+    value: <computed>
+    reason: The auto-computed default (True for VLLM_COMPILE+inductor, False otherwise) is appropriate. vllm-ascend does not
+      override this parameter, and Ascend's torch_npu backend does not have custom lowering rules that depend on this wrapping.
+  - scenario: Debugging torch.compile issues or reducing compilation overhead
+    value: false
+    reason: Disabling torch custom op wrapping allows Dynamo to trace the implementation directly, which can simplify debugging
+      and reduce compilation overhead when custom lowering is not needed.
+  caveats:
+  - This parameter has no Ascend-specific override in vllm-ascend; upstream behavior applies unchanged.
+  - On Ascend NPU, torch.compile with inductor backend may have limited support compared to CUDA. The benefit of torch custom
+    op wrapping is primarily designed for CUDA Inductor lowering.
+  - Setting this to True when not using inductor backend has no effect and may add unnecessary overhead.
+  quick_guide: Keep the auto-computed default on Ascend; only set to false for debugging torch.compile issues.
+analysis_date: '2026-07-06'

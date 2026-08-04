@@ -1,0 +1,59 @@
+name: VLLM_MORIIO_POST_BATCH_SIZE
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1484
+- vllm/envs.py:208
+- vllm/distributed/kv_transfer/kv_connector/v1/moriio/moriio_engine.py:380
+value_type: int
+default: -1
+valid_choices: any positive integer; -1 means use default
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls the post-processing batch size for the Mori-IO connector, which is used
+  in disaggregated prefill-decode (PD) setups for KV cache transfer over RDMA. The value is passed to `RdmaBackendConfig`
+  as `post_batch_size` when creating the RDMA backend in `moriio_engine.py:380-389`. A larger batch size can improve throughput
+  by reducing the number of post-processing operations, but may increase latency for individual transfers. The default value
+  of -1 indicates that the Mori-IO library will use its own internal default. This parameter only has effect when using the
+  Mori-IO connector in a disaggregated serving setup, which is primarily a GPU/NVIDIA feature. On Ascend NPU, disaggregated
+  serving with Mori-IO is not a standard deployment pattern, so this parameter has minimal practical impact.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/moriio/moriio_engine.py:380
+  context: Reads VLLM_MORIIO_POST_BATCH_SIZE and passes it to RdmaBackendConfig for RDMA backend creation
+related_parameters:
+- name: VLLM_MORIIO_QP_PER_TRANSFER
+  relation: Also passed to RdmaBackendConfig alongside post_batch_size; controls queue pairs per transfer
+- name: VLLM_MORIIO_NUM_WORKERS
+  relation: Also passed to RdmaBackendConfig; controls number of worker threads for Mori operations
+- name: VLLM_MORIIO_CONNECTOR_READ_MODE
+  relation: Controls the read mode for the same Mori-IO connector
+constraints:
+- Must be a valid integer; negative values (including the default -1) indicate the Mori-IO library should use its internal
+  default
+tuning_advice:
+  summary: 'Only relevant for disaggregated prefill-decode setups using the Mori-IO connector over RDMA; has negligible impact
+    on standard Ascend NPU deployments.
+
+    '
+  suggested_values:
+  - scenario: Standard Ascend NPU deployment (no disaggregated serving with Mori-IO)
+    value: -1
+    reason: The parameter has no effect in this scenario; keep the default to avoid unnecessary configuration
+  - scenario: Disaggregated PD setup with Mori-IO connector on RDMA-capable hardware
+    value: 32
+    reason: A moderate batch size balances throughput and latency for KV cache post-processing operations
+  caveats:
+  - This parameter only takes effect when using the Mori-IO connector in a disaggregated prefill-decode setup, which is not
+    a common Ascend NPU deployment pattern
+  - The Mori-IO connector is primarily designed for NVIDIA GPU RDMA environments; Ascend NPU support is not verified
+  - Setting this value too high may increase memory pressure on the RDMA backend; setting it too low may increase overhead
+    from frequent small batch operations
+  quick_guide: Leave at default (-1) unless explicitly using Mori-IO disaggregated serving with RDMA
+analysis_date: '2026-07-06'

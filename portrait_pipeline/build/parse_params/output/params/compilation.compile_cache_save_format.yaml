@@ -1,0 +1,60 @@
+name: compilation.compile_cache_save_format
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:109
+value_type: str
+default: '''"binary"'''
+valid_choices:
+- binary
+- unpacked
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the on-disk format of the torch inductor compilation cache. When set to "binary",
+  compiled artifacts are saved as a single binary file, which is multiprocess-safe and has lower filesystem overhead. When
+  set to "unpacked", artifacts are saved as a directory structure, which is useful for debugging but NOT multiprocess-safe
+  and may cause filesystem contention when multiple workers attempt to read/write simultaneously. The parameter is passed
+  to InductorStandaloneAdaptor (vllm/compilation/backends.py:109), which is only used when VLLM_USE_STANDALONE_COMPILE=1 and
+  the PyTorch version supports torch._inductor.standalone_compile. On Ascend NPU, torch inductor compilation is the primary
+  backend, so this cache format affects cold-start latency (first-run compilation vs cache hit) and warm-start throughput.
+  The "unpacked" format can cause race conditions in multi-GPU deployments, potentially leading to cache corruption and recompilation,
+  which degrades throughput. The performance impact is low because it only affects compilation cache I/O, not the runtime
+  execution of compiled models.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:109
+  context: Passed to InductorStandaloneAdaptor constructor when standalone compile is enabled
+related_parameters:
+- name: compilation.backend
+  relation: Must be 'inductor' for this parameter to have any effect
+- name: VLLM_USE_STANDALONE_COMPILE
+  relation: Must be set to 1 for InductorStandaloneAdaptor to be used; otherwise this parameter is ignored
+- name: VLLM_COMPILE_CACHE_SAVE_FORMAT
+  relation: Environment variable that sets the default value for this parameter
+constraints:
+- Only takes effect when compilation.backend is 'inductor' and VLLM_USE_STANDALONE_COMPILE=1
+- The 'unpacked' format is NOT multiprocess-safe and should not be used in multi-GPU deployments
+tuning_advice:
+  summary: Use the default 'binary' format for production; only use 'unpacked' for debugging compilation issues.
+  suggested_values:
+  - scenario: Production deployment (single or multi-GPU)
+    value: binary
+    reason: Multiprocess-safe, lower filesystem overhead, avoids cache corruption in multi-worker scenarios
+  - scenario: Debugging torch inductor compilation issues
+    value: unpacked
+    reason: Allows inspection of individual compiled artifacts; only safe in single-worker environments
+  caveats:
+  - The 'unpacked' format can cause race conditions when multiple workers share the same cache directory, leading to cache
+    corruption and unnecessary recompilation
+  - This parameter only affects InductorStandaloneAdaptor; if VLLM_USE_STANDALONE_COMPILE is not set, the cache format is
+    determined by torch inductor defaults
+  - On Ascend NPU, compilation cache I/O may be slower due to host-device file transfer overhead; using 'binary' format minimizes
+    this
+  quick_guide: Keep the default 'binary' format unless you need to inspect compiled artifacts for debugging.
+analysis_date: '2026-07-06'

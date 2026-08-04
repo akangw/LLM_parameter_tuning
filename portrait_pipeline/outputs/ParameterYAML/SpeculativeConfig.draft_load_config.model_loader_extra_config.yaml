@@ -1,0 +1,111 @@
+name: SpeculativeConfig.draft_load_config.model_loader_extra_config
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:94
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- docs/models/extensions/tensorizer.md:69
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+- vllm_ascend/model_loader/netloader/netloader.py:64
+- vllm_ascend/model_loader/rfork/rfork_loader.py:42
+- vllm_ascend/model_loader/rfork/seed_protocol.py:32
+value_type: dict
+default: {}
+valid_choices: 'Any mapping accepted by the selected model loader. The empty mapping is the default. Keys are loader-specific:
+  tensorizer accepts serialization and deserialization options; pinned vllm-ascend netloader accepts CONFIG_FILE, SOURCE,
+  MODEL, LISTEN_PORT, INT8_CACHE, INT8_CACHE_NAME, and OUTPUT_PREFIX; pinned vllm-ascend rfork reads model_url, model_deploy_strategy_name,
+  rfork_scheduler_url, rfork_seed_timeout_sec, and rfork_seed_key_separator.'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: 'This is the loader-specific option mapping inside the speculative draft model''s LoadConfig. It has no fixed
+  effect by itself: the selected draft loader interprets its keys while the draft model is initialized. Upstream documentation
+  shows tensorizer using deserialization_kwargs such as num_readers, which can trade model-load concurrency against CPU and
+  I/O pressure. On Ascend, the proposer passes the complete draft_load_config to get_model. The netloader then reads this
+  mapping to choose elastic-loading sources and optional INT8 cache placement, while rfork reads transfer endpoints and timeout
+  settings; both loaders can fall back to the default loader when their specialized path is unavailable. These choices can
+  change cold-start latency and loader/cache memory use, but the mapping does not alter the speculative decoding computation
+  or steady-state token throughput.'
+usage_locations:
+- file: vllm/config/load.py:94
+  context: Declares the loader-specific mapping with an empty-dictionary default and passes it through to the loader selected
+    by load_format.
+- file: vllm/config/speculative.py:186
+  context: Embeds LoadConfig as the draft model's load configuration and states that the target model load configuration is
+    used when this internal object is unspecified.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Documents draft_load_config as an internal speculative-decoding field populated by vLLM rather than a supported
+    user-facing speculative key.
+- file: docs/models/extensions/tensorizer.md:69
+  context: Documents serialization_kwargs and deserialization_kwargs and gives num_readers as a model-loading concurrency
+    option.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Passes speculative_config.draft_load_config to get_model when the Ascend speculative proposer constructs its draft
+    model.
+- file: vllm_ascend/model_loader/netloader/netloader.py:64
+  context: Reads either a JSON CONFIG_FILE or this mapping directly, validates netloader source, port, cache, and output settings,
+    and uses them for elastic draft-model loading.
+- file: vllm_ascend/model_loader/netloader/netloader.py:344
+  context: Clears the extra mapping and switches to auto when reverting to the default loader.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:42
+  context: Requires a dictionary and extracts RFork service identity, scheduler, timeout, and key-separator settings from
+    it.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:174
+  context: Clears the mapping before falling back to ordinary auto loading after an RFork transfer failure.
+- file: vllm_ascend/model_loader/rfork/seed_protocol.py:32
+  context: Requires model_url and model_deploy_strategy_name to construct an RFork seed key, including a distinct suffix for
+    a draft worker.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: Selects the loader that defines which keys in this mapping are meaningful.
+- name: SpeculativeConfig.draft_load_config
+  relation: Parent internal LoadConfig for the speculative draft model; when absent, vLLM uses the target model load configuration.
+- name: SpeculativeConfig.draft_model_config
+  relation: Identifies the draft model whose weights the configured loader loads.
+constraints:
+- draft_load_config is an internal field populated by vLLM and is not intended to be supplied as a key of the user-facing
+  --speculative-config object.
+- Keys and value shapes must match the loader selected by load_format; there is no cross-loader schema for this mapping.
+- The default empty mapping is valid for ordinary loaders, but specialized loaders can require external services and mandatory
+  keys.
+- Ascend RFork requires a dictionary; model_url and model_deploy_strategy_name must be non-empty for seed-key construction.
+- Ascend netloader uses uppercase keys, whereas RFork uses lowercase keys; configurations are not interchangeable.
+tuning_advice:
+  summary: Keep the inherited empty mapping for standard draft loading. Framework integrators should populate it only together
+    with a known load_format and should benchmark an uncached cold start plus peak host and device memory.
+  suggested_values:
+  - scenario: Standard draft model loading
+    value: {}
+    reason: The default avoids activating loader-specific services or passing keys that another loader may reject or ignore.
+  - scenario: Tensorizer draft checkpoint with constrained read concurrency
+    value:
+      deserialization_kwargs:
+        num_readers: 2
+    reason: The pinned upstream documentation identifies num_readers as the way to limit concurrent tensorizer deserialization
+      readers; tune it against storage bandwidth and CPU pressure.
+  - scenario: Ascend RFork integration
+    value:
+      model_url: /models/draft
+      model_deploy_strategy_name: draft-strategy
+      rfork_scheduler_url: http://scheduler.example
+      rfork_seed_timeout_sec: 5.0
+    reason: These are the fields consumed by the pinned RFork loader; valid deployment-specific endpoints allow transfer-based
+      draft loading.
+  caveats:
+  - 'Loader-specific examples are not portable: tensorizer, netloader, and RFork interpret different keys and may require
+    optional dependencies or external infrastructure.'
+  - Increasing tensorizer reader concurrency can increase CPU, memory, and storage pressure without improving startup time
+    once the storage path is saturated.
+  - Invalid or unavailable Ascend transfer sources trigger fallback loading, adding failed-attempt and cleanup time to cold
+    start.
+  - Netloader INT8 cache placement can retain additional HBM or DRAM for its elastic server; measure memory on the actual
+    deployment.
+  quick_guide: Leave this mapping empty unless the selected draft load_format has a documented requirement. Configure only
+    that loader's keys, validate all external endpoints, and compare cold-start time and peak memory against the empty-mapping
+    baseline.
+analysis_date: '2026-07-31'

@@ -1,0 +1,96 @@
+name: VLLM_RAY_PER_WORKER_GPUS
+type: env
+category: scheduling
+scope: both
+source_file:
+- vllm/envs.py:1142
+- vllm_ascend/platform.py:111
+value_type: float
+default: 1.0
+valid_choices: Any string accepted by Python float(); vLLM performs no range validation. Operational values must also be valid
+  Ray accelerator-resource quantities, with 1.0 for an exclusive device claim and a positive fraction below 1.0 for resource
+  sharing.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: The pinned upstream Ray executors read this value when creating every worker actor. On GPU platforms it becomes
+  the actor's num_gpus request; on other accelerator platforms it becomes a custom resource request keyed by current_platform.ray_device_key.
+  The pinned Ascend platform sets that key to NPU, so the same value controls each Ascend Ray worker's NPU-resource claim.
+  A fraction can permit actors from colocated workloads to share a device resource and can increase aggregate serving density,
+  but it neither limits nor reduces a worker's actual model or KV-cache allocation. Sharing can therefore cause device-memory
+  contention or OOM and can lower useful throughput if the colocated actors compete for compute or bandwidth. Moreover, when
+  vLLM creates its own placement group, it still requests one whole device bundle per parallel rank; this setting changes
+  the actor claim inside a bundle rather than the placement group's device count.
+usage_locations:
+- file: vllm/envs.py:1142
+  context: Parses the environment variable as float with default 1.0 and documents fractional actor scheduling for device
+    sharing and colocation.
+- file: vllm_ascend/platform.py:111
+  context: Sets the generic Ray accelerator resource key to NPU, causing the upstream non-GPU Ray actor path to apply this
+    per-worker value to the NPU custom-resource request.
+related_parameters:
+- name: VLLM_RAY_BUNDLE_INDICES
+  relation: Selects the placement-group bundle used by each Ray worker and is needed when colocated instances must target
+    specific shared device bundles.
+- name: --distributed-executor-backend
+  relation: This environment variable affects worker allocation only when the Ray distributed executor backend is used.
+- name: --tensor-parallel-size
+  relation: Contributes to the parallel world size and therefore the number of Ray worker actors and full-device placement-group
+    bundles that vLLM creates.
+constraints:
+- The environment value must be parseable by Python float() or access to the setting fails.
+- vLLM performs no positivity, finiteness, or upper-bound validation; the resulting value must still be accepted by Ray as
+  an accelerator-resource request.
+- The setting affects Ray execution only and does not change model memory, KV-cache sizing, or per-process memory limits.
+- On Ascend, the value is requested as a fractional custom NPU resource rather than through Ray's num_gpus field.
+- Automatically created placement groups continue to reserve one whole GPU or NPU bundle per parallel rank regardless of this
+  value.
+tuning_advice:
+  summary: Keep 1.0 for ordinary single-instance serving. Use a fractional claim only for a deliberately colocated Ray placement
+    where device capacity and workload benchmarks show that sharing is safe and beneficial.
+  suggested_values:
+  - scenario: Dedicated Ray worker per GPU or Ascend NPU
+    value: 1.0
+    reason: This default gives each actor a full device-resource claim and avoids scheduling another resource-sharing actor
+      into the same bundle.
+  - scenario: Two small colocated instances with verified memory headroom
+    value: 0.5
+    reason: Two actors can each claim half of the bundle's accelerator resource; this is a scheduling reservation, so both
+      instances' actual peak memory and throughput must be measured together.
+  - scenario: Reproducing the pinned RLHF IPC colocation example
+    value: 0.4
+    reason: The upstream example assigns 0.4 GPU to each vLLM worker so two LLM instances can use one selected bundle while
+      leaving scheduling slack.
+  caveats:
+  - Fractional Ray accelerator resources do not partition compute, memory bandwidth, or device memory.
+  - The combined model weights, KV caches, activation peaks, and graph workspaces of colocated workers can exceed physical
+    device memory even when their fractional resource claims sum to at most 1.0.
+  - Lowering this value alone does not reduce the number of whole-device bundles in a placement group that vLLM creates automatically.
+  - Coordinate fractional claims with VLLM_RAY_BUNDLE_INDICES or an externally managed placement group so colocated instances
+    use the intended device.
+  - Oversubscription can reduce per-instance and aggregate throughput through compute, bandwidth, and memory contention; benchmark
+    the complete colocated workload.
+  quick_guide: Use 1.0 by default; for intentional colocation, start at 0.5 for two actors, pin the intended bundle, confirm
+    combined peak memory fits, and retain the fractional setting only if aggregate throughput improves.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

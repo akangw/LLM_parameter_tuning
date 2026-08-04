@@ -1,0 +1,103 @@
+name: SpeculativeConfig.parallel_drafting
+type: nested
+category: parallelism
+scope: both
+source_file:
+- vllm/config/speculative.py:147
+- vllm/config/speculative.py:1023
+- vllm_ascend/spec_decode/llm_base_proposer.py:1034
+- vllm_ascend/attention/attention_v1.py:302
+- vllm/model_executor/models/llama_eagle3.py:308
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --speculative-config '{"model":"amd/PARD-Qwen3-0.6B","method":"draft_model","num_speculative_tokens":12,"parallel_drafting":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Enabling this flag changes proposal generation from sequential speculative-token steps to a parallel draft.
+  In the Ascend proposer, the first draft-model forward returns a tensor containing all num_speculative_tokens when parallel_drafting
+  is true, bypassing the loop that generates the remaining tokens; Ascend also avoids building per-step attention metadata
+  for those serial iterations. This can reduce inter-token draft latency and raise decode throughput when a compatible parallel
+  drafter has useful acceptance rates. The tradeoff is a wider draft step: SpeculativeConfig.max_num_new_slots_for_drafting
+  reserves num_speculative_tokens - 1 additional masked-token slots, plus one slot for a draft-model method, so larger speculative
+  widths increase per-request KV/workspace pressure and can reduce concurrency. Upstream attention also doubles the speculative-token
+  contribution to its reorder threshold in this mode, and parallel EAGLE3 loads an additional mask_hidden buffer.'
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:836
+  context: Skips construction of attention metadata for the serial draft iterations when parallel drafting is enabled.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:1034
+  context: Returns all draft-token IDs after the first proposal forward instead of entering the remaining-token generation
+    loop.
+- file: vllm_ascend/attention/attention_v1.py:302
+  context: Uses device-side sequence lengths for Ascend attention metadata in the parallel-drafting path.
+- file: vllm/config/speculative.py:1023
+  context: Computes the maximum new drafting slots; parallel mode adds num_speculative_tokens - 1 masked-token slots per request.
+- file: vllm/v1/attention/backend.py:568
+  context: Raises the spec-as-decode batch-reorder threshold using twice the configured speculative-token count when parallel
+    drafting is active.
+- file: vllm/model_executor/models/llama_eagle3.py:308
+  context: Enables the EAGLE3 parallel path, allocates mask_hidden, and requires that buffer to be present in parallel-drafting
+    model weights.
+related_parameters:
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Sets the width of the parallel proposal and the number of added masked-token slots, so increasing it magnifies
+    both potential speedup and memory pressure.
+- name: SpeculativeConfig.method
+  relation: Explicit parallel drafting is intended for EAGLE-family and draft-model methods; dflash forces parallel_drafting
+    on during configuration.
+- name: SpeculativeConfig.model
+  relation: The selected speculative model must have been trained for parallel drafting and must provide the parallel-drafting
+    state expected by its architecture.
+constraints:
+- Enable explicitly only with an EAGLE-family or draft-model speculative method; dflash sets the flag to true internally.
+- The speculative model must be trained for parallel drafting; enabling the flag does not convert a sequential drafter into
+  a valid parallel drafter.
+- Parallel EAGLE3 weights must contain mask_hidden or model weight loading raises an error.
+tuning_advice:
+  summary: Enable only for a supported, parallel-trained speculative model after measuring end-to-end acceptance, latency,
+    throughput, and available KV-cache headroom.
+  suggested_values:
+  - scenario: A compatible PARD or parallel EAGLE drafter is deployed and decode latency is the priority.
+    value: true
+    reason: Ascend can produce the full speculative width in one proposal forward and skip the sequential remaining-token
+      loop.
+  - scenario: The drafter is sequential, compatibility is unknown, or memory/concurrency is the limiting resource.
+    value: false
+    reason: This preserves the safe default, avoids the additional masked-token slots, and prevents use of parallel-only model
+      state.
+  caveats:
+  - Higher num_speculative_tokens widens the one-pass proposal but also increases reserved slots per request; benchmark concurrency
+    and KV-cache utilization, not only single-request latency.
+  - Throughput gains depend on draft-token acceptance and the parallel model's compute cost; a wider low-acceptance proposal
+    can waste work.
+  - On Ascend, the mode also changes sequence-length handling and skips serial attention-metadata updates, so validate the
+    exact model, speculative method, compilation mode, and batch regime used in production.
+  quick_guide: Start with false. Set true only for a verified parallel-trained EAGLE or draft-model checkpoint, then tune
+    num_speculative_tokens while watching p50/p99 decode latency, accepted tokens, throughput, and KV-cache occupancy.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

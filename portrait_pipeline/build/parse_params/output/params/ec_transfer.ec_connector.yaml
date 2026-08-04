@@ -1,0 +1,84 @@
+name: ec_transfer.ec_connector
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/distributed/ec_transfer/ec_connector/factory.py:63
+value_type: str
+default: null
+valid_choices: Any string registered in ECConnectorFactory._registry, or a class name loadable via ec_connector_module_path
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'The `ec_transfer.ec_connector` parameter selects the EC (Encoder Cache) connector implementation used for
+  transmitting encoder caches (e.g., multimodal embeddings) between vLLM instances in a disaggregated serving setup. The connector
+  is instantiated by `ECConnectorFactory.create_connector` (vllm/distributed/ec_transfer/ec_connector/factory.py:36), which
+  reads `ec_transfer_config.ec_connector` at line 63 to determine the connector class. The connector is used in two roles:
+  "a scheduler-side connector that co-locates with the" scheduler process, and a worker-side connector that co-locates with
+  worker processes. On the worker side, `ECConnectorModelRunnerMixin` (vllm/v1/worker/ec_connector_model_runner_mixin.py:14)
+  calls `maybe_save_ec_to_connector` and `maybe_get_ec_connector_output` to save and retrieve encoder caches. The choice of
+  connector directly affects the latency of cache transfer operations and the throughput of multimodal request processing.
+  Different connectors may use different transport mechanisms (shared memory, NCCL, TCP, etc.) with varying performance characteristics.
+  On Ascend NPU, the connector must be compatible with HCCL communication and CANN memory management. The vllm-ascend patch
+  at vllm_ascend/patch/platform/patch_balance_schedule.py:9 imports `ECConnectorMetadata` from the base connector module,
+  indicating that EC connector functionality is used in Ascend''s balance scheduling feature. The `RecomputeScheduler` at
+  vllm_ascend/core/recompute_scheduler.py:26 also imports `ECConnectorMetadata`, showing integration with Ascend''s recompute
+  scheduling path.
+
+  '
+usage_locations:
+- file: vllm/distributed/ec_transfer/ec_connector/factory.py:63
+  context: Reads ec_transfer_config.ec_connector to select the connector class for instantiation
+- file: vllm/distributed/ec_transfer/ec_transfer_state.py:5
+  context: Imports ECConnectorBase and ECConnectorRole for global EC connector state management
+- file: vllm/v1/worker/ec_connector_model_runner_mixin.py:14
+  context: Uses ECConnectorBase for saving and retrieving encoder caches in model runner
+- file: vllm/v1/core/sched/scheduler.py:13
+  context: Imports ECConnectorMetadata and ECConnectorRole for scheduler-side EC connector usage
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:9
+  context: Imports ECConnectorMetadata for Ascend balance scheduling integration
+- file: vllm_ascend/core/recompute_scheduler.py:26
+  context: Imports ECConnectorMetadata for Ascend recompute scheduler integration
+related_parameters:
+- name: ec_transfer.ec_connector_module_path
+  relation: Specifies the Python module path to load the connector class from when the connector name is not in the built-in
+    registry
+- name: ec_transfer.engine_id
+  relation: Passed to the connector constructor to identify the engine instance in disaggregated serving
+- name: ec_transfer_config
+  relation: Parent configuration object; must be non-None for any EC connector to be created
+constraints:
+- ec_transfer_config must be set (non-None) to create an EC connector
+- ec_transfer.ec_connector must not be None when ec_transfer_config is set
+- If the connector name is not in the built-in registry, ec_connector_module_path must be provided and must point to a valid
+  importable module
+tuning_advice:
+  summary: 'Select the EC connector implementation based on your deployment topology and Ascend NPU communication capabilities.
+    For Ascend, prefer connectors that leverage HCCL or shared memory for low-latency cache transfer.
+
+    '
+  suggested_values:
+  - scenario: Single-node Ascend deployment with shared memory access
+    value: shared_memory
+    reason: Shared memory connectors avoid network overhead and provide the lowest latency for intra-node cache transfer on
+      Ascend NPU
+  - scenario: Multi-node Ascend deployment with HCCL interconnect
+    value: hccl
+    reason: HCCL-based connectors leverage Ascend's native high-speed interconnect for efficient cross-node encoder cache
+      transfer
+  - scenario: Development and testing
+    value: example
+    reason: The built-in ECExampleConnector uses file-based safetensors storage, suitable for functional testing but not production
+      performance
+  caveats:
+  - The EC connector is only active in disaggregated serving setups where encoder cache transfer between instances is needed
+  - On Ascend NPU, ensure the chosen connector is compatible with HCCL communication and CANN memory allocation patterns
+  - The connector runs in both scheduler and worker processes; connector overhead affects both scheduling latency and per-step
+    execution time
+  - vllm-ascend's balance scheduling and recompute scheduling features both depend on EC connector metadata, so the connector
+    choice may interact with these Ascend-specific optimizations
+  quick_guide: Use shared_memory connector for single-node Ascend deployments; use HCCL-based connector for multi-node setups
+analysis_date: '2026-07-06'

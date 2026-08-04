@@ -1,0 +1,83 @@
+name: CompilationConfig.pass_config.fuse_act_padding
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:143
+- vllm/config/compilation.py:240
+- vllm/config/vllm.py:158
+- docs/design/fusions.md:371
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+cli_example: -cc.pass_config.fuse_act_padding=True
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On the upstream ROCm/AITER path, enabling this flag requests the RMSNorm-plus-padding compilation fusion documented
+  for GPT-OSS. The fused path combines residual add and RMSNorm with the following hidden-dimension padding, avoiding an intermediate
+  tensor materialization and a separate kernel launch; this can reduce latency and improve throughput when that pattern recurs
+  across transformer layers. The declared value starts as null because VllmConfig resolves it from the optimization level:
+  O0 supplies false, while O1 through O3 call enable_norm_pad_fusion, which returns true only when the selected fused_add_rms_norm
+  implementation is AITER and model hidden size is 2880. An explicit user value is retained rather than replaced by these
+  defaults. PassConfig post-initialization forcibly changes a true value to false on every non-ROCm platform, so this upstream
+  flag provides no fusion benefit on Ascend. Disabling eliminate_noops does not forcibly disable the flag, but the source
+  warns that the fusion might not work in that state.'
+usage_locations:
+- file: vllm/config/compilation.py:143
+  context: Declares the delayed bool setting and describes it as fusing custom RMSNorm and padding operations.
+- file: vllm/config/compilation.py:240
+  context: PassConfig post-initialization warns when no-op elimination is disabled and forces the setting off when the active
+    platform is not ROCm.
+- file: vllm/config/vllm.py:158
+  context: Computes the automatic O1-O3 value from AITER fused-add-RMSNorm selection and the GPT-OSS hidden size of 2880.
+- file: vllm/config/vllm.py:175
+  context: Optimization-level tables set the flag false at O0 and use the enable_norm_pad_fusion predicate at O1, O2, and
+    O3.
+- file: docs/design/fusions.md:371
+  context: Documents the ROCm/AITER-only residual-add/RMSNorm-to-padding fusion, its targeted model, and its reduction of
+    separate operations.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: O0 defaults this flag to false; O1 through O3 derive its default from enable_norm_pad_fusion. The overall default
+    optimization level is O2.
+- name: KernelConfig.ir_op_priority.fused_add_rms_norm
+  relation: Automatic enablement requires the first selected implementation to be aiter.
+- name: CompilationConfig.pass_config.eliminate_noops
+  relation: When false, configuration emits a warning that RMSNorm-plus-padding fusion might not work.
+constraints:
+- Effective only on ROCm; PassConfig automatically resets true to false on non-ROCm platforms, including Ascend.
+- The automatic O1-O3 default becomes true only with AITER selected for fused_add_rms_norm and model hidden size 2880.
+- The graph must contain the targeted residual-add/RMSNorm followed by hidden-dimension padding pattern; otherwise enabling
+  the pass cannot remove work.
+- Keeping eliminate_noops enabled is recommended because configuration warns that the fusion might not work without no-op
+  elimination.
+tuning_advice:
+  summary: Leave the delayed default in place for supported GPT-OSS ROCm/AITER deployments; use an explicit value mainly for
+    controlled benchmarking or troubleshooting, and do not enable it on Ascend.
+  suggested_values:
+  - scenario: GPT-OSS on ROCm with AITER fused_add_rms_norm selected
+    value: true
+    reason: This is the targeted hidden-size-2880 case, where removing the intermediate padding boundary can reduce memory
+      traffic and kernel launch overhead.
+  - scenario: Ascend, CUDA, CPU, or another non-ROCm platform
+    value: false
+    reason: Source initialization forcibly disables the flag on non-ROCm platforms, so false accurately represents the effective
+      behavior and avoids a warning.
+  - scenario: Debugging a ROCm compilation or numerical issue
+    value: false
+    reason: Disabling the fusion preserves separate operations and helps isolate whether this graph rewrite is involved.
+  caveats:
+  - The source-level default is null, not universally true or false; the effective default is resolved after platform kernel
+    priorities and the optimization level are applied.
+  - Explicitly setting true can bypass the conservative model-shape auto-enable predicate, but it cannot bypass the non-ROCm
+    forced disable and may simply find no matching graph pattern.
+  - The pinned vllm-ascend repository contains no implementation or override for fuse_act_padding; upstream configuration
+    disables it on Ascend because Ascend is not ROCm.
+  - The benefit is workload- and model-specific and should be confirmed with end-to-end latency and throughput measurements.
+  quick_guide: On GPT-OSS ROCm/AITER, keep the O1-or-higher default or test true against false; everywhere else use false.
+analysis_date: '2026-07-30'

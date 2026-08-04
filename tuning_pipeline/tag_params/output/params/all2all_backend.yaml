@@ -1,0 +1,99 @@
+name: --all2all-backend
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/config/parallel.py:40
+- vllm/config/parallel.py:174
+- vllm/config/parallel.py:420
+- vllm/config/vllm.py:1278
+- vllm/config/compilation.py:1173
+- vllm_ascend/platform.py:513
+- vllm_ascend/platform.py:559
+value_type: str
+default: allgather_reducescatter
+valid_choices:
+- naive
+- pplx
+- deepep_high_throughput
+- deepep_low_latency
+- mori
+- nixl_ep
+- allgather_reducescatter
+- flashinfer_all2allv
+- flashinfer_nvlink_two_sided
+- flashinfer_nvlink_one_sided
+cli_example: --all2all-backend <value>
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option selects the MoE expert-parallel all-to-all implementation. The backend changes token dispatch and
+  combine communication, so it directly affects latency, throughput, and temporary communication buffers. In the target vllm-ascend
+  source, platform configuration overrides the value to flashinfer_all2allv when worker_cls is auto and compilation sequence
+  parallelism is disabled. The selected value is also passed into compilation graph splitting; upstream disables graph capture
+  for deepep_high_throughput with data parallelism greater than one because that kernel is not graph compatible.
+usage_locations:
+- file: vllm_ascend/platform.py:559
+  context: The Ascend platform forces flashinfer_all2allv for the normal automatic worker path when compilation pass_config.enable_sp
+    is false.
+- file: vllm_ascend/platform.py:513
+  context: Passes the effective backend into compilation graph-splitting configuration.
+- file: vllm/config/vllm.py:1278
+  context: Requires a DeepEP backend when dual-batch-overlap microbatching is active.
+- file: vllm/config/parallel.py:420
+  context: Maps the removed naive and pplx values back to allgather_reducescatter.
+- file: vllm/config/compilation.py:1173
+  context: Disables graph capture for deepep_high_throughput with data parallelism greater than one.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: The all-to-all backend is relevant to MoE expert-parallel dispatch and combine.
+- name: --enable-dbo
+  relation: DBO microbatching only accepts deepep_low_latency or deepep_high_throughput.
+- name: --data-parallel-size
+  relation: Data-parallel size participates in backend behavior and graph compatibility.
+- name: compilation_config.pass_config.enable_sp
+  relation: Controls whether vllm-ascend replaces this option with flashinfer_all2allv.
+constraints:
+- When --enable-dbo activates microbatching, --all2all-backend must be deepep_low_latency or deepep_high_throughput.
+- The legacy naive and pplx values are removed and are converted to allgather_reducescatter during configuration validation.
+- In the automatic Ascend worker path with compilation sequence parallelism disabled, vllm-ascend replaces the configured
+  value with flashinfer_all2allv.
+tuning_advice:
+  summary: For the target Ascend stack, normally leave this option at its default and let the vllm-ascend platform select
+    flashinfer_all2allv; benchmark alternatives only when the automatic override is not active.
+  suggested_values:
+  - scenario: Normal Ascend deployment using worker_cls=auto without compilation sequence parallelism
+    value: flashinfer_all2allv
+    reason: This is the effective value selected by the target vllm-ascend platform code for that path.
+  - scenario: Configuration path where the Ascend override is not active
+    value: allgather_reducescatter
+    reason: This is the current upstream default and avoids selecting CUDA-specific DeepEP or NVLink paths without evidence
+      that they are supported by the deployed Ascend software stack.
+  caveats:
+  - A command-line value may not be the runtime value because vllm-ascend can overwrite it during platform configuration.
+  - deepep_high_throughput disables graph capture when data_parallel_size is greater than one in upstream configuration, trading
+    decode graph benefits for its prefill-oriented communication path.
+  - Static source analysis establishes control flow but does not identify the fastest backend for the user's CANN, firmware,
+    topology, model, and traffic; confirm that choice with target-machine benchmarks.
+  quick_guide: On the target Ascend automatic-worker path, leave the option unset and verify that the effective backend becomes
+    flashinfer_all2allv before benchmarking.
+analysis_date: '2026-07-24'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

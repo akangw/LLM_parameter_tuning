@@ -1,0 +1,113 @@
+name: compilation.pass_config.enable_sp
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:1154
+- vllm/config/vllm.py:1035
+- vllm_ascend/platform.py:223
+- vllm_ascend/platform.py:456
+- vllm_ascend/ascend_config.py:250
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:74
+value_type: bool
+default: None (resolved to False if not explicitly set)
+valid_choices:
+- true
+- false
+cli_example: '''--compilation-config {"pass_config": {"enable_sp": true}}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'Sequence parallelism (SP) shards the sequence dimension across tensor-parallel ranks, reducing per-device
+  activation memory and enabling larger batch sizes. On Ascend NPU, when enable_sp is True, vllm-ascend injects two graph
+  fusion passes (SequenceParallelismPass and SequenceParallelismMoePass) that rewrite the computation graph to insert all-gather
+  / reduce-scatter collectives at layer boundaries. This directly affects throughput and latency: "at small token counts the
+  fixed communication" overhead dominates and hurts performance, but at larger token counts (>= sp_min_token_num, default
+  1000 on Ascend) the memory savings allow higher batch sizes and net throughput gains. The parameter also forces full-graph
+  compilation (splitting_ops is cleared) and requires cudagraph capture sizes to be multiples of tensor_parallel_size, which
+  can constrain scheduling flexibility. On Ascend, the platform layer auto-sets sp_min_token_num to 1000 for dense models
+  and 1 for MoE models when enable_sp is True and sp_min_token_num is unset.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:223
+  context: 'apply_config_platform_defaults: auto-sets sp_min_token_num when enable_sp is True'
+- file: vllm_ascend/platform.py:456
+  context: Updates cudagraph capture sizes to be multiples of tp_size when SP is enabled
+- file: vllm_ascend/ascend_config.py:250
+  context: enable_sp_by_pass derived flag controls whether SP bypass is active
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:74
+  context: Registers SequenceParallelismPass and SequenceParallelismMoePass when enable_sp is True
+- file: vllm_ascend/worker/model_runner_v1.py:4630
+  context: v1 worker temporarily overrides enable_sp via enable_sp() helper during model execution
+- file: vllm/config/vllm.py:1035
+  context: 'Post-init validation: disables SP if TP=1 or hidden_size too small'
+- file: vllm/config/compilation.py:1154
+  context: Forces full-graph compilation (clears splitting_ops) when SP is enabled
+- file: vllm/v1/worker/gpu_model_runner.py:3264
+  context: Pads num_scheduled_tokens to multiple of tp_size for SP
+- file: vllm/v1/worker/gpu_model_runner.py:3680
+  context: Asserts num_tokens is multiple of tp_size when SP is enabled
+- file: vllm/v1/worker/gpu_worker.py:801
+  context: 'PP+SP coordination: determines batch execution with SP padding'
+- file: vllm/compilation/passes/pass_manager.py:140
+  context: Registers upstream SequenceParallelismPass and AsyncTPPass when enable_sp is True
+related_parameters:
+- name: compilation.pass_config.sp_min_token_num
+  relation: SP only activates when num_tokens >= sp_min_token_num; auto-set by vllm-ascend when enable_sp is True
+- name: compilation.pass_config.fuse_gemm_comms
+  relation: Enabling fuse_gemm_comms forces enable_sp to True (async TP requires SP)
+- name: parallel_config.tensor_parallel_size
+  relation: SP requires TP > 1; automatically disabled if TP == 1
+- name: compilation_config.cudagraph_capture_sizes
+  relation: SP forces capture sizes to be multiples of tp_size; incompatible with piecewise cudagraph
+- name: compilation_config.splitting_ops
+  relation: SP requires full-graph compilation; splitting_ops is cleared when SP is enabled
+- name: compilation_config.cudagraph_mode
+  relation: SP is incompatible with piecewise cudagraph; mode is forced to FULL
+- name: model_config.enforce_eager
+  relation: SP is not supported in eager mode; enable_sp_by_pass is False when enforce_eager is True
+constraints:
+- tensor_parallel_size must be greater than 1; SP is automatically disabled if TP == 1.
+- SP is not supported in eager mode (enforce_eager must be False).
+- SP requires full-graph compilation; piecewise cudagraph modes are incompatible and will be overridden to FULL.
+- When SP is enabled, cudagraph_capture_sizes must contain values that are multiples of tensor_parallel_size.
+- When combined with speculative decoding, num_speculative_tokens + 1 must evenly divide tensor_parallel_size, or SP must
+  be disabled.
+- The model hidden_size must be large enough for the SP threshold heuristic; if too small, SP is automatically disabled unless
+  sp_min_token_num is set manually.
+tuning_advice:
+  summary: Enable SP on Ascend NPU for models with TP>1 and large batch sizes to reduce activation memory and improve throughput;
+    leave disabled for small-batch or low-token scenarios where communication overhead dominates.
+  suggested_values:
+  - scenario: Dense models with TP >= 4 and typical production batch sizes
+    value: 'true'
+    reason: SP reduces per-device activation memory proportionally to TP size, enabling larger batch sizes and higher throughput.
+      Ascend default sp_min_token_num=1000 filters out small-token cases where SP would hurt.
+  - scenario: MoE models (e.g., DeepSeek-V2/V3) with TP >= 2
+    value: 'true'
+    reason: vllm-ascend auto-sets sp_min_token_num=1 for MoE models, making SP always active. The SequenceParallelismMoePass
+      provides MoE-specific graph optimizations.
+  - scenario: Small batch / low concurrency serving (num_tokens consistently < 1000)
+    value: 'false'
+    reason: Communication overhead of all-gather/reduce-scatter dominates when token count is small, causing net throughput
+      degradation.
+  - scenario: TP=2 with small hidden_size models
+    value: 'false'
+    reason: The SP threshold heuristic may disable SP anyway; forcing it via manual sp_min_token_num is unlikely to yield
+      benefits at TP=2.
+  caveats:
+  - SP forces full-graph compilation and clears splitting_ops, which may increase compilation time and memory overhead for
+    the compiled graph.
+  - cudagraph_capture_sizes must be multiples of tp_size; non-conforming sizes will cause assertion errors at startup.
+  - On Ascend, the default sp_min_token_num is 1000 for dense models — SP has no effect below this threshold. For MoE models
+    it defaults to 1.
+  - SP is currently experimental on vllm-ascend and not enabled by default; behavior may change in future releases.
+  - When combined with pipeline parallelism (PP>1), SP requires V1 model runner and adds coordination overhead for batch execution
+    padding.
+  quick_guide: Set enable_sp=true for Ascend deployments with TP>=4 and sustained batch sizes above 1000 tokens; use the default
+    sp_min_token_num=1000 unless profiling shows benefits at lower thresholds.
+analysis_date: '2026-07-06'

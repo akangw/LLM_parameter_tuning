@@ -1,0 +1,87 @@
+name: --skip-mm-profiling
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/multimodal.py:183
+- vllm/engine/arg_utils.py:1222
+- vllm_ascend/worker/model_runner_v1.py:3418
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --skip-mm-profiling
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: When enabled for a multimodal model, the upstream GPUModelRunner skips the dummy multimodal-encoder execution
+  and temporary encoder-cache population in profile_run(), but it still performs the language-backbone dummy run. This can
+  reduce engine initialization latency. Because the skipped encoder activations and cache entries are absent from peak-memory
+  measurement, the engine can calculate more memory as available for the KV cache than is safe when real multimodal requests
+  later execute. The flag does not alter steady-state model execution directly. Ascend's NPUModelRunner inherits this branch
+  by calling the upstream profile_run() implementation from its override.
+usage_locations:
+- file: vllm/config/multimodal.py:183
+  context: Defines the boolean default and documents the startup-time versus memory-estimation trade-off.
+- file: vllm/engine/arg_utils.py:1547
+  context: Passes the CLI-derived value into ModelConfig and subsequently MultiModalConfig.
+- file: vllm_ascend/worker/model_runner_v1.py:3418
+  context: Ascend NPUModelRunner performs its platform warm-up and then delegates to the upstream profile_run(), inheriting
+    the flag's behavior.
+- file: vllm_ascend/worker/worker.py:335
+  context: Ascend profiles model memory around model_runner.profile_run() to calculate memory available for the KV cache.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Controls the memory budget from which profiled non-KV usage is subtracted; lowering it can leave headroom for
+    encoder memory omitted by this flag.
+- name: --kv-cache-memory
+  relation: Explicitly fixes KV-cache memory and bypasses the normal memory calculation, although profile_run() still runs
+    for model compilation.
+- name: --limit-mm-per-prompt
+  relation: Determines multimodal item limits used to construct the encoder profiling workload when profiling is not skipped.
+- name: --enable-mm-embeds
+  relation: With all modality limits set to zero, embedding-only mode skips encoder profiling independently of this flag because
+    no encoder workload exists.
+constraints:
+- The flag changes profiling only when the model runner supports multimodal inputs.
+- It does not skip the language-backbone dummy run used during initialization.
+- In embedding-only mode with --enable-mm-embeds and all modality limits set to zero, encoder profiling is already skipped
+  regardless of this flag.
+tuning_advice:
+  summary: Keep the default for unknown multimodal workloads; enable only when faster startup matters and encoder peak memory
+    has been measured separately with sufficient device-memory headroom.
+  suggested_values:
+  - scenario: First deployment or variable multimodal inputs
+    value: false
+    reason: Includes the configured multimodal encoder workload and temporary encoder cache in initialization-time peak-memory
+      measurement.
+  - scenario: Repeated deployment with independently measured, stable multimodal memory requirements
+    value: true
+    reason: Reduces cold-start work while an externally validated memory margin covers the encoder activations and cache omitted
+      from profiling.
+  caveats:
+  - Enabling the flag can make calculated KV-cache capacity optimistic and cause an out-of-memory failure when real multimodal
+    requests run.
+  - The startup-latency saving depends on the multimodal encoder and configured profiling workload; text-only models receive
+    no benefit.
+  - Lowering --gpu-memory-utilization can reserve headroom, but the required margin must be measured for the actual model
+    and input limits.
+  - The flag has no direct steady-state throughput benefit.
+  quick_guide: Leave false until representative multimodal peak memory is known; then enable only with validated headroom
+    if reducing engine startup time is important.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

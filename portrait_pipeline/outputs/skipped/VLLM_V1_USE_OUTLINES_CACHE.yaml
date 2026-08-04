@@ -1,0 +1,6 @@
+name: VLLM_V1_USE_OUTLINES_CACHE
+type: env
+performance_impact: none
+skip_reason: 'In the pinned current sources this variable is inert: upstream vLLM only declares and parses it in vllm/envs.py,
+  with no runtime read or cache implementation referencing it, while the pinned vllm-ascend repository has no occurrence or
+  override. Changing it therefore cannot affect latency, throughput, or memory in the analyzed versions.'

@@ -1,0 +1,86 @@
+name: VLLM_DISABLE_SHARED_EXPERTS_STREAM
+type: env
+category: scheduling
+scope: both
+source_file:
+- vllm/envs.py:1680
+- vllm_ascend/platform.py:32
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether MoE (Mixture of Experts) shared experts are executed in a separate
+  CUDA/HCCL stream to overlap with other operations. When set to 1 (disabled), shared experts run sequentially in the default
+  stream, eliminating stream synchronization overhead but also removing any potential overlap benefit. When set to 0 (enabled),
+  shared experts are dispatched to an auxiliary stream via aux_stream(), allowing concurrent execution with other kernels.
+
+  On Ascend NPU, vllm-ascend unconditionally sets this to "1" in platform.py:32, meaning the separate stream path is ALWAYS
+  disabled regardless of user configuration. This is a hard override — any user attempt to set VLLM_DISABLE_SHARED_EXPERTS_STREAM=0
+  is silently ignored because the platform module executes before user env vars are fully processed. The comment in platform.py:31
+  indicates this is a temporary workaround ("todo: please remove it when solve cuda hard code in vllm"), suggesting that the
+  upstream CUDA stream mechanism is not yet compatible with Ascend''s HCCL stream model.
+
+  The performance impact is classified as "low" because on Ascend this parameter is effectively non-functional — it is always
+  forced to 1. The theoretical performance difference (overlap vs sequential execution) cannot be realized on Ascend until
+  the platform override is removed and HCCL stream support is validated.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:32
+  context: 'Hard override: "sets VLLM_DISABLE_SHARED_EXPERTS_STREAM=1 unconditionally" before any model loading, disabling
+    the separate stream path on all Ascend devices.
+
+    '
+- file: vllm/model_executor/layers/fused_moe/runner/shared_experts.py:71
+  context: 'Reads the env var to decide whether to create an auxiliary stream for shared experts. When True, sets self._stream
+    = None (sequential execution). When False, calls aux_stream() to get a separate stream for overlap.
+
+    '
+- file: vllm/platforms/cpu.py:209
+  context: 'CPU platform also forces VLLM_DISABLE_SHARED_EXPERTS_STREAM=1 since CPU has no CUDA stream concept. This is the
+    same pattern vllm-ascend follows for Ascend.
+
+    '
+related_parameters:
+- name: VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD
+  relation: 'When VLLM_DISABLE_SHARED_EXPERTS_STREAM=0, this threshold limits the number of tokens below which shared experts
+    run in a separate stream. On Ascend, this threshold is irrelevant because the separate stream is always disabled.
+
+    '
+constraints:
+- On Ascend NPU, vllm-ascend unconditionally overrides this to 1; setting it to 0 has no effect.
+- The separate stream path requires aux_stream() to return a valid stream object; on non-CUDA platforms this typically returns
+  None.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter is force-disabled by vllm-ascend and cannot be changed. No tuning is necessary or
+    possible.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: '1'
+    reason: 'vllm-ascend unconditionally sets this to 1 in platform.py. Any other value is silently overridden. This is the
+      only valid setting on Ascend.
+
+      '
+  caveats:
+  - 'Do not attempt to set VLLM_DISABLE_SHARED_EXPERTS_STREAM=0 on Ascend — the platform module overrides it before model
+    initialization, so it has no effect.
+
+    '
+  - 'The forced disable means MoE shared experts always run sequentially on Ascend, which may slightly reduce throughput for
+    MoE models compared to GPU deployments where stream overlap is possible. This is a known limitation tracked by the "todo"
+    comment in vllm_ascend/platform.py:31.
+
+    '
+  quick_guide: 'Leave this parameter unset on Ascend — vllm-ascend forces it to 1 automatically.
+
+    '
+analysis_date: '2026-07-06'

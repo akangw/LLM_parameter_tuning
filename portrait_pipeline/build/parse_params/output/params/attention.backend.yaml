@@ -1,0 +1,94 @@
+name: attention.backend
+type: nested
+category: hardware
+scope: both
+source_file:
+- vllm/config/attention.py:20
+- vllm_ascend/platform.py:1048
+value_type: str
+default: null
+valid_choices:
+- auto
+- FLASH_ATTN
+- FLASHINFER
+- TRITON_ATTN
+- FLEX_ATTENTION
+- TORCH_SDPA
+- ROCM_AITER_FA
+- ROCM_AITER_UNIFIED_ATTN
+- CUTLASS_MLA
+- FLASHMLA
+- FLASHMLA_SPARSE
+- CUTLASS_MLA_CK
+- IPEX
+- OPENVINO
+- PALLAS
+- BIGATTN
+- ASCEND
+cli_example: --attention-backend FLASH_ATTN
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On Ascend NPU, the attention.backend parameter has minimal direct performance impact because vllm-ascend overrides
+  the user-specified backend with its own Ascend-native attention implementation. In vllm_ascend/platform.py (lines 1056-1065),
+  any non-FLASH_ATTN backend value is explicitly reset to None with a log message stating "Ascend NPU will use its registered
+  plugin backend instead." The FLASH_ATTN value is preserved for training-inference consistency but does not change the actual
+  attention kernel used at runtime. Additionally, vllm_ascend/patch/platform/patch_mla_prefill_backend.py (line 48) monkey-patches
+  the MLA prefill backend selector to always return AscendMLAPrefillBackend, bypassing any user configuration. The parameter
+  is only meaningful when set to FLASH_ATTN in combination with VLLM_BATCH_INVARIANT=1 for batch-invariant flash attention
+  optimization as documented in vllm-ascend docs (user_guide/feature_guide/flash_attention.md:70). For all other values, the
+  parameter is effectively ignored on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:1056
+  context: Resets non-FLASH_ATTN backend values to None, logging that Ascend uses its own plugin backend
+- file: vllm_ascend/patch/platform/patch_mla_prefill_backend.py:48
+  context: Monkey-patches MLA prefill backend selector to always return AscendMLAPrefillBackend
+- file: vllm/config/attention.py:20
+  context: 'Field definition with docstring: ''Attention backend to use. Use auto or None for automatic selection'''
+- file: vllm/engine/arg_utils.py:877
+  context: CLI argument registration as --attention-backend
+- file: vllm/config/speculative.py:110
+  context: Draft model attention backend override for speculative decoding
+- file: vllm/config/multimodal.py:159
+  context: Multi-modal encoder attention backend override for vision transformers
+related_parameters:
+- name: VLLM_BATCH_INVARIANT
+  relation: When attention.backend is set to FLASH_ATTN, setting VLLM_BATCH_INVARIANT=1 enables batch-invariant flash attention
+    optimization on Ascend
+- name: flash_attn_version
+  relation: flash_attn_version is reset to None by vllm-ascend since Ascend uses its own attention backend (vllm_ascend/platform.py:1048)
+- name: use_prefill_decode_attention
+  relation: Force-reset to False on Ascend as it is NVIDIA-specific (vllm_ascend/platform.py:1030)
+- name: speculative_config.attention_backend
+  relation: Draft model attention backend; same override behavior applies on Ascend
+- name: mm_encoder_attn_backend
+  relation: Multi-modal encoder attention backend; same override behavior applies on Ascend
+constraints:
+- Setting attention.backend to any value other than FLASH_ATTN or None will be overridden to None on Ascend NPU with a log
+  message
+- The XFORMERS backend has been removed and will raise a ValueError if specified
+tuning_advice:
+  summary: On Ascend NPU, leave attention.backend at its default (None) or set to FLASH_ATTN for batch-invariant optimization;
+    all other values are silently ignored
+  suggested_values:
+  - scenario: Default Ascend deployment
+    value: null
+    reason: vllm-ascend automatically selects the optimal Ascend-native attention backend; any explicit non-FLASH_ATTN value
+      is reset to None
+  - scenario: Batch-invariant flash attention optimization
+    value: FLASH_ATTN
+    reason: Setting --attention-backend FLASH_ATTN with VLLM_BATCH_INVARIANT=1 enables batch-invariant optimization for improved
+      performance on Ascend NPU
+  caveats:
+  - Setting attention.backend to GPU-specific backends (FLASHINFER, TRITON_ATTN, etc.) has no effect on Ascend — vllm-ascend
+    silently resets them to None
+  - The FLASH_ATTN value is preserved for training-inference consistency but does not change the actual attention kernel;
+    Ascend always uses its own plugin backend
+  - MLA prefill backend selection is completely bypassed on Ascend via monkey-patch, regardless of attention.backend setting
+  quick_guide: Leave --attention-backend at default (None) on Ascend NPU; only set to FLASH_ATTN if also using VLLM_BATCH_INVARIANT=1
+    for batch-invariant optimization
+analysis_date: '2026-07-06'

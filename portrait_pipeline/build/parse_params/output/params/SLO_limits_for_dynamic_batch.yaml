@@ -1,0 +1,68 @@
+name: --SLO_limits_for_dynamic_batch
+type: cli
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:201
+- vllm_ascend/platform.py:601
+- vllm_ascend/core/scheduler_dynamic_batch.py:148
+value_type: int
+default: '-1'
+valid_choices: integer >= -1; -1 disables the feature
+cli_example: --SLO_limits_for_dynamic_batch 2048
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When set to a value other than -1, this parameter activates the Ascend-native SchedulerDynamicBatch (vllm_ascend/core/scheduler_dynamic_batch.py),
+  replacing the default vLLM scheduler. The dynamic batch scheduler uses a BudgetRefiner that dynamically adjusts the token
+  budget per scheduling step based on the SLO limit, aiming to maximize throughput while respecting latency targets. It also
+  forces enable_chunked_prefill=True. The SLO limit is passed directly to BudgetRefiner as the slo_limit parameter, which
+  controls how aggressively the scheduler batches requests. Larger values relax the latency constraint, allowing more tokens
+  per step and higher throughput at the cost of increased per-request latency. Currently only supported on Ascend 910B3 NPU
+  with decode token scales below 2048.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:201
+  context: Reads SLO_limits_for_dynamic_batch from additional_config dict, defaults to -1
+- file: vllm_ascend/platform.py:601
+  context: If value != -1, replaces scheduler_cls with SchedulerDynamicBatch and sets enable_chunked_prefill=True
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:148
+  context: Passes SLO_limits_for_dynamic_batch to BudgetRefiner as slo_limit for dynamic token budget calculation
+related_parameters:
+- name: max_num_batched_tokens
+  relation: Serves as the default budget for BudgetRefiner; dynamic batch refines this budget based on SLO limit
+- name: enable_chunked_prefill
+  relation: Automatically set to True when dynamic batch is enabled
+- name: recompute_scheduler_enable
+  relation: Both replace the default scheduler; only one should be active at a time
+constraints:
+- Only supported on Ascend 910B3 NPU; other devices are not supported
+- Decode token number scale must be below 2048
+- Must be an integer; -1 disables the feature, any positive value enables it
+tuning_advice:
+  summary: Set to a positive integer (e.g., 2048) to enable dynamic batch scheduling on 910B3 for higher throughput; larger
+    values trade latency for throughput
+  suggested_values:
+  - scenario: Disable dynamic batch (default behavior)
+    value: '-1'
+    reason: Uses the standard vLLM scheduler with no dynamic budget refinement
+  - scenario: Enable dynamic batch with moderate SLO on 910B3 for Qwen/Llama models
+    value: '2048'
+    reason: Documentation suggests decode token scales below 2048; 2048 provides a balanced starting point for throughput
+      improvement
+  - scenario: Relax latency constraints for maximum throughput on 910B3
+    value: '4096'
+    reason: Larger values allow more aggressive batching, increasing effective throughput at the cost of higher per-request
+      latency
+  caveats:
+  - Only works on Ascend 910B3 NPU; attempting to use on other devices may cause undefined behavior
+  - Enabling this feature forces enable_chunked_prefill=True, which changes scheduling behavior
+  - Larger SLO values increase memory pressure due to larger batch sizes
+  - Improvements are most noticeable on Qwen and Llama model families
+  - Cannot be combined with recompute_scheduler_enable as both replace the default scheduler
+  quick_guide: On 910B3, set --SLO_limits_for_dynamic_batch 2048 to enable dynamic batch for improved throughput on Qwen/Llama
+    models
+analysis_date: '2026-07-06'

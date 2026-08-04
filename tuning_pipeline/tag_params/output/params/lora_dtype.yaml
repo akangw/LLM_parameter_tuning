@@ -1,0 +1,88 @@
+name: --lora-dtype
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:576
+- vllm/engine/arg_utils.py:1246
+- vllm/config/lora.py:46
+value_type: str
+default: auto
+valid_choices: auto, float16, bfloat16
+cli_example: --lora-dtype bfloat16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option is passed into LoRAConfig only when --enable-lora is enabled (vllm/engine/arg_utils.py:1992-2007).
+  LoRAConfig resolves auto to the base model dtype and converts an explicit string to a torch dtype (vllm/config/lora.py:120-124).
+  The resolved dtype is included in the LoRA computation-graph hash (vllm/config/lora.py:81-98), so a change selects a distinct
+  graph configuration. In the pinned vllm-ascend tree there is no lora_dtype reference or override; Ascend therefore uses
+  this upstream configuration path. Dtype selection can trade LoRA tensor memory footprint, numerical precision, and the performance
+  of the corresponding graph; measure it on the target model and Ascend device.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1246
+  context: Registers --lora-dtype in the LoRA command-line argument group.
+- file: vllm/engine/arg_utils.py:1992
+  context: Creates LoRAConfig with lora_dtype only when enable_lora is true.
+- file: vllm/config/lora.py:46
+  context: Defines lora_dtype with auto as the default and documents fallback to the base-model dtype.
+- file: vllm/config/lora.py:91
+  context: Includes lora_dtype in the factors used for the LoRA computation-graph hash.
+- file: vllm/config/lora.py:121
+  context: Resolves auto to model_config.dtype and converts explicit dtype strings to torch dtypes.
+related_parameters:
+- name: --enable-lora
+  relation: LoRAConfig, including lora_dtype, is created only when this flag is enabled.
+- name: --dtype
+  relation: With lora_dtype=auto, LoRAConfig adopts the base model dtype selected by the model configuration.
+- name: --max-loras
+  relation: Controls how many LoRA adapters the same LoRA configuration can serve; benchmark dtype choices at the intended
+    adapter concurrency.
+- name: --max-lora-rank
+  relation: Sets the configured LoRA rank and therefore changes the scale at which a dtype choice is evaluated.
+constraints:
+- Only affects a server started with --enable-lora.
+- Supported declared CLI string choices are auto, float16, and bfloat16.
+- auto resolves to the base model dtype during LoRAConfig verification.
+tuning_advice:
+  summary: Keep auto unless a measured LoRA workload requires a deliberate precision-versus-resource tradeoff.
+  suggested_values:
+  - scenario: Normal deployment matching the base model precision
+    value: auto
+    reason: The configuration resolves auto to model_config.dtype, avoiding an independent LoRA dtype choice.
+  - scenario: Workload validated for bfloat16 LoRA execution
+    value: bfloat16
+    reason: Uses an explicit supported low-precision LoRA dtype; compare accuracy, memory, and throughput against auto on
+      the target Ascend hardware.
+  - scenario: Workload validated for float16 LoRA execution
+    value: float16
+    reason: Uses the other explicit supported low-precision LoRA dtype; benchmark it because results depend on the model and
+      device.
+  caveats:
+  - An explicit value changes the LoRA computation-graph hash relative to another dtype configuration.
+  - The pinned Ascend source contains no lora_dtype-specific override, so device-specific performance must be measured rather
+    than inferred from an override.
+  - A dtype choice is irrelevant when --enable-lora is not set.
+  quick_guide: Start with auto; set float16 or bfloat16 only after validating quality and performance for the deployed model.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

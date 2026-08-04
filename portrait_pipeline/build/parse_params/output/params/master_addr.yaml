@@ -1,0 +1,86 @@
+name: --master-addr
+type: cli
+category: communication
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:927
+- vllm/config/parallel.py:255
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:59
+value_type: str
+default: 127.0.0.1
+valid_choices: any valid IPv4 address string
+cli_example: --master-addr 192.168.1.100
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: '--master-addr specifies the IP address of the master node for torch.distributed process group initialization
+  in multi-node deployments. It is only used when distributed_executor_backend is "mp" and nnodes > 1. On Ascend NPU, this
+  address is passed to HCCL (Huawei Collective Communication Library) via the torch.distributed.init_process_group call with
+  backend "npu:hccl". The address itself does not directly affect throughput or latency — it is a connectivity parameter.
+  However, an incorrect or suboptimal address (e.g., using a slow management network interface instead of a high-speed RoCE/IB
+  interface) can severely degrade multi-node communication performance. In vllm-ascend, the multiproc executor patch (patch_multiproc_executor.py:59)
+  uses master_addr as the connect_ip for MessageQueue initialization, which is used for broadcasting scheduler outputs to
+  worker processes. For single-node deployments, vllm-ascend examples default to "127.0.0.1" (loopback), which is optimal.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:255
+  context: Default value definition (127.0.0.1) in ParallelConfig class
+- file: vllm/engine/arg_utils.py:927
+  context: CLI argument registration in ParallelConfig group
+- file: vllm/distributed/parallel_state.py:1396
+  context: Used as IP for distributed_init_method when nnodes > 1
+- file: vllm/v1/executor/multiproc_executor.py:141
+  context: Logged for debugging in v1 multiproc executor
+- file: vllm/entrypoints/cli/serve.py:184
+  context: Used for headless worker torch.distributed process group address
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:59
+  context: Used as connect_ip for MessageQueue in Ascend multiproc executor
+- file: vllm/distributed/weight_transfer/nccl_engine.py:32
+  context: Passed as master_address for NCCL weight transfer initialization
+related_parameters:
+- name: --master-port
+  relation: Must be set together with --master-addr for multi-node communication
+- name: --distributed-executor-backend
+  relation: --master-addr is only used when this is set to "mp"
+- name: --nnodes
+  relation: --master-addr is only meaningful when nnodes > 1
+- name: --node-rank
+  relation: Together with --master-addr, defines the multi-node topology
+constraints:
+- --master-addr must be a valid IPv4 address string reachable from all worker nodes
+- --master-addr is only used when --distributed-executor-backend is "mp" and --nnodes is greater than 1
+- --master-addr is ignored in the hash computation for data-parallel worker configuration validation (it is in the ignored_factors
+  set)
+tuning_advice:
+  summary: 'For multi-node Ascend deployments, set --master-addr to the IP of the high-speed network interface (RoCE/IB) used
+    for HCCL communication, not the management network interface.
+
+    '
+  suggested_values:
+  - scenario: Single-node deployment (all NPUs on one server)
+    value: 127.0.0.1
+    reason: Loopback is optimal for single-node; no network overhead
+  - scenario: Multi-node deployment with dedicated high-speed interconnect (RoCE/IB)
+    value: <IP of the high-speed network interface on the master node>
+    reason: HCCL uses this address for all-reduce and other collective operations; using the high-speed interface minimizes
+      communication latency
+  - scenario: Multi-node deployment without dedicated interconnect (using management network)
+    value: <IP of the management network interface on the master node>
+    reason: Fallback when no dedicated high-speed network is available; expect higher communication overhead
+  caveats:
+  - Using the wrong network interface IP can cause HCCL to route collective communication over a slow link, significantly
+    degrading multi-node throughput
+  - On Ascend NPU, HCCL communication performance is highly sensitive to network bandwidth and latency; ensure the chosen
+    interface has sufficient bandwidth
+  - For single-node multi-NPU deployments, leave --master-addr at its default (127.0.0.1) — setting it to an external IP adds
+    unnecessary network stack overhead
+  - The vllm-ascend multiproc executor uses master_addr for MessageQueue connect_ip; this is local IPC on single-node and
+    should remain loopback
+  quick_guide: 'For multi-node Ascend: "set --master-addr to the RoCE/IB IP of the master node." For single-node: "use the
+    default 127.0.0.1."
+
+    '
+analysis_date: '2026-07-06'

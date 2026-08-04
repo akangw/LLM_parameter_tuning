@@ -1,0 +1,88 @@
+name: additional_config.multistream_overlap_shared_expert
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:131
+- vllm_ascend/ascend_config.py:281
+- vllm_ascend/ops/fused_moe/fused_moe.py:386
+- vllm_ascend/ops/fused_moe/fused_moe.py:724
+- vllm_ascend/utils.py:692
+- docs/source/user_guide/configuration/additional_config.md:79
+- docs/source/tutorials/models/Kimi-K2.5.md:645
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '--additional-config ''{"multistream_overlap_shared_expert": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: When true on a MoE layer that actually has shared experts, vLLM Ascend runs the shared-expert path on the shared-expert
+  calculation stream. Event waits let its quantization, gate/up projection, activation, and down projection overlap routed-expert
+  dispatch/combine work, after which the default stream waits for completion. This can shorten MoE execution and improve throughput
+  when there is useful work to hide; the model guide calls out TP=1 or enable_shared_expert_dp=true as the effective configurations.
+  The flag is masked off when the layer has no shared experts. In HCCL_OP_EXPANSION_MODE=AIV it also adds one to the graph-capture
+  parallel_factor, which lowers the calculated maximum supported ACL-graph batch-size count and can limit batching/concurrency.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:131
+  context: Reads the boolean from additional_config with a false default and stores it in AscendConfig.
+- file: vllm_ascend/ascend_config.py:281
+  context: Rejects startup when multistream shared-expert overlap is combined with mix placement.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:386
+  context: Enables the per-layer behavior only when the configuration is true and the MoE layer has shared experts.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:724
+  context: Switches shared-expert calculation to its own NPU stream, coordinates it with routed-expert events, and waits for
+    it before returning.
+- file: vllm_ascend/utils.py:692
+  context: In AIV HCCL expansion mode, counts the extra stream in parallel_factor when calculating supported ACL graph capture
+    batch sizes.
+- file: docs/source/tutorials/models/Kimi-K2.5.md:645
+  context: Documents TP=1 or shared-expert data parallelism as the configurations where the extra stream improves efficiency.
+related_parameters:
+- name: additional_config.enable_shared_expert_dp
+  relation: The tuning guide identifies shared-expert DP, along with TP=1, as a configuration where overlap is useful.
+- name: additional_config.mix_placement
+  relation: Mutually exclusive; enabling mix placement together with this option raises ValueError during Ascend configuration
+    checks.
+- name: additional_config.multistream_overlap_gate
+  relation: A sibling multi-stream option for overlapping MoE gate computation; it is configured and gated separately.
+- name: parallel_config.tensor_parallel_size
+  relation: The model tuning guide specifically recommends the overlap path when tensor parallel size is 1, unless shared-expert
+    DP is enabled.
+constraints:
+- Only takes effect for MoE layers with shared experts; the implementation masks the configured value with has_shared_experts.
+- Cannot be enabled with additional_config.mix_placement; that combination raises ValueError at startup.
+- The documented favorable cases are tensor parallel size 1 or additional_config.enable_shared_expert_dp=true; gains remain
+  workload- and model-dependent.
+tuning_advice:
+  summary: Benchmark true for shared-expert MoE models when TP=1 or shared-expert DP is enabled; retain false when the model
+    has no shared experts or overlap does not offset its extra stream/resource cost.
+  suggested_values:
+  - scenario: Shared-expert MoE with TP=1
+    value: true
+    reason: The pinned model guide explicitly identifies TP=1 as a case where the additional stream can overlap shared-expert
+      computation for better efficiency.
+  - scenario: Shared-expert MoE with TP greater than 1 and enable_shared_expert_dp=true
+    value: true
+    reason: The pinned model guide also identifies shared-expert DP as an effective configuration; verify latency and throughput
+      with the target batch mix.
+  - scenario: Dense model, or MoE layer without shared experts
+    value: false
+    reason: The execution path masks the feature off without shared experts, while AIV graph sizing reads the raw additional_config
+      value and would still count an extra parallel stream.
+  - scenario: mix_placement=true
+    value: false
+    reason: Ascend configuration rejects the combination, so overlap must remain disabled if mix placement is required.
+  caveats:
+  - In HCCL_OP_EXPANSION_MODE=AIV, true increases parallel_factor by one and therefore reduces the calculated number of supported
+    ACL graph capture batch sizes.
+  - The default stream must wait for the shared-expert stream before consuming the result; benefit depends on enough routed-expert
+    communication being available to hide the work.
+  - Enabling this option triggers a post-load consistency validation for the split shared-expert computation path.
+  quick_guide: Start with false. Try true only on a shared-expert MoE configuration with TP=1 or enable_shared_expert_dp=true,
+    keep mix_placement=false, and compare end-to-end latency, throughput, and graph-capture capacity.
+analysis_date: '2026-08-01'

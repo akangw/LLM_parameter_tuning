@@ -1,0 +1,68 @@
+name: --scheduling-policy
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1347
+- vllm/engine/arg_utils.py:623
+- vllm/engine/arg_utils.py:1975
+value_type: str
+default: fcfs
+valid_choices:
+- fcfs
+- priority
+cli_example: --scheduling-policy priority
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the order in which the vLLM scheduler selects requests from the waiting queue for
+  execution. With "fcfs" (First Come First Served), requests are processed strictly in arrival order. With "priority", requests
+  with lower priority values are scheduled earlier, with arrival time breaking ties. The performance impact is low because
+  it only affects request ordering, not the core scheduling algorithm (e.g., token budget allocation, prefill/decode batching,
+  or KV cache management). On Ascend NPU, the scheduling logic is identical to upstream vLLM — vllm-ascend does not override
+  or modify this parameter. The impact is most noticeable under high load with mixed-priority workloads, where "priority"
+  mode can reduce latency for high-priority requests at the cost of increased latency for low-priority ones. Overall system
+  throughput remains largely unchanged.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:623
+  context: EngineArgs field definition, defaulting to SchedulerConfig.policy
+- file: vllm/engine/arg_utils.py:1347
+  context: CLI argument registration in SchedulerConfig group
+- file: vllm/engine/arg_utils.py:1975
+  context: Passed to SchedulerConfig constructor during engine config creation
+- file: vllm/v1/core/scheduler.py
+  context: Used by the scheduler to determine request selection order from the waiting queue
+related_parameters:
+- name: --max-num-seqs
+  relation: Controls the maximum number of concurrent sequences; priority scheduling becomes more impactful when the waiting
+    queue is large
+- name: --max-num-batched-tokens
+  relation: Limits tokens per iteration; affects how many priority-ordered requests can be batched together
+constraints:
+- Must be one of "fcfs" or "priority" (case-sensitive)
+tuning_advice:
+  summary: Use "fcfs" for most workloads; switch to "priority" only when you need differentiated latency guarantees for specific
+    request classes
+  suggested_values:
+  - scenario: General-purpose serving with uniform request importance
+    value: fcfs
+    reason: Simplest scheduling, lowest overhead, fair to all requests; no priority metadata needed in API calls
+  - scenario: Production serving with tiered SLAs (e.g., free vs. premium users)
+    value: priority
+    reason: Allows high-priority requests to jump the queue, reducing P99 latency for critical traffic; requires clients to
+      set the "priority" field in API requests
+  caveats:
+  - Priority scheduling only takes effect when there is a backlog of waiting requests; under light load, behavior is identical
+    to FCFS
+  - Clients must explicitly set the "priority" field in their API requests (lower integer = higher priority); otherwise all
+    requests default to priority 0 and behave like FCFS
+  - Priority scheduling can cause starvation of low-priority requests under sustained high load — consider setting per-user
+    rate limits to mitigate this
+  - On Ascend NPU, there is no hardware-specific advantage or disadvantage to either policy; the scheduler logic runs on the
+    host CPU
+  quick_guide: Use "fcfs" unless you have a clear need for request prioritization with client-side priority metadata
+analysis_date: '2026-07-06'

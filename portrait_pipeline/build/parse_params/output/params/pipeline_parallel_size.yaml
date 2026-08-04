@@ -1,0 +1,137 @@
+name: --pipeline-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:923
+- vllm/config/parallel.py:111
+- vllm_ascend/ascend_config.py:68
+- vllm_ascend/ascend_config.py:555
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:150
+- vllm_ascend/worker/worker.py:763
+- vllm_ascend/ascend_forward_context.py:275
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:235
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1389
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:218
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1087
+- vllm/config/model.py:1152
+- vllm/config/model.py:1199
+- vllm/config/parallel.py:233
+- vllm/config/speculative.py:911
+- vllm/config/vllm.py:693
+- vllm/config/vllm.py:1236
+value_type: int
+default: '1'
+valid_choices: positive integer
+cli_example: --pipeline-parallel-size 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Pipeline parallelism splits model layers across multiple Ascend NPUs, enabling models that exceed single-device
+  memory to run. On Ascend, this parameter directly controls:
+
+  1) **Memory distribution**: Each pipeline stage holds only a subset of layers, reducing per-device memory pressure proportionally
+  to pp_size. This is the primary mechanism for running large models on Ascend NPUs with limited HBM.
+
+  2) **Throughput via pipelining**: Multiple micro-batches can be in-flight simultaneously across pipeline stages, improving
+  device utilization. The Ascend-specific dynamic chunked pipeline parallel feature (profiling_chunk_config) requires pp_size
+  > 1 and dynamically adjusts chunk sizes based on profiling data to optimize pipeline bubble reduction.
+
+  3) **Communication overhead**: Pipeline parallelism introduces point-to-point communication between stages via HCCL. The
+  communication volume is proportional to hidden_size × num_microbatches, which can become a bottleneck if stages are imbalanced
+  or chunk sizes are suboptimal.
+
+  4) **Ascend-specific constraints**: vllm-ascend enforces that xlite graph mode is incompatible with pp_size > 1 (raises
+  RuntimeError). The profiling_chunk_config feature requires pp_size > 1 (raises ValueError otherwise). MoE communication
+  type selection uses pp_size in world_size_across_dp // pp_size calculation.
+
+  5) **KV transfer impact**: Mooncake connectors use pp_size for device ID calculation and port assignment in disaggregated
+  prefill-decode setups.
+
+  6) **Model compatibility**: Only models implementing the SupportsPP interface can use pipeline parallelism; otherwise a
+  NotImplementedError is raised.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:68
+  context: Validates that profiling_chunk_config requires pp_size > 1, raises ValueError otherwise
+- file: vllm_ascend/ascend_config.py:555
+  context: Blocks xlite graph mode when pp_size > 1, raises RuntimeError
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:150
+  context: Reads pp_size for parallel size tuple in Ascend multiproc executor
+- file: vllm_ascend/worker/worker.py:763
+  context: Passes pp_size to ensure_model_parallel_initialized for HCCL distributed init
+- file: vllm_ascend/ascend_forward_context.py:275
+  context: Uses pp_size in MoE communication type selection (world_size_across_dp // pp_size)
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:235
+  context: KV cache sending thread uses pp_size for rank and device calculations
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1389
+  context: Mooncake scheduler uses pp_size in max_device_id and side_channel_port calculations
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:218
+  context: Hybrid connector sending thread uses pp_size for rank calculations
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1087
+  context: Hybrid connector scheduler uses pp_size in max_device_id and port calculations
+- file: vllm/config/model.py:1152
+  context: Verifies model supports PP interface when pp_size > 1
+- file: vllm/config/model.py:1199
+  context: Blocks torch_shm mm_tensor_ipc when pp_size > 1
+- file: vllm/config/speculative.py:911
+  context: Draft model parallel config inherits pp_size from target config
+- file: vllm/config/vllm.py:693
+  context: KV offloading uses pp_size × tp_size for num_kv_ranks calculation
+- file: vllm/config/vllm.py:1236
+  context: Sequence parallelism with PP requires custom rms_norm op
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Combined with pp_size to determine total world_size; tp_size × pp_size must not exceed available NPUs
+- name: --enable-chunked-prefill
+  relation: Required when using dynamic chunked pipeline parallel (profiling_chunk_config) on Ascend
+- name: profiling_chunk_config (in --additional-config)
+  relation: Ascend-specific feature that requires pp_size > 1; dynamically optimizes chunk sizes for pipeline efficiency
+- name: VLLM_ASCEND_BALANCE_SCHEDULING
+  relation: Incompatible with dynamic chunked pipeline parallel which requires pp_size > 1
+- name: --data-parallel-size
+  relation: Combined with pp_size and tp_size to determine total device allocation
+- name: --distributed-executor-backend
+  relation: When pp_size × tp_size fits on one node, 'mp' backend is used; otherwise 'ray' or explicit setting required
+constraints:
+- pipeline_parallel_size must be a positive integer
+- pipeline_parallel_size > 1 requires the model to implement the SupportsPP interface, otherwise a NotImplementedError is
+  raised
+- When profiling_chunk_config is enabled, pipeline_parallel_size must be greater than 1, otherwise a ValueError is raised
+- Xlite graph mode is incompatible with pipeline_parallel_size > 1 and will raise a RuntimeError
+- mm_tensor_ipc='torch_shm' is not supported when pipeline_parallel_size > 1
+- When using dynamic chunked pipeline parallel, --enable-chunked-prefill must also be set
+- When using dynamic chunked pipeline parallel, VLLM_ASCEND_BALANCE_SCHEDULING must not be enabled
+- Sequence parallelism with pipeline_parallel_size > 1 requires custom rms_norm op to avoid tracing errors
+tuning_advice:
+  summary: Use pipeline_parallel_size > 1 only when model exceeds single-NPU memory or when leveraging Ascend dynamic chunked
+    pipeline parallel for throughput optimization; otherwise keep at 1 to avoid communication overhead.
+  suggested_values:
+  - scenario: Model fits on a single Ascend NPU
+    value: 1
+    reason: Avoids pipeline communication overhead and bubble; single-device execution is most efficient when memory permits
+  - scenario: Large model exceeding single-NPU HBM, or leveraging dynamic chunked pipeline parallel
+    value: 2
+    reason: Minimum pipeline parallelism for memory distribution; enables Ascend dynamic chunked pipeline parallel feature
+      for optimized scheduling
+  - scenario: Very large model requiring more than 2 pipeline stages
+    value: 4
+    reason: Further distributes memory across more NPUs; balance with tp_size to fully utilize available devices
+  caveats:
+  - Pipeline parallelism introduces communication bubbles between stages; throughput gains require careful tuning of chunk
+    sizes via profiling_chunk_config
+  - On Ascend, dynamic chunked pipeline parallel (profiling_chunk_config) adds ~64 forward passes of profiling overhead at
+    startup (tens of seconds)
+  - Xlite graph mode cannot be used with pipeline parallelism; disable one or the other
+  - Pipeline parallelism is not supported for all models; only models implementing SupportsPP interface work with pp_size
+    > 1
+  - When combined with sequence parallelism, custom rms_norm ops are automatically added to avoid tracing errors
+  - MoE communication type selection (MC2 vs ALLGATHER) depends on pp_size via world_size calculation; changing pp_size may
+    affect MoE performance
+  quick_guide: Set --pipeline-parallel-size to 1 unless model exceeds single-NPU memory or you need Ascend dynamic chunked
+    pipeline parallel; use 2 as starting point for multi-NPU deployments.
+analysis_date: '2026-07-06'

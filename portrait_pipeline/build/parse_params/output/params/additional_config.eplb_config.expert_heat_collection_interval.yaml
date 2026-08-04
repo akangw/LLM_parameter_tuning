@@ -1,0 +1,81 @@
+name: additional_config.eplb_config.expert_heat_collection_interval
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:632
+- vllm_ascend/eplb/eplb_updator.py:53
+- vllm_ascend/ops/fused_moe/fused_moe.py:438
+value_type: int
+default: 400
+valid_choices: integer > 0
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls how many forward iterations the EPLB (Expert Parallelism Load Balancing) system waits
+  before beginning expert heat (load) collection on Ascend NPU. It directly affects the timing of dynamic expert redistribution
+  in MoE models. In eplb_updator.py:53, the value is assigned to self.expert_heat_collection_interval and used at line 59
+  to determine num_expert_load_gather when VLLM_ALLOW_EXPERT_LOAD_COLLECTING is disabled. In fused_moe.py:438, when eplb_policy_type
+  == 3 (multi-stage swift balancer), this value sets self.num_iter which determines the size of the moe_load tensor used for
+  collecting per-expert workload statistics across iterations. A higher value delays load collection, meaning the system runs
+  longer with the initial expert distribution before rebalancing. A lower value triggers earlier collection and potentially
+  more frequent rebalancing, which can improve load distribution but adds overhead from the EPLB algorithm execution. The
+  parameter only takes effect when dynamic_eplb is enabled (dynamic_eplb=True) and the DYNAMIC_EPLB or EXPERT_MAP_RECORD environment
+  variable is set to true.
+
+  '
+usage_locations:
+- file: vllm_ascend/eplb/eplb_updator.py:53
+  context: Assigned to self.expert_heat_collection_interval; used to set num_expert_load_gather when periodic load gathering
+    is disabled
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:438
+  context: Sets self.num_iter for multi-stage EPLB (policy_type==3) to allocate moe_load tensor for per-iteration expert workload
+    tracking
+- file: vllm_ascend/ascend_config.py:670
+  context: Validated as integer > 0 in _validate_config()
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must be True for expert_heat_collection_interval to take effect
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Controls how often the EPLB algorithm runs after heat collection begins; should be tuned together
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: When set to 3 (multi-stage swift balancer), this parameter determines the multi-stage load tensor size
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Number of redundant experts used during EPLB rebalancing; affects how load is redistributed
+constraints:
+- expert_heat_collection_interval must be an integer
+- expert_heat_collection_interval must be greater than 0
+- dynamic_eplb must be True and DYNAMIC_EPLB or EXPERT_MAP_RECORD environment variable must be set to true for this parameter
+  to take effect
+tuning_advice:
+  summary: 'Adjust based on workload stability: higher values (400+) for stable traffic, lower values (100-200) for fluctuating
+    workloads to enable faster load rebalancing on Ascend NPU.'
+  suggested_values:
+  - scenario: Stable workloads with consistent expert utilization patterns
+    value: 400
+    reason: Default value; delays heat collection to avoid premature rebalancing during startup, reducing unnecessary EPLB
+      algorithm overhead
+  - scenario: Fluctuating or bursty traffic where expert load changes frequently
+    value: 100
+    reason: Earlier heat collection enables faster detection of load imbalance and quicker rebalancing, improving throughput
+      under variable workloads
+  - scenario: Initial deployment or testing of EPLB with unknown workload patterns
+    value: 200
+    reason: Balanced value that provides moderate responsiveness without excessive rebalancing overhead; recommended starting
+      point per documentation
+  caveats:
+  - This parameter only takes effect when dynamic_eplb=True and DYNAMIC_EPLB=true or EXPERT_MAP_RECORD=true environment variable
+    is set
+  - When VLLM_ALLOW_EXPERT_LOAD_COLLECTING is disabled (default), this value directly sets num_expert_load_gather, meaning
+    all iterations in the interval are used for load collection
+  - For eplb_policy_type=3 (multi-stage swift balancer), this value determines the multi-stage tensor size; larger values
+    consume more NPU memory for load tracking
+  - Setting this value too low (<50) may cause the EPLB algorithm to run before sufficient load data is collected, leading
+    to suboptimal expert redistribution
+  - Must be tuned together with algorithm_execution_interval; the algorithm should not execute before heat collection completes
+  quick_guide: Use 400 for stable workloads, 100-200 for fluctuating traffic; ensure dynamic_eplb=True and DYNAMIC_EPLB=true
+    are set.
+analysis_date: '2026-07-06'

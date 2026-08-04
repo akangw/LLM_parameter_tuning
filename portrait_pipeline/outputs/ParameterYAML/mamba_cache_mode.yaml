@@ -1,0 +1,94 @@
+name: --mamba-cache-mode
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/cache.py:132
+- vllm/config/vllm.py:1975
+- vllm/v1/kv_cache_interface.py:548
+- vllm_ascend/patch/platform/patch_mamba_config.py:107
+- vllm_ascend/patch/platform/patch_mamba_config_310.py:68
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:68
+value_type: str
+default: none
+valid_choices:
+- none
+- all
+- align
+cli_example: --mamba-cache-mode align
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Selects how Mamba state is cached for hybrid Mamba-attention models. Upstream, all retains a state page for
+  every block across the model context, align retains only the current and speculative pages, and none retains the minimal
+  current state; these paths therefore have directly different Mamba-cache memory costs. The mode also determines which prefix-cache
+  indices and copy operations are used. On the target Ascend runtime, align makes the Mamba block size equal the attention
+  block size and may pad Mamba pages to make page sizes equal, trading some extra memory for compatible hybrid cache management.
+  KV transfer forces align for hybrid models, and AscendStore rejects a hybrid Mamba cache mode other than align.
+usage_locations:
+- file: vllm/config/cache.py:132
+  context: Defines none, all, and align and their Mamba-state caching semantics.
+- file: vllm/v1/kv_cache_interface.py:563
+  context: 'Calculates maximum Mamba-cache memory differently: all allocates pages over max_model_len, align keeps pages for
+    current and speculative blocks, and none keeps only the minimal state.'
+- file: vllm/config/vllm.py:1975
+  context: Validates align-mode scheduler and model-runner requirements.
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:107
+  context: Forces none to align for hybrid KV transfer, rejects other modes, and aligns mamba_block_size with block_size when
+    prefix caching is enabled.
+- file: vllm_ascend/patch/platform/patch_mamba_config_310.py:68
+  context: Computes a potentially larger attention/Mamba block size for all; align instead sets mamba_block_size to the attention
+    block size and may pad the Mamba page.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_scheduler.py:68
+  context: Rejects hybrid linear-attention cache specifications whose mode is not align.
+related_parameters:
+- name: --enable-prefix-caching
+  relation: Prefix caching determines whether Mamba caching is useful; target Ascend sets mamba_block_size to block_size for
+    align when prefix caching is enabled.
+- name: --mamba-block-size
+  relation: In Ascend align mode it is forced to block_size; all uses model chunk and kernel-alignment calculations.
+- name: --block-size
+  relation: Ascend align mode matches the Mamba block size to this attention block size; upstream requires it not exceed max_num_batched_tokens.
+- name: --max-num-batched-tokens
+  relation: Must be at least block_size when align is selected.
+- name: --kv-transfer-config
+  relation: For a hybrid model, KV transfer changes none to align and asserts that every explicit mode is align.
+constraints:
+- With hybrid KV transfer on the target Ascend runtime, the effective mode must be align; none is changed to align and all
+  is rejected.
+- AscendStore hybrid linear-attention cache support requires align.
+- In align mode, block_size must be no greater than max_num_batched_tokens and chunked multimodal input must remain enabled.
+- Upstream Model Runner V2 does not support align mode.
+- With target Ascend hybrid KV transfer, a non-default mamba_block_size must be a multiple of block_size when prefix caching
+  is disabled.
+tuning_advice:
+  summary: For target Ascend hybrid Mamba-attention serving, use align when prefix caching, KV transfer, or AscendStore hybrid
+    cache support is required. Keep none when no Mamba prefix-cache behavior is needed. Consider all only outside those Ascend
+    compatibility paths and benchmark its larger cache footprint and block sizing.
+  suggested_values:
+  - scenario: Target Ascend hybrid model using KV transfer or AscendStore
+    value: align
+    reason: KV transfer requires this effective mode and AscendStore explicitly rejects other hybrid Mamba cache modes.
+  - scenario: Target Ascend hybrid model with prefix caching and no incompatible V2 runner
+    value: align
+    reason: Matches Mamba and attention block sizes for target hybrid cache management, with any page padding made explicit
+      by the runtime.
+  - scenario: Mamba model without useful prefix-cache reuse
+    value: none
+    reason: Keeps only the minimal Mamba state instead of allocating cache pages for reusable prefixes.
+  - scenario: Upstream-compatible prefix caching without target KV-transfer or AscendStore requirements
+    value: all
+    reason: Retains a Mamba-state page at each block boundary, but its memory cost scales with context length and target block-size
+      calculation can be larger.
+  caveats:
+  - Align can increase Mamba-page memory through padding needed to match attention page size.
+  - All has maximum Mamba-cache usage proportional to max_model_len divided by block size; its benefit depends on reusable
+    prefixes.
+  - Selecting align with VLLM_USE_V2_MODEL_RUNNER enabled fails upstream validation.
+  - None may be silently changed to align for target hybrid KV transfer, so inspect the effective configuration.
+  quick_guide: Use --mamba-cache-mode align for target Ascend hybrid KV-transfer or AscendStore deployments; otherwise leave
+    none unless measured prefix-cache reuse justifies a supported cache mode.
+analysis_date: '2026-07-27'

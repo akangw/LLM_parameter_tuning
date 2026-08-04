@@ -1,0 +1,138 @@
+name: SpeculativeConfig.attention_backend
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:110
+- vllm_ascend/spec_decode/llm_base_proposer.py:217
+- vllm_ascend/spec_decode/dflash_proposer.py:14
+- vllm/v1/attention/backend.py:284
+- vllm_ascend/platform.py:693
+value_type: str
+default: null
+valid_choices:
+- null
+- FLASH_ATTN
+- FLASH_ATTN_DIFFKV
+- TRITON_ATTN
+- ROCM_ATTN
+- ROCM_AITER_MLA
+- ROCM_AITER_TRITON_MLA
+- ROCM_AITER_FA
+- ROCM_AITER_MLA_SPARSE
+- XPU_MLA_SPARSE
+- TORCH_SDPA
+- FLASHINFER
+- FLASHINFER_MLA
+- TOKENSPEED_MLA
+- FLASHINFER_MLA_SPARSE
+- TRITON_MLA
+- CUTLASS_MLA
+- FLASHMLA
+- FLASHMLA_SPARSE
+- FLASH_ATTN_MLA
+- NO_ATTENTION
+- FLEX_ATTENTION
+- ROCM_AITER_UNIFIED_ATTN
+- CPU_ATTN
+- TURBOQUANT
+- CUSTOM
+cli_example: --speculative-config '{"model":"draft-model","attention_backend":"FLASH_ATTN"}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Selects the attention implementation for the speculative draft model, independently of the target model. The
+  proposer always replaces the draft VllmConfig''s attention backend with this field: null triggers a fresh automatic selection
+  rather than inheriting the target backend, while an explicit enum forces that candidate. Backend kernels differ in supported
+  devices, dtypes, attention modes, KV-cache layouts, graph behavior, workspace use, and speed, so a compatible override can
+  change draft-step latency, speculative throughput, and memory consumption; an incompatible override is rejected. DFlash
+  additionally requests non-causal attention, narrowing the set of valid upstream backends. On Ascend, ordinary selections
+  are implemented by the registered Ascend backend; FLASH_ATTN is special: with batch invariance and a valid dense non-MLA
+  configuration it selects the flash_attn_npu_v3 FA3 backend, while without batch invariance it falls back to the normal Ascend
+  backend.'
+usage_locations:
+- file: vllm/config/speculative.py:922
+  context: Parses strings case-insensitively through AttentionBackendEnum; the special value auto becomes null.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:217
+  context: Builds the draft model's VllmConfig and deliberately replaces the target attention backend with this field, causing
+    independent auto-selection when null.
+- file: vllm_ascend/spec_decode/dflash_proposer.py:14
+  context: DFlash extends the draft config with use_non_causal=true after applying this backend selection, so backend validation
+    must accept non-causal attention.
+- file: vllm/v1/attention/backend.py:284
+  context: Backend validation checks device capability, dtype, attention type, model features, and non-causal support before
+    the selected implementation can run.
+- file: vllm_ascend/platform.py:693
+  context: Maps draft attention selection to Ascend implementations. FLASH_ATTN can select AscendFABackend after FA3 validation;
+    other choices resolve to the appropriate standard Ascend attention, MLA, SFA, or DSA backend.
+related_parameters:
+- name: AttentionConfig.backend
+  relation: 'Selects the target model backend. It is not inherited by the draft: null here causes independent draft auto-selection.'
+- name: SpeculativeConfig.method
+  relation: Determines the proposer and its attention requirements; DFlash adds the non-causal requirement.
+- name: VLLM_BATCH_INVARIANT
+  relation: On Ascend, batch-invariant mode is required for an explicit FLASH_ATTN selection to activate the FA3 implementation.
+constraints:
+- The string auto is accepted and normalized to null; other strings must name an AttentionBackendEnum member.
+- An explicit backend must pass validation for the device, dtype, KV-cache dtype, block size, attention type, model shape,
+  and requested features.
+- DFlash's upstream draft configuration requires a backend whose supports_non_causal() capability is true.
+- CUSTOM requires a backend registration before use; vllm-ascend registers its Ascend backend under CUSTOM.
+- On Ascend, FLASH_ATTN with batch invariance supports only dense non-MLA, non-SFA attention and requires flash_attn_npu_v3
+  with flash_attn_with_kvcache.
+- On Ascend without batch invariance, FLASH_ATTN does not enable FA3 and falls back to the registered plugin backend.
+tuning_advice:
+  summary: Leave this null for independent, capability-aware draft backend selection. Override it only to satisfy a draft-specific
+    requirement or after measuring the complete speculative pipeline; on Ascend, use FLASH_ATTN only when FA3 is intentionally
+    required and all prerequisites are met.
+  suggested_values:
+  - scenario: General speculative decoding
+    value: <unset>
+    reason: Auto-selection validates the draft model and platform independently, avoiding accidental reuse of a target backend
+      that is unsuitable for the drafter.
+  - scenario: Upstream DFlash with FlashAttention available
+    value: FLASH_ATTN
+    reason: DFlash requests non-causal attention and FlashAttention is the documented example of a backend supporting that
+      mode; benchmark against null because auto-selection can also choose a compatible implementation.
+  - scenario: Ascend training-inference consistency workload that explicitly requires FA3
+    value: FLASH_ATTN
+    reason: In batch-invariant mode this is the selector value that can route dense non-MLA attention to AscendFABackend,
+      provided flash_attn_npu_v3 is installed.
+  - scenario: Ordinary Ascend speculative decoding
+    value: <unset>
+    reason: The platform's registered backend supplies the Ascend implementation without coupling the configuration to an
+      upstream GPU backend name.
+  caveats:
+  - Backend speedups apply only to draft attention; end-to-end gains also depend on acceptance rate, draft cost, target verification,
+    batch size, and sequence lengths.
+  - A backend that is fastest for the target model need not be fastest or even valid for the draft model.
+  - Explicit selection disables fallback to another candidate when the named backend is unavailable or incompatible.
+  - Ascend logs that FA3 may degrade performance in training-inference consistency mode, so FLASH_ATTN is not automatically
+    a throughput recommendation there.
+  quick_guide: Start with null, confirm the selected draft backend in logs, and benchmark end-to-end latency and accepted
+    tokens per second. Force a backend only for a demonstrated compatibility need or repeatable gain. On Ascend, reserve FLASH_ATTN
+    for a validated FA3 setup.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

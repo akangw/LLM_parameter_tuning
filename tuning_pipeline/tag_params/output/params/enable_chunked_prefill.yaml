@@ -1,0 +1,99 @@
+name: --enable-chunked-prefill
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1349
+- vllm/engine/arg_utils.py:2306
+- vllm/config/scheduler.py:84
+- vllm/config/scheduler.py:222
+- vllm_ascend/platform.py:605
+- vllm_ascend/worker/model_runner_v1.py:1342
+- vllm_ascend/worker/v2/attn_utils.py:180
+- vllm_ascend/core/scheduler_dynamic_batch.py:403
+value_type: bool
+default: null
+valid_choices: true, false
+cli_example: --enable-chunked-prefill
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This switch controls whether the scheduler may process a prompt in a token-budget-limited chunk. With it disabled,
+  the Ascend dynamic-batch scheduler defers a waiting request whose remaining work exceeds the available token budget; with
+  it enabled, the request is limited to that budget and can share iterations with other work. Ascend workers also select the
+  ChunkedPrefill attention state when the switch is enabled, so it changes the executed NPU attention path. That can reduce
+  head-of-line blocking and improve utilization and latency under mixed long-prefill/decode traffic, while changing batching
+  behavior and the resources held by partially computed prompts.
+usage_locations:
+- file: vllm/engine/arg_utils.py:2306
+  context: Resolves an unspecified CLI value from model support for chunked prefill.
+- file: vllm/config/scheduler.py:222
+  context: Forces the setting off for encoder-decoder models.
+- file: vllm_ascend/platform.py:605
+  context: For SLO-based dynamic batching, forces the scheduler setting to true.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:403
+  context: When disabled, postpones a request rather than chunking work that exceeds the token budget.
+- file: vllm_ascend/worker/model_runner_v1.py:1342
+  context: Selects AscendAttentionState.ChunkedPrefill when chunked prefill is enabled.
+- file: vllm_ascend/worker/v2/attn_utils.py:180
+  context: Selects the ChunkedPrefill attention state in the v2 attention utility.
+related_parameters:
+- name: --max-num-batched-tokens
+  relation: Sets the per-iteration token budget that bounds a scheduled prefill chunk.
+- name: --max-num-partial-prefills
+  relation: Values above one require chunked prefill to be enabled.
+- name: --long-prefill-token-threshold
+  relation: Limits the amount of long-prefill work scheduled at once.
+- name: SLO_limits_for_dynamic_batch
+  relation: When configured by vllm-ascend, it forces chunked prefill on.
+constraints:
+- Encoder-decoder models force chunked prefill off.
+- If max_num_batched_tokens is below max_model_len, disabling chunked prefill makes vLLM reject longer sequences.
+- max_num_partial_prefills greater than one requires chunked prefill.
+- SLO-based dynamic batching in the target Ascend platform overrides this setting to true.
+tuning_advice:
+  summary: Leave the model-supported default in place for ordinary serving, and enable chunked prefill for mixed long-prompt
+    and decode workloads when benchmark results support it.
+  suggested_values:
+  - scenario: Mixed long-prefill and decode traffic on Ascend
+    value: true
+    reason: Allows bounded prefill work to be scheduled and selects the Ascend ChunkedPrefill path.
+  - scenario: SLO-based dynamic batching
+    value: true
+    reason: The target Ascend platform sets it to true regardless of the user-provided value.
+  - scenario: Encoder-decoder model
+    value: false
+    reason: The upstream scheduler forcibly disables chunked prefill for this model class.
+  caveats:
+  - The CLI default is null; EngineArgs resolves it from model support rather than directly using SchedulerConfig's testing
+    default.
+  - Disabling it can defer prompts that do not fit the available token budget and can reject long sequences when the batch-token
+    budget is below max_model_len.
+  - Benchmark the enabled attention path with the target model, token-length distribution, and batch-token budget.
+  quick_guide: Use the resolved default first; enable for mixed long-prefill workloads, but do not expect it to remain disabled
+    with Ascend SLO dynamic batching.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

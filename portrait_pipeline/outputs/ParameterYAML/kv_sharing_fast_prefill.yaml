@@ -1,0 +1,58 @@
+name: --kv-sharing-fast-prefill
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/cache.py:148
+- vllm/config/vllm.py:1148
+- vllm_ascend/worker/model_runner_v1.py:1833
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --kv-sharing-fast-prefill
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This work-in-progress flag prepares KV-sharing fast-prefill metadata but does not itself implement a prefill
+  optimization. Upstream CacheConfig documents that no prefill optimization takes place when it is enabled (vllm/config/cache.py:148).
+  On Ascend's v1 model runner it additionally prepares padded logits indices for the path (vllm_ascend/worker/model_runner_v1.py:2956),
+  so enabling it can add setup work without an established latency or throughput benefit.
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:1833
+  context: Ascend v1 runner rejects prompt-logprob use while the flag is enabled because prompt-token logprobs are incorrect.
+- file: vllm_ascend/worker/model_runner_v1.py:2956
+  context: Ascend v1 runner records and pads logits indices for fast-prefill attention metadata.
+- file: vllm/config/vllm.py:1148
+  context: Upstream validation rejects EAGLE speculative decoding and warns that model-side changes are required for correctness
+    and prefill savings.
+- file: vllm/config/vllm.py:1884
+  context: Upstream marks KV-sharing fast prefill unsupported by the v2 model runner.
+related_parameters:
+- name: prompt_logprobs
+  relation: Incompatible on Ascend v1; enabled fast prefill produces incorrect prompt-token logprobs.
+- name: speculative_config (EAGLE)
+  relation: Incompatible; configuration validation raises when EAGLE speculative decoding is enabled.
+- name: VLLM_USE_V2_MODEL_RUNNER
+  relation: Incompatible; upstream lists KV-sharing fast prefill as unsupported by the v2 model runner.
+constraints:
+- Do not enable this flag for requests that require prompt logprobs.
+- Do not combine this flag with EAGLE speculative decoding.
+- Do not use this flag with the v2 model runner.
+tuning_advice:
+  summary: Keep the default disabled on Ascend unless the deployment has verified model-side KV-sharing fast-prefill support
+    and accepts the feature limitations.
+  suggested_values:
+  - scenario: Standard Ascend deployment
+    value: false
+    reason: Current source documents no prefill optimization from the toggle itself, while the Ascend v1 path performs additional
+      logits-index preparation.
+  caveats:
+  - The feature is work in progress and requires model-side changes for correctness and prefill savings.
+  - Prompt-token logprobs are incorrect when it is enabled.
+  - It is incompatible with EAGLE speculative decoding and unsupported by the v2 model runner.
+  quick_guide: Leave --kv-sharing-fast-prefill disabled by default.
+analysis_date: '2026-07-27'

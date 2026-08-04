@@ -1,0 +1,432 @@
+approval_queue:
+- canonical_name: gpu_memory_utilization
+  knowledge_name: --gpu-memory-utilization
+  aliases:
+  - --gpu-memory-utilization
+  category: memory
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: 0.93
+  values:
+  - 0.93
+  - 0.85
+  - 0.9
+  - 0.95
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - 0.93
+  - source: registry_policy
+    values:
+    - 0.85
+    - 0.9
+    - 0.93
+    - 0.95
+  pruned_values: []
+  injection:
+    kind: env_value
+    name: GPU_MEMORY_UTILIZATION
+    target: vllm_cli
+  integration_status: existing
+  availability:
+    status: verified
+    source: existing_continuous_controller_contract_2026-07-31
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\gpu_memory_utilization.yaml
+  constraints_evidence:
+  - The value must be greater than 0 and less than or equal to 1.
+  - At device initialization, free memory must be at least total device memory multiplied
+    by this value or the Ascend worker raises ValueError.
+  - On 310P, the available KV-cache budget computed from this setting is halved for
+    workspace and other caches.
+  - When --kv-cache-memory-bytes is set, it takes precedence and gpu_memory_utilization
+    is not used for KV-cache sizing.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  base_activation_score: 59
+  history_score_adjustment: 0.0
+  activation_score: 59.0
+- canonical_name: compilation_mode
+  knowledge_name: CompilationConfig.cudagraph_mode
+  aliases:
+  - CompilationConfig.cudagraph_mode
+  - compilation.cudagraph_mode
+  - --compilation-config
+  category: compilation
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: FULL_DECODE_ONLY
+  values:
+  - FULL_DECODE_ONLY
+  - PIECEWISE
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - FULL_DECODE_ONLY
+  - source: registry_policy
+    values:
+    - FULL_DECODE_ONLY
+    - PIECEWISE
+  pruned_values: []
+  injection:
+    kind: env_json_field
+    name: COMPILATION_MODE
+    object: compilation_config
+    field: cudagraph_mode
+  integration_status: existing
+  availability:
+    status: verified
+    source: existing_continuous_controller_contract_2026-07-31
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\CompilationConfig.cudagraph_mode.yaml
+  constraints_evidence:
+  - String values are parsed case-insensitively but must name one of NONE, PIECEWISE,
+    FULL, FULL_DECODE_ONLY, or FULL_AND_PIECEWISE.
+  - PIECEWISE and FULL_AND_PIECEWISE require CompilationMode.VLLM_COMPILE and usable
+    splitting operations; incompatible compilation settings cause a fallback to NONE
+    or another mode.
+  - Full graph modes depend on the selected attention backend and model features.
+    Runtime initialization may downgrade them to the closest supported mode, so the
+    configured and effective values can differ.
+  - 'Upstream pooling models replace full-containing modes with PIECEWISE. Encoder-decoder
+    handling is platform-specific: pinned Ascend replaces full-containing modes with
+    PIECEWISE under VLLM_COMPILE and NONE otherwise.'
+  - On Ascend, compilation modes other than NONE and VLLM_COMPILE force cudagraph_mode
+    to NONE; xlite full mode also forces NONE, while xlite decode-only mode forces
+    FULL_DECODE_ONLY.
+  - Ascend graph modes are incompatible with ASCEND_LAUNCH_BLOCKING=1 and platform
+    configuration raises ValueError when both are active.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  base_activation_score: 61
+  history_score_adjustment: 0.0
+  activation_score: 61.0
+- canonical_name: num_speculative_tokens
+  knowledge_name: SpeculativeConfig.num_speculative_tokens
+  aliases:
+  - SpeculativeConfig.num_speculative_tokens
+  - speculative.num_speculative_tokens
+  category: scheduling
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: 3
+  values:
+  - 3
+  - 0
+  - 1
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - 3
+  - source: registry_policy
+    values:
+    - 0
+    - 1
+    - 2
+    - 3
+  pruned_values:
+  - value: 2
+    violations:
+    - mtp_factor_divides_tensor_parallel
+    - cudagraph_sizes_match_speculation_factor
+  injection:
+    kind: env_json_field
+    name: NUM_SPECULATIVE_TOKENS
+    object: speculative_config
+    field: num_speculative_tokens
+  integration_status: existing
+  availability:
+    status: verified
+    source: existing_continuous_controller_contract_2026-07-31
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\SpeculativeConfig.num_speculative_tokens.yaml
+  constraints_evidence:
+  - The value must be an integer greater than zero.
+  - It is required unless compatible draft-model metadata supplies n_predict; suffix
+    decoding instead defaults it to suffix_decoding_max_tree_depth.
+  - Supplying a positive value without a supported speculative method or draft model
+    is rejected.
+  - When draft metadata exposes n_predict and K exceeds it, K must be divisible by
+    n_predict so the MTP module can be reused.
+  - The extract_hidden_states method requires K=1 because it does not perform actual
+    speculation.
+  - On the documented Ascend fused TND attention path, K+1 cannot exceed 16, so K
+    is at most 15.
+  - In Ascend full-graph EAGLE or MTP operation, each supported graph capture size
+    must be an integer multiple of K+1.
+  - With LoRA, max_num_batched_tokens must be at least max_num_seqs multiplied by
+    K+1.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  base_activation_score: 62
+  history_score_adjustment: 0.0
+  activation_score: 62.0
+- canonical_name: enable_chunked_prefill
+  knowledge_name: --enable-chunked-prefill
+  aliases:
+  - --enable-chunked-prefill
+  category: scheduling
+  performance_impact: high
+  risk: low
+  role: tunable
+  recall_source: tag_recall
+  baseline: true
+  values:
+  - true
+  - false
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - true
+  - source: registry_policy
+    values:
+    - false
+    - true
+  - source: knowledge_suggested_values
+    values:
+    - true
+    - false
+  pruned_values: []
+  injection:
+    kind: cli_bool_flag
+    flag: --enable-chunked-prefill
+  integration_status: planned
+  availability:
+    status: unverified_for_current_image
+    source: registry_and_knowledge_only
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\enable_chunked_prefill.yaml
+  constraints_evidence:
+  - Encoder-decoder models force chunked prefill off.
+  - If max_num_batched_tokens is below max_model_len, disabling chunked prefill makes
+    vLLM reject longer sequences.
+  - max_num_partial_prefills greater than one requires chunked prefill.
+  - SLO-based dynamic batching in the target Ascend platform overrides this setting
+    to true.
+  approval: human_required
+  approval_reasons:
+  - parameter_not_verified_for_current_image
+  base_activation_score: 61
+  history_score_adjustment: 0.0
+  activation_score: 61.0
+- canonical_name: cudagraph_capture_sizes
+  knowledge_name: --cudagraph-capture-sizes
+  aliases:
+  - --cudagraph-capture-sizes
+  - compilation.cudagraph_capture_sizes
+  category: compilation
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: &id001
+  - 16
+  - 32
+  - 48
+  - 64
+  - 80
+  - 96
+  - 112
+  - 128
+  - 144
+  - 160
+  - 176
+  - 192
+  values:
+  - *id001
+  - null
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - *id001
+  - source: registry_policy
+    values:
+    - - 16
+      - 32
+      - 48
+      - 64
+      - 80
+      - 96
+      - 112
+      - 128
+      - 144
+      - 160
+      - 176
+      - 192
+    - null
+  pruned_values: []
+  injection:
+    kind: cli_list
+    flag: --cudagraph-capture-sizes
+  integration_status: planned
+  availability:
+    status: unverified_for_current_image
+    source: registry_and_knowledge_only
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\cudagraph_capture_sizes.yaml
+  constraints_evidence:
+  - When cudagraphs are enabled, an explicitly supplied list must contain at least
+    one size.
+  - Explicit values are deduplicated, sorted, and sizes above the valid maximum token
+    count are discarded.
+  - If --max-cudagraph-capture-size is also explicitly set, it must match the largest
+    final capture size.
+  - Do not also set compilation_config.cudagraph_capture_sizes when using this CLI
+    option.
+  - Under --enforce-eager, cudagraphs are disabled and this setting has no graph-capture
+    effect.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  - parameter_not_verified_for_current_image
+  base_activation_score: 53
+  history_score_adjustment: 0.0
+  activation_score: 53.0
+- canonical_name: max_cudagraph_capture_size
+  knowledge_name: --max-cudagraph-capture-size
+  aliases:
+  - --max-cudagraph-capture-size
+  - compilation.max_cudagraph_capture_size
+  category: compilation
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: 192
+  values:
+  - 192
+  - 128
+  - 256
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - 192
+  - source: registry_policy
+    values:
+    - 128
+    - 192
+    - 256
+  pruned_values: []
+  injection:
+    kind: cli_value
+    flag: --max-cudagraph-capture-size
+  integration_status: planned
+  availability:
+    status: unverified_for_current_image
+    source: registry_and_knowledge_only
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\max_cudagraph_capture_size.yaml
+  constraints_evidence:
+  - If both an explicit bound and explicit cudagraph capture sizes are provided, their
+    maximum values must be consistent; otherwise validation can raise an error.
+  - Under enforce_eager, graph capture is disabled and the bound is set to 0.
+  - With graph capture enabled, the effective capture-size list must contain a valid
+    maximum capture size.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  - parameter_not_verified_for_current_image
+  base_activation_score: 53
+  history_score_adjustment: 0.0
+  activation_score: 53.0
+- canonical_name: mlapo
+  knowledge_name: additional_config.enable_mlapo
+  aliases:
+  - additional_config.enable_mlapo
+  category: compilation
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: true
+  values:
+  - true
+  - false
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - true
+  - source: registry_policy
+    values:
+    - true
+    - false
+  pruned_values: []
+  injection:
+    kind: json_field
+    object: additional_config
+    field: enable_mlapo
+  integration_status: planned
+  availability:
+    status: unverified_for_current_image
+    source: registry_and_knowledge_only
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\additional_config.enable_mlapo.yaml
+  constraints_evidence:
+  - The value must be a YAML/JSON boolean in additional_config; the nested value overrides
+    the deprecated environment variable.
+  - On non-A5 devices, MLAPO is enabled only on a KV-transfer consumer that is not
+    also a producer; ordinary or mixed producer-consumer instances do not activate
+    it.
+  - The MLA implementation supports MLAPO only for layers whose fused projection uses
+    Ascend W8A8 or W8A8MXFP8 dynamic quantization.
+  - On non-A5 SFA, the fused projection must use supported W8A8 quantization and SFA
+    context parallelism must be disabled; A5 SFA additionally supports floating-point
+    MLAPO.
+  - The guarded non-A5 fused runtime paths accept no more than 1,024 input/decode
+    tokens; larger batches fall back to the unfused path.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  - parameter_not_verified_for_current_image
+  base_activation_score: 53
+  history_score_adjustment: 0.0
+  activation_score: 53.0
+- canonical_name: flashcomm1
+  knowledge_name: additional_config.enable_flashcomm1
+  aliases:
+  - additional_config.enable_flashcomm1
+  category: communication
+  performance_impact: high
+  risk: medium
+  role: tunable
+  recall_source: tag_recall
+  baseline: true
+  values:
+  - true
+  - false
+  value_sources:
+  - source: scenario_baseline
+    values:
+    - true
+  - source: registry_policy
+    values:
+    - false
+    - true
+  pruned_values: []
+  injection:
+    kind: json_field
+    object: additional_config
+    field: enable_flashcomm1
+  integration_status: planned
+  availability:
+    status: unverified_for_current_image
+    source: registry_and_knowledge_only
+  knowledge_file: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params\additional_config.enable_flashcomm1.yaml
+  constraints_evidence:
+  - Requires tensor_parallel_size greater than 1; platform validation asserts otherwise.
+  - For MoE models, expert parallelism must also be enabled.
+  - For dense models, the runtime FlashComm1 path is used only when num_tokens is
+    greater than 1000; smaller batches remain on the ordinary communication path.
+  - additional_config.enable_dsa_cp cannot be enabled unless FlashComm1 sequence parallelism
+    is enabled.
+  - An explicit additional_config value overrides the deprecated VLLM_ASCEND_ENABLE_FLASHCOMM1
+    environment fallback, including an explicit false value.
+  approval: human_required
+  approval_reasons:
+  - risk_is_medium
+  - parameter_not_verified_for_current_image
+  base_activation_score: 49
+  history_score_adjustment: 0.0
+  activation_score: 49.0

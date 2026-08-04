@@ -1,0 +1,70 @@
+name: --numa-bind
+type: cli
+category: hardware
+scope: both
+source_file:
+- vllm/config/parallel.py:267
+- vllm/engine/arg_utils.py:459
+- vllm_ascend/platform.py:1092
+value_type: bool
+default: false
+valid_choices: boolean (true/false)
+cli_example: --numa-bind
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'On Ascend NPU, --numa-bind is silently overridden by vllm-ascend (vllm_ascend/platform.py:1092). When set
+  to true, vllm-ascend resets it to false and instead sets additional_config={"enable_cpu_binding": true}, which triggers
+  Ascend-native CPU-core binding based on NPU topology rather than GPU-to-NUMA detection. The actual performance effect comes
+  from the Ascend-native CPU binding mechanism, not from the upstream NUMA binding code path. The upstream NUMA binding (vllm/utils/numa_utils.py)
+  relies on numactl and GPU-to-NUMA topology detection, neither of which is applicable to Ascend NPUs. The Ascend-native replacement
+  performs automatic topo-affinity CPU binding, which can reduce cross-socket memory access latency and improve tail latency
+  stability, but the magnitude of improvement is typically modest (low single-digit percentage) on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:1092
+  context: 'vllm-ascend override: resets numa_bind to False and enables Ascend-native CPU binding via additional_config'
+- file: vllm/v1/engine/core.py:1088
+  context: 'v1 engine core process: logs current NUMA affinity state when numa_bind is true (not reached on Ascend due to
+    override)'
+- file: vllm/v1/executor/multiproc_executor.py:839
+  context: 'v1 multiproc executor worker: logs NUMA affinity state per worker when numa_bind is true (not reached on Ascend
+    due to override)'
+- file: vllm/utils/numa_utils.py:139
+  context: 'Upstream NUMA node resolution: reads numa_bind_nodes or auto-detects GPU-to-NUMA topology (bypassed on Ascend)'
+related_parameters:
+- name: --numa-bind-nodes
+  relation: Upstream companion parameter specifying per-GPU NUMA node indices; ignored on Ascend NPU
+- name: --numa-bind-cpus
+  relation: Upstream companion parameter specifying per-GPU CPU lists; ignored on Ascend NPU
+- name: '--additional-config {"enable_cpu_binding": true}'
+  relation: Ascend-native replacement triggered automatically when --numa-bind is set on Ascend NPU
+constraints:
+- On Ascend NPU, --numa-bind is silently converted to Ascend-native CPU binding; the upstream NUMA binding code path is never
+  executed.
+- --numa-bind-nodes and --numa-bind-cpus are ignored on Ascend NPU regardless of their values.
+tuning_advice:
+  summary: On Ascend NPU, --numa-bind is automatically converted to Ascend-native CPU binding; enabling it is recommended
+    for multi-socket deployments to reduce cross-socket latency.
+  suggested_values:
+  - scenario: Single-socket Ascend NPU server
+    value: false
+    reason: No cross-socket NUMA effects exist; CPU binding provides negligible benefit and may unnecessarily restrict CPU
+      core scheduling flexibility.
+  - scenario: Multi-socket Ascend NPU server (production deployment)
+    value: true
+    reason: Triggers Ascend-native topo-affinity CPU binding, which pins worker processes to CPU cores local to their assigned
+      NPU, reducing cross-socket memory access latency and improving tail latency stability.
+  caveats:
+  - The actual CPU binding behavior on Ascend is controlled by the internal enable_cpu_binding mechanism, not by the upstream
+    numactl-based NUMA binding — do not expect numactl-style NUMA node assignments.
+  - --numa-bind-nodes and --numa-bind-cpus have no effect on Ascend NPU; all CPU binding is computed automatically from NPU
+    topology.
+  - Performance gains from CPU binding on Ascend are typically modest (1-3% throughput improvement, better tail latency);
+    do not expect dramatic improvements.
+  quick_guide: Set --numa-bind on multi-socket Ascend servers to enable automatic NPU-topology-aware CPU binding; skip on
+    single-socket systems.
+analysis_date: '2026-07-06'

@@ -1,0 +1,91 @@
+name: CompilationConfig.pass_config.fuse_gemm_comms
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/config/compilation.py:133
+- vllm/config/vllm.py:225
+- vllm/config/vllm.py:1032
+- docs/design/fusions.md:258
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: vllm serve <model> --tensor-parallel-size 2 --compilation-config='{"pass_config":{"fuse_gemm_comms":true}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'True enables the AsyncTP compilation pass after sequence parallelism has restructured tensor-parallel collectives.
+  Matching GEMM followed by reduce-scatter and all-gather followed by GEMM patterns are replaced by symmetric-memory fused
+  primitives so communication overlaps computation. The pinned fusion guide reports an indicative 7-10% end-to-end speedup,
+  but the transformation is intended only for large token counts and is a no-op when sequence parallelism did not rewrite
+  the graph or no supported pattern matches. The declared null is resolved by the optimization profile: O0 and O1 set false,
+  while the pinned O2/O3 dense-model predicate is currently hard-coded false, so the effective default is off and true must
+  be selected explicitly.'
+usage_locations:
+- file: vllm/config/vllm.py:1032
+  context: Makes AsyncTP imply enable_sp, then disables both switches when tensor parallel size is one or the sequence-parallel
+    threshold heuristic cannot support the model and no manual threshold was supplied.
+- file: vllm/config/compilation.py:1152
+  context: When AsyncTP or sequence parallelism is enabled without Inductor graph partitioning, clears splitting operations
+    and changes piecewise CUDA graphs to full mode to preserve the full-graph passes.
+- file: docs/design/fusions.md:258
+  context: Documents the fused GEMM/collective patterns, symmetric-memory backend, token-range gating, supported data types,
+    hardware restrictions, and indicative 7-10% end-to-end speedup.
+related_parameters:
+- name: CompilationConfig.pass_config.enable_sp
+  relation: AsyncTP is built on sequence parallelism; setting fuse_gemm_comms true forces enable_sp true, and the AsyncTP
+    pass is registered only after the sequence-parallel pass.
+- name: CompilationConfig.pass_config.sp_min_token_num
+  relation: Sets the lower token boundary of the compiled range where sequence parallelism, and therefore the subsequent AsyncTP
+    fusion, can apply.
+- name: ParallelConfig.tensor_parallel_size
+  relation: Must exceed one; configuration validation disables both sequence parallelism and AsyncTP at tensor-parallel size
+    one.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: Without Inductor graph partitioning, AsyncTP requires full-graph compilation and causes configured graph-splitting
+    operations to be removed.
+- name: CompilationConfig.cudagraph_mode
+  relation: Piecewise CUDA graphs are changed to full mode when the full-graph AsyncTP path is required without Inductor graph
+    partitioning.
+constraints:
+- Tensor parallel size must be greater than one. Enabling this field automatically enables sequence parallelism, and validation
+  disables both fields when TP equals one.
+- The sequence-parallel pass must first match and rewrite the graph; otherwise AsyncTP has no reduce-scatter/all-gather patterns
+  to fuse.
+- Automatic sequence-parallel thresholds in the pinned source exist only for NVIDIA CUDA SM90 and the SM100 family with hidden
+  size at least 8192. Other hardware or smaller models require an explicit sp_min_token_num, but that override does not itself
+  provide a supported fused implementation.
+- The documented fused implementation requires NVIDIA CUDA symmetric-memory support. Basic patterns cover FP16/BF16; scaled
+  FP8 variants have additional dtype, scaling-layout, and kernel restrictions.
+- The fusion applies only in the higher compiled range at or above sp_min_token_num because communication overlap is not profitable
+  for small num_tokens.
+- 'Without Inductor graph partitioning, the pass requires a full graph: splitting_ops are cleared and piecewise CUDA-graph
+  mode is changed to FULL.'
+tuning_advice:
+  summary: Keep the field unset or false unless serving a supported large-model CUDA tensor-parallel workload; then A/B test
+    explicit true after warm-up with the production token distribution.
+  suggested_values:
+  - scenario: Supported SM90/SM100 CUDA deployment, TP greater than one, hidden size at least 8192, and many requests above
+      the SP token threshold
+    value: true
+    reason: Enables the sequence-parallel and AsyncTP passes so matching GEMMs and collectives can overlap; the pinned guide
+      reports an indicative 7-10% end-to-end speedup.
+  - scenario: TP equals one, unsupported hardware, small model, small-token workload, or compilation troubleshooting
+    value: false
+    reason: Avoids an inapplicable or unprofitable full-graph transformation and provides the conservative unfused baseline.
+  caveats:
+  - 'True does not guarantee a rewrite: sequence parallelism, token-range eligibility, supported graph patterns, dtype, kernels,
+    and symmetric memory must all be available.'
+  - The 7-10% figure is indicative and workload dependent; small-token requests can fail to amortize the collective-overlap
+    overhead.
+  - Enabling the field can change graph partitioning and CUDA-graph mode and can increase compilation or warm-up cost.
+  - The pinned vllm-ascend repository contains no implementation or override for fuse_gemm_comms, so this portrait does not
+    claim an Ascend AsyncTP benefit.
+  quick_guide: Start with null/false; on supported CUDA with TP>1, enable true, confirm the AsyncTP patterns match above sp_min_token_num,
+    and retain it only if warmed-up end-to-end latency or throughput improves.
+analysis_date: '2026-07-30'

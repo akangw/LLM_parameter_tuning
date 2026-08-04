@@ -1,0 +1,8 @@
+name: --moe-backend
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source this CLI option is transferred to KernelConfig.moe_backend only when non-auto (vllm/engine/arg_utils.py:2080).
+  In the pinned Ascend source, FusedMoE is registered as AscendFusedMoE (vllm_ascend/utils.py:845); that class replaces the
+  standard MoE quant method with an Ascend method and uses its own forward and communication path (vllm_ascend/ops/fused_moe/fused_moe.py:335,
+  vllm_ascend/ops/fused_moe/fused_moe.py:366). No current Ascend code reads moe_backend, so the option does not select the
+  executed Ascend MoE kernel and has no evidenced latency, throughput, or memory effect on this platform.

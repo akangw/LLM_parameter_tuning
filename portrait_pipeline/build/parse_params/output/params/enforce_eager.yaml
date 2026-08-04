@@ -1,0 +1,141 @@
+name: enforce_eager
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/model.py:215
+- vllm/engine/arg_utils.py:532
+- vllm_ascend/platform.py:420
+- vllm_ascend/ascend_config.py:249
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: --enforce-eager
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When `--enforce-eager` is set to True, vLLM disables both CUDA graph (ACL graph on NPU) and torch.compile,
+  forcing the model to execute in pure PyTorch eager mode. On Ascend NPU, this has cascading effects:
+
+  1. **Graph capture disabled**: In `vllm_ascend/worker/worker.py:503-526`, the `compile_or_warm_up_model` method checks `enforce_eager`
+  — when True, it skips `capture_model()` entirely, meaning no ACL graph is captured. ACL graph capture is the primary mechanism
+  for reducing kernel launch overhead on Ascend NPU.
+
+  2. **Compilation mode forced to NONE**: In `vllm_ascend/platform.py:436-440`, when `enforce_eager` is True, `compilation_config.mode`
+  is set to `CompilationMode.NONE` and `splitting_ops` is cleared. This disables all vLLM-level compilation optimizations.
+
+  3. **CUDAGraph mode forced to NONE**: In `vllm/config/vllm.py:941-947` and `vllm/config/vllm.py:1134-1139`, `enforce_eager`
+  sets `cudagraph_mode` to `CUDAGraphMode.NONE`, `max_cudagraph_capture_size` to 0, and `cudagraph_capture_sizes` to empty
+  list.
+
+  4. **Sequence parallelism interaction**: In `vllm_ascend/platform.py:458-476`, sequence parallelism (SP) ACL graph sizes
+  are only computed when `enforce_eager` is False. With eager mode, SP graph optimization is skipped.
+
+  5. **Fine-grained TP constraints**: In `vllm_ascend/ascend_config.py:429-444`, `oproj_tensor_parallel_size` and `olora_tensor_parallel_size`
+  raise AssertionError if `enforce_eager` is True, because these features require graph mode for dummy_run to capture the
+  full attention module.
+
+  6. **Memory impact**: Without graph capture, NPU graph memory is zero (`npugraph_memory_bytes = 0` at `worker.py:524-526`),
+  reducing total memory usage but at the cost of significantly higher per-step kernel launch latency.
+
+  7. **Speculative decoding**: In `vllm/config/speculative.py:533`, DeepSeek V3.2 MTP forces `enforce_eager = True` due to
+  cudagraph incompatibility. In `vllm/v1/spec_decode/extract_hidden_states.py:225`, the speculative config''s `enforce_eager`
+  controls whether PIECEWISE cudagraph is used for the proposer.
+
+  The net effect: "`--enforce-eager` trades throughput and latency for" compatibility and reduced memory. On Ascend NPU, the
+  performance penalty is especially severe because ACL graph capture is the primary optimization for reducing host-device
+  synchronization overhead.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:420-440
+  context: Sets compilation mode to NONE and clears splitting_ops when enforce_eager is True
+- file: vllm_ascend/platform.py:458-476
+  context: Skips SP ACL graph size computation when enforce_eager is True
+- file: vllm_ascend/worker/worker.py:503-526
+  context: Skips graph capture (capture_model) when enforce_eager is True
+- file: vllm_ascend/worker/model_runner_v1.py:593-598
+  context: _use_aclgraph returns False when enforce_eager is True, disabling ACL graph dispatch
+- file: vllm_ascend/ascend_config.py:249-251
+  context: enable_sp_by_pass is False when enforce_eager is True
+- file: vllm_ascend/ascend_config.py:429-444
+  context: Raises AssertionError for oproj/olora TP when enforce_eager is True
+- file: vllm/config/vllm.py:941-947
+  context: Sets compilation mode and cudagraph mode to NONE when enforce_eager is True
+- file: vllm/config/vllm.py:1134-1139
+  context: Disables cudagraph, zeros capture sizes when enforce_eager is True
+- file: vllm_ascend/patch/platform/patch_minimax_m2_config.py:116
+  context: Sets HCCL_OP_EXPANSION_MODE=AIV for MiniMax-M2 when enforce_eager is False
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: enforce_eager=True forces cudagraph_mode to NONE
+- name: compilation_config.mode
+  relation: enforce_eager=True forces compilation mode to NONE
+- name: compilation_config.cudagraph_capture_sizes
+  relation: enforce_eager=True clears cudagraph_capture_sizes
+- name: oproj_tensor_parallel_size
+  relation: Requires enforce_eager=False (graph mode only)
+- name: olora_tensor_parallel_size
+  relation: Requires enforce_eager=False (graph mode only)
+- name: speculative_config.enforce_eager
+  relation: Separate override for speculative decoding; DeepSeek V3.2 MTP forces this to True
+- name: xlite_graph_config.enabled
+  relation: xlite full mode forces enforce_eager=True
+constraints:
+- oproj_tensor_parallel_size > 0 requires enforce_eager=False (graph mode only)
+- olora_tensor_parallel_size > 0 requires enforce_eager=False (graph mode only)
+- When using FA3 (flash_attn_with_kvcache), enforce_eager=True is required because FA3 does not support ACL graph capture
+- When using msprobe profiling tools, enforce_eager=True is required to avoid RuntimeError
+- DeepSeek V3.2 MTP speculative decoding automatically sets enforce_eager=True due to cudagraph incompatibility
+tuning_advice:
+  summary: 'Keep `--enforce-eager` disabled (default) for production deployments to benefit from ACL graph capture; enable
+    it only when required for compatibility with FA3, profiling tools, or PD separation prefiller nodes.
+
+    '
+  suggested_values:
+  - scenario: Production inference on Ascend NPU (default)
+    value: 'false'
+    reason: 'ACL graph capture significantly reduces kernel launch overhead on NPU, improving throughput and latency. This
+      is the recommended setting for all standard deployments.
+
+      '
+  - scenario: Using FA3 (flash_attn_with_kvcache) attention backend
+    value: 'true'
+    reason: 'FA3 tiling is processed on the host side and does not support ACL graph capture. enforce_eager=True is required
+      to avoid errors.
+
+      '
+  - scenario: PD separation prefiller node
+    value: 'true'
+    reason: 'vllm-ascend documentation recommends --enforce-eager for prefiller nodes in PD separation scenarios, combined
+      with HCCL_BUFFSIZE=256.
+
+      '
+  - scenario: Using msprobe or other profiling/debugging tools
+    value: 'true'
+    reason: 'Profiling tools may raise RuntimeError without enforce_eager mode. Required for compatibility with msprobe dump
+      analysis.
+
+      '
+  - scenario: Debugging or testing model correctness
+    value: 'true'
+    reason: 'Eager mode provides more readable error messages and avoids graph capture-related issues during development and
+      debugging.
+
+      '
+  caveats:
+  - Enabling enforce_eager disables ACL graph capture entirely, which can reduce throughput by 2-5x on Ascend NPU due to increased
+    kernel launch overhead
+  - When enforce_eager=True, fine-grained TP features (oproj_tensor_parallel_size, olora_tensor_parallel_size) are unavailable
+    and will raise AssertionError
+  - Sequence parallelism ACL graph optimization is skipped when enforce_eager=True
+  - MiniMax-M2 models automatically set HCCL_OP_EXPANSION_MODE=AIV when enforce_eager=False for better graph coverage
+  - xlite full mode overrides and forces enforce_eager=True regardless of user setting
+  quick_guide: Default to --enforce-eager=False for production; use --enforce-eager=True only for FA3, PD prefiller nodes,
+    or debugging.
+analysis_date: '2026-07-06'

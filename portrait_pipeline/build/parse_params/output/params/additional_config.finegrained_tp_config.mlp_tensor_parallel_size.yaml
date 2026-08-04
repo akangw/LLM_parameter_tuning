@@ -1,0 +1,81 @@
+name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:421
+value_type: int
+default: '0'
+valid_choices: non-negative integer; must divide data_parallel_size when > 0
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter enables fine-grained tensor parallelism specifically for MLP (Multi-Layer Perceptron) layers
+  in MoE (Mixture of Experts) models on Ascend NPU. When set to a value > 0, it creates a dedicated communication group (_MLP_TP)
+  via `_create_or_get_group(mlp_tp_size, "mlptp")` in `vllm_ascend/distributed/parallel_state.py:148-149`. This group is then
+  used by `AscendRowParallelLinear` layers (as seen in `tests/ut/ops/test_linear.py:111`) to perform tensor-parallel communication
+  for MLP projections (gate_proj, up_proj, down_proj) independently from the global tensor-parallel group. By decoupling MLP
+  TP from attention TP, it allows different parallelism strategies for different parts of the model, potentially reducing
+  communication overhead and improving throughput for MoE models where MLP computation dominates. The `mlp_tp_enable()` utility
+  function in `vllm_ascend/utils.py:978-979` gates MLP-specific optimizations throughout the codebase. Setting this to 0 disables
+  the feature entirely.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:421
+  context: Parsed from additional_config.finegrained_tp_config dict with default 0
+- file: vllm_ascend/ascend_config.py:449-450
+  context: Logged as enabled config when > 0
+- file: vllm_ascend/distributed/parallel_state.py:138
+  context: Read to create _MLP_TP communication group via _create_or_get_group
+- file: vllm_ascend/utils.py:978-979
+  context: mlp_tp_enable() checks if mlp_tensor_parallel_size > 0
+- file: vllm_ascend/ops/linear.py (inferred from test)
+  context: AscendRowParallelLinear uses _MLP_TP group for MLP layer communication
+related_parameters:
+- name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+  relation: Sibling fine-grained TP config; shares the same MoE-only constraint and data_parallel_size divisibility check
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Sibling fine-grained TP config for attention output projection; oproj additionally requires graph mode and PD
+    D-node scenario
+- name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+  relation: Sibling fine-grained TP config for embedding layer
+- name: parallel_config.data_parallel_size
+  relation: mlp_tensor_parallel_size must divide data_parallel_size evenly when > 0
+- name: model_config.is_moe
+  relation: All fine-grained TP configs (including mlp) require the model to be MoE
+constraints:
+- mlp_tensor_parallel_size must be 0 or a positive integer.
+- When mlp_tensor_parallel_size > 0, the model must be an MoE (Mixture of Experts) model.
+- When mlp_tensor_parallel_size > 0, data_parallel_size must be divisible by mlp_tensor_parallel_size.
+tuning_advice:
+  summary: 'For MoE models on Ascend NPU, set mlp_tensor_parallel_size to a value smaller than the global tensor_parallel_size
+    to reduce MLP communication overhead while keeping attention layers at higher parallelism.
+
+    '
+  suggested_values:
+  - scenario: MoE model with high MLP compute ratio and global TP=8
+    value: '4'
+    reason: Reduces MLP communication group size to 4 while attention stays at TP=8, lowering all-reduce overhead for the
+      dominant MLP computation
+  - scenario: MoE model where MLP and attention have similar compute profiles
+    value: '0'
+    reason: Disables fine-grained TP for MLP, using the global TP group uniformly; avoids unnecessary communication group
+      management overhead
+  - scenario: Dense (non-MoE) model
+    value: '0'
+    reason: Feature is only supported for MoE models; any positive value will raise an AssertionError
+  caveats:
+  - This is an Ascend-only feature; it has no effect in upstream vLLM.
+  - The constraint check at line 464-465 raises an error for ALL fine-grained TP configs if the model is not MoE, even though
+    the error message mentions only 'lmhead parallel feature'.
+  - Creating additional communication groups adds initialization overhead; only enable if the MLP compute-to-communication
+    ratio justifies it.
+  - The mlp_tensor_parallel_size must divide data_parallel_size, not tensor_parallel_size — ensure your DP configuration is
+    compatible.
+  quick_guide: Set to a divisor of data_parallel_size for MoE models to independently control MLP tensor parallelism on Ascend
+    NPU.
+analysis_date: '2026-07-06'

@@ -1,0 +1,6 @@
+name: --mamba-backend
+type: cli
+performance_impact: none
+skip_reason: The current pinned source registers the option and copies its parsed value into MambaConfig.backend, but no current
+  vLLM or vLLM-Ascend code reads MambaConfig.backend to select or alter an execution implementation. The only current backend
+  enum values are triton and flashinfer; the legacy Ascend backend claim is absent from both pinned repositories.

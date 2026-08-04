@@ -1,0 +1,81 @@
+name: --cpu-offload-params
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1143
+- vllm/config/offload.py:34
+- vllm/model_executor/offloader/uva.py:33
+value_type: set[str]
+default: set()
+valid_choices: any set of parameter name segments (strings)
+cli_example: --cpu-offload-params experts w2_weight
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter controls selective CPU offloading of model weights via UVA (Unified Virtual Addressing). When
+  `cpu_offload_gb > 0` and the offload backend resolves to "uva", the `UVAOffloader` uses `cpu_offload_params` to filter which
+  parameter name segments are eligible for offloading. If the set is empty, all parameters are eligible up to the byte limit
+  defined by `cpu_offload_gb`. If the set is non-empty, only parameters whose names contain one of the specified segments
+  (exact segment match, e.g., "experts" matches "mlp.experts.w2_weight") are offloaded. This directly affects GPU memory usage
+  (reducing it by offloading targeted weights to CPU), but also impacts throughput and latency because UVA-based access to
+  CPU memory is slower than GPU memory access, especially on Ascend NPU where the CPU-NPU interconnect may have different
+  bandwidth characteristics than GPU systems. Selective offloading allows keeping frequently accessed parameters on NPU while
+  offloading less critical ones, balancing memory savings against performance degradation.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:508
+  context: Field declaration in EngineArgs, typed as set[str]
+- file: vllm/engine/arg_utils.py:2146
+  context: Passed to UVAOffloadConfig constructor when building VllmConfig
+- file: vllm/config/offload.py:34
+  context: Defined in UVAOffloadConfig dataclass with default_factory=set
+- file: vllm/model_executor/offloader/base.py:159
+  context: Passed to UVAOffloader constructor when backend is 'uva'
+- file: vllm/model_executor/offloader/uva.py:33
+  context: Stored as self.cpu_offload_params and used in _maybe_offload_to_cpu filtering
+related_parameters:
+- name: --cpu-offload-gb
+  relation: Must be > 0 for cpu_offload_params to have any effect; defines the total byte budget for offloading
+- name: --offload-backend
+  relation: Must resolve to 'uva' (either explicitly or via 'auto' when cpu_offload_gb > 0 and offload_group_size == 0) for
+    UVA offloading to be active
+- name: --offload-params
+  relation: Similar parameter for the prefetch offloader; mutually exclusive in practice since only one offload backend is
+    active
+constraints:
+- cpu_offload_params only takes effect when --cpu-offload-gb is greater than 0 and the offload backend is 'uva'
+- Parameter name segments must match exactly; partial or substring matches are not supported (e.g., 'expert' will NOT match
+  'experts')
+- When cpu_offload_params is non-empty, only matched parameters are offloaded regardless of the cpu_offload_gb budget
+tuning_advice:
+  summary: Use selective offloading to target large but infrequently accessed parameter groups (e.g., MoE experts) to reduce
+    NPU memory usage while minimizing performance impact.
+  suggested_values:
+  - scenario: MoE model with many experts, limited NPU memory
+    value: set(['experts'])
+    reason: Offloads expert weights which are large and accessed sparsely, freeing significant NPU memory while keeping shared
+      layers on NPU for fast access
+  - scenario: Dense model where all parameters are frequently accessed
+    value: set()
+    reason: Empty set allows non-selective offloading up to the cpu_offload_gb limit, which may be simpler but can offload
+      performance-critical weights
+  - scenario: Targeting specific large weight matrices by name
+    value: set(['w2_weight', 'w3_weight'])
+    reason: Allows precise control over which weight matrices are offloaded, useful when profiling reveals specific memory
+      hotspots
+  caveats:
+  - On Ascend NPU, UVA-based CPU offloading relies on the CPU-NPU interconnect bandwidth; performance degradation may be more
+    severe than on GPU systems with NVLink
+  - Selective offloading requires knowledge of the model's parameter naming convention; use model inspection to identify correct
+    segment names
+  - If cpu_offload_params is set but no parameters match, no offloading occurs and the cpu_offload_gb budget is unused
+  - The vllm-ascend plugin does not override this parameter, but Ascend NPU memory management may interact differently with
+    UVA offloading compared to CUDA
+  quick_guide: Set --cpu-offload-params to target large, infrequently accessed parameter groups (like MoE experts) to reduce
+    NPU memory usage with minimal throughput impact.
+analysis_date: '2026-07-06'

@@ -1,0 +1,96 @@
+name: additional_config.eplb_config.expert_map_record_path
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:634
+- vllm_ascend/eplb/eplb_updator.py:55
+value_type: str
+default: null
+valid_choices: A valid JSON file path string, or null
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'Setting expert_map_record_path to a non-null value triggers dynamic EPLB (Expert-Parallel Load Balancing)
+  by automatically setting dynamic_eplb=True in the EplbConfig constructor (vllm_ascend/ascend_config.py:665). This activates
+  the EPLB background process which periodically collects expert load statistics and rebalances expert assignments across
+  NPU ranks. The rebalancing improves MoE model throughput by reducing expert load imbalance, but the collection and rebalancing
+  process itself consumes CPU and communication resources. The recorded expert map is saved to the specified JSON file path
+  for later reuse as a static expert_map_path, enabling faster cold starts on subsequent runs. Without this parameter (null),
+  dynamic EPLB is disabled and no expert load recording occurs.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:664
+  context: 'Validation logic: "if expert_map_record_path is not None, sets dynamic_eplb=True," validates the path ends with
+    .json, and creates parent directories.
+
+    '
+- file: vllm_ascend/eplb/eplb_updator.py:55
+  context: 'Stored as self.expert_map_record_path in the EPLB updater for use during expert load recording and map generation.
+
+    '
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: 'Automatically set to True when expert_map_record_path is provided.
+
+    '
+- name: additional_config.eplb_config.expert_map_path
+  relation: 'expert_map_record_path generates a new expert map file that can later be used as expert_map_path for static EPLB
+    in subsequent runs.
+
+    '
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: 'Controls how many forward iterations pass before EPLB begins collecting expert load data during recording.
+
+    '
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: 'Controls how frequently the EPLB worker executes the rebalancing algorithm during recording.
+
+    '
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: 'Specifies the number of redundant experts used during EPLB rebalancing, affecting the generated expert map.
+
+    '
+constraints:
+- The value must be a string ending with .json, or null.
+- When set, the environment variable DYNAMIC_EPLB or EXPERT_MAP_RECORD must be set to true.
+- The parent directory of the specified path must be writable (the code creates it if it does not exist).
+tuning_advice:
+  summary: 'Set expert_map_record_path to a writable JSON file path to enable dynamic EPLB recording on the first run; reuse
+    the generated file as expert_map_path on subsequent runs for faster startup.
+
+    '
+  suggested_values:
+  - scenario: First deployment of an MoE model on Ascend NPU to generate an expert map
+    value: '''"/path/to/expert_map.json"'''
+    reason: 'Enables dynamic EPLB recording to capture expert load distribution and generate an optimized expert map for future
+      runs, improving throughput by reducing load imbalance.
+
+      '
+  - scenario: Subsequent runs with an already-generated expert map
+    value: 'null'
+    reason: 'Use the previously recorded expert map via expert_map_path instead of re-recording, avoiding the overhead of
+      dynamic EPLB collection.
+
+      '
+  caveats:
+  - 'Recording requires the EXPERT_MAP_RECORD or DYNAMIC_EPLB environment variable to be set to true; otherwise the process
+    will assert-fail at startup.
+
+    '
+  - 'Dynamic EPLB recording adds CPU overhead for expert load collection and rebalancing computation, which may temporarily
+    reduce throughput during the recording phase.
+
+    '
+  - 'The recorded file is only useful for MoE models; for dense models this parameter has no effect.
+
+    '
+  quick_guide: 'Set to a .json path on first run with EXPERT_MAP_RECORD=true to generate an expert map; use expert_map_path
+    on subsequent runs instead.
+
+    '
+analysis_date: '2026-07-06'

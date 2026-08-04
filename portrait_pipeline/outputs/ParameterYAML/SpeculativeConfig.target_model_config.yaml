@@ -1,0 +1,100 @@
+name: SpeculativeConfig.target_model_config
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/speculative.py
+- vllm/engine/arg_utils.py
+- vllm_ascend/patch/worker/patch_deepseek_mtp.py
+- vllm_ascend/patch/platform/patch_minimax_m2_config.py
+value_type: dict
+default: null
+valid_choices: Internal ModelConfig for the target model, injected by EngineArgs when SpeculativeConfig is constructed; it
+  is not an independent user-facing value
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field is an internal reference to the target model's already-resolved ModelConfig, not a second model
+  and not a direct tuning knob. Its model type, tokenizer, dtype, quantization, maximum length, eager-mode setting, and other
+  properties are consumed while speculative decoding is initialized. For MTP, upstream derives the draft checkpoint and default
+  quantization from it; for an external draft model, upstream inherits multiple target settings and uses target maximum length
+  to bound the draft configuration. N-gram drafting aliases this object as draft_model_config, while extract-hidden-states
+  copies it. These decisions can change draft-model memory, draft-forward cost, graph/eager execution, and ultimately speculative
+  latency and throughput, although changing the reference independently is unsupported. On Ascend, the target model type additionally
+  selects a GLM-MoE-DSA MTP rotation layer and is inspected by the MiniMax-M2 speculative-validation patch.
+usage_locations:
+- file: vllm/engine/arg_utils.py
+  context: create_speculative_config injects the already-created target ModelConfig into the speculative configuration; it
+    is explicitly not obtained from the --speculative-config CLI value.
+- file: vllm/config/speculative.py
+  context: Post-initialization requires the field for MTP, derives the MTP model and default quantization from it, aliases
+    or copies it for non-neural and extract-hidden-states methods, and inherits target properties when constructing a separate
+    draft ModelConfig.
+- file: vllm/config/speculative.py
+  context: Validation uses target model type to gate auxiliary-hidden-state methods, uses target maximum length to cap the
+    draft model, and checks target and draft vocabulary sizes for draft-model speculation.
+- file: vllm_ascend/patch/worker/patch_deepseek_mtp.py
+  context: Ascend's patched DeepSeek MTP layer reads the target model type and adds and executes a rotation projection for
+    quantized GLM-MoE-DSA targets.
+- file: vllm_ascend/patch/platform/patch_minimax_m2_config.py
+  context: Ascend's validation patch reads target hf_text_config.model_type before relaxing the upstream auxiliary-hidden-state
+    allowlist for MiniMax-M2.
+related_parameters:
+- name: ModelConfig.model
+  relation: Selects the target checkpoint represented by this injected object and is reused as the MTP draft checkpoint.
+- name: ModelConfig.quantization
+  relation: Supplies the MTP draft quantization when SpeculativeConfig.quantization is not explicitly set.
+- name: ModelConfig.max_model_len
+  relation: Bounds the separate draft model's resolved maximum length and therefore its usable context and cache requirements.
+- name: ModelConfig.enforce_eager
+  relation: Is inherited when constructing the draft ModelConfig; upstream also forces speculative eager execution for a DeepSeek-V3.2
+    MTP target.
+- name: SpeculativeConfig.draft_model_config
+  relation: May alias, copy, or inherit settings from target_model_config depending on the speculative method.
+- name: SpeculativeConfig.quantization
+  relation: Overrides the target-derived quantization for a separately constructed draft model when supplied.
+- name: SpeculativeConfig.method
+  relation: Determines which target properties are consumed and whether this object is aliased, copied, or used to construct
+    a separate drafter.
+constraints:
+- EngineArgs injects this object after constructing ModelConfig; users should not include target_model_config in --speculative-config.
+- MTP with num_speculative_tokens requires a non-null target ModelConfig and derives its model checkpoint from the target.
+- Draft-model speculation requires target and draft vocabulary sizes to match.
+- Eagle3, extract_hidden_states, and dflash are restricted by target model type in upstream validation; Ascend specifically
+  patches the MiniMax-M2 eagle3/extract-hidden-states case.
+- This reference does not allocate a duplicate target model. Performance effects arise from the target configuration and from
+  the speculative configuration derived from it.
+tuning_advice:
+  summary: Leave target_model_config engine-managed. Tune the target model through its normal model options and tune the user-facing
+    speculative method, model, quantization, maximum length, and token count; then benchmark the resolved combination end
+    to end.
+  suggested_values:
+  - scenario: Any normal CLI or API engine construction
+    value: automatic injection of the active target ModelConfig
+    reason: This preserves consistency between target execution and all target properties inherited or validated by speculative
+      decoding.
+  - scenario: Model-native MTP on Ascend
+    value: automatic injection; select a supported target checkpoint
+    reason: MTP derives its model and default quantization from the target, while Ascend also branches on target model type
+      for model-specific behavior.
+  - scenario: External draft model
+    value: automatic injection; tune SpeculativeConfig.model and related fields
+    reason: The supported path constructs the draft config from user-facing speculative settings while safely inheriting tokenizer,
+      dtype, target length, eager-mode, and configuration-format properties.
+  caveats:
+  - Replacing or manually serializing this object is unsupported and can create inconsistent target/draft tokenizer, vocabulary,
+    length, or execution settings.
+  - The best target and draft combination is workload-dependent; measure acceptance length, end-to-end tokens per second,
+    latency, and peak device memory together.
+  - Inheriting target dtype, eager mode, or quantization does not guarantee that it is optimal for a separate draft model;
+    use the exposed speculative overrides where supported.
+  - Ascend model-type patches are narrow compatibility behaviors, not a general reason to mutate this internal field.
+  quick_guide: Do not set this field. Select and configure the target model normally, let EngineArgs inject its ModelConfig,
+    then tune only exposed speculative options. For MTP, verify target-model support and benchmark its inherited quantization
+    and execution mode. For an external drafter, compare a small compatible draft checkpoint and supported quantization using
+    end-to-end throughput and peak memory rather than draft latency alone.
+analysis_date: '2026-07-31'

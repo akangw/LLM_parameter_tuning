@@ -1,0 +1,107 @@
+name: --long-prefill-token-threshold
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:80
+- vllm/engine/arg_utils.py:518
+- vllm/engine/arg_utils.py:1341
+- vllm_ascend/patch/platform/patch_balance_schedule.py:132
+- vllm_ascend/patch/platform/patch_balance_schedule.py:401
+- vllm_ascend/core/recompute_scheduler.py:274
+- vllm_ascend/core/recompute_scheduler.py:536
+- vllm_ascend/core/scheduler_dynamic_batch.py:198
+- vllm_ascend/core/scheduler_dynamic_batch.py:398
+- vllm_ascend/core/scheduler_profiling_chunk.py:288
+- vllm_ascend/core/scheduler_profiling_chunk.py:519
+value_type: int
+default: '0'
+valid_choices: integer >= 0
+cli_example: --long-prefill-token-threshold 400
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter caps the number of new tokens scheduled per step for a single request during chunked prefill.
+  When a request''s remaining prompt tokens exceed this threshold, the scheduler limits the tokens issued in that step to
+  the threshold value, effectively splitting long prefill work into multiple chunks. On Ascend NPU, this is used across all
+  scheduler variants (balance_schedule, recompute_scheduler, dynamic_batch, profiling_chunk) in both v1 and v2 worker paths.
+  The mechanism is identical to upstream vLLM: "the scheduler computes `num_new_tokens` for a request, and if" `0 < long_prefill_token_threshold
+  < num_new_tokens`, it clamps `num_new_tokens` to the threshold. This directly controls the maximum prefill chunk size per
+  request, which affects the tradeoff between prefill latency (smaller chunks = lower per-step latency but more steps) and
+  throughput (larger chunks = better NPU utilization per step). Setting it to 0 (default) disables the cap, allowing requests
+  to consume as many tokens as the token budget permits in a single step. The parameter works in conjunction with `--max-num-partial-prefills`
+  and `--max-long-partial-prefills` to control how many long-prefill requests can be processed concurrently.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:132
+  context: 'v1-ascend: Caps num_new_tokens for RUNNING requests during chunked prefill scheduling'
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:401
+  context: 'v1-ascend: Caps num_new_tokens for WAITING requests being added to the batch'
+- file: vllm_ascend/core/recompute_scheduler.py:274
+  context: 'v2-ascend: Caps num_new_tokens for RUNNING requests in recompute scheduler'
+- file: vllm_ascend/core/recompute_scheduler.py:536
+  context: 'v2-ascend: Caps num_new_tokens for WAITING requests in recompute scheduler'
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:198
+  context: 'v1-ascend: Caps num_new_tokens for RUNNING requests in dynamic batch scheduler'
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:398
+  context: 'v1-ascend: Caps num_new_tokens for WAITING requests in dynamic batch scheduler'
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:288
+  context: 'v1-ascend: Caps num_new_tokens for RUNNING requests in profiling chunk scheduler'
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:519
+  context: 'v1-ascend: Caps num_new_tokens for WAITING requests in profiling chunk scheduler'
+- file: vllm/v1/core/sched/scheduler.py:371
+  context: 'v1-upstream: Caps num_new_tokens for RUNNING requests (GPU reference)'
+- file: vllm/v1/core/sched/scheduler.py:636
+  context: 'v1-upstream: Caps num_new_tokens for WAITING requests (GPU reference)'
+related_parameters:
+- name: --max-num-partial-prefills
+  relation: Controls how many partially-prefilled sequences can run concurrently; long_prefill_token_threshold defines which
+    requests count as 'long' for the separate --max-long-partial-prefills limit
+- name: --max-long-partial-prefills
+  relation: Limits concurrent long-prefill requests (those exceeding long_prefill_token_threshold); setting this lower than
+    max_num_partial_prefills allows short prompts to jump the queue
+- name: --enable-chunked-prefill
+  relation: Chunked prefill must be enabled for this parameter to have any effect; when disabled, requests exceeding the token
+    budget are skipped rather than chunked
+- name: --max-num-batched-tokens
+  relation: The per-step token budget; long_prefill_token_threshold caps individual request tokens, but the total across all
+    requests cannot exceed max_num_batched_tokens
+constraints:
+- long_prefill_token_threshold must be >= 0 (negative values are not valid)
+- When mamba_cache_mode is 'align' and long_prefill_token_threshold > 0, it must be >= block_size
+- This parameter only takes effect when chunked prefill is enabled (--enable-chunked-prefill, default True)
+tuning_advice:
+  summary: Set to a value that balances prefill latency against NPU utilization; typical values range from 256 to 2048 tokens
+    depending on model size and sequence length requirements
+  suggested_values:
+  - scenario: Short prompts (< 2K tokens) with low latency requirements
+    value: '0'
+    reason: Disabling the cap allows full prefill in one step, minimizing scheduling overhead and maximizing throughput for
+      short sequences
+  - scenario: Long prompts (4K-32K tokens) where prefill latency matters
+    value: '512'
+    reason: Limits each prefill chunk to 512 tokens, keeping per-step latency bounded while allowing other requests to be
+      interleaved; good starting point for Ascend NPU with typical block_size=128
+  - scenario: Very long prompts (> 32K tokens) with strict latency SLOs
+    value: '256'
+    reason: Smaller chunks reduce maximum per-step latency further, at the cost of more scheduling steps; useful when TPOT
+      (time-per-output-token) must stay low even during prefill
+  - scenario: Throughput-optimized batch processing with mixed-length prompts
+    value: '1024'
+    reason: Larger chunks improve NPU compute utilization per step; combined with --max-long-partial-prefills=1, this ensures
+      one long request gets substantial NPU time while short requests complete quickly
+  caveats:
+  - On Ascend NPU, the profiling_chunk scheduler (vllm_ascend/core/scheduler_profiling_chunk.py) may further reduce chunk
+    size dynamically based on profiling data, overriding the static threshold
+  - Setting this too low (< 128) may cause excessive scheduling overhead and underutilize the NPU, especially with large block_size
+    values
+  - 'This parameter interacts with --max-long-partial-prefills: if both are set, long requests are both capped per-step AND
+    limited in concurrency, which can significantly increase end-to-end latency for long prompts'
+  - The vllm-ascend schedulers apply this threshold identically to upstream vLLM; no Ascend-specific override of the parameter
+    value or behavior exists
+  quick_guide: Start with 512 for long-context workloads on Ascend NPU; increase to 1024-2048 if throughput is prioritized
+    over latency, or set to 0 to disable chunking for short-prompt scenarios
+analysis_date: '2026-07-06'

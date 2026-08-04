@@ -1,0 +1,83 @@
+name: additional_config.ascend_compilation_config.fuse_qknorm_rope
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:486
+- vllm_ascend/ascend_config.py:508
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled (default), the QKNormRopeFusionPass graph optimization pass is registered during Ascend graph
+  compilation. This pass fuses Query-Key normalization (QKNorm) and Rotary Position Embedding (RoPE) operations into a single
+  optimized kernel on the NPU. Fusion eliminates intermediate memory round-trips and reduces kernel launch overhead, directly
+  improving per-token latency and overall throughput. When disabled, these operations execute as separate kernels, increasing
+  execution time and memory bandwidth consumption. The pass is applied via the VllmInductorPass framework in graph_fusion_pass_manager.py:59-62,
+  which checks the fuse_qknorm_rope config value before appending the QKNormRopeFusionPass to the compilation pipeline.
+
+  '
+usage_locations:
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:59
+  context: 'Reads fuse_qknorm_rope from ascend_compilation_config dict; if True, imports and appends QKNormRopeFusionPass
+    to the graph optimization pass list.
+
+    '
+- file: vllm_ascend/ascend_config.py:514
+  context: 'Stores the fuse_qknorm_rope value as an instance attribute of AscendCompilationConfig.
+
+    '
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: 'Graph fusion passes including QKNormRopeFusionPass operate within the npugraph_ex compilation backend. If enable_npugraph_ex
+    is False, graph-level fusion passes may not take effect.
+
+    '
+- name: additional_config.ascend_compilation_config.fuse_norm_quant
+  relation: 'Sibling fusion pass in the same AscendCompilationConfig group; both control independent graph optimization passes
+    that reduce kernel count and improve NPU execution efficiency.
+
+    '
+constraints:
+- Triton must be available in the environment when fuse_qknorm_rope is enabled; if Triton is not installed, set this parameter
+  to False to avoid errors.
+tuning_advice:
+  summary: 'Keep fuse_qknorm_rope enabled (default) for optimal NPU performance unless Triton is unavailable or the fused
+    kernel causes correctness issues with a specific model.
+
+    '
+  suggested_values:
+  - scenario: Standard deployment with Triton available
+    value: true
+    reason: 'Enables QKNorm+RoPE kernel fusion, reducing kernel launch overhead and intermediate memory traffic, which improves
+      latency and throughput on Ascend NPU.
+
+      '
+  - scenario: Triton is not installed in the environment
+    value: false
+    reason: 'The QKNormRopeFusionPass depends on Triton; disabling it prevents import errors and allows the model to run with
+      separate QKNorm and RoPE kernels.
+
+      '
+  - scenario: Debugging model correctness or numerical precision issues
+    value: false
+    reason: 'Disabling fusion runs QKNorm and RoPE as separate operations, making it easier to isolate the source of numerical
+      discrepancies during debugging.
+
+      '
+  caveats:
+  - 'The documentation explicitly states: ''If Triton is not in the environment, set it to False.'' Running with fuse_qknorm_rope=True
+    without Triton will cause failures.'
+  - Disabling this fusion increases the number of NPU kernel launches per attention layer, which can measurably increase per-token
+    latency especially at small batch sizes.
+  - This is an Ascend-specific optimization; it has no effect on non-Ascend backends and is not present in upstream vLLM.
+  quick_guide: Keep enabled for production; disable only if Triton is unavailable or for debugging.
+analysis_date: '2026-07-06'

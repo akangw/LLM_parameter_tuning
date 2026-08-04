@@ -1,0 +1,77 @@
+name: --enable-elastic-ep
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1038
+- vllm/config/parallel.py:193
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-elastic-ep
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: Enables elastic expert parallelism for DP/EP. In the current upstream configuration, it is valid only together
+  with EPLB, without pipeline parallelism or external/hybrid data-parallel load balancing. When enabled, the data-parallel
+  initialization skips allocation of the normal master-port list, and EPLB selects the PyNCCL communicator because elastic
+  EP requires stateless mode. These choices change the communication and coordination path for MoE distributed serving, so
+  throughput and latency must be evaluated for the actual deployment; the source does not provide a universal speedup.
+usage_locations:
+- file: vllm/config/parallel.py:772
+  context: Validates that elastic EP requires enable_eplb, pipeline_parallel_size equal to 1, and no external or hybrid DP
+    load balancing.
+- file: vllm/config/parallel.py:799
+  context: Skips normal data-parallel master-port-list allocation while elastic EP is enabled.
+- file: vllm/config/parallel.py:894
+  context: Selects the PyNCCL EPLB communicator because elastic EP requires stateless mode.
+- file: vllm/engine/arg_utils.py:1917
+  context: Passes the CLI-derived value into ParallelConfig.
+related_parameters:
+- name: --enable-eplb
+  relation: Must be enabled; otherwise ParallelConfig raises a ValueError.
+- name: --pipeline-parallel-size
+  relation: Must be 1 when elastic EP is enabled.
+- name: --data-parallel-external-lb
+  relation: Must be disabled because elastic EP requires a single API server and core client for coordination.
+- name: --data-parallel-hybrid-lb
+  relation: Must be disabled for the same coordination constraint.
+- name: --eplb-config
+  relation: Its communicator defaults to PyNCCL in stateless elastic-EP mode when no communicator is supplied.
+constraints:
+- --enable-eplb must be enabled.
+- --pipeline-parallel-size must be 1.
+- --data-parallel-external-lb and --data-parallel-hybrid-lb must be disabled.
+tuning_advice:
+  summary: Keep disabled for fixed distributed configurations. Enable only for an MoE deployment that needs elastic EP and
+    has been tested with EPLB and the stateless PyNCCL communication path.
+  suggested_values:
+  - scenario: Fixed DP/EP deployment without elastic scaling requirements
+    value: false
+    reason: Avoids the elastic-EP validation constraints and retains the normal data-parallel master-port initialization path.
+  - scenario: MoE deployment that requires elastic EP and has EPLB configured
+    value: true
+    reason: Activates the stateless elastic-EP configuration and selects PyNCCL for EPLB when its communicator is unspecified.
+  caveats:
+  - Enabling without --enable-eplb raises a ValueError during ParallelConfig initialization.
+  - Pipeline parallelism and external or hybrid data-parallel load balancing are incompatible with elastic EP.
+  - PyNCCL is selected only when EPLB is enabled and eplb_config.communicator is not explicitly set.
+  quick_guide: Enable only with --enable-eplb, --pipeline-parallel-size 1, and both external and hybrid DP load balancing
+    disabled; benchmark the resulting communication path.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

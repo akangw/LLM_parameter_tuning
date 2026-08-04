@@ -1,0 +1,120 @@
+name: HCCL_OP_EXPANSION_MODE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/patch/platform/patch_minimax_m2_config.py:118
+- vllm_ascend/utils.py:692
+value_type: str
+default: <computed>
+valid_choices:
+- AIV
+- <any other string>
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'HCCL_OP_EXPANSION_MODE controls how HCCL (Huawei Collective Communication Library) expands collective communication
+  operators on Ascend NPU. When set to "AIV", HCCL uses the AIVector core to directly schedule ROCE communication (FFTS+ method),
+  which consumes fewer device streams per collective operation. This directly affects the maximum number of CUDA/ACL graph
+  capture sizes that can be supported, because each captured graph consumes a limited pool of device resources (MAX_CAPTURE_SIZE).
+
+  In vllm_ascend/utils.py:692-705, when HCCL_OP_EXPANSION_MODE="AIV", the code calculates a smaller parallel_factor for dense
+  models, resulting in a higher max_num_batch_sizes. When the env var is NOT set to "AIV" (default HCCL behavior on A3 hardware
+  uses AICPU method), the code at line 732-734 applies a more conservative formula that subtracts num_comm_groups * 40 from
+  MAX_CAPTURE_SIZE and uses a larger parallel_factor, significantly reducing the number of supported batch sizes. Fewer capture
+  sizes means more graph recompilations at runtime, directly hurting throughput.
+
+  Additionally, in vllm_ascend/patch/platform/patch_minimax_m2_config.py:118-127, for MiniMax-M2 models with ACL graph capture
+  enabled, the code auto-sets HCCL_OP_EXPANSION_MODE="AIV" if unset, and warns that non-AIV values "may reduce ACL graph shape
+  coverage."
+
+  The documentation at developer_guide/performance_and_debug/optimization_and_tuning.md:182 and multiple model tutorials (Qwen3-Dense,
+  Qwen3-Omni) explicitly recommend setting this to "AIV" for performance optimization.
+
+  '
+usage_locations:
+- file: vllm_ascend/utils.py:692
+  context: 'Checks if HCCL_OP_EXPANSION_MODE=="AIV" to determine the parallel_factor used in calculating max_num_batch_sizes
+    for ACL graph capture. AIV mode uses a smaller factor, allowing more batch sizes to be captured.
+
+    '
+- file: vllm_ascend/utils.py:739
+  context: 'When HCCL_OP_EXPANSION_MODE is NOT "AIV", logs a warning recommending users set it to AIV to improve performance
+    and increase supported shapes.
+
+    '
+- file: vllm_ascend/patch/platform/patch_minimax_m2_config.py:118-127
+  context: 'For MiniMax-M2 models with ACL graph capture, auto-sets the env var to "AIV" if unset, and warns if a different
+    value is detected.
+
+    '
+- file: vllm_ascend/patch/__init__.py:107
+  context: 'Documents the patch rationale: "HCCL op expansion mode affects graph shape" coverage for MiniMax-M2 on NPU.
+
+    '
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: 'HCCL_OP_EXPANSION_MODE only affects performance when ACL/CUDA graph capture is enabled (cudagraph_mode is not
+    disabled). In eager mode, this env var has no effect on graph capture sizes.
+
+    '
+- name: compilation_config.cudagraph_capture_sizes
+  relation: 'The number of capture sizes that can be supported is directly limited by the HCCL_OP_EXPANSION_MODE setting.
+    AIV mode allows more capture sizes.
+
+    '
+- name: tensor_parallel_size
+  relation: 'The parallel_factor calculation in utils.py includes tensor_parallel_size > 1 as a factor. Larger TP sizes consume
+    more streams, making AIV mode more critical for maintaining adequate capture size counts.
+
+    '
+- name: data_parallel_size
+  relation: 'Similarly included in the parallel_factor calculation. Multi-DP deployments benefit more from AIV mode.
+
+    '
+- name: enable_expert_parallel
+  relation: 'Expert parallelism adds to the parallel_factor, further reducing available capture sizes when not using AIV mode.
+
+    '
+constraints:
+- HCCL_OP_EXPANSION_MODE must be set before starting the vLLM server; changing it at runtime has no effect.
+- On A3 hardware, HCCL defaults to the AICPU method which may allocate up to rank_size-1 additional streams per communication
+  domain, severely limiting ACL graph capture sizes.
+tuning_advice:
+  summary: 'Always set HCCL_OP_EXPANSION_MODE="AIV" on Ascend NPU when using ACL graph capture to maximize the number of supported
+    batch sizes and avoid runtime graph recompilation overhead.
+
+    '
+  suggested_values:
+  - scenario: 'Any Ascend NPU deployment with ACL graph capture enabled (cudagraph_mode != disabled)
+
+      '
+    value: AIV
+    reason: 'AIV mode uses the FFTS+ method for HCCL operator expansion, consuming fewer device streams and allowing more
+      batch sizes to be captured in the ACL graph. This avoids runtime recompilations and improves throughput. The vllm-ascend
+      documentation and source code both explicitly recommend this value.
+
+      '
+  - scenario: 'MiniMax-M2 model with ACL graph capture on NPU
+
+      '
+    value: AIV
+    reason: 'vllm-ascend auto-sets this value for MiniMax-M2 if unset, and warns that non-AIV values reduce graph shape coverage.
+      This is a model-specific requirement for optimal ACL graph capture.
+
+      '
+  caveats:
+  - On A3 hardware, not setting this to AIV causes HCCL to use the AICPU method, which can allocate up to rank_size-1 additional
+    streams per communication domain, drastically reducing the number of supported capture sizes.
+  - For dense models with tensor parallelism, the allreduce operator in non-AIV mode occupies additional streams, further
+    reducing available capture sizes.
+  - This env var has no effect when running in eager mode (enforce_eager=True or cudagraph_mode disabled).
+  - The env var must be exported in the shell before launching vLLM; it cannot be set via vLLM configuration files.
+  quick_guide: 'Export HCCL_OP_EXPANSION_MODE="AIV" before launching vLLM on Ascend NPU to maximize ACL graph capture coverage
+    and throughput.
+
+    '
+analysis_date: '2026-07-06'

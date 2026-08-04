@@ -1,0 +1,97 @@
+name: --all2all-backend
+type: cli
+category: communication
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1030
+- vllm/config/parallel.py:174
+- vllm_ascend/platform.py:559
+value_type: str
+default: allgather_reducescatter
+valid_choices:
+- allgather_reducescatter
+- deepep_high_throughput
+- deepep_low_latency
+- mori
+- nixl_ep
+- flashinfer_nvlink_two_sided
+- flashinfer_nvlink_one_sided
+cli_example: --all2all-backend deepep_low_latency
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Controls the communication backend for all-to-all operations in Mixture-of-Experts (MoE) expert parallel dispatch/combine.
+  On Ascend NPU, vllm-ascend silently overrides this parameter: when worker_cls is "auto" and sequence parallelism is disabled,
+  it forces the value to "flashinfer_all2allv" (line 559 of vllm_ascend/platform.py). This override is critical because the
+  Ascend NPU does not support CUDA-based backends like DeepEP or FlashInfer NVLink kernels natively. The forced "flashinfer_all2allv"
+  backend routes through Ascend-compatible communication paths. Additionally, this parameter affects compilation graph splitting
+  via set_splitting_ops_for_v1 (vllm/config/compilation.py:1083), which determines how the FX graph is partitioned for piecewise
+  CUDA graph capture. On Ascend, this interacts with the NPU graph compilation pipeline (vllm_ascend/platform.py:513). The
+  choice of backend directly impacts MoE token dispatch latency, expert load balancing overhead, and memory usage during all-to-all
+  communication. Using an incompatible backend on Ascend will cause runtime errors or fall back to suboptimal paths.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:559
+  context: vllm-ascend silently overrides all2all_backend to 'flashinfer_all2allv' when worker_cls is 'auto' and sequence
+    parallelism is disabled
+- file: vllm_ascend/platform.py:513
+  context: Passes all2all_backend to set_splitting_ops_for_v1 for NPU graph compilation splitting
+- file: vllm/config/compilation.py:1083
+  context: Used in set_splitting_ops_for_v1 to determine FX graph splitting for piecewise compilation
+- file: vllm/config/compilation.py:1173
+  context: Disables CUDA graphs when all2all_backend is 'deepep_high_throughput' and data_parallel_size > 1
+- file: vllm/config/vllm.py:1219
+  context: Called during VllmConfig initialization to set splitting ops based on all2all_backend
+- file: vllm/config/vllm.py:1278
+  context: Validates that microbatching (DBO) only supports deepep_low_latency and deepep_high_throughput backends
+- file: vllm/v1/engine/utils.py:517
+  context: Validates Ray DP pack strategy compatibility with DeepEP backends
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Must be enabled for all2all communication to be active in MoE models
+- name: --data-parallel-size
+  relation: Interacts with all2all_backend for graph compilation and DeepEP compatibility
+- name: --enable-dbo
+  relation: Microbatching requires deepep_low_latency or deepep_high_throughput backends
+- name: --worker-cls
+  relation: vllm-ascend overrides all2all_backend based on worker_cls value
+- name: VLLM_RAY_DP_PACK_STRATEGY
+  relation: DeepEP backends require 'strict' pack strategy in Ray DP deployments
+constraints:
+- When microbatching (--enable-dbo) is enabled, only 'deepep_low_latency' and 'deepep_high_throughput' backends are supported
+- DeepEP backends require EP ranks [0,7] to be on the same node, which requires VLLM_RAY_DP_PACK_STRATEGY=strict in Ray deployments
+- The 'pplx' and 'naive' backends have been removed and will silently fall back to 'allgather_reducescatter'
+- On Ascend NPU, vllm-ascend overrides this parameter to 'flashinfer_all2allv' when worker_cls is 'auto' and sequence parallelism
+  is not enabled
+tuning_advice:
+  summary: On Ascend NPU, this parameter is automatically overridden by vllm-ascend; manual setting is generally ignored unless
+    using custom worker classes or sequence parallelism
+  suggested_values:
+  - scenario: Default Ascend NPU deployment with auto worker class
+    value: flashinfer_all2allv
+    reason: vllm-ascend automatically sets this value to ensure Ascend-compatible all-to-all communication; manual override
+      is ignored
+  - scenario: Ascend NPU with sequence parallelism enabled
+    value: allgather_reducescatter
+    reason: When sequence parallelism is active, vllm-ascend does not override the backend, and allgather_reducescatter is
+      the safest Ascend-compatible option
+  - scenario: GPU deployment with DeepEP low-latency kernels for decode-optimized workloads
+    value: deepep_low_latency
+    reason: Optimized for low-latency decode; compatible with CUDA graphs and microbatching
+  - scenario: GPU deployment with DeepEP high-throughput kernels for prefill-optimized workloads
+    value: deepep_high_throughput
+    reason: Optimized for high-throughput prefill but incompatible with CUDA graphs when data_parallel_size > 1
+  caveats:
+  - On Ascend NPU, vllm-ascend silently overrides this parameter to 'flashinfer_all2allv' when worker_cls is 'auto' and sequence
+    parallelism is disabled — manual settings are ignored
+  - DeepEP high-throughput backend disables CUDA graphs when data_parallel_size > 1, which may hurt decode performance
+  - The 'flashinfer_nvlink_two_sided' and 'flashinfer_nvlink_one_sided' backends require NVLink and are not available on Ascend
+    NPU
+  - Microbatching (DBO) only works with DeepEP backends, which are not available on Ascend NPU
+  quick_guide: On Ascend NPU, leave this parameter unset — vllm-ascend automatically selects the correct Ascend-compatible
+    backend
+analysis_date: '2026-07-06'

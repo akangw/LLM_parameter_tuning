@@ -1,0 +1,6 @@
+name: --gdn-prefill-backend
+type: cli
+performance_impact: none
+skip_reason: The pinned vLLM source parses this option and copies a non-null value into additional_config, but has no current
+  runtime consumer of gdn_prefill_backend. The pinned vLLM-Ascend source has no consumer or override for this setting, so
+  it cannot affect Ascend latency, throughput, or memory.

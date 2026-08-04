@@ -1,0 +1,92 @@
+name: --long-prefill-token-threshold
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/scheduler.py:80
+- vllm/engine/arg_utils.py:518
+- vllm/engine/arg_utils.py:1341
+- vllm_ascend/core/scheduler_dynamic_batch.py:198
+- vllm_ascend/core/recompute_scheduler.py:274
+- vllm_ascend/core/scheduler_profiling_chunk.py:288
+- vllm_ascend/patch/platform/patch_balance_schedule.py:132
+value_type: int
+default: 0
+valid_choices: Integer; values greater than 0 activate the per-request prefill cap.
+cli_example: --long-prefill-token-threshold 512
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: On Ascend, the balance, dynamic-batch, recompute, and profiling-chunk schedulers compare each request's pending
+  work with this value. When the threshold is positive and smaller than the pending token count, they reduce the request's
+  num_new_tokens to the threshold before applying the batch token budget. A smaller positive value therefore bounds per-step
+  work from a long prefill and permits more interleaving, while requiring more scheduling steps; a larger value permits larger
+  chunks and can improve accelerator utilization at the cost of longer per-step prefill work. Zero does not satisfy the positive-value
+  condition. Separately, upstream uses the threshold to classify prompts as long for concurrent partial-prefill scheduling.
+usage_locations:
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:198
+  context: Caps pending tokens for running requests when the positive threshold is smaller.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:398
+  context: Applies the same cap while admitting waiting requests.
+- file: vllm_ascend/core/recompute_scheduler.py:274
+  context: Caps pending tokens for running requests in the recompute scheduler.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:519
+  context: Applies the configured cap before profiling-chunk dynamic chunk sizing.
+- file: vllm/config/scheduler.py:245
+  context: When concurrent partial prefills are enabled and the value is zero, upstream derives it as 4% of max_model_len.
+related_parameters:
+- name: --max-num-partial-prefills
+  relation: When greater than one, upstream derives a zero threshold from max_model_len and enables concurrent partial-prefill
+    policy.
+- name: --max-long-partial-prefills
+  relation: Limits concurrent prompts classified as long relative to this threshold.
+- name: --enable-chunked-prefill
+  relation: Controls whether chunked prefill is enabled; the threshold caps scheduler chunks when they are scheduled.
+- name: --max-num-batched-tokens
+  relation: Sets the total per-step token budget applied after the per-request threshold cap.
+constraints:
+- With max_num_partial_prefills greater than one, long_prefill_token_threshold cannot exceed max_model_len.
+- For Mamba cache align mode, a positive threshold must be at least block_size.
+- Encoder-decoder models disable chunked prefill and reset this value to zero during scheduler configuration.
+tuning_advice:
+  summary: Leave the default baseline unless long-prefill fairness or per-step latency requires bounded chunks; benchmark
+    positive thresholds against the workload's prompt-length mix.
+  suggested_values:
+  - scenario: Default partial-prefill configuration
+    value: 0
+    reason: No explicit positive cap is applied; with more than one partial prefill, upstream derives a threshold from max_model_len.
+  - scenario: Mixed workloads needing bounded long-prefill steps
+    value: 512
+    reason: A positive cap makes Ascend schedulers split requests with more than 512 pending tokens.
+  - scenario: Throughput-oriented long-context batching
+    value: 1024
+    reason: A larger cap reduces the number of chunks while still bounding any one request's scheduled work.
+  caveats:
+  - Smaller positive thresholds add scheduling steps and may reduce throughput if the accelerator is underfilled.
+  - The profiling-chunk scheduler can further adjust chunk size after this configured cap is applied.
+  - A manually chosen threshold must satisfy the max_model_len and Mamba align-mode constraints when those configurations
+    apply.
+  quick_guide: Use 0 for the default behavior; start at 512 for long-prompt fairness and increase only when throughput measurements
+    justify it.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

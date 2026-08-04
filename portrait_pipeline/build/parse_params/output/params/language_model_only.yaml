@@ -1,0 +1,106 @@
+name: --language-model-only
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:77
+- vllm/engine/arg_utils.py:1168
+- vllm/config/model.py:323
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --language-model-only
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: "When enabled, this flag sets all multimodal modality limits to 0, effectively disabling the loading of vision\
+  \ encoders, audio encoders, and other multimodal components. On Ascend NPU, this has two key performance effects:\n1. **Memory\
+  \ savings**: The multimodal encoder (e.g., ViT for vision models) is\n   not loaded onto the NPU, freeing significant device\
+  \ memory that can instead\n   be allocated to the KV cache. This directly increases the maximum batch size\n   and sequence\
+  \ length the model can serve.\n\n2. **Throughput improvement for text-only workloads**: By skipping multimodal\n   preprocessing\
+  \ and encoder execution, the model operates as a pure text LLM.\n   This eliminates encoder forward passes and multimodal\
+  \ data transfer overhead,\n   improving tokens-per-second for text-only inference.\n\nThe vllm-ascend release notes (PR\
+  \ #8556) confirm a bug fix for `_dummy_run` warmup mismatch when `--language-model-only` is used, indicating this flag is\
+  \ actively tested and supported on Ascend hardware. The test at `tests/e2e/pull_request/one_card/test_vlm.py:73` demonstrates\
+  \ using this flag with Qwen3-VL-8B-Instruct on Ascend, confirming it works for multimodal models deployed in text-only mode\
+  \ on NPUs.\nThe parameter also affects model config hashing (vllm/config/model.py:397), meaning enabling it changes the\
+  \ compiled graph cache key — this is relevant for Ascend's graph compilation pipeline.\n"
+usage_locations:
+- file: vllm/config/multimodal.py:315
+  context: '`get_limit_per_prompt()` returns 0 for all modalities when `language_model_only` is True, effectively disabling
+    multimodal input validation.
+
+    '
+- file: vllm/config/model.py:397
+  context: 'Included in model config hash computation — affects graph compilation cache on Ascend.
+
+    '
+- file: vllm/lora/model_manager.py:199
+  context: 'When enabled, automatically disables `enable_tower_connector_lora` since the multimodal tower/connector is not
+    loaded.
+
+    '
+- file: tests/e2e/pull_request/one_card/test_vlm.py:86
+  context: 'Ascend E2E test using `language_model_only=True` with Qwen3-VL-8B-Instruct for text-only generation on NPU.
+
+    '
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: '`--language-model-only` is semantically equivalent to setting `--limit-mm-per-prompt` to 0 for every modality.
+    If both are specified, `language_model_only` takes precedence in `get_limit_per_prompt()`.
+
+    '
+- name: --enable-tower-connector-lora
+  relation: 'When `--language-model-only` is True, tower connector LoRA is automatically disabled since the multimodal tower
+    is not loaded.
+
+    '
+constraints:
+- Only meaningful for multimodal models; has no effect on text-only models.
+- When enabled, multimodal inputs (images, video, audio) will be rejected at the API level since all modality limits are set
+  to 0.
+tuning_advice:
+  summary: 'Enable `--language-model-only` when deploying multimodal models on Ascend NPU for text-only inference to save
+    device memory and improve throughput.
+
+    '
+  suggested_values:
+  - scenario: 'Deploying a multimodal model (e.g., Qwen2-VL, Qwen3-VL, LLaVA) on Ascend NPU for text-only serving where no
+      image/video/audio inputs are expected.
+
+      '
+    value: 'True'
+    reason: 'Frees NPU memory by not loading the vision/audio encoder, allowing larger KV cache allocation and higher batch
+      sizes. Eliminates encoder overhead from the inference pipeline.
+
+      '
+  - scenario: 'Deploying a multimodal model on Ascend NPU where multimodal inputs are required.
+
+      '
+    value: 'False'
+    reason: 'Multimodal encoders must be loaded to process image/video/audio inputs. Setting to True would reject all multimodal
+      requests.
+
+      '
+  caveats:
+  - 'The vllm-ascend plugin had a historical bug (fixed in PR #8556) where `_dummy_run` warmup could mismatch with `--language-model-only`.
+    Ensure you are using a recent vllm-ascend version that includes this fix.
+
+    '
+  - 'When enabled, any request containing multimodal data (images, video, audio) will be rejected. Ensure your API clients
+    only send text-only requests.
+
+    '
+  - 'Tower connector LoRA (`--enable-tower-connector-lora`) is automatically disabled when this flag is set, as the multimodal
+    tower is not loaded.
+
+    '
+  quick_guide: 'Set `--language-model-only` when serving multimodal models for text-only workloads on Ascend NPU to save memory
+    and boost throughput.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,76 @@
+name: weight_transfer.backend
+type: nested
+category: communication
+scope: vllm
+source_file: []
+value_type: str
+default: nccl
+valid_choices:
+- nccl
+- ipc
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the communication backend used for weight transfer between vLLM workers during online
+  weight updates (e.g., RLHF training loops). It is part of the WeightTransferConfig nested config object. On Ascend NPU,
+  the vllm-ascend plugin patches the distributed backend normalization function (vllm_ascend/patch/worker/patch_distributed.py:35)
+  to convert backend strings to their canonical form, but does not override the weight transfer backend selection itself.
+  The parameter only affects performance when online weight transfer is actively used (init_weight_transfer_engine / update_weights
+  APIs). For standard inference without online weight updates, this parameter has no runtime effect. When active, "nccl" uses
+  NCCL/HCCL collective communication for weight broadcasting, while "ipc" uses shared memory for same-node transfers. On Ascend,
+  HCCL (the NCCL equivalent) is the recommended backend for multi-NPU weight synchronization.
+
+  '
+usage_locations:
+- file: examples/rl/rlhf_async_new_apis.py:229
+  context: RLHF example using WeightTransferConfig(backend="nccl") for async weight updates
+- file: examples/rl/rlhf_ipc.py:102
+  context: RLHF example using WeightTransferConfig(backend="ipc") for same-node IPC weight transfer
+- file: examples/rl/rlhf_nccl.py:137
+  context: RLHF example using WeightTransferConfig(backend="nccl") with TP=2
+- file: examples/rl/rlhf_nccl_fsdp_ep.py:234
+  context: RLHF example using WeightTransferConfig(backend="nccl") with expert parallelism
+- file: tests/entrypoints/weight_transfer/test_weight_transfer_llm.py:117
+  context: Test verifying weight transfer engine initialization with nccl backend
+- file: tests/entrypoints/weight_transfer/test_weight_transfer_llm.py:145
+  context: Test verifying init_weight_transfer_engine calls with nccl backend
+- file: vllm_ascend/patch/worker/patch_distributed.py:35
+  context: Ascend patch normalizes backend string representation
+related_parameters:
+- name: distributed_executor_backend
+  relation: Must be "ray" for weight transfer to work (weight transfer requires Ray executor)
+- name: load_format
+  relation: Often used with load_format="dummy" in RLHF examples to skip initial weight loading
+- name: tensor_parallel_size
+  relation: Affects the number of workers participating in weight transfer
+constraints:
+- distributed_executor_backend must be set to 'ray' for weight transfer to function
+- Only 'nccl' and 'ipc' are valid backend choices
+tuning_advice:
+  summary: 'Use "nccl" (default) for multi-NPU weight transfer on Ascend; "ipc" only for single-node scenarios where shared
+    memory is preferred. This parameter has no effect unless online weight transfer APIs are actively used.
+
+    '
+  suggested_values:
+  - scenario: Multi-NPU RLHF training with online weight updates on Ascend
+    value: nccl
+    reason: 'HCCL (Ascend''s NCCL equivalent) provides efficient collective communication for weight broadcasting across NPUs.
+      This is the default and recommended backend for distributed weight transfer.
+
+      '
+  - scenario: Single-NPU or same-node weight transfer where NCCL overhead is undesirable
+    value: ipc
+    reason: 'IPC (inter-process communication) uses shared memory for weight transfer between processes on the same node,
+      avoiding NCCL/HCCL initialization overhead. Only suitable for single-node deployments.
+
+      '
+  caveats:
+  - This parameter only affects performance when online weight transfer APIs (init_weight_transfer_engine, update_weights)
+    are actively called — for standard inference it has no effect
+  - On Ascend NPU, the 'nccl' backend maps to HCCL under the hood via vllm-ascend's distributed backend normalization
+  - Weight transfer requires distributed_executor_backend='ray' — it does not work with mp or uni executors
+  quick_guide: Use default 'nccl' for Ascend RLHF weight transfer; switch to 'ipc' only for single-node deployments
+analysis_date: '2026-07-06'

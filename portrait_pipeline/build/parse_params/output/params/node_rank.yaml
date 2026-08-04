@@ -1,0 +1,91 @@
+name: --node-rank
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:930
+- vllm/config/parallel.py:261
+- vllm_ascend/patch/platform/patch_multiproc_executor.py:51
+- vllm_ascend/model_loader/rfork/rfork_loader.py:104
+value_type: int
+default: '0'
+valid_choices: 0 to nnodes-1
+cli_example: --node-rank 0
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: '--node-rank identifies the current node in a multi-node distributed inference deployment. It is used to compute
+  node_rank_within_dp (node_rank % nnodes_within_dp), which determines whether this node acts as the leader (node_rank_within_dp
+  == 0) or a follower within its data-parallel group. The leader node creates the MessageQueue for broadcasting scheduler
+  outputs and collects response message queues from all workers (both local and remote). Follower nodes skip this setup and
+  run in headless mode, waiting for instructions from the leader. On Ascend NPU, vllm-ascend patches the multiproc executor
+  to use the same leader/follower logic (patch_multiproc_executor.py:51,105). Incorrect node_rank causes either multiple leaders
+  (duplicate MessageQueue creation, port conflicts) or no leader (all nodes wait indefinitely), both resulting in hang or
+  crash. The parameter also affects RFork model loading: "node_rank is embedded in the seed key for topology-sensitive" seed
+  matching (rfork_loader.py:104, seed_protocol.py:30,48). Mismatched node_rank prevents seed reuse across instances, increasing
+  cold-start latency.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:641
+  context: Computes node_rank_within_dp = node_rank % nnodes_within_dp
+- file: vllm/v1/executor/multiproc_executor.py:134
+  context: 'Leader check: if node_rank_within_dp == 0, create MessageQueue for broadcast'
+- file: vllm/v1/executor/multiproc_executor.py:164
+  context: Computes global_start_rank = local_world_size * node_rank_within_dp
+- file: vllm/entrypoints/cli/serve.py:180
+  context: Follower nodes (node_rank_within_dp > 0) run headless multiproc executor
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:51
+  context: Ascend-patched leader check for MessageQueue creation
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:105
+  context: Ascend-patched leader check for remote response message queues
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:104
+  context: Passes node_rank to RForkWorker for seed key construction
+- file: vllm_ascend/model_loader/rfork/seed_protocol.py:30
+  context: node_rank embedded in RFork seed key for topology matching
+- file: vllm/engine/arg_utils.py:1775
+  context: 'Validation: node_rank must be less than nnodes'
+related_parameters:
+- name: --nnodes
+  relation: node_rank must be in range [0, nnodes-1]; together they define the node's position in the cluster
+- name: --distributed-executor-backend
+  relation: node_rank is only meaningful when distributed_executor_backend is mp (multiprocessing)
+- name: --data-parallel-size
+  relation: node_rank is used to infer data_parallel_rank and data_parallel_size_local in multi-node DP setups
+- name: --tensor-parallel-size
+  relation: Combined with tp_size and pp_size to compute world_size and local_world_size per node
+- name: --pipeline-parallel-size
+  relation: Combined with tp_size and dp_size to compute world_size and local_world_size per node
+- name: --master-addr
+  relation: Follower nodes use master_addr to connect to the leader node's process group
+- name: --master-port
+  relation: Follower nodes use master_port to connect to the leader node's process group
+constraints:
+- node_rank must be less than nnodes (--nnodes)
+- node_rank is only effective when --distributed-executor-backend is mp
+- world_size (tp_size * pp_size * pcp_size) must be divisible by nnodes
+- Each node in the cluster must have a unique node_rank starting from 0
+tuning_advice:
+  summary: 'Assign a unique, sequential integer starting from 0 to each node in the cluster. Node 0 acts as the leader; incorrect
+    assignment causes hangs or crashes.
+
+    '
+  suggested_values:
+  - scenario: Single-node deployment
+    value: '0'
+    reason: Default value; no multi-node coordination needed
+  - scenario: Multi-node deployment with N nodes
+    value: 0, 1, 2, ..., N-1
+    reason: Each node must have a unique rank; node 0 is the leader that creates the broadcast MessageQueue
+  caveats:
+  - On Ascend NPU, vllm-ascend patches the multiproc executor but preserves the same leader/follower logic — node_rank behavior
+    is identical to upstream vLLM
+  - If using RFork model loading on Ascend, node_rank is part of the seed key; changing node_rank between restarts prevents
+    seed reuse and forces a full model reload from storage
+  - Incorrect node_rank (e.g., two nodes both set to 0) causes both to try creating the MessageQueue as leader, leading to
+    port conflicts and hang
+  - A node_rank >= nnodes triggers an assertion error at startup (arg_utils.py:1775)
+  quick_guide: Set --node-rank to a unique integer from 0 to N-1 for each of the N nodes; node 0 is the leader
+analysis_date: '2026-07-06'

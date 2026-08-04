@@ -1,0 +1,95 @@
+name: HCCL_CONNECT_TIMEOUT
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:82
+- docs/source/tutorials/models/DeepSeek-V3.1.md:285
+- docs/source/tutorials/models/DeepSeek-V3.2.md:302
+- docs/source/tutorials/models/DeepSeek-V4-Flash.md:356
+- docs/source/tutorials/models/DeepSeek-V4-Pro.md:163
+- examples/disaggregated_prefill_v1/mooncake_connector_deployment_guide.md:20
+value_type: int
+default: 120
+valid_choices: positive integer number of seconds
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'HCCL_CONNECT_TIMEOUT is consumed by the external HCCL runtime and bounds connection establishment rather than
+  vLLM request execution. The pinned vllm-ascend source does not read or write it in Python, and pinned upstream vLLM has
+  no occurrence. Ascend launch recipes nevertheless set it before starting distributed servers: the dynamic chunked pipeline-parallel,
+  DeepSeek-V3.1, DeepSeek-V3.2, and several DeepSeek-V4 examples use 120 seconds, while larger DeepSeek-V4 multi-node configurations
+  use 1200 or 7200 seconds. A value that is too short can make slow rank or device connection setup time out, causing startup
+  failure or restart and increasing time-to-ready. A larger value does not improve healthy steady-state latency, throughput,
+  or memory use; it only permits more time for connection establishment and therefore delays reporting a genuine connection
+  failure.'
+usage_locations:
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:82
+  context: Sets 120 seconds before launching a multi-node dynamic chunked pipeline-parallel server.
+- file: docs/source/tutorials/models/DeepSeek-V3.1.md:285
+  context: Sets 120 seconds alongside HCCL_EXEC_TIMEOUT in distributed disaggregated-prefill launch scripts.
+- file: docs/source/tutorials/models/DeepSeek-V3.2.md:302
+  context: Sets 120 seconds in the model's distributed Ascend launch environment.
+- file: docs/source/tutorials/models/DeepSeek-V4-Flash.md:427
+  context: Uses 1200 seconds in a larger multi-node DeepSeek-V4-Flash launch recipe.
+- file: docs/source/tutorials/models/DeepSeek-V4-Pro.md:163
+  context: Uses 7200 seconds for a large DeepSeek-V4-Pro data-parallel and tensor-parallel deployment.
+- file: examples/disaggregated_prefill_v1/mooncake_connector_deployment_guide.md:20
+  context: Sets 120 seconds for both prefill and decode node launch scripts and identifies it as HCCL configuration.
+related_parameters:
+- name: HCCL_EXEC_TIMEOUT
+  relation: Controls HCCL operation execution timeout after connection setup; Ascend recipes commonly configure it beside
+    HCCL_CONNECT_TIMEOUT.
+- name: HCCL_IF_IP
+  relation: Selects the local address used by HCCL; an invalid address can prevent connection establishment regardless of
+    timeout length.
+- name: HCCL_SOCKET_IFNAME
+  relation: Selects the HCCL network interface in multi-node recipes and must identify a reachable interface.
+- name: VLLM_ENGINE_READY_TIMEOUT_S
+  relation: Separately limits how long vLLM orchestration waits for engines to become ready and should allow enough time for
+    distributed initialization.
+constraints:
+- Set the variable in the process environment before launching vLLM so the external HCCL runtime sees it during initialization.
+- Use a positive integer expressed in seconds.
+- All participating nodes still require correct, mutually reachable HCCL_IF_IP and HCCL_SOCKET_IFNAME settings; increasing
+  this timeout cannot repair network configuration errors.
+tuning_advice:
+  summary: Keep 120 seconds for ordinary deployments. Increase it only when a valid large or slow-starting distributed topology
+    cannot finish HCCL connection establishment in that window; this tunes startup tolerance, not steady-state inference speed.
+  suggested_values:
+  - scenario: Ordinary distributed Ascend deployment
+    value: 120
+    reason: This is the value repeated across the pinned DeepSeek-V3 and standard disaggregated-prefill launch recipes.
+  - scenario: Large multi-node deployment with demonstrably slow but successful HCCL initialization
+    value: 1200
+    reason: Pinned DeepSeek-V4 and nightly multi-node configurations use 1200 seconds to provide additional connection-setup
+      headroom.
+  - scenario: Very large DeepSeek-V4-Pro deployment matching the documented recipe
+    value: 7200
+    reason: The pinned DeepSeek-V4-Pro data-parallel and tensor-parallel launch recipe explicitly uses this extended value.
+  caveats:
+  - Larger values delay failure reporting when a rank, device, address, or interface is genuinely unavailable.
+  - Do not raise this timeout to treat steady-state collective execution timeouts; HCCL_EXEC_TIMEOUT is the distinct setting
+    shown for that purpose.
+  - The repository documents launch values but does not implement or validate HCCL's external fallback default, so 120 is
+    the vllm-ascend recipe baseline represented here.
+  quick_guide: Start at 120 seconds; use 1200 only for measured large-cluster startup delays, and reserve 7200 for the documented
+    very-large DeepSeek-V4-Pro topology.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

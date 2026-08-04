@@ -1,0 +1,29 @@
+verified_at: '2026-08-03T15:00:00+08:00'
+platform:
+  os: linux
+  architecture: arm64
+  accelerator: Atlas A3
+source_image:
+  reference: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  pulled_digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+target_image:
+  repository: 10.1.30.201:31443/user-cdy-normal/vllm-ascend
+  tag: glm5.2-a3
+  digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  size_bytes: 6613584525
+versions:
+  vllm:
+    package: 0.1.dev1+g418bd6273.empty
+    commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend:
+    package: 0.1.dev1+g32c8cf190.d20260616
+    commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+parameter_portrait:
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+verification:
+  package_versions_match: true
+  source_commits_match: true
+  remote_pull_verified: true
+  model_catalog_pairing_verified: true
+  portrait_reuse_approved: true

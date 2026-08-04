@@ -1,0 +1,119 @@
+name: --data-parallel-rank
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:971
+- vllm/config/parallel.py:122
+value_type: int
+default: '0'
+valid_choices: non-negative integer
+cli_example: --data-parallel-rank 0
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "This parameter assigns a unique rank to each data-parallel (DP) replica in a multi-replica deployment. It\
+  \ is the cornerstone of DP orchestration on Ascend NPU and directly controls:\n1. **KV cache sharding and transfer** — In\
+  \ vllm-ascend's Mooncake KV transfer\n   connectors (mooncake_connector.py:1395, mooncake_hybrid_connector.py:1093,\n  \
+  \ mooncake_layerwise_connector.py:800,1093), `data_parallel_rank` is used to\n   compute per-replica side-channel ports\
+  \ and `max_device_id`, which determine\n   how KV cache blocks are partitioned and routed between prefill and decode\n \
+  \  nodes. An incorrect rank causes KV cache routing failures or port conflicts.\n\n2. **DP metadata synchronization** —\
+  \ In the v1 Ascend model runner\n   (model_runner_v1.py:2746), `data_parallel_rank` indexes into the\n   `num_tokens_across_dp`\
+  \ tensor to extract the correct token count for\n   CUDA-graph dispatch. This directly affects batch formation and padding\n\
+  \   efficiency, impacting throughput and latency.\n\n3. **External load balancer mode** — When set explicitly (arg_utils.py:971-978),\n\
+  \   it enables external load balancer mode for MoE data-parallel deployments.\n   The upstream AsyncLLM (async_llm.py:293)\
+  \ and EngineCoreRequest\n   (engine/__init__.py:94) route requests to the correct DP rank via this\n   field. Misconfiguration\
+  \ causes requests to be routed to the wrong replica,\n   breaking the serving pipeline.\n\n4. **DP process group initialization**\
+  \ — In upstream parallel.py:543,\n   `data_parallel_rank == 0` determines which replica binds the master socket\n   and\
+  \ publishes the port. All other ranks read from the coordination store.\n   An incorrect rank breaks DP group formation.\n\
+  \nOn Ascend NPU, the parameter is consumed by vllm-ascend's BalanceDPEngineCoreProc (patch_balance_schedule.py:699) which\
+  \ sets `parallel_config.data_parallel_rank` before spawning engine cores. The v1 model runner reads it at model_runner_v1.py:297\
+  \ to set `self.dp_rank`, which is used throughout the execution loop for DP-aware scheduling and communication.\n"
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:699
+  context: BalanceDPEngineCoreProc sets parallel_config.data_parallel_rank = dp_rank before spawning engine cores
+- file: vllm_ascend/worker/model_runner_v1.py:297
+  context: V1 model runner reads dp_rank from parallel_config for DP-aware batch dispatch
+- file: vllm_ascend/worker/model_runner_v1.py:2746
+  context: DP rank used to index num_tokens_across_dp tensor for CUDA-graph dispatch
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1395
+  context: Mooncake scheduler computes side_channel_port using data_parallel_rank
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1583
+  context: Mooncake worker reads data_parallel_rank_local for KV transfer coordination
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1093
+  context: Mooncake hybrid scheduler computes side_channel_port using data_parallel_rank
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1391
+  context: Mooncake hybrid worker reads data_parallel_rank_local
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:800
+  context: Mooncake layerwise scheduler computes side_channel_port using data_parallel_rank
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_layerwise_connector.py:1093
+  context: Mooncake layerwise worker computes side_channel_port using data_parallel_rank
+- file: vllm/config/parallel.py:543
+  context: DP rank 0 binds master socket and publishes port for DP group init
+- file: vllm/v1/engine/__init__.py:94
+  context: EngineCoreRequest carries data_parallel_rank for request routing
+- file: vllm/v1/engine/async_llm.py:293
+  context: AsyncLLM.add_request accepts data_parallel_rank for DP request routing
+related_parameters:
+- name: --data-parallel-size
+  relation: Must be set together; rank must be in range [0, data_parallel_size)
+- name: --data-parallel-start-rank
+  relation: Starting rank for secondary nodes in multi-node DP deployments
+- name: --data-parallel-size-local
+  relation: Number of local DP replicas on this node; local rank derived from global rank
+- name: --data-parallel-address
+  relation: Address of DP cluster head-node for coordination
+- name: --data-parallel-rpc-port
+  relation: Port for DP RPC communication; used with rank to compute per-replica ports
+- name: --data-parallel-backend
+  relation: Backend (mp or ray) determines how DP ranks communicate
+- name: --data-parallel-external-lb
+  relation: Implicitly set when --data-parallel-rank is provided; enables external LB mode
+- name: --tensor-parallel-size
+  relation: DP rank interacts with TP size for device ID and port calculations
+- name: --pipeline-parallel-size
+  relation: DP rank interacts with PP size for max_device_id computation
+- name: --nnodes
+  relation: Multi-node DP deployments use nnodes to infer DP rank from node_rank
+- name: --node-rank
+  relation: Used with nnodes to infer DP rank in multi-node setups
+constraints:
+- --data-parallel-rank must be in range [0, --data-parallel-size).
+- --data-parallel-rank is only meaningful when --data-parallel-size > 1.
+- When --data-parallel-rank is set explicitly, --data-parallel-external-lb is implicitly enabled (MoE-only).
+- Non-MoE models should not use --data-parallel-rank; launch independent vLLM instances instead.
+- When --data-parallel-backend is 'ray', --nnodes must be 1 (single-node only).
+- Each DP rank on the same node must use a unique --port to avoid conflicts.
+tuning_advice:
+  summary: 'Assign a unique integer rank to each DP replica, starting from 0. For Ascend NPU deployments with KV transfer
+    (Mooncake), ensure ranks are consistent across prefill and decode nodes to avoid port conflicts and KV cache routing errors.
+
+    '
+  suggested_values:
+  - scenario: Single-node multi-replica DP deployment
+    value: 0, 1, 2, ... (sequential, one per replica)
+    reason: Each replica needs a unique rank for port computation and KV cache partitioning. Sequential assignment starting
+      from 0 is the standard convention.
+  - scenario: Multi-node DP with Mooncake KV transfer
+    value: 'Computed as: node_rank * (local_world_size) // (tp_size * pp_size)'
+    reason: Upstream arg_utils.py:1761-1780 infers DP rank from node_rank and world size. Consistent rank assignment ensures
+      KV transfer side-channel ports do not collide across nodes.
+  - scenario: External load balancer mode (MoE models)
+    value: Explicitly set per replica, e.g., --data-parallel-rank 0 for first replica
+    reason: Setting --data-parallel-rank explicitly enables external LB mode. The external LB uses this rank to route requests
+      to the correct replica.
+  caveats:
+  - On Ascend NPU with Mooncake KV transfer, an incorrect data_parallel_rank causes side_channel_port collisions, breaking
+    KV cache transfer between prefill and decode nodes.
+  - The v1 Ascend model runner uses dp_rank to index into num_tokens_across_dp; an out-of-bounds rank causes a runtime indexing
+    error.
+  - When using --data-parallel-rank explicitly, vLLM enables external load balancer mode which is only supported for MoE models.
+    Non-MoE models should use independent vLLM instances without --data-parallel-* flags.
+  - In multi-node deployments, DP rank is inferred from node_rank and world_size. Manually setting --data-parallel-rank may
+    conflict with the inferred value.
+  quick_guide: Assign sequential ranks starting from 0, one per DP replica. For Mooncake KV transfer on Ascend, ensure ranks
+    are consistent across all nodes.
+analysis_date: '2026-07-06'

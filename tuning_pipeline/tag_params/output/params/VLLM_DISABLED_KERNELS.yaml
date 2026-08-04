@@ -1,0 +1,94 @@
+name: VLLM_DISABLED_KERNELS
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:107
+- vllm/envs.py:979
+- docs/design/fusions.md:66
+- docs/design/fusions.md:281
+value_type: list[str]
+default: []
+valid_choices: Comma-separated, case-sensitive linear-kernel class names registered by vLLM, including MacheteLinearKernel,
+  MarlinLinearKernel, ExllamaLinearKernel, FlashInferFP8ScaledMMLinearKernel, and other MP, scaled-MM, MXFP8, or NVFP4 kernel
+  class names.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: When unset, vLLM exposes an empty list. When set, envs.py splits the raw value on commas, and the current upstream
+  linear-kernel selectors compare each candidate's exact class name against that list before selecting the first supported
+  implementation. Disabling a preferred implementation can therefore select a slower fallback and change inference latency
+  and throughput; disabling every viable candidate can prevent model initialization. The pinned upstream source applies the
+  check to mixed-precision, scaled-MM, MXFP8, and NVFP4 selection, which is broader than the older envs.py comment that mentions
+  only MPLinearKernel. The upstream fusion guide specifically requires disabling FlashInferFP8ScaledMMLinearKernel for the
+  documented SM100/B200 FP8 collective fusion path. The pinned vllm-ascend repository contains no reference to this variable,
+  identifies its platform as the out-of-tree platform, and supplies its own Ascend quantization implementations; the upstream
+  candidate registries have no out-of-tree entry. Consequently this variable is not an Ascend NPU tuning control in the pinned
+  stack.
+usage_locations:
+- file: vllm/envs.py:979
+  context: Defines the variable and parses a present value with split(","), without trimming whitespace or validating kernel
+    names.
+- file: docs/design/fusions.md:66
+  context: States that SM100 support for the documented GEMM-communication fusion configuration also requires disabling FlashInferFP8ScaledMMLinearKernel.
+- file: docs/design/fusions.md:281
+  context: Shows the B200 FP8 fusion invocation with VLLM_DISABLED_KERNELS=FlashInferFP8ScaledMMLinearKernel.
+related_parameters:
+- name: --quantization
+  relation: The model's quantization format determines which linear-kernel registry and candidate set can be reached.
+- name: VLLM_USE_TRITON_AWQ
+  relation: Both settings can influence the implementation used for quantized linear execution, although this variable excludes
+    candidates by exact class name.
+- name: compilation_config.pass_config.fuse_gemm_comms
+  relation: The upstream guide requires excluding the FlashInfer FP8 scaled-MM kernel for the documented SM100/B200 GEMM-communication
+    fusion path.
+constraints:
+- Kernel names are case-sensitive Python class names and unknown names are silently ineffective.
+- Values are split only on commas; surrounding whitespace is retained, so "MacheteLinearKernel, MarlinLinearKernel" does not
+  disable the second name.
+- Disabling all candidates that support a layer configuration makes kernel selection raise ValueError instead of guaranteeing
+  a generic fallback.
+- The setting affects only selectors that explicitly consult VLLM_DISABLED_KERNELS; it is not a general mechanism for disabling
+  every vLLM kernel.
+tuning_advice:
+  summary: Leave the variable unset in normal operation, especially on Ascend. Use it only to work around a documented incompatibility
+    or to run a controlled kernel-fallback performance comparison.
+  suggested_values:
+  - scenario: Normal deployment, including the pinned vllm-ascend stack
+    value: []
+    reason: The empty list preserves automatic selection of the first supported kernel, and the pinned Ascend plugin has no
+      consumer for this variable.
+  - scenario: Documented SM100/B200 FP8 GEMM-communication fusion path
+    value:
+    - FlashInferFP8ScaledMMLinearKernel
+    reason: The pinned upstream fusion guide explicitly requires excluding this incompatible kernel for that CUDA-specific
+      path.
+  - scenario: Controlled comparison of an upstream quantized linear fallback
+    value:
+    - MacheteLinearKernel
+    reason: Excluding the exact preferred class can exercise the next supported candidate, but the resulting latency and throughput
+      must be benchmarked for the specific model, shapes, dtype, and GPU.
+  caveats:
+  - 'Do not copy the SM100/B200 workaround to Ascend: the documented fusion and FlashInfer kernel are CUDA-specific, and the
+    pinned Ascend source does not consume this variable.'
+  - Candidate order and registered class names vary by platform and quantization format; a value that changes one model may
+    do nothing for another.
+  - Typos and whitespace produce no validation error, while excluding every viable candidate can fail model startup.
+  - Source inspection establishes selection behavior but not the speed of a fallback on a particular system; confirm changes
+    with end-to-end benchmarks.
+  quick_guide: Keep it unset on Ascend; upstream, provide exact comma-separated class names only for a documented workaround
+    or a measured fallback experiment.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

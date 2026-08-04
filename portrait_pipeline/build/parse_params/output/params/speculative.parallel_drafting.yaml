@@ -1,0 +1,125 @@
+name: speculative.parallel_drafting
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/v1/spec_decode/llm_base_proposer.py:95
+- vllm_ascend/spec_decode/llm_base_proposer.py:1034
+- vllm_ascend/attention/attention_v1.py:302
+- vllm/v1/attention/backend.py:568
+- vllm/model_executor/models/llama_eagle3.py:308
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, parallel drafting generates all speculative tokens in a single forward pass instead of sequentially.
+  This eliminates the per-token iteration overhead in the draft proposer''s generation loop. In vllm-ascend''s v1 worker,
+  the AscendEagleProposer and AscendDraftModelProposer both check `self.parallel_drafting` at line 1034 of vllm_ascend/spec_decode/llm_base_proposer.py:
+  if true (or if num_speculative_tokens == 1), the proposer returns all draft tokens immediately after the first forward pass,
+  skipping the iterative loop that would otherwise run `num_speculative_tokens` times. This directly reduces latency per decode
+  step. Additionally, in the attention backend (vllm_ascend/attention/attention_v1.py:302), parallel drafting changes how
+  sequence lengths are handled — it forces the use of on-device seq_lens instead of CPU-side seq_lens, which affects the Ascend
+  attention metadata construction. The upstream v1 attention backend (vllm/v1/attention/backend.py:568) also uses this flag
+  to compute `reorder_batch_threshold`, multiplying the speculative token count by 2 (instead of 1) when parallel drafting
+  is active, which can increase batch reordering overhead but enables better kernel selection for the parallel draft pattern.
+  Memory-wise, parallel drafting requires extra slots per request: "`extra_slots_per_request` becomes `num_speculative_tokens`
+  instead" of 1 (vllm/v1/spec_decode/llm_base_proposer.py:96-98), increasing the KV cache reservation per sequence. The Eagle3
+  model (vllm/model_executor/models/llama_eagle3.py:308-319) also allocates a `mask_hidden` buffer when parallel drafting
+  is enabled, consuming additional device memory proportional to hidden_size.
+
+  '
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:1034
+  context: 'Early exit in draft token generation — if parallel_drafting is true, returns all draft tokens after the first
+    forward pass, skipping the iterative loop.
+
+    '
+- file: vllm_ascend/attention/attention_v1.py:302
+  context: 'When parallel_drafting is true, forces seq_lens to use on-device tensor instead of CPU-side tensor for Ascend
+    attention metadata.
+
+    '
+- file: vllm/v1/spec_decode/llm_base_proposer.py:95-98
+  context: 'Sets extra_slots_per_request to num_speculative_tokens (vs 1) when parallel drafting is enabled, increasing KV
+    cache reservation.
+
+    '
+- file: vllm/v1/attention/backend.py:568
+  context: 'Computes reorder_batch_threshold with a multiplier of 2 for speculative tokens when parallel drafting is active.
+
+    '
+- file: vllm/model_executor/models/llama_eagle3.py:308-319
+  context: 'Allocates mask_hidden buffer on device when parallel drafting is enabled.
+
+    '
+related_parameters:
+- name: speculative.num_speculative_tokens
+  relation: 'When parallel_drafting is true, extra_slots_per_request equals num_speculative_tokens instead of 1, directly
+    multiplying KV cache memory usage.
+
+    '
+- name: speculative.method
+  relation: 'Only compatible with "eagle" and "draft_model" methods. Not supported by "mtp", "ngram", "medusa", or "dflash"
+    (dflash always uses parallel drafting internally but does not expose this flag).
+
+    '
+constraints:
+- parallel_drafting is only compatible with speculative methods 'eagle' and 'draft_model'.
+- The draft model must be trained to support parallel drafting; using it with a model not trained for this mode will produce
+  incorrect results.
+tuning_advice:
+  summary: 'Enable parallel drafting on Ascend NPU when using EAGLE or draft-model speculation with a model trained for parallel
+    decoding — it eliminates the per-token iteration overhead and can significantly reduce decode latency, at the cost of
+    increased KV cache memory per request.
+
+    '
+  suggested_values:
+  - scenario: 'Using EAGLE or draft-model speculation on Ascend NPU with a model trained for parallel drafting, and KV cache
+      memory is not the bottleneck.
+
+      '
+    value: 'true'
+    reason: 'Eliminates the sequential draft generation loop, reducing per-step latency by up to num_speculative_tokens ×
+      (forward pass time). On Ascend NPU, the v1 worker''s AscendEagleProposer directly returns all draft tokens after one
+      forward pass when this is enabled.
+
+      '
+  - scenario: 'KV cache memory is constrained, or the draft model was not trained for parallel drafting.
+
+      '
+    value: 'false'
+    reason: 'Parallel drafting increases extra_slots_per_request from 1 to num_speculative_tokens, multiplying KV cache reservation.
+      If memory is tight, this can reduce max batch size and overall throughput.
+
+      '
+  caveats:
+  - 'On Ascend NPU v1 worker, when parallel_drafting is true, the attention backend switches from CPU-side seq_lens to on-device
+    seq_lens (vllm_ascend/attention/attention_v1.py:302-303). This may introduce additional host-to-device synchronization
+    overhead in some scenarios.
+
+    '
+  - 'The upstream v1 attention backend increases reorder_batch_threshold when parallel drafting is active (vllm/v1/attention/backend.py:568),
+    which can increase batch reordering overhead but is necessary for correct kernel dispatch with parallel draft patterns.
+
+    '
+  - 'Eagle3 models allocate an additional mask_hidden buffer on device when parallel drafting is enabled (vllm/model_executor/models/llama_eagle3.py:310-319),
+    consuming extra device memory proportional to hidden_size.
+
+    '
+  - 'Not all speculative methods support parallel drafting — it is only effective for "eagle" and "draft_model". For "mtp",
+    the proposer always runs the iterative loop regardless of this flag.
+
+    '
+  quick_guide: 'Set to true for latency-sensitive EAGLE/draft-model speculation on Ascend NPU when the draft model supports
+    parallel decoding and KV cache memory is sufficient; keep false otherwise.
+
+    '
+analysis_date: '2026-07-06'

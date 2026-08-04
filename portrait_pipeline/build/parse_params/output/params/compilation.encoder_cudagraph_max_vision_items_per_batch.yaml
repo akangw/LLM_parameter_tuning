@@ -1,0 +1,53 @@
+name: compilation.encoder_cudagraph_max_vision_items_per_batch
+type: nested
+category: compilation
+scope: vllm
+source_file: []
+value_type: int
+default: '0'
+valid_choices: non-negative integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls the fixed batch size used during CUDA graph capture for the vision encoder in multimodal
+  models. When set to 0 (default), the batch size is auto-inferred from the model''s budget range as max_budget // min_budget.
+  A user-provided positive value overrides this auto-inference. On Ascend NPU, CUDA graphs are not natively supported — vllm-ascend
+  uses its own graph capture mechanism (torch_npu graph or CANN graph). The parameter may have limited or no effect on Ascend
+  hardware, as the underlying graph capture implementation differs significantly from CUDA. Even if partially effective, it
+  primarily affects encoder memory allocation and graph capture overhead, which is a one-time cost during model initialization
+  rather than per-step runtime.
+
+  '
+usage_locations: []
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: Parent compilation config that determines whether graph capture is enabled at all
+- name: compilation.encoder_cudagraph_capture_sizes
+  relation: Related parameter controlling which batch sizes to capture for the encoder
+constraints:
+- Must be a non-negative integer
+- Only effective when CUDA graph capture is enabled for the encoder (cudagraph_mode includes encoder support)
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has minimal performance impact due to lack of native CUDA graph support. Leave at
+    default (0) for auto-inference unless you observe encoder initialization memory issues with very large vision batch sizes.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU
+    value: '0'
+    reason: Auto-inference from model budget range is sufficient; manual tuning provides negligible benefit on Ascend due
+      to different graph capture backend
+  - scenario: Encoder OOM during initialization with large vision inputs
+    value: '1'
+    reason: Forces the smallest possible fixed batch size for graph capture, minimizing encoder memory allocation
+  caveats:
+  - vllm-ascend does not use CUDA graphs natively; this parameter may be silently ignored or have reduced effect compared
+    to NVIDIA GPUs
+  - Encoder graph capture is a one-time initialization cost — this parameter does not affect per-token generation latency
+    or throughput
+  - Setting a value larger than the actual maximum vision items per batch wastes memory without benefit
+  quick_guide: Leave at default (0) on Ascend NPU; only adjust if encoder initialization fails with OOM
+analysis_date: '2026-07-06'

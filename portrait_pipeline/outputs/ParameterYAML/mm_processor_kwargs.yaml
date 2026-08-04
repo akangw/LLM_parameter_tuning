@@ -1,0 +1,78 @@
+name: --mm-processor-kwargs
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1180
+- vllm/config/model.py:647
+- vllm/config/multimodal.py:114
+value_type: dict
+default: null
+valid_choices: Model-specific dictionary of keyword arguments accepted by the selected model's multimodal processor.
+cli_example: '--mm-processor-kwargs ''{"max_pixels": 589824}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'The CLI value is stored in EngineArgs and passed into ModelConfig, which builds MultiModalConfig with mm_processor_kwargs.
+  MultiModalConfig forwards these values to the selected model''s multimodal processor; request-level processor kwargs are
+  merged afterward and take precedence. Therefore performance depends on the model-specific keys used. The vLLM memory guide
+  documents that reducing processor arguments can reduce processed multimodal-input size and save memory; it gives Qwen2.5-VL
+  max_pixels and InternVL max_dynamic_patch examples. For transformer multimodal models, the configured kwargs are also passed
+  to the processor token-count calculation, so overrides that reduce image/video processing can reduce vision tokens, prefill
+  work, and associated memory. vLLM-Ascend carries the field through its DeepSeek-V4 chat patch and its E2E Qwen3-VL configuration
+  uses min_pixels, max_pixels, and fps, with no Ascend-specific override of this configuration.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:1549
+  context: EngineArgs forwards mm_processor_kwargs when constructing ModelConfig.
+- file: vllm/config/model.py:647
+  context: ModelConfig passes the value into MultiModalConfig.
+- file: vllm/config/multimodal.py:326
+  context: merge_mm_processor_kwargs combines configured defaults with inference kwargs, with inference values winning.
+- file: vllm/model_executor/models/transformers/multimodal.py:70
+  context: Transformer multimodal processing passes configured kwargs to the processor token-count calculation.
+- file: docs/configuration/conserving_memory.md:167
+  context: Documents reducing processor input size to save memory and shows Qwen2.5-VL and InternVL examples.
+- file: vllm_ascend/patch/platform/patch_deepseek_v4_thinking.py:69
+  context: The Ascend DeepSeek-V4 chat patch preserves mm_processor_kwargs in ChatParams.
+- file: tests/e2e/conftest.py:1681
+  context: Ascend E2E Qwen3-VL configuration supplies min_pixels, max_pixels, and fps.
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Limits the number of multimodal items; combine it with processor sizing to bound total multimodal work per prompt.
+- name: --max-model-len
+  relation: Vision tokens produced by the processor consume the model context budget.
+- name: --media-io-kwargs
+  relation: Configures media I/O by modality, whereas this parameter configures the model's multimodal processor.
+- name: --mm-processor-cache-gb
+  relation: Sizes the cache for processed multimodal inputs; it does not set processor resolution or tokenization.
+constraints:
+- The value must be a JSON object on the CLI.
+- Supported keys and valid ranges are defined by the selected model's processor; use that model's processor documentation
+  or configuration.
+- Keys that change image size, patch count, frame sampling, or similar preprocessing can change accuracy as well as performance.
+- Request-level processor kwargs override matching configured keys when the multimodal request path supplies them.
+tuning_advice:
+  summary: Start from the selected model's processor defaults, then reduce only the model-supported input-sizing keys when
+    multimodal prefill memory or latency is the constraint.
+  suggested_values:
+  - scenario: Qwen2.5-VL workload where lower multimodal memory use is acceptable
+    value: '{"max_pixels": 589824}'
+    reason: The vLLM conserving-memory guide uses max_pixels=768*768 instead of the cited 1280*28*28 default to reduce the
+      processed image size.
+  - scenario: Qwen3-VL on Ascend using the repository's E2E-tested processor configuration
+    value: '{"min_pixels": 784, "max_pixels": 1003520, "fps": 1}'
+    reason: The Ascend E2E configuration for Qwen3-VL uses these model-specific values, providing a source-backed baseline
+      to validate before changing them.
+  caveats:
+  - Do not apply Qwen or InternVL keys to a different model unless its processor supports them.
+  - Reducing image size, patch count, or sampled frames can reduce visual detail and task quality.
+  - Not every accepted processor key changes latency, throughput, or memory; assess the effect of the specific key for the
+    selected model.
+  quick_guide: For memory-constrained Qwen2.5-VL requests, test a lower supported max_pixels value; otherwise retain model
+    defaults or the Ascend-tested Qwen3-VL settings and benchmark representative inputs.
+analysis_date: '2026-07-27'

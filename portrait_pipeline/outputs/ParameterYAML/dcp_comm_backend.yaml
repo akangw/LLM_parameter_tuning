@@ -1,0 +1,62 @@
+name: --dcp-comm-backend
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:951
+- vllm/config/parallel.py:38
+- vllm/config/parallel.py:322
+value_type: str
+default: ag_rs
+valid_choices:
+- ag_rs
+- a2a
+cli_example: --dcp-comm-backend a2a
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Selects the Decode Context Parallel communication and output-combine path. ag_rs uses AllGather followed by
+  ReduceScatter. For a2a, the configuration selects an All-to-All exchange of partial outputs and LSE followed by a Triton
+  combine kernel; the source documents a reduction from three to two NCCL calls. The setting is consulted by attention backends
+  only when Decode Context Parallel is enabled, so its latency and throughput effect is workload- and backend-dependent.
+usage_locations:
+- file: vllm/engine/arg_utils.py:951
+  context: Registers the --dcp-comm-backend CLI option from the parallel configuration field.
+- file: vllm/config/parallel.py:38
+  context: Declares DCPCommBackend as Literal["ag_rs", "a2a"].
+- file: vllm/config/parallel.py:322
+  context: Defines the default and documents the two communication patterns and their NCCL-call counts.
+- file: vllm/config/parallel.py:480
+  context: Rejects a2a unless decode_context_parallel_size is greater than one.
+- file: vllm/v1/attention/backends/flash_attn.py:666
+  context: Chooses dcp_a2a_lse_reduce for a2a with DCP enabled; otherwise uses cp_lse_ag_out_rs.
+- file: vllm/v1/attention/backends/flashinfer.py:608
+  context: Enables the FlashInfer DCP a2a path only for a2a with DCP enabled.
+related_parameters:
+- name: --decode-context-parallel-size
+  relation: a2a is valid only when decode_context_parallel_size is greater than one; the attention backends gate the a2a path
+    on that condition.
+- name: --tensor-parallel-size
+  relation: tensor_parallel_size must be divisible by decode_context_parallel_size, which configures the DCP topology used
+    by this backend.
+constraints:
+- --dcp-comm-backend a2a requires --decode-context-parallel-size > 1.
+- tensor_parallel_size must be divisible by decode_context_parallel_size.
+tuning_advice:
+  summary: Keep ag_rs as the baseline; benchmark a2a only with Decode Context Parallel enabled.
+  suggested_values:
+  - scenario: Decode Context Parallel is disabled or its size is one.
+    value: ag_rs
+    reason: a2a is rejected unless the DCP size is greater than one, while ag_rs is the default communication path.
+  - scenario: Decode Context Parallel size is greater than one and the active attention backend supports the a2a path.
+    value: a2a
+    reason: The source selects the All-to-All plus LSE combine path and documents two rather than three NCCL calls.
+  caveats:
+  - The source does not guarantee that a2a is faster for every model, sequence length, topology, or attention backend; measure
+    end-to-end latency and throughput.
+  - This option changes the DCP communication path, not whether DCP itself is enabled.
+  quick_guide: Use ag_rs by default; try a2a only after setting a valid Decode Context Parallel size above one and benchmarking
+    the target workload.
+analysis_date: '2026-07-27'

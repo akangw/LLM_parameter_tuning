@@ -1,0 +1,65 @@
+name: --renderer-num-workers
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:838
+- vllm/config/model.py:309
+value_type: int
+default: 1
+valid_choices: positive integer (>= 1)
+cli_example: --renderer-num-workers 4
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the size of the ThreadPoolExecutor used by the renderer (vllm/renderers/base.py:88-89).
+  The thread pool handles async tokenization, chat template rendering, and multimodal preprocessing. Increasing the number
+  of workers allows concurrent processing of multiple requests'' tokenization and multimodal preprocessing, which can improve
+  throughput under high concurrency by preventing the renderer from becoming a bottleneck. However, each worker may hold its
+  own copy of the tokenizer (vllm/renderers/hf.py:809 configures the tokenizer''s internal thread pool as renderer_num_workers
+  + 1), increasing memory usage. On Ascend NPU, where host CPU memory may be more constrained relative to GPU memory, excessive
+  workers could cause CPU memory pressure. The parameter has a hard constraint: it cannot be > 1 when multimodal processor
+  cache is enabled (vllm/config/model.py:676-686), as the cache is not thread-safe.
+
+  '
+usage_locations:
+- file: vllm/renderers/base.py:88
+  context: Creates ThreadPoolExecutor with max_workers=renderer_num_workers for async tokenization and multimodal preprocessing
+- file: vllm/renderers/hf.py:809
+  context: Configures tokenizer's internal thread pool size as renderer_num_workers + 1
+- file: vllm/config/model.py:676
+  context: Validates that renderer_num_workers > 1 is incompatible with multimodal processor cache
+related_parameters:
+- name: --mm-processor-cache-gb
+  relation: Cannot be > 0 when renderer_num_workers > 1; the multimodal processor cache is not thread-safe
+constraints:
+- renderer_num_workers must be >= 1
+- renderer_num_workers must be 1 when --mm-processor-cache-gb > 0 (multimodal processor cache is not thread-safe)
+tuning_advice:
+  summary: 'Increase renderer_num_workers for multimodal models under high concurrent load to parallelize tokenization and
+    preprocessing; keep at 1 for text-only models or when using the multimodal processor cache.
+
+    '
+  suggested_values:
+  - scenario: Text-only models or low concurrency
+    value: 1
+    reason: Tokenization is fast for text-only models; additional workers add memory overhead without meaningful throughput
+      gains
+  - scenario: Multimodal models with high concurrent requests and no processor cache
+    value: 4
+    reason: Multimodal preprocessing is CPU-intensive; multiple workers prevent the renderer from becoming a bottleneck under
+      concurrent load
+  - scenario: Multimodal models with processor cache enabled
+    value: 1
+    reason: Required by constraint; the cache is not thread-safe and will raise a ValueError if renderer_num_workers > 1
+  caveats:
+  - Each worker may hold a copy of the tokenizer, increasing host CPU memory usage — monitor CPU memory on Ascend nodes where
+    it may be more constrained
+  - Setting this too high can cause thread contention and diminishing returns; start with 2-4 and benchmark
+  - This parameter only affects the renderer thread pool, not the model inference workers — it does not directly improve NPU
+    utilization
+  quick_guide: Use --renderer-num-workers 1 for text-only models; increase to 2-4 for multimodal models under high concurrency
+    when not using the multimodal processor cache
+analysis_date: '2026-07-06'

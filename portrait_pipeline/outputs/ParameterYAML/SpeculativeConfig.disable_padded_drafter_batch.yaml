@@ -1,0 +1,108 @@
+name: SpeculativeConfig.disable_padded_drafter_batch
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/speculative.py:127
+- vllm/config/vllm.py:835
+- vllm/config/vllm.py:869
+- vllm_ascend/worker/model_runner_v1.py:1557
+- vllm_ascend/worker/model_runner_v1.py:1636
+- vllm_ascend/worker/model_runner_v1.py:2248
+- vllm_ascend/spec_decode/llm_base_proposer.py:1602
+- vllm_ascend/spec_decode/llm_base_proposer.py:1659
+- vllm_ascend/spec_decode/llm_base_proposer.py:1782
+- vllm_ascend/attention/mla_v1.py:534
+- vllm_ascend/attention/mla_v1.py:603
+- docs/source/user_guide/feature_guide/Multi_Token_Prediction.md:14
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --speculative-config '{"method":"mtp","num_speculative_tokens":1,"disable_padded_drafter_batch":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Controls whether EAGLE/MTP and draft-model speculative decoding keeps a rectangular padded drafter batch or
+  compacts it to the per-request valid token counts after rejection. In the target Ascend implementation, false keeps sampled
+  tokens and rejection accounting on the device, includes rejected positions as padding, and can start drafting before CPU
+  bookkeeping finishes. True consumes CPU-side token lists, builds variable-length metadata, and gathers only retained token
+  positions, which can reduce drafter attention and intermediate-tensor work when request lengths or accepted-token counts
+  diverge. That saving competes with CPU/NPU synchronization and loss of the padded path's overlap; true also disables automatic
+  async scheduling or makes an explicit async-scheduling request fail. The net latency, throughput, and temporary-memory effect
+  therefore depends on batch heterogeneity, rejection rate, graph mode, and attention backend.
+usage_locations:
+- file: vllm/config/vllm.py:835
+  context: Rejects an explicitly enabled async scheduler when this nested option is true.
+- file: vllm/config/vllm.py:869
+  context: Resolves automatic async scheduling to false when this option is true.
+- file: vllm_ascend/worker/model_runner_v1.py:1557
+  context: Selects CPU-side next-token preparation for true and padded device-side preparation for false in EAGLE and draft-model
+    speculation.
+- file: vllm_ascend/worker/model_runner_v1.py:1636
+  context: Selects variable-length rejection-compacted drafter metadata for true; false uses the padded input preparation
+    path.
+- file: vllm_ascend/worker/model_runner_v1.py:2248
+  context: Allows padded EAGLE/draft-model work to begin before bookkeeping completes only when this option is false.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:1659
+  context: Constructs compact query lengths and token indices after removing rejected positions for the unpadded path.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:1782
+  context: Keeps all positions, represents rejected tokens as padding, and performs rejection accounting on the device for
+    the padded path.
+- file: vllm_ascend/attention/mla_v1.py:603
+  context: Adjusts graph-captured MLA decode metadata, sequence lengths, and block tables for the unpadded MTP drafter path.
+related_parameters:
+- name: --async-scheduling
+  relation: True is incompatible with this option; explicit async scheduling raises, while automatic async scheduling is resolved
+    to false.
+- name: SpeculativeConfig.method
+  relation: Upstream documents the option for EAGLE; the target Ascend runner applies it to EAGLE/MTP and draft-model proposer
+    paths.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: More speculative positions increase both padded rejected-token work and the potential value of compacting variable-length
+    inputs.
+- name: SpeculativeConfig.attention_backend
+  relation: Variable-length speculative batches are supported only by compatible attention backends.
+- name: CompilationConfig.cudagraph_mode
+  relation: Ascend full-graph MLA metadata has special padding and block-table handling when the drafter batch is unpadded.
+constraints:
+- Do not combine true with explicitly enabled async scheduling; current vLLM raises a configuration error.
+- With async scheduling left on automatic selection, true forces the effective async-scheduling value to false.
+- True requires the active speculative attention backend to support sequences of different lengths within one batch.
+- The target Ascend implementation applies the switch in EAGLE/MTP and draft-model runner paths; it is not a general padding
+  control for ordinary target-model decoding.
+- Ascend source notes that the unpadded MTP full-graph path is incompatible with PCP, so do not treat true as supported for
+  that combination without target-version validation.
+tuning_advice:
+  summary: Keep false for the normal Ascend path because it preserves device-side padded preparation and scheduling overlap.
+    Benchmark true only for heterogeneous speculative batches with enough rejected or uneven token positions to offset CPU-side
+    compaction and the loss of async scheduling.
+  suggested_values:
+  - scenario: General EAGLE/MTP or draft-model serving on Ascend
+    value: false
+    reason: This is the default and retains padded device-side bookkeeping plus the path that can overlap drafting with CPU
+      bookkeeping.
+  - scenario: Highly uneven batches with frequent speculative rejection
+    value: true
+    reason: Compacting to valid per-request positions can avoid processing rejected padding, but it should be used only with
+      a compatible backend and after an end-to-end benchmark shows a gain.
+  - scenario: Workload that benefits from async scheduling
+    value: false
+    reason: True is configuration-incompatible with explicit async scheduling and disables its automatic selection.
+  caveats:
+  - 'True does not guarantee lower latency: CPU-side list processing, synchronization, metadata rebuilding, and loss of overlap
+    can outweigh the removed padded work.'
+  - False can perform extra drafter work for rejected positions, especially when accepted-token counts differ substantially
+    across requests.
+  - Full-graph capture sizes, speculative-token count, batch size, acceptance rate, and attention backend all change the crossover
+    point.
+  - The Ascend documentation describes this as affecting MTP, while upstream describes EAGLE; the target runner source is
+    authoritative for this pinned version and also branches for draft-model speculation.
+  quick_guide: Start with false, record end-to-end throughput and tail latency, then test true only with async scheduling
+    off and representative heterogeneous batches; keep true only if the measured saving from compacted drafter work exceeds
+    its synchronization and overlap costs.
+analysis_date: '2026-07-31'

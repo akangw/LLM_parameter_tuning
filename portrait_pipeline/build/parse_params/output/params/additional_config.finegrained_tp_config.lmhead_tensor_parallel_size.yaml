@@ -1,0 +1,79 @@
+name: additional_config.finegrained_tp_config.lmhead_tensor_parallel_size
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:419
+value_type: int
+default: '0'
+valid_choices: positive integer that divides data_parallel_size, or 0 (disabled)
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls the tensor parallel size specifically for the lm_head (language model head) layer
+  in MoE models on Ascend NPUs. When set to a value > 0, it creates a dedicated communication group (named "lmheadtp") via
+  `_create_or_get_group` in `vllm_ascend/distributed/parallel_state.py:144-145`, which partitions the lm_head weight matrix
+  across the specified number of NPUs. This reduces the per-device computational load and memory footprint of the lm_head
+  layer, which is typically a large linear projection from hidden_size to vocab_size. The documentation explicitly states
+  that when the decode node''s TP size is 1, setting lmhead_tensor_parallel_size to a larger value (e.g., 16) allows the lm_head
+  embedding layer to be parallelized across more devices, reducing per-card computation. This directly improves latency and
+  throughput for the final projection step, and reduces memory pressure on individual NPUs. The parameter is checked via `lmhead_tp_enable()`
+  in `vllm_ascend/utils.py:963` to conditionally activate lm_head tensor parallelism in model execution.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:419
+  context: Parsed from additional_config dict with default 0
+- file: vllm_ascend/ascend_config.py:445-467
+  context: 'Validation: must be 0 or positive; only for MoE models; must divide data_parallel_size'
+- file: vllm_ascend/distributed/parallel_state.py:136
+  context: Read to create lmheadtp communication group via _create_or_get_group
+- file: vllm_ascend/utils.py:963
+  context: lmhead_tp_enable() helper checks if value > 0
+related_parameters:
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for o_proj layer; shares the same MoE-only and data_parallel_size divisibility
+    constraints
+- name: additional_config.finegrained_tp_config.embedding_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for embedding layer; shares the same MoE-only and data_parallel_size divisibility
+    constraints
+- name: additional_config.finegrained_tp_config.mlp_tensor_parallel_size
+  relation: Sibling fine-grained TP parameter for MLP layer; shares the same MoE-only and data_parallel_size divisibility
+    constraints
+- name: parallel_config.data_parallel_size
+  relation: lmhead_tensor_parallel_size must divide data_parallel_size evenly
+- name: model_config.is_moe
+  relation: Fine-grained TP (including lmhead) is only supported for MoE models
+constraints:
+- lmhead_tensor_parallel_size must be 0 (disabled) or a positive integer.
+- Fine-grained tensor parallelism (including lmhead) can only be enabled for MoE models (is_moe must be true).
+- lmhead_tensor_parallel_size must evenly divide data_parallel_size.
+tuning_advice:
+  summary: 'For MoE models on Ascend NPU, set lmhead_tensor_parallel_size to parallelize the lm_head layer across multiple
+    devices, reducing per-device computation and memory. Particularly useful when the decode node''s global TP size is 1 but
+    you want the lm_head to be distributed.
+
+    '
+  suggested_values:
+  - scenario: DeepSeek-V3.1 PD separation with decode node TP=1
+    value: '16'
+    reason: Documented recommendation to reduce per-card lm_head computation when decode node TP is 1
+  - scenario: General MoE model with sufficient NPUs and data_parallel_size >= 8
+    value: data_parallel_size
+    reason: Maximizes lm_head distribution across all data-parallel devices, minimizing per-device work
+  - scenario: Non-MoE (dense) models
+    value: '0'
+    reason: Feature is only supported for MoE models; setting > 0 will raise an AssertionError
+  caveats:
+  - This parameter is vllm-ascend specific and has no effect in upstream vLLM.
+  - Only applicable to MoE models; attempting to use it with dense models raises an assertion error.
+  - The value must evenly divide data_parallel_size, otherwise an assertion error is raised.
+  - Enabling lmhead TP creates additional communication groups, which adds synchronization overhead — ensure the computational
+    savings outweigh the communication cost.
+  quick_guide: Set to a divisor of data_parallel_size for MoE models to distribute lm_head computation; leave at 0 for dense
+    models.
+analysis_date: '2026-07-06'

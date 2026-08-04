@@ -1,0 +1,78 @@
+# Tag dimension definitions for the vllm-ascend parameter knowledge base.
+# Each dimension lists its allowed values with descriptions and signal keywords
+# to guide LLM-based automatic tagging.
+
+dimensions:
+
+  model:
+    description: "Model architecture relevance"
+    type: multi_select
+    values:
+      dense:
+        description: "Standard dense transformer models"
+        signals: "No special architecture requirements; generic transformer parameters"
+      moe:
+        description: "Mixture-of-Experts architecture"
+        signals: "expert, EP, MC2, EPLB, dispatch, all-to-all, MoE"
+      mla:
+        description: "Multi-head Latent Attention (DeepSeek series)"
+        signals: "MLA, absorbed, latent attention, DeepSeek"
+      vlm:
+        description: "Vision-Language / multimodal models"
+        signals: "image, multimodal, vision, pixel, VLM"
+      quantized:
+        description: "Quantized models (non-FP16 storage, e.g. W8A8, W4A8)"
+        signals: "quantization, quantized, W8A8, W4A8, AWQ, GPTQ, INT8, INT4, FP8"
+
+  optimize_target:
+    description: "Performance optimization target"
+    type: multi_select
+    values:
+      ttft:
+        description: "Time To First Token — prefill latency"
+        signals: "prefill latency, prefill phase, first token, TTFT, context encoding"
+      tpot:
+        description: "Time Per Output Token — per-token decode latency"
+        signals: "decode latency, per-token latency, token generation, TPOT, auto-regressive"
+      throughput:
+        description: "Overall throughput (tokens per second)"
+        signals: "batch, scheduling, concurrent, tokens per second, throughput, TPS"
+      memory:
+        description: "Memory efficiency (HBM usage)"
+        signals: "KV cache, memory footprint, HBM, memory usage, memory allocation, GPU memory"
+
+  deploy_topology:
+    description: "Deployment topology"
+    type: multi_select
+    values:
+      single_node:
+        description: "Single-node deployment"
+        signals: "single node, standalone, single machine, local"
+      multi_node:
+        description: "Multi-node deployment"
+        signals: "multi-node, RDMA, cross-node, HCCL, distributed, multi-machine, cluster"
+
+  hardware:
+    description: "Hardware compatibility"
+    type: multi_select
+    values:
+      a2:
+        description: "Atlas 800I/T A2 series"
+        signals: "A2, 800 I/T A2, Atlas A2"
+      a3:
+        description: "Atlas 800I/T A3 series"
+        signals: "A3, 800 I/T A3, Atlas A3, fabric memory"
+
+  deploy_scenario:
+    description: "Deployment scenario (cross-cutting concern)"
+    type: multi_select
+    values:
+      long_input:
+        description: "Long input text (input > 8K tokens)"
+        signals: "long context, long input, large prompt, long sequence, chunked prefill, context parallel, max_model_len"
+      long_output:
+        description: "Long output text (output > 8K tokens)"
+        signals: "long output, long generation, large max_tokens, long decode, speculative decoding"
+      high_concurrency:
+        description: "High concurrency / large batch serving"
+        signals: "batch size, concurrent, scheduling, max_num_seqs, queuing, SLO, high throughput"

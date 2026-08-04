@@ -1,0 +1,94 @@
+name: VLLM_MLA_DISABLE
+type: env
+category: model
+scope: both
+source_file:
+- vllm/envs.py:1137
+- vllm/config/model.py:1600
+- vllm/model_executor/models/deepseek_v2.py:1124
+- vllm/v1/attention/backend.py:300
+- vllm_ascend/platform.py:695
+- vllm_ascend/worker/model_runner_v1.py:374
+- vllm_ascend/ops/rotary_embedding.py:74
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'The variable is parsed as bool(int(value)) and defaults to false. ModelConfig.use_mla is true only for a model
+  identified as DeepSeek MLA and when this variable is false. For such models, the normal value "0" selects the specialized
+  latent-attention implementation, while "1" selects the ordinary DeepseekV2Attention implementation. The ordinary path expands
+  the latent K/V representation into per-head keys and values and uses a standard attention backend instead of the MLA backend,
+  increasing KV-cache footprint and attention work and therefore potentially reducing cache capacity, throughput, and latency
+  at long context or high concurrency. The effect is structural: upstream backend validation distinguishes MLA from non-MLA
+  backends, and Ascend maps model_config.use_mla to AscendMLABackend when true and AscendAttentionBackend when false. Ascend
+  also uses this decision in runner setup and rotary-buffer layout. The variable has no effect when the loaded model is not
+  recognized as a DeepSeek MLA architecture.'
+usage_locations:
+- file: vllm/envs.py:1137
+  context: Parses the environment variable through int() and bool(); the unset default is "0".
+- file: vllm/config/model.py:1600
+  context: Defines effective MLA use as is_deepseek_mla and not VLLM_MLA_DISABLE.
+- file: vllm/model_executor/models/deepseek_v2.py:1124
+  context: Selects DeepseekV2MLAAttention when effective MLA is enabled and the ordinary DeepseekV2Attention fallback otherwise.
+- file: vllm/v1/attention/backend.py:300
+  context: Rejects attention backends whose MLA capability does not match the effective use_mla mode.
+- file: vllm_ascend/platform.py:695
+  context: Maps the effective MLA flag to the Ascend MLA backend or standard Ascend attention backend.
+- file: vllm_ascend/worker/model_runner_v1.py:374
+  context: Passes model_config.use_mla into Ascend attention-backend selection during runner initialization.
+- file: vllm_ascend/ops/rotary_embedding.py:74
+  context: Allocates MLA-specific rotary buffers when enabled and standard-attention rotary buffers after MLA is disabled.
+related_parameters:
+- name: VLLM_ATTENTION_BACKEND
+  relation: A forced backend must support the effective MLA or non-MLA mode; backend validation rejects a capability mismatch.
+- name: --kv-cache-dtype
+  relation: Cache dtype multiplies the memory cost of the selected cache representation; disabling MLA changes the representation
+    from latent MLA cache data to ordinary per-head K/V.
+- name: --decode-context-parallel-size
+  relation: ModelConfig applies different decode-context-parallel validation rules when use_mla is false, so disabling MLA
+    can change which TP/DCP combinations are valid.
+constraints:
+- Use an integer string. "0" is false and preserves MLA, while any nonzero integer is true and disables MLA; a nonnumeric
+  value raises an error while the environment is parsed.
+- The switch only changes models for which is_deepseek_mla is true; it does not convert a conventional attention model into
+  or out of MLA.
+- Disabling MLA requires a non-MLA attention backend compatible with the model, dtype, cache dtype, block size, and platform.
+- On Ascend, the setting changes plugin backend selection from AscendMLABackend to AscendAttentionBackend and also changes
+  MLA-dependent runner and cache behavior.
+tuning_advice:
+  summary: Keep the default "0" for production DeepSeek MLA inference. Set "1" only to diagnose, compare, or work around a
+    problem in the specialized MLA path, then benchmark memory capacity and end-to-end service performance before retaining
+    the fallback.
+  suggested_values:
+  - scenario: Production inference for a supported DeepSeek MLA model
+    value: '0'
+    reason: Preserves the specialized latent-attention backend and compact cache representation, which are the intended performance
+      path.
+  - scenario: Isolating an MLA-backend correctness or compatibility issue
+    value: '1'
+    reason: Selects the ordinary attention implementation and non-MLA backend, providing a useful diagnostic fallback when
+      the specialized MLA path is suspected.
+  - scenario: Model that is not identified as DeepSeek MLA
+    value: '0'
+    reason: The flag has no effective performance role for that model, so leaving the default avoids implying that a different
+      attention implementation is being selected.
+  caveats:
+  - '"Disable" refers to vLLM''s MLA optimization path, not to changing the model''s learned architecture or weights; the
+    fallback still computes the model''s attention.'
+  - The exact latency, throughput, and cache-capacity difference depends on model dimensions, context length, concurrency,
+    dtype, backend, and hardware; the pinned sources do not give a portable benchmark ratio.
+  - A backend explicitly forced for MLA may become invalid after setting this variable, and a non-MLA fallback can expose
+    different platform compatibility constraints.
+  - On Ascend this upstream environment variable is not redeclared by the plugin, but the plugin consumes the resulting upstream
+    ModelConfig.use_mla value throughout backend and runner setup.
+  quick_guide: Use "0" normally. Use "1" temporarily when debugging the MLA implementation, and compare peak cache memory,
+    maximum concurrency, TTFT, inter-token latency, and throughput.
+analysis_date: '2026-07-29'

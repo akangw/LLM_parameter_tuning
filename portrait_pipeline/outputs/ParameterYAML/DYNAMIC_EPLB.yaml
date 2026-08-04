@@ -1,0 +1,119 @@
+name: DYNAMIC_EPLB
+type: env
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:94
+- vllm_ascend/ascend_config.py:630
+- vllm_ascend/ascend_config.py:677
+- vllm_ascend/patch/platform/__init__.py:42
+- vllm_ascend/distributed/parallel_state.py:98
+- vllm_ascend/eplb/eplb_updator.py:31
+- vllm_ascend/ops/fused_moe/fused_moe.py:416
+- vllm_ascend/worker/model_runner_v1.py:466
+- vllm_ascend/worker/v2/model_runner.py:71
+- vllm_ascend/utils.py:1190
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:28
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+- '1'
+- '0'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: DYNAMIC_EPLB is the process-start gate for Ascend dynamic Expert Parallel Load Balancing. Values "true" and
+  "1" (case-insensitive for "true") load the Ascend multiprocessing-executor patch and satisfy validation when additional_config.eplb_config.dynamic_eplb
+  is enabled. The configuration flag, rather than this environment variable alone, initializes a dedicated HCCL group, collects
+  per-expert load, runs a separate balancing process, and asynchronously transfers expert weights and updates expert maps.
+  The Ascend guide describes the resulting redistribution as reducing TTFT and TPOT and increasing token throughput for imbalanced
+  MoE workloads. Enabling it also adds communication, load-tracking, process, mapping, and potentially redundant-expert storage;
+  the dedicated HCCL group is assigned a buffer size of 100. Dynamic EPLB can therefore improve latency and throughput when
+  expert activation is skewed, while adding periodic balancing work and memory overhead. The pinned upstream vLLM repository
+  contains no DYNAMIC_EPLB definition or consumer.
+usage_locations:
+- file: vllm_ascend/envs.py:94
+  context: Defines the environment variable as a lower-cased string with default "false".
+- file: vllm_ascend/ascend_config.py:677
+  context: Requires DYNAMIC_EPLB=true/1 or EXPERT_MAP_RECORD=true when the dynamic_eplb configuration flag is active.
+- file: vllm_ascend/patch/platform/__init__.py:42
+  context: Conditionally imports the Ascend multiprocessing-executor patch for DYNAMIC_EPLB=true/1 or EXPERT_MAP_RECORD=true.
+- file: vllm_ascend/distributed/parallel_state.py:98
+  context: Creates a dedicated dynamic_eplb model-parallel communication group when the configuration flag is enabled.
+- file: vllm_ascend/eplb/eplb_updator.py:53
+  context: Uses the collection and algorithm intervals to gather load, invoke the balancing worker, and schedule asynchronous
+    expert-weight updates.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:416
+  context: Enables dynamic MoE load tracking and expert-map handling when dynamic EPLB has a usable logical-to-physical map.
+- file: vllm_ascend/worker/model_runner_v1.py:466
+  context: Creates the EPLB loader, manager, worker process, and per-forward update hooks for the supported model runner.
+- file: vllm_ascend/worker/v2/model_runner.py:71
+  context: Rejects dynamic EPLB because Ascend NPU model runner v2 does not support it.
+- file: vllm_ascend/utils.py:1190
+  context: Assigns the dynamic_eplb HCCL group its dedicated buffer size.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:28
+  context: Documents the required environment variable, expected latency and throughput effects, and a recommended SwiftBalancer
+    configuration.
+related_parameters:
+- name: eplb_config.dynamic_eplb
+  relation: Must be true to activate runtime balancing; setting DYNAMIC_EPLB alone only selects startup patches and satisfies
+    the gate.
+- name: EXPERT_MAP_RECORD
+  relation: Alternative startup gate that imports the same executor patch and satisfies dynamic EPLB validation for expert-map
+    recording.
+- name: eplb_config.expert_heat_collection_interval
+  relation: Controls how many forward iterations are used before waking the balancing worker to process collected expert load.
+- name: eplb_config.algorithm_execution_interval
+  relation: Controls the interval reserved for the balancing worker before expert update information is consumed.
+- name: eplb_config.num_redundant_experts
+  relation: Controls redundant expert capacity available to the placement algorithm and directly affects expert storage.
+- name: eplb_config.eplb_policy_type
+  relation: Selects policy 0 through 3; the current Ascend guide recommends SwiftBalancer policy 2.
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: The fused dispatch_ffn_combine path is restricted to non-dynamic-EPLB configurations.
+- name: --enable-expert-parallel
+  relation: Dynamic EPLB is intended for MoE serving with expert parallelism, as shown by the documented invocation.
+constraints:
+- DYNAMIC_EPLB must be set before process startup so the conditional platform patch is imported.
+- Runtime balancing additionally requires additional_config.eplb_config.dynamic_eplb=true; the environment variable alone
+  does not set that field.
+- If dynamic_eplb is true, validation accepts DYNAMIC_EPLB values "true" or "1", or the alternative exact EXPERT_MAP_RECORD
+  value "true"; otherwise initialization asserts.
+- Dynamic EPLB is an MoE expert-parallel feature and requires a usable expert placement map; it does not benefit dense models.
+- Ascend NPU model runner v2 raises NotImplementedError when dynamic EPLB is enabled.
+- The dispatch_ffn_combine fused MC2 optimization is restricted to non-dynamic-EPLB operation.
+tuning_advice:
+  summary: Enable dynamic EPLB for supported MoE expert-parallel serving only after measuring expert-load skew; start with
+    the documented SwiftBalancer policy and tune its collection and execution intervals against the workload.
+  suggested_values:
+  - scenario: Imbalanced MoE serving with expert parallelism on the supported Ascend model runner
+    value: 'true'
+    reason: Activates the required process-start path so configured dynamic EPLB can redistribute expert load and reduce rank
+      bottlenecks.
+  - scenario: Dense models, single-rank deployments, model runner v2, or balanced MoE traffic
+    value: 'false'
+    reason: Avoids unsupported paths and the communication, worker-process, load-collection, and expert-update overhead when
+      balancing has no expected gain.
+  - scenario: Expert-map recording rather than live dynamic redistribution
+    value: 'false'
+    reason: Use EXPERT_MAP_RECORD=true with expert_map_record_path for the documented static-EPLB recording workflow.
+  caveats:
+  - Both the environment gate and eplb_config.dynamic_eplb must be configured for normal live dynamic EPLB.
+  - The guide recommends policy 2 with collection interval 600 and algorithm interval 50 as a starting configuration, but
+    explicitly says to adjust intervals for workload patterns.
+  - Redundant experts consume model memory; setting num_redundant_experts to the EP size is a documented example, not a universal
+    optimum.
+  - The EPLB communication group, load tensors, multiprocessing worker, and expert transfers add overhead that can outweigh
+    gains when expert traffic is already balanced.
+  - Source and documentation establish the mechanism and expected direction of impact but provide no workload-independent
+    benchmark gain.
+  quick_guide: Export DYNAMIC_EPLB=true, enable expert parallelism, set additional_config.eplb_config.dynamic_eplb=true, begin
+    with policy 2 and the guide's 600/50 intervals, then compare throughput, TTFT, TPOT, and NPU memory against DYNAMIC_EPLB=false
+    on representative traffic.
+analysis_date: '2026-07-28'

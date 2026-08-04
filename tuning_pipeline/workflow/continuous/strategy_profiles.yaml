@@ -1,0 +1,63 @@
+# Strategy profiles are deliberately separate from config.yaml. The live
+# controller continues to use best_anchor_coverage_v2 until an operator opts in
+# during a future V3 integration.
+default_strategy: best_anchor_coverage_v2
+
+strategies:
+  best_anchor_coverage_v2:
+    status: integrated
+    purpose: >-
+      Full-matrix, best-accepted-anchor search. Every candidate runs the frozen
+      aligned-L1 matrix, so its result is directly comparable with A0.
+    exploration:
+      independent_parameters_per_round: [2, 3]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 6
+    refinement:
+      independent_parameters_per_round: [1, 2]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 3
+
+  best_anchor_coverage_v3:
+    status: standalone_not_integrated
+    purpose: >-
+      Hierarchical search for expensive rounds: use a fixed C32 screen to rank
+      candidates, fully validate only screened winners, then refine locally.
+    exploration:
+      independent_parameters_per_round: [2, 3]
+      minimum_independent_parameters: 2
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 6
+      # A one-parameter probe remains allowed only when every valid two-parameter
+      # probe would violate a hard rule, or when testing an explicit high-risk
+      # hypothesis. The decision must record that exception.
+      one_parameter_exception_required: true
+      probe_templates:
+        - name: scheduler_capacity
+          parameters: [max_num_seqs, max_num_batched_tokens]
+          intent: Test whether more concurrent work and token budget improve C32 throughput together.
+        - name: scheduling_prefill
+          parameters: [max_num_batched_tokens, long_prefill_token_threshold]
+          intent: Test batching and long-prefill scheduling as one workload-aware hypothesis.
+        - name: concurrency_memory
+          parameters: [max_num_seqs, gpu_memory_utilization]
+          intent: Test additional concurrency with an explicit memory-headroom check.
+    screening:
+      benchmark_mode: aligned_l1_screen
+      # Four C32 formal cases plus their warmups: one representative case per
+      # frozen workload. Screening is a ranking gate, never final acceptance.
+      selected_cases:
+        - {workload: chat-1024-256, concurrency: 32}
+        - {workload: prefill-8192-512, concurrency: 32}
+        - {workload: balanced-1024-1024, concurrency: 32}
+        - {workload: decode-256-2048, concurrency: 32}
+      require_zero_errors: true
+      minimum_geomean_tps_ratio_vs_anchor: 0.99
+      minimum_each_workload_tps_ratio_vs_anchor: 0.95
+    full_verification:
+      benchmark_mode: aligned_l1
+      required_before_accepting_improvement: true
+    local_refinement:
+      independent_parameters_per_round: [1, 2]
+      max_grid_steps_per_parameter: 1
+      max_total_grid_steps: 2

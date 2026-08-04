@@ -1,0 +1,75 @@
+name: attention.flash_attn_version
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/v1/attention/backends/fa_utils.py:94
+- vllm/engine/arg_utils.py:2044
+value_type: int
+default: <computed>
+valid_choices: 2, 3, or 4
+cli_example: --attention-config.flash_attn_version=3
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter selects the FlashAttention kernel version (2, 3, or 4) used by the flash-attention backend.
+  On Ascend NPU, the flash-attention backend is NOT the default — vllm-ascend uses its own Ascend-specific attention backends
+  (e.g., torch_npu flash attention, CANN operators). The flash_attn_version parameter is only consulted when the attention
+  backend is explicitly set to FLASH_ATTN, which is primarily a CUDA/GPU backend. On Ascend, setting the backend to FLASH_ATTN
+  would likely fail or fall back to a different implementation, as the underlying flash_attn library (Dao-AILab/flash-attention)
+  does not support Ascend NPUs. Therefore, this parameter has negligible performance impact on Ascend — it controls a code
+  path that is effectively unavailable on NPU hardware. The parameter is read in get_flash_attn_version() (vllm/v1/attention/backends/fa_utils.py:94)
+  and in TurboQuant compatibility logic (vllm/engine/arg_utils.py:2044), neither of which is relevant to Ascend''s default
+  attention path.
+
+  '
+usage_locations:
+- file: vllm/v1/attention/backends/fa_utils.py:94
+  context: 'get_flash_attn_version() reads the config value to override the platform-default FA version. Only invoked when
+    using the flash-attention backend, which is CUDA-specific.
+
+    '
+- file: vllm/engine/arg_utils.py:2044
+  context: 'TurboQuant compatibility check — forces FA2 when flash_attn_version >= 3. TurboQuant is a CUDA-specific quantization
+    scheme.
+
+    '
+related_parameters:
+- name: attention_config.backend
+  relation: 'flash_attn_version is only meaningful when attention_config.backend is set to FLASH_ATTN. On Ascend, the default
+    backend is not FLASH_ATTN.
+
+    '
+constraints:
+- flash_attn_version must be 2, 3, or 4.
+- flash_attn_version is only valid when using the flash-attention backend.
+- FA version 3 is not supported on Blackwell (SM100+) platforms.
+- FA version 3 is not compatible with ALiBi attention.
+- TurboQuant requires FA version 2; FA >= 3 will be overridden to 2.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has negligible impact because the flash-attention backend is CUDA-specific and not
+    used by vllm-ascend''s default attention path.
+
+    '
+  suggested_values:
+  - scenario: Default Ascend deployment
+    value: null
+    reason: 'Leave unset. vllm-ascend uses its own attention backends (torch_npu, CANN operators) and does not use the flash-attention
+      backend. Setting this parameter has no effect on Ascend.
+
+      '
+  caveats:
+  - 'Setting attention_config.backend to FLASH_ATTN on Ascend will likely fail because the flash_attn library does not support
+    Ascend NPUs. Do not attempt to force the flash-attention backend on Ascend hardware.
+
+    '
+  - 'This parameter is CUDA-specific. All version-specific behaviors (FA3 on Hopper, FA4 on Blackwell, ALiBi incompatibility)
+    apply only to NVIDIA GPUs.
+
+    '
+  quick_guide: 'Ignore this parameter on Ascend — it controls a CUDA-only attention backend that is not used by vllm-ascend.
+
+    '
+analysis_date: '2026-07-06'

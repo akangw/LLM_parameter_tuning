@@ -1,0 +1,106 @@
+name: --max-model-len
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:189
+- vllm/engine/arg_utils.py:355
+- vllm/config/scheduler.py:259
+- vllm_ascend/attention/attention_v1.py:238
+- vllm_ascend/core/single_type_kv_cache_manager.py:236
+- vllm_ascend/core/scheduler_dynamic_batch.py:202
+- docs/source/faqs.md:142
+- docs/source/tutorials/hardwares/310p.md:71
+value_type: int
+default: null
+valid_choices: Integer >= -1. CLI accepts human-readable k/m/g and K/M/G suffixes; -1 or auto selects the derived model length
+  and lets the platform check it.
+cli_example: --max-model-len 16384
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: This sets the maximum tokens in one sequence, including prompt and generated tokens. Upstream uses it to validate
+  scheduler token limits, so lowering it can reject longer requests while avoiding capacity reserved for a longer context.
+  On Ascend, attention code derives per-request block-table capacity from max_model_len, and the KV-cache manager uses it
+  to cap admission blocks for compressed MLA and recycling cache specifications. Thus increasing it generally increases KV-cache/block-table
+  and related workspace pressure and reduces the concurrency that fits in memory; decreasing it can improve memory headroom
+  and throughput for short requests. Ascend schedulers also clamp scheduled tokens at the configured maximum, including speculation.
+  On 310P, the documented attention path can allocate a full O(max_model_len^2) causal mask, making an explicit conservative
+  value particularly important.
+usage_locations:
+- file: vllm/config/model.py:189
+  context: Defines the field, its >= -1 constraint, human-readable CLI formats, and automatic derivation behavior.
+- file: vllm/config/scheduler.py:259
+  context: Rejects an unchunked configuration when max_num_batched_tokens is smaller than max_model_len.
+- file: vllm_ascend/attention/attention_v1.py:238
+  context: Computes the maximum number of blocks per request from max_model_len and the kernel block size.
+- file: vllm_ascend/core/single_type_kv_cache_manager.py:253
+  context: Uses max_model_len to cap per-request KV-cache admission blocks for compressed MLA and recycling cache specifications.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:202
+  context: Clamps scheduling so a request does not exceed the maximum context length, including speculative decoding.
+- file: docs/source/tutorials/hardwares/310p.md:71
+  context: Warns that auto detection can cause OOM on 310P because its attention mask allocation is O(max_model_len^2).
+related_parameters:
+- name: --max-num-seqs
+  relation: Together with context length determines concurrent KV-cache demand.
+- name: --max-num-batched-tokens
+  relation: Must be at least max_model_len when chunked prefill is disabled; it also constrains scheduler work per step.
+- name: --gpu-memory-utilization
+  relation: Controls the memory budget available to cache allocation and therefore the feasible context length.
+- name: --block-size
+  relation: Ascend per-request block capacity is derived from max_model_len divided by block size.
+- name: --enable-chunked-prefill
+  relation: Changes the scheduler validation relationship between max_num_batched_tokens and max_model_len.
+constraints:
+- The value must be >= -1; -1 or auto uses automatic derivation, while an omitted value is also derived from model configuration.
+- A value above the model-derived maximum is rejected unless VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 is set; exceeding positional
+  limits can be unsafe.
+- With chunked prefill disabled, max_num_batched_tokens must be >= max_model_len.
+- On Ascend 310P, do not rely on automatic detection; set an explicit conservative value because the documented mask path
+  scales quadratically with max_model_len.
+tuning_advice:
+  summary: Set the smallest context length that covers the workload's prompt plus expected output. Benchmark larger settings
+    only when longer requests are required, because they consume cache capacity and reduce feasible concurrency. Use an explicit
+    conservative value on Ascend 310P.
+  suggested_values:
+  - scenario: Short-context, high-concurrency serving
+    value: 4096
+    reason: Limits per-request context capacity so more cache capacity can remain available for concurrent short requests.
+  - scenario: Typical explicit Ascend 310P deployment
+    value: 16384
+    reason: The target 310P guide uses this conservative explicit example and warns against auto detection.
+  - scenario: Model-default context is desired and the platform has been validated
+    value: <unset>
+    reason: Upstream derives the value from model configuration when it is omitted.
+  caveats:
+  - A smaller value causes requests whose prompt plus generation exceed the cap to be rejected or limited by scheduling.
+  - A larger value may cause memory exhaustion even if typical requests are short, because cache and Ascend block capacities
+    are sized using it.
+  - Do not use an over-model-limit value merely to bypass validation; models with positional encodings may fail or produce
+    invalid results beyond their derived limit.
+  quick_guide: Choose the smallest required prompt-plus-output limit; keep --max-num-batched-tokens compatible, and explicitly
+    set a conservative value on 310P.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

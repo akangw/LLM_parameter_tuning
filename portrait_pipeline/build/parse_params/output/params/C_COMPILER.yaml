@@ -1,0 +1,66 @@
+name: C_COMPILER
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:49
+- vllm_ascend/setup.py:278
+value_type: str
+default: null
+valid_choices: any valid path to a C compiler executable (e.g., /usr/bin/gcc)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'C_COMPILER is a build-time environment variable used exclusively during the `pip install` phase of vllm-ascend.
+  It specifies the C compiler passed to CMake via `-DCMAKE_C_COMPILER`. The choice of compiler can affect the optimization
+  level of compiled C/C++ extensions (e.g., custom Ascend kernels), which in turn may influence runtime inference performance.
+  However, this is an indirect, one-time effect at build time — it does not control any runtime behavior. The vllm-ascend
+  documentation notes that if compilation problems occur, it may be because an unexpected compiler is being used, and recommends
+  exporting C_COMPILER (and CXX_COMPILER) to explicitly specify the compiler location.
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:49
+  context: 'Defines the env var mapping: reads C_COMPILER from environment, defaults to None (system default C compiler)'
+- file: vllm_ascend/setup.py:278
+  context: 'In CMake build configuration: if C_COMPILER is set, appends -DCMAKE_C_COMPILER=<value> to cmake_args'
+related_parameters:
+- name: CXX_COMPILER
+  relation: Analogous env var for the C++ compiler; often set together with C_COMPILER to ensure consistent toolchain usage
+- name: CMAKE_BUILD_TYPE
+  relation: Controls optimization level (Release/Debug/RelWithDebugInfo); compiler choice interacts with optimization flags
+- name: MAX_JOBS
+  relation: Controls parallel compilation jobs; both affect build performance but not runtime
+constraints:
+- The specified compiler must support the C standards required by vllm-ascend's C extensions (gcc 8+ recommended per documentation)
+- The compiler must be compatible with the Ascend CANN toolkit and the target SOC_VERSION
+tuning_advice:
+  summary: 'In most cases, leave C_COMPILER unset to use the system default. Only set it explicitly if the build fails due
+    to compiler incompatibility or if you need to use a specific optimized compiler version.
+
+    '
+  suggested_values:
+  - scenario: Default (recommended for most users)
+    value: null
+    reason: The system default C compiler (typically gcc) is usually sufficient and compatible with CANN. No explicit configuration
+      needed.
+  - scenario: Build fails with compiler errors or wrong compiler is auto-detected
+    value: /usr/bin/gcc
+    reason: Explicitly specifying the path to a known-good gcc installation resolves ambiguity when multiple compilers are
+      present on the system.
+  - scenario: Using a non-standard compiler for performance (e.g., newer gcc with better optimizations)
+    value: /path/to/custom/gcc
+    reason: A newer compiler version may generate more efficient code for Ascend custom kernels, potentially improving inference
+      throughput marginally.
+  caveats:
+  - This is a build-time only variable; changing it requires re-installing vllm-ascend. It has no effect on already-installed
+    packages.
+  - The compiler must be compatible with the Ascend CANN toolkit version installed. Mismatched compilers can cause silent
+    build failures or runtime crashes.
+  - Performance gains from compiler choice are typically marginal (low single-digit percentage) compared to runtime configuration
+    tuning.
+  quick_guide: Leave unset unless build fails; then set to your gcc path (e.g., /usr/bin/gcc).
+analysis_date: '2026-07-06'

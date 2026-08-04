@@ -1,0 +1,61 @@
+name: --max-cpu-loras
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/lora.py:43
+- vllm/engine/arg_utils.py:575
+- vllm/engine/arg_utils.py:1253
+- vllm/engine/arg_utils.py:2002
+value_type: int | None
+default: null
+valid_choices: integer >= max_loras, or null
+cli_example: --max-cpu-loras 8
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'Controls the maximum number of LoRA adapters that can be stored in CPU memory (the CPU-side LoRA cache). When
+  set to null, it defaults to the value of `max_loras` (see vllm/config/lora.py:103-104). This parameter does not directly
+  affect GPU memory usage or inference latency/throughput — it only determines how many LoRA adapters can be held in CPU memory
+  for swapping into GPU slots. The actual GPU memory impact is governed by `max_loras` (number of GPU LoRA slots). On Ascend
+  NPU, the behavior is identical to upstream vLLM since vllm-ascend does not override or modify this parameter. The parameter
+  is only meaningful when `enable_lora` is True; otherwise the entire LoRAConfig is set to None (vllm/engine/arg_utils.py:2006-2008).
+
+  '
+usage_locations:
+- file: vllm/config/lora.py:103
+  context: 'Validation: if max_cpu_loras is None, set it to max_loras; if set, must be >= max_loras'
+- file: vllm/lora/model_manager.py:256
+  context: Used as the capacity property of LoRAModelManager, defining the CPU cache size
+- file: vllm/engine/arg_utils.py:2002
+  context: Passed to LoRAConfig constructor; if None or <=0, set to None
+related_parameters:
+- name: --enable-lora
+  relation: Must be True for max_cpu_loras to have any effect; otherwise LoRAConfig is None
+- name: --max-loras
+  relation: max_cpu_loras must be >= max_loras; defaults to max_loras when not set
+constraints:
+- max_cpu_loras must be >= max_loras when explicitly set
+- max_cpu_loras only takes effect when enable_lora is True
+tuning_advice:
+  summary: 'Set max_cpu_loras to the total number of distinct LoRA adapters you plan to use across all requests. This parameter
+    has minimal performance impact on Ascend NPU — it only affects CPU memory usage for LoRA storage.
+
+    '
+  suggested_values:
+  - scenario: Small number of LoRA adapters (1-4)
+    value: '4'
+    reason: Matches typical deployment scenarios; CPU memory overhead is negligible
+  - scenario: Many LoRA adapters (e.g., multi-tenant serving with per-user LoRAs)
+    value: '128'
+    reason: Allows caching many adapters in CPU memory without frequent loading/unloading
+  - scenario: Unknown or dynamic LoRA count
+    value: null (defaults to max_loras)
+    reason: Safe default that ensures at least as many CPU slots as GPU slots
+  caveats:
+  - This parameter only controls CPU-side storage; GPU memory for LoRA is governed by max_loras and max_lora_rank
+  - On Ascend NPU, there is no vllm-ascend specific override — behavior matches upstream vLLM
+  - Setting max_cpu_loras much larger than max_loras increases CPU memory usage but does not affect inference performance
+  quick_guide: Set to the total number of distinct LoRA adapters you expect to serve; defaults to max_loras if unset.
+analysis_date: '2026-07-06'

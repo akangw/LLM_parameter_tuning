@@ -1,0 +1,100 @@
+name: --gpu-memory-utilization
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/cache.py:66
+- vllm/engine/arg_utils.py:1082
+- vllm_ascend/worker/worker.py:281
+- vllm_ascend/worker/worker.py:348
+- vllm_ascend/_310p/worker_310p.py:119
+value_type: float
+default: 0.92
+valid_choices: 0 < value <= 1
+cli_example: --gpu-memory-utilization 0.9
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: This fraction sets the per-instance NPU/GPU memory budget used by the model executor. In the Ascend worker,
+  requested memory is total device memory multiplied by gpu_memory_utilization; after model-memory profiling, the remaining
+  requested budget becomes available KV-cache memory. More KV-cache capacity can support more concurrent or longer requests
+  and avoid cache pressure, improving throughput and latency, while a value that exceeds free startup memory fails initialization.
+  On 310P, the computed available cache memory is halved to reserve workspace and other caches. An explicit kv_cache_memory_bytes
+  value takes a separate fast path and does not respect this setting.
+usage_locations:
+- file: vllm/config/cache.py:66
+  context: Defines the float with default 0.92 and validation greater than zero and less than or equal to one.
+- file: vllm/engine/arg_utils.py:1082
+  context: Exposes CacheConfig.gpu_memory_utilization as the --gpu-memory-utilization CLI option and passes it into CacheConfig.
+- file: vllm_ascend/worker/worker.py:281
+  context: Computes requested NPU memory as total memory times the configured fraction and rejects startup when free memory
+    is smaller.
+- file: vllm_ascend/worker/worker.py:348
+  context: Uses explicit kv_cache_memory_bytes directly, logs that it does not respect gpu_memory_utilization, and skips the
+    profiling calculation.
+- file: vllm_ascend/worker/worker.py:398
+  context: Computes available KV-cache memory by subtracting profiled non-KV-cache memory from the requested-memory budget.
+- file: vllm_ascend/_310p/worker_310p.py:119
+  context: Halves the computed cache-memory budget on 310P to reserve operator workspace and other cache.
+related_parameters:
+- name: --kv-cache-memory-bytes
+  relation: When non-null, it directly specifies the KV-cache size and the Ascend worker does not apply gpu_memory_utilization.
+- name: --max-model-len
+  relation: Longer supported contexts require more KV cache; reduce this limit or increase the memory fraction when cache
+    capacity is insufficient.
+- name: --max-num-batched-tokens
+  relation: This affects profiling and activation memory, which changes the remaining budget available for KV cache.
+- name: --block-size
+  relation: KV-cache capacity is allocated in blocks, so block size affects token-level cache allocation granularity.
+constraints:
+- The value must be greater than 0 and less than or equal to 1.
+- At device initialization, free memory must be at least total device memory multiplied by this value or the Ascend worker
+  raises ValueError.
+- On 310P, the available KV-cache budget computed from this setting is halved for workspace and other caches.
+- When --kv-cache-memory-bytes is set, it takes precedence and gpu_memory_utilization is not used for KV-cache sizing.
+tuning_advice:
+  summary: Start from the upstream default and tune against representative traffic; increase cautiously for more KV-cache
+    capacity and reduce it when startup or runtime memory headroom is inadequate.
+  suggested_values:
+  - scenario: General deployment with adequate free device memory
+    value: 0.92
+    reason: This is the current CacheConfig default and uses most, but not all, device memory for the model-executor budget.
+  - scenario: Workload needs more KV-cache capacity after confirming memory headroom
+    value: 0.95
+    reason: A higher fraction increases the requested budget and can leave more capacity after profiling for KV cache, subject
+      to the startup free-memory check.
+  - scenario: 310P or a workload with tight memory headroom
+    value: 0.8
+    reason: Lowering the requested budget leaves additional headroom; on 310P the remaining cache budget is also halved for
+      workspace and other caches.
+  caveats:
+  - The setting is a per-instance limit and does not itself coordinate memory sharing with another vLLM instance.
+  - A successful startup check does not substitute for benchmarking peak memory use under the production model and request
+    mix.
+  - Do not expect this setting to tune KV-cache size when --kv-cache-memory-bytes is explicitly set.
+  quick_guide: Leave the default unless KV-cache capacity or memory failures show a need to tune; change one direction at
+    a time and validate with the deployed model and traffic.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

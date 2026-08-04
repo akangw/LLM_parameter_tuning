@@ -1,0 +1,69 @@
+name: --mm-encoder-only
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:139
+- vllm/engine/arg_utils.py:1193
+- vllm/model_executor/models/interfaces.py:241
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --mm-encoder-only
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Enabling this option makes the process encoder-only: MultiModalConfig documents that it skips the language
+  component, and model construction replaces marked language-model modules with StageMissingLayer rather than initializing
+  their weights. This removes language-model computation and its model-memory footprint from the process, so its latency,
+  throughput, and memory characteristics are those of multimodal encoding rather than end-to-end generation. The pinned vLLM-Ascend
+  source has no parameter-specific override; use the upstream behavior as the applicable implementation evidence.'
+usage_locations:
+- file: vllm/config/multimodal.py:139
+  context: Defines the false default and states that the language component is skipped for a disaggregated Encoder process.
+- file: vllm/engine/arg_utils.py:1193
+  context: Registers --mm-encoder-only and passes its value into EngineArgs.
+- file: vllm/model_executor/models/interfaces.py:236
+  context: When enabled, no_init_weights replaces marked language-model components with StageMissingLayer during model construction.
+related_parameters:
+- name: --mm-encoder-tp-mode
+  relation: Controls whether supported multimodal encoders use weight or data tensor parallelism, including in an encoder-only
+    process.
+constraints:
+- This is intended for a disaggregated Encoder process; it skips the language component and therefore does not provide normal
+  text generation.
+- The remaining multimodal encoder must support the selected model and deployment path.
+tuning_advice:
+  summary: Enable only for the encoder role of a disaggregated multimodal deployment; otherwise retain the false default.
+  suggested_values:
+  - scenario: Dedicated disaggregated multimodal encoder process
+    value: true
+    reason: Avoids constructing and executing the language-model component so the process performs only multimodal encoding.
+  - scenario: Normal end-to-end multimodal generation server
+    value: false
+    reason: Keeps the language component available for generation.
+  caveats:
+  - Performance measurements with this flag are not comparable to end-to-end generation, because the language-model work is
+    deliberately absent.
+  - Encoder-only deployment still requires capacity for the multimodal encoder and any downstream transfer or decoder service.
+  quick_guide: Use --mm-encoder-only for a separate encoder service, not an end-to-end serving process.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

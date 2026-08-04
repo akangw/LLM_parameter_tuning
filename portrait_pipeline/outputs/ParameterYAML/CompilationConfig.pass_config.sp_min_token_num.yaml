@@ -1,0 +1,107 @@
+name: CompilationConfig.pass_config.sp_min_token_num
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/compilation.py:173
+- vllm/config/vllm.py:1042
+- vllm/config/vllm.py:1683
+- vllm_ascend/platform.py:221
+- vllm_ascend/compilation/passes/sequence_parallelism.py:13
+- docs/source/user_guide/feature_guide/sequence_parallelism.md:21
+value_type: int
+default: null
+valid_choices: Integer token count; values of 1 or greater are operationally meaningful.
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: This field is the token-count boundary intended to select which compiled graph ranges receive sequence parallelism.
+  With SP enabled, upstream adds an endpoint at sp_min_token_num - 1 when the threshold is greater than 1 and below max_num_batched_tokens,
+  producing a lower range without SP and a higher range where SP can rewrite all-reduce plus normalization into reduce-scatter,
+  local normalization, and all-gather. A low boundary exposes small-token requests to fixed collective overhead and can increase
+  latency; a high boundary avoids that overhead but can withhold SP and the communication/computation overlap built on it
+  from larger batches, reducing potential throughput. On Ascend, an unset value is resolved to 1000 for dense models and 1
+  for MoE models when SP is enabled. The pinned Ascend pass implementation then gates ranges with its model-derived 1000/1
+  threshold rather than reading an explicit configured override, even though the documentation describes the field as customizable.
+  Consequently, current Ascend source reliably supports the automatic thresholds, while custom values—especially dense-model
+  values below 1000—must be treated cautiously and verified against the compiled ranges and pass logs.
+usage_locations:
+- file: vllm/config/vllm.py:1042
+  context: When SP is enabled and this field is unset, computes the upstream device-, tensor-parallel-, dtype-, and hidden-size-dependent
+    threshold; if no threshold is available, disables SP and AsyncTP.
+- file: vllm/config/vllm.py:1683
+  context: Adds sp_min_token_num - 1 to the compile-range endpoints when the configured threshold lies strictly between 1
+    and max_num_batched_tokens, separating the non-SP and SP graph ranges.
+- file: vllm_ascend/platform.py:221
+  context: Before upstream fallback is needed, resolves an unset threshold for enabled Ascend SP to 1000 for dense models
+    or 1 for MoE models.
+- file: vllm_ascend/compilation/passes/sequence_parallelism.py:16
+  context: Defines Ascend's model-derived threshold helper as 1000 for dense models and 1 for MoE models.
+- file: vllm_ascend/compilation/passes/sequence_parallelism.py:207
+  context: The dense/VL Ascend pass stores the helper result and applies only when the compiled range start is at least that
+    value; it does not read pass_config.sp_min_token_num here.
+- file: vllm_ascend/compilation/passes/sequence_parallelism_moe.py:185
+  context: The Ascend MoE follow-up pass uses the same model-derived range gate.
+- file: docs/source/user_guide/feature_guide/sequence_parallelism.md:21
+  context: Documents the fixed-overhead tradeoff, the Ascend default of 1000, and the intended compile-range customization
+    path.
+related_parameters:
+- name: CompilationConfig.pass_config.enable_sp
+  relation: The threshold has an effect only when sequence parallelism is enabled; if upstream cannot compute an unset threshold,
+    it disables SP.
+- name: CompilationConfig.pass_config.fuse_gemm_comms
+  relation: Async tensor-parallel communication/GEMM fusion forces SP on and is effective only after SP has transformed an
+    eligible higher token range.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: The scheduler limit is the upper compile-range endpoint. A configured threshold at or above it does not create
+    the threshold split, so SP may never receive an eligible higher range.
+- name: ParallelConfig.tensor_parallel_size
+  relation: SP requires tensor parallel size greater than one; upstream disables both SP and AsyncTP at TP=1 regardless of
+    this threshold.
+- name: CompilationConfig.compile_ranges_endpoints
+  relation: The effective threshold is represented by adding sp_min_token_num - 1 to these endpoints when it lies inside the
+    schedulable token range.
+constraints:
+- The field is ignored when enable_sp is false.
+- Sequence parallelism requires tensor_parallel_size greater than one; validation disables SP at TP=1.
+- To form distinct lower and upper compile ranges, sp_min_token_num must be greater than 1 and less than max_num_batched_tokens;
+  otherwise no threshold endpoint is added.
+- Ascend graph-pass SP requires graph mode; eager execution does not activate the pass-derived SP runtime path.
+- In the pinned Ascend implementation, pass applicability uses a hard-coded model-derived gate of 1000 for dense models or
+  1 for MoE models rather than the explicit field value.
+tuning_advice:
+  summary: Keep Ascend's automatic 1000/1 model-specific threshold initially; tune only with token-range benchmarks and verify
+    that current-source pass applicability matches the intended boundary.
+  suggested_values:
+  - scenario: Dense or VL model on Ascend with supported graph-pass SP
+    value: 1000
+    reason: This is both the documented empirical crossover and the threshold actually used by the pinned Ascend pass, avoiding
+      fixed collective overhead for smaller token ranges.
+  - scenario: MoE model on Ascend with supported graph-pass SP
+    value: 1
+    reason: Ascend's platform default and pass helper both use 1 for MoE, making the pass eligible from the first compile
+      range.
+  - scenario: Upstream CUDA deployment on supported hardware
+    value: <computed>
+    reason: Leaving the field unset lets upstream derive a threshold from device capability, tensor-parallel size, dtype element
+      size, and hidden size; use an explicit integer only after profiling representative token ranges.
+  - scenario: Latency-sensitive workload that rarely reaches the current SP crossover
+    value: max_num_batched_tokens
+    reason: Using a boundary at the scheduler limit prevents creation of a higher SP range and is useful as an A/B baseline,
+      although explicitly disabling enable_sp is clearer when SP is not wanted.
+  caveats:
+  - 'Lower is not automatically faster: fixed reduce-scatter/all-gather overhead can dominate small-token execution and regress
+    latency.'
+  - A threshold at or above max_num_batched_tokens creates no upper compile range, so the expected SP and AsyncTP throughput
+    benefit can disappear.
+  - Current Ascend documentation says custom thresholds are supported, but the pinned dense and MoE passes gate on their own
+    1000/1 helper values. In particular, a dense override below 1000 can create a range whose start remains below the pass
+    gate, leaving the whole range ineligible.
+  - Changing the threshold changes graph range partitioning and can add compilation and warm-up work even when end-to-end
+    performance does not improve.
+  quick_guide: 'Ascend: leave the value unset or use 1000 for dense/VL and 1 for MoE; benchmark latency and throughput on
+    both sides of the boundary, and do not trust a custom lower dense threshold without confirming pass application.'
+analysis_date: '2026-07-30'

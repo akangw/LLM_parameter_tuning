@@ -1,0 +1,70 @@
+name: --io-processor-plugin
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:835
+- vllm/config/model.py:307
+value_type: str
+default: null
+valid_choices: <plugin name registered under vllm.io_processor_plugins entry point>
+cli_example: --io-processor-plugin my_custom_plugin
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter specifies a custom IOProcessor plugin to load at model startup. The plugin performs pre-processing
+  (parsing input data, tokenization) and post-processing of model outputs for pooling models. It is loaded via Python entry
+  points under the ''vllm.io_processor_plugins'' group. The plugin code runs in process0 (the API server process) only, not
+  in the engine core or worker processes. Its performance impact is limited to request pre/post-processing latency — it does
+  not affect model inference throughput or NPU memory usage directly. However, a poorly implemented plugin could add significant
+  per-request overhead. On Ascend NPU, this parameter behaves identically to upstream vLLM; vllm-ascend does not override
+  or modify it.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:564
+  context: 'Field declaration: io_processor_plugin: str | None = None'
+- file: vllm/engine/arg_utils.py:1569
+  context: Passed to ModelConfig constructor during config creation
+- file: vllm/config/model.py:307
+  context: ModelConfig field definition with docstring
+- file: vllm/config/model.py:375
+  context: Listed in ignored_factors for hash computation (does not affect model cache key)
+- file: vllm/entrypoints/pooling/factories.py:70
+  context: Checked via has_io_processor() to determine if PluginWithIOProcessorPlugins should be used
+- file: vllm/entrypoints/pooling/pooling/io_processor.py:37
+  context: PluginWithIOProcessorPlugins.__init__ loads the named plugin via get_io_processor()
+- file: vllm/plugins/io_processors/__init__.py:26
+  context: has_io_processor() checks if plugin name is provided
+- file: vllm/plugins/io_processors/__init__.py:49
+  context: get_io_processor() loads the plugin from vllm.io_processor_plugins entry point group
+related_parameters:
+- name: pooling_task
+  relation: IOProcessor plugin is only used when pooling_task is 'plugin' or when has_io_processor() returns true
+- name: VLLM_PLUGINS
+  relation: Environment variable that can restrict which plugins are allowed to load
+constraints:
+- The plugin name must correspond to a registered entry point under the 'vllm.io_processor_plugins' group.
+- The plugin's registered callable must return a fully-qualified class name string or None.
+- The returned class must be importable and a valid IOProcessor subclass.
+tuning_advice:
+  summary: 'Only set this when deploying a custom pooling model that requires specialized input/output processing. For standard
+    models, leave it unset (null) to avoid unnecessary plugin loading overhead.
+
+    '
+  suggested_values:
+  - scenario: Standard embedding/classification/pooling models with built-in IO processors
+    value: null
+    reason: vLLM provides built-in IO processors for common pooling tasks (embed, classify, score, etc.); no plugin needed
+  - scenario: Custom pooling model requiring specialized pre/post-processing
+    value: <your_registered_plugin_name>
+    reason: Enables custom data parsing and output formatting specific to your model
+  caveats:
+  - Plugin code runs in the API server process (process0) only — it does not benefit from NPU acceleration.
+  - A slow plugin can become a bottleneck, increasing per-request latency regardless of NPU inference speed.
+  - The plugin is loaded once at startup; runtime overhead is per-request, not per-token.
+  - This parameter is listed in `ignored_factors` for model cache key computation, so changing it does not invalidate the
+    compiled model cache.
+  quick_guide: Leave unset unless deploying a custom pooling model with a registered IOProcessor plugin.
+analysis_date: '2026-07-06'

@@ -1,0 +1,94 @@
+schema_version: 1
+scenario_id: glm52-w8a8-a3-dp2-tp16-aligned-l1
+
+recall_tags:
+  hardware: [a3]
+  model: [moe, mla, quantized]
+  deploy_topology: [multi_node]
+  optimize_target: [throughput]
+  # Empty for the mixed-workload Aligned L1 matrix.
+  deploy_scenario: []
+
+image:
+  reference: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+  parameter_portrait_exact_match: true
+
+# A future read-only image probe can replace or extend this snapshot. Parameters
+# absent here may still be proposed, but can never be auto-approved.
+capabilities:
+  source: existing_continuous_controller_contract_2026-07-31
+  verified_canonical_parameters:
+    - max_num_seqs
+    - max_model_len
+    - max_num_batched_tokens
+    - gpu_memory_utilization
+    - enable_prefix_caching
+    - async_scheduling
+    - enable_expert_parallel
+    - compilation_mode
+    - num_speculative_tokens
+    - long_prefill_token_threshold
+
+model:
+  architecture: GlmMoeDsaForCausalLM
+  moe: true
+  mla: true
+  quantized: true
+  encoder_decoder: false
+  uses_kv_cache: true
+
+topology:
+  nodes: 2
+  npu_per_node: 16
+  total_npu: 32
+  data_parallel_size: 2
+  tensor_parallel_size: 16
+  pipeline_parallel_size: 1
+  worker_generation: v1
+
+features:
+  mtp: true
+  pd_disaggregated: false
+  kv_transfer: false
+  lora: false
+  hierarchy_communication: false
+  dynamic_eplb: false
+
+benchmark:
+  mode: aligned_l1
+  primary_concurrency: 32
+  maximum_input_tokens: 8192
+  maximum_output_tokens: 2048
+
+# This snapshot is input evidence only. The compiler never writes it back to
+# workflow/continuous/config.yaml.
+baseline:
+  max_num_seqs: 48
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.93
+  enable_prefix_caching: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  long_prefill_token_threshold: 0
+  # The pinned vLLM commit rejects max_num_batched_tokens < max_model_len when
+  # chunked prefill is disabled. Keep it enabled for the 64k context baseline.
+  enable_chunked_prefill: true
+  # Effective list captured from the successful 0706 A0 runtime.  This is
+  # deliberately explicit: null delegates list construction to the runtime
+  # and has produced a different effective profile on the new pipeline.
+  cudagraph_capture_sizes: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+  max_cudagraph_capture_size: 192
+  compilation_enable_sp: null
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  block_size: null
+  flashcomm1: true
+  mlapo: true
+  fused_mc2: 0
+  decode_context_parallel_size: 1

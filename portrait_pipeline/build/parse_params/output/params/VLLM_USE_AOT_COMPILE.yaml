@@ -1,0 +1,97 @@
+name: VLLM_USE_AOT_COMPILE
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:321
+- vllm/envs.py:641
+- vllm/compilation/decorators.py:525
+- vllm/compilation/decorators.py:578
+- vllm/compilation/wrapper.py:138
+value_type: bool
+default: <computed>
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'VLLM_USE_AOT_COMPILE controls whether vLLM performs Ahead-of-Time (AOT) compilation of torch.compile graphs
+  during the model warmup phase, caching the compiled artifacts for reuse on subsequent invocations. When enabled (value "1"),
+  the compilation overhead is shifted from the first inference request to the warmup phase, and subsequent requests benefit
+  from pre-compiled, optimized kernels. This directly affects cold-start latency (first request latency), steady-state throughput
+  (by avoiding JIT compilation pauses), and memory usage (compiled artifacts are cached to disk under VLLM_CACHE_ROOT/torch_compile_cache/torch_aot_compile/).
+  The default value is dynamically computed: "it defaults to \"1\" when PyTorch >= 2.10.0 and" VLLM_DISABLE_COMPILE_CACHE
+  is not set, otherwise "0". On Ascend NPU, this parameter is upstream-only (no vllm-ascend override found in the provided
+  context), but its effect depends on the Ascend torch.compile backend (torch_npu). The AOT path in vllm/compilation/decorators.py:525-574
+  generates a hash from compilation factors, checks for cached artifacts, and either loads them or triggers fresh compilation.
+  In vllm/compilation/wrapper.py:138-145, when enabled, it patches torch._dynamo.config.enable_aot_compile=True before calling
+  torch.compile. The compiled callable is stored as self.aot_compiled_fn and invoked directly on subsequent calls, bypassing
+  the normal torch.compile guard mechanism. This significantly reduces per-request overhead but requires sufficient disk space
+  for cache storage and may increase warmup time on first run.
+
+  '
+usage_locations:
+- file: vllm/compilation/decorators.py:525
+  context: Checks VLLM_USE_AOT_COMPILE to decide whether to compute AOT cache hash and attempt loading cached compiled artifacts
+- file: vllm/compilation/decorators.py:578
+  context: Asserts that when VLLM_USE_AOT_COMPILE is enabled and the model is already compiled, the backend must be "eager"
+    (sanity check)
+- file: vllm/compilation/wrapper.py:138
+  context: When VLLM_USE_AOT_COMPILE is enabled, patches torch._dynamo.config.enable_aot_compile=True before calling torch.compile
+- file: vllm/model_executor/layers/batch_invariant.py:1009
+  context: For batch invariance testing, VLLM_USE_AOT_COMPILE is explicitly set to "0" to ensure deterministic compilation
+    behavior
+related_parameters:
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: When VLLM_DISABLE_COMPILE_CACHE is set, the default value of VLLM_USE_AOT_COMPILE becomes "0" (via use_aot_compile()
+    logic)
+- name: VLLM_FORCE_AOT_LOAD
+  relation: VLLM_FORCE_AOT_LOAD is ignored when VLLM_USE_AOT_COMPILE is disabled; when both are enabled, failure to load cached
+    AOT artifacts causes a hard error
+- name: VLLM_USE_MEGA_AOT_ARTIFACT
+  relation: Works alongside VLLM_USE_AOT_COMPILE to load compiled models from standalone compile artifacts without re-splitting
+    graph modules
+- name: VLLM_CACHE_ROOT
+  relation: AOT compilation cache artifacts are stored under VLLM_CACHE_ROOT/torch_compile_cache/torch_aot_compile/
+- name: VLLM_USE_BYTECODE_HOOK
+  relation: Both affect torch.compile behavior; AOT compile with unbacked dynamic shapes may require VLLM_USE_BYTECODE_HOOK=False
+constraints:
+- VLLM_USE_AOT_COMPILE requires PyTorch version that supports torch._dynamo.config.enable_aot_compile; if unavailable, a warning
+  is logged and AOT compile is disabled
+- When VLLM_USE_AOT_COMPILE is enabled and the model is already compiled, the compilation backend must be "eager"
+- VLLM_FORCE_AOT_LOAD has no effect when VLLM_USE_AOT_COMPILE is disabled
+tuning_advice:
+  summary: Enable VLLM_USE_AOT_COMPILE=1 on Ascend NPU to shift torch.compile overhead from inference time to warmup, reducing
+    first-request latency and avoiding JIT pauses during serving
+  suggested_values:
+  - scenario: Production serving on Ascend NPU with PyTorch >= 2.10.0
+    value: '1'
+    reason: AOT compilation pre-compiles all torch.compile graphs during warmup, eliminating JIT compilation pauses during
+      inference and improving steady-state throughput; cached artifacts persist across restarts
+  - scenario: Development or debugging on Ascend NPU where compilation cache may cause issues
+    value: '0'
+    reason: Disabling AOT compile allows normal JIT compilation, which is easier to debug and avoids potential cache staleness
+      issues during rapid code changes
+  - scenario: First deployment of a new model on Ascend NPU
+    value: '1'
+    reason: The initial warmup will be slower due to AOT compilation, but subsequent restarts will benefit from cached artifacts,
+      significantly reducing cold-start time
+  caveats:
+  - On Ascend NPU, AOT compilation uses the torch_npu backend; compilation time during warmup may be longer than on CUDA due
+    to CANN graph compilation overhead
+  - AOT cache artifacts are stored on disk under VLLM_CACHE_ROOT; ensure sufficient disk space, especially for large models
+    with many compiled subgraphs
+  - If model source code changes, cached AOT artifacts are invalidated and recompilation occurs; this is detected by hashing
+    source files
+  - When VLLM_USE_AOT_COMPILE=1 and VLLM_FORCE_AOT_LOAD=1, any cache miss causes a hard error rather than falling back to
+    JIT compilation
+  - The default value is "1" only when PyTorch >= 2.10.0 AND VLLM_DISABLE_COMPILE_CACHE is not set; on older PyTorch versions
+    it defaults to "0"
+  quick_guide: Set VLLM_USE_AOT_COMPILE=1 for production Ascend NPU deployments to pre-compile graphs during warmup and eliminate
+    JIT pauses; ensure PyTorch >= 2.10.0 and sufficient disk space for cache
+analysis_date: '2026-07-06'

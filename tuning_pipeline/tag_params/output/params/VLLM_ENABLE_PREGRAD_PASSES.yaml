@@ -1,0 +1,73 @@
+name: VLLM_ENABLE_PREGRAD_PASSES
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:627
+- vllm_ascend/compilation/compiler_interface.py:231
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: VLLM_ENABLE_PREGRAD_PASSES=0 vllm serve MODEL
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: Upstream vLLM's Inductor compiler checks this flag immediately before standalone_compile. With PyTorch older
+  than 2.12, false patches torch._inductor.compile_fx._recursive_pre_grad_passes to return the graph unchanged; true leaves
+  the passes enabled. Current source says those passes do nothing for vLLM but run even on cache hits and add O(1s) to cold
+  compile time. PyTorch 2.12.0.dev and newer always use the normal pass path, so the setting is then ineffective. The pinned
+  Ascend backend overrides compile with its own fusion-pass or npugraph_ex/torchair path and never reads this flag, so it
+  has no latency, throughput, or memory effect on Ascend.
+usage_locations:
+- file: vllm_ascend/compilation/compiler_interface.py:231
+  context: AscendCompiler.compile selects npugraph_ex_compile or fusion_pass_compile without invoking upstream InductorCompiler.compile;
+    consequently VLLM_ENABLE_PREGRAD_PASSES is not consumed on this backend.
+related_parameters:
+- name: VLLM_USE_STANDALONE_COMPILE
+  relation: The pre-grad toggle is evaluated in the upstream Inductor standalone compilation path; it cannot affect execution
+    when that path is not used.
+- name: VLLM_USE_MEGA_AOT_ARTIFACT
+  relation: Mega-AOT artifact generation is an option of the same upstream standalone_compile call, but it does not change
+    the version gate or the meaning of this pre-grad toggle.
+constraints:
+- The environment parser treats exactly the string "1" as true; "0" and every other value are false.
+- The setting changes upstream behavior only with PyTorch older than 2.12.0.dev; newer versions ignore false and run the normal
+  pre-grad path.
+- The pinned AscendCompiler does not consume this variable because it replaces the upstream Inductor compilation method.
+tuning_advice:
+  summary: For upstream vLLM on PyTorch older than 2.12, set the variable to 0 to reduce compilation/startup latency; leave
+    the default on newer PyTorch or on Ascend, where changing it has no performance effect.
+  suggested_values:
+  - scenario: Upstream vLLM with PyTorch older than 2.12 and cold-start time matters
+    value: '0'
+    reason: This skips pre-grad passes that current vLLM source describes as ineffective for vLLM yet responsible for O(1s)
+      of cold compile time, including work on cache hits.
+  - scenario: PyTorch 2.12 or newer, or the pinned Ascend backend
+    value: '1'
+    reason: PyTorch 2.12 or newer bypasses the disabling branch, and Ascend uses a separate compiler implementation, so retaining
+      the default avoids an unnecessary override.
+  caveats:
+  - This affects compilation/startup latency only, not steady-state request latency, throughput, or memory.
+  - The source retains a TODO noting that maybe_inplace requires pre-grad processing; revalidate before disabling if the compilation
+    pipeline changes.
+  quick_guide: Use VLLM_ENABLE_PREGRAD_PASSES=0 only for upstream vLLM on PyTorch before 2.12 when shaving roughly one second
+    from compile warmup matters.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

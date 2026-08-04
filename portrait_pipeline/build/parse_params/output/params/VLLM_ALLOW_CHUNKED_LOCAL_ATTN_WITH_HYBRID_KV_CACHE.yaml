@@ -1,0 +1,102 @@
+name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+type: env
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/envs.py:1539
+- vllm/envs.py:213
+- vllm/config/vllm.py:1329
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'This environment variable controls whether the Hybrid KV cache manager is allowed to be used together with
+  chunked local attention (attention_chunk_size is set). When set to 0 (false), the hybrid KV cache manager is forcibly disabled
+  for models using chunked local attention, falling back to the standard KV cache manager. The standard KV cache manager uses
+  more memory because it cannot share KV cache blocks between full-attention and local-attention layers in hybrid models (e.g.,
+  Llama4). Enabling this flag (default true) allows the hybrid KV cache manager to operate, which saves KV cache memory and
+  enables longer context lengths, but the upstream code explicitly warns of a known latency regression when combining chunked
+  local attention with the hybrid KV cache manager. On Ascend NPU, this tradeoff is equally relevant: "the hybrid KV cache
+  manager reduces memory pressure (critical for" NPU HBM), but the latency regression may be more or less pronounced depending
+  on CANN''s attention kernel efficiency. The parameter is checked in vllm/config/vllm.py:1329 during scheduler configuration
+  initialization.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1329
+  context: 'During scheduler config initialization, checks if chunked local attention is enabled (attention_chunk_size is
+    not None) and if speculative decoding with Eagle is not active. If VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+    is false, the hybrid KV cache manager is disabled with a warning log.
+
+    '
+related_parameters:
+- name: attention_chunk_size
+  relation: 'This parameter only takes effect when attention_chunk_size is set (chunked local attention is enabled). Without
+    chunked local attention, the hybrid KV cache manager operates normally regardless of this env var.
+
+    '
+- name: disable_hybrid_kv_cache_manager
+  relation: 'If the user explicitly disables the hybrid KV cache manager via --disable-kv-cache-manager, this env var has
+    no effect — the hybrid manager is already off.
+
+    '
+- name: speculative_config (Eagle)
+  relation: 'When speculative decoding with Eagle is active and chunked local attention is enabled, the hybrid KV cache manager
+    is unconditionally disabled, overriding this env var.
+
+    '
+constraints:
+- This env var has no effect if attention_chunk_size is not set (chunked local attention is not enabled).
+- This env var has no effect if speculative decoding with Eagle is active and chunked local attention is enabled — hybrid
+  KV cache manager is unconditionally disabled in that case.
+- This env var has no effect if the user explicitly disables the hybrid KV cache manager via --disable-kv-cache-manager.
+tuning_advice:
+  summary: 'Enable (default) to save KV cache memory on hybrid models like Llama4 at the cost of a known latency regression;
+    disable if latency is more critical than memory savings.
+
+    '
+  suggested_values:
+  - scenario: 'Running hybrid models (e.g., Llama4) with chunked local attention on Ascend NPU where memory is constrained
+      and longer context is needed.
+
+      '
+    value: true
+    reason: 'The hybrid KV cache manager shares KV cache blocks between full-attention and local-attention layers, significantly
+      reducing KV cache memory usage and enabling longer context lengths. The default value (true) is appropriate for memory-constrained
+      NPU scenarios.
+
+      '
+  - scenario: 'Running hybrid models with chunked local attention where latency is the primary concern and memory is sufficient.
+
+      '
+    value: false
+    reason: 'Upstream code explicitly documents a latency regression when combining chunked local attention with the hybrid
+      KV cache manager. Disabling it falls back to the standard KV cache manager, which avoids this regression at the cost
+      of higher memory usage.
+
+      '
+  caveats:
+  - 'The latency regression mentioned in the upstream code is GPU-observed; on Ascend NPU the magnitude may differ due to
+    CANN''s attention kernel implementation. Benchmark both settings on your specific NPU hardware.
+
+    '
+  - 'This flag only affects hybrid models (models with both full-attention and local-attention layers, such as Llama4). For
+    non-hybrid models, the hybrid KV cache manager behavior is unaffected by this flag.
+
+    '
+  - 'The upstream TODO comment indicates this flag is temporary and will be removed once the latency regression is resolved
+    — expect behavior changes in future vLLM versions.
+
+    '
+  quick_guide: 'Keep the default (true) for memory savings on Ascend NPU; set to 0 only if latency regression is confirmed
+    and unacceptable for your workload.
+
+    '
+analysis_date: '2026-07-06'

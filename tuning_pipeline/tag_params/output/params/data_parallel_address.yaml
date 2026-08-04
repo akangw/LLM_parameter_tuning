@@ -1,0 +1,86 @@
+name: --data-parallel-address
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:472
+- vllm/engine/arg_utils.py:991
+- vllm/engine/arg_utils.py:1864
+- vllm/config/parallel.py:127
+- vllm/config/parallel.py:539
+value_type: str
+default: null
+valid_choices: Any resolvable IP address or hostname reachable by the data-parallel processes.
+cli_example: vllm serve <model> --data-parallel-address 10.0.0.10
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: This option selects the address stored as ParallelConfig.data_parallel_master_ip. In the current upstream source,
+  EngineArgs uses an explicit value directly; if omitted, it derives the address from get_ip() for the Ray backend or from
+  --master-addr/data_parallel_master_ip for the mp backend (vllm/engine/arg_utils.py:1864-1882). The resulting address is
+  used for the multi-node data-parallel torch distributed group and ZMQ sockets, and ParallelConfig also uses it to connect
+  to the TCP store and bind the data-parallel coordination socket (vllm/config/parallel.py:539-545, 581-589). It does not
+  change model computation or memory allocation. A reachable address on the intended interconnect can avoid communication-path
+  and connection overhead, so it can indirectly affect end-to-end latency and throughput when remote data-parallel engines
+  are used. The pinned vLLM-Ascend tree has no override or direct reference to this CLI option and consumes upstream ParallelConfig,
+  so Ascend retains this upstream address-resolution behavior.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1864
+  context: Resolves the explicit address or chooses the Ray/mp fallback before constructing ParallelConfig.
+- file: vllm/engine/arg_utils.py:1909
+  context: Passes the resolved address as data_parallel_master_ip to ParallelConfig.
+- file: vllm/config/parallel.py:539
+  context: Uses data_parallel_master_ip to create the TCP-store client and bind the coordination socket.
+- file: vllm/config/parallel.py:584
+  context: Passes data_parallel_master_ip to the stateless torch distributed process-group initializer.
+related_parameters:
+- name: --data-parallel-backend
+  relation: Determines whether an unset address is derived from the Ray host IP or the mp fallback.
+- name: --master-addr
+  relation: Provides the mp-backend fallback when this option is unset.
+- name: --data-parallel-rpc-port
+  relation: Supplies the separate port used for remote data-parallel engine messaging.
+- name: --data-parallel-size
+  relation: Remote data-parallel communication is relevant only when the deployment uses multiple data-parallel replicas.
+constraints:
+- The address must resolve and be reachable by every participating remote data-parallel process.
+- Leave it unset when the Ray-derived or mp fallback address is correct; an explicit value overrides both fallbacks.
+- Ensure the chosen interface can bind the data-parallel coordination socket and route the distributed traffic.
+tuning_advice:
+  summary: This is a connectivity selection, not a compute or memory tuning knob. For multi-node data parallelism, set it
+    only when automatic address selection would choose the wrong interface.
+  suggested_values:
+  - scenario: Multi-node deployment with a dedicated reachable interconnect
+    value: 10.0.0.10
+    reason: Use the head node's address on the interface reachable by all data-parallel processes.
+  - scenario: Ray backend with correct host-IP detection
+    value: unset
+    reason: Leaving the option unset lets the current source use get_ip() for the Ray-based data-parallel address.
+  - scenario: mp backend with --master-addr already set correctly
+    value: unset
+    reason: Leaving the option unset lets the current source use --master-addr before the ParallelConfig default.
+  caveats:
+  - An unreachable or incorrect address prevents the data-parallel coordination and distributed group from connecting.
+  - This option does not reduce GPU/NPU memory use or alter model kernels; its performance relevance is limited to remote
+    communication setup and path selection.
+  - The data-parallel RPC port is configured separately and must also be usable for remote engines.
+  quick_guide: Set the head-node address on the shared interconnect only when the automatic Ray/mp fallback is not the desired
+    reachable interface.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

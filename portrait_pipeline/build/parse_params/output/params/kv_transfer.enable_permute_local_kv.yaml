@@ -1,0 +1,59 @@
+name: kv_transfer.enable_permute_local_kv
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm_ascend/platform.py:1017
+- vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:600
+- vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:1427
+- vllm/platforms/xpu.py:243
+value_type: bool
+default: 'False'
+valid_choices:
+- true
+- false
+cli_example: '--kv-transfer-config ''{"enable_permute_local_kv": true}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter is an experimental feature flag that controls whether to permute local KV cache from HND (head,
+  num_blocks, head_dim) layout to NHD (num_blocks, head, head_dim) layout during KV transfer operations. On Ascend NPU, vllm-ascend
+  explicitly resets this flag to False (vllm_ascend/platform.py:1017-1022) because the underlying permutation mechanism is
+  tied to an incompatible backend (NIXL/NCCL-based GPU KV transfer). The flag only takes effect in the v1-upstream NIXL worker
+  path (vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:600,1427), which is not used on Ascend. Since vllm-ascend
+  forces this to False regardless of user input, the parameter has no runtime effect on Ascend NPU — it is effectively neutralized.
+  The performance impact is classified as "low" because while the parameter itself does nothing on Ascend, the KV transfer
+  subsystem it belongs to could theoretically affect performance if Ascend were to implement its own KV transfer backend in
+  the future.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:1017
+  context: Ascend platform check resets enable_permute_local_kv to False with warning
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:600
+  context: v1 NIXL worker checks flag to decide whether to permute host buffer shape from NHD to HND
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/worker.py:1427
+  context: v1 NIXL worker uses flag to enable local KV permutation when remote is HND and local is NHD
+- file: vllm/platforms/xpu.py:243
+  context: XPU platform forces enable_permute_local_kv to True for Intel GPU KV transfer
+related_parameters:
+- name: kv_transfer.kv_buffer_size
+  relation: Both are KV transfer config parameters; kv_buffer_size is also reset by vllm-ascend
+- name: kv_transfer.kv_connector
+  relation: The KV connector backend determines whether enable_permute_local_kv has any effect
+constraints:
+- enable_permute_local_kv is always reset to False on Ascend NPU regardless of user setting
+- enable_permute_local_kv requires NIXL-based KV transfer backend which is not available on Ascend
+tuning_advice:
+  summary: This parameter is forcibly disabled on Ascend NPU and has no effect — no tuning needed
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: 'false'
+    reason: vllm-ascend automatically resets this to False; setting it to true has no effect and triggers a warning
+  caveats:
+  - Setting this to true on Ascend will produce a warning log but will be silently overridden to false
+  - This parameter only applies to the v1 NIXL KV transfer path which is not used on Ascend
+  quick_guide: Leave at default (false) — vllm-ascend forces this off automatically
+analysis_date: '2026-07-06'

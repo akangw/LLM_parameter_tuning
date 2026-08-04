@@ -1,0 +1,112 @@
+name: KVTransferConfig.kv_connector_extra_config.connectors
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:33
+- vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:19
+- docs/source/user_guide/feature_guide/kv_pool.md:22
+- docs/features/disagg_prefill.md:29
+value_type: unknown
+default: null
+valid_choices: An ordered, non-null list of KVTransferConfig dictionaries. Each child dictionary identifies a registered kv_connector
+  and supplies its required kv_role and any connector-specific fields.
+cli_example: --kv-transfer-config '{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_both"},{"kv_connector":"AscendStoreConnector","kv_role":"kv_both","kv_connector_extra_config":{"lookup_rpc_port":"0","backend":"mooncake"}}]}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This ordered list determines which child KV-transfer implementations MultiConnector instantiates. Upstream
+  MultiConnector checks children in list order when loading and assigns a request to the first child that reports matched
+  tokens, while save operations are issued to every child. Consequently, connector ordering can change KV-hit latency, and
+  every additional save target can add transfer work, storage use, and asynchronous completion overhead. Ascend replaces the
+  upstream wrapper with AscendMultiConnector and requires all children to support hybrid KV-cache management unless that manager
+  is disabled. Ascend's CPU-offload metadata path also walks this list to recover a nested CPUOffloadingConnector and its
+  host-memory configuration.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:19
+  context: Ascend subclasses MultiConnector, operates on the instantiated child list, and enforces that all children support
+    hybrid KV-cache management when it is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:33
+  context: Reads and iterates connectors to locate a nested CPUOffloadingConnector whose extra configuration sizes the shared
+    host KV cache.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:275
+  context: Documents an Ascend producer configuration combining MooncakeConnectorV1 and AscendStoreConnector in the connectors
+    list.
+- file: docs/features/disagg_prefill.md:29
+  context: Documents upstream MultiConnector as an ordered list of child connector keyword dictionaries under kv_connector_extra_config.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: Must select MultiConnector for this nested list to be consumed as the child-connector configuration.
+- name: KVTransferConfig.kv_role
+  relation: Sets the top-level producer/consumer role; each child dictionary also needs a role appropriate for that child
+    and deployment.
+- name: KVTransferConfig.kv_load_failure_policy
+  relation: For MultiConnector on Ascend, configure this policy on the top-level KVTransferConfig rather than inside child
+    dictionaries.
+- name: SchedulerConfig.disable_hybrid_kv_cache_manager
+  relation: If hybrid KV-cache management remains enabled, Ascend requires every configured child connector to support it.
+constraints:
+- The key is only meaningful when the top-level kv_connector is MultiConnector.
+- The value must be present and non-null for MultiConnector; its constructor asserts that the connectors list exists before
+  iterating it.
+- Every item must be accepted by KVTransferConfig and resolve to a registered connector implementation; a configured kv_connector
+  requires a valid kv_role.
+- 'Connector order is load priority: the first child that reports matched tokens supplies the load, whereas saves are dispatched
+  to all children.'
+- When Ascend hybrid KV-cache management is enabled, all child connectors must support hybrid KV-cache management.
+tuning_advice:
+  summary: Include only the KV backends the deployment needs, and order load-capable children by measured hit latency and
+    the desired fallback priority.
+  suggested_values:
+  - scenario: Ascend disaggregated prefill with direct transfer plus a shared KV pool
+    value:
+    - kv_connector: MooncakeConnectorV1
+      kv_role: kv_both
+    - kv_connector: AscendStoreConnector
+      kv_role: kv_both
+      kv_connector_extra_config:
+        lookup_rpc_port: '0'
+        backend: mooncake
+    reason: This follows the documented Ascend two-backend pattern. Putting the direct-transfer child first gives it load
+      priority, while the store remains an additional load source and receives saves.
+  - scenario: A different pair of load-capable connectors
+    value:
+    - kv_connector: FAST_LOCAL_CONNECTOR
+      kv_role: kv_both
+    - kv_connector: DURABLE_REMOTE_CONNECTOR
+      kv_role: kv_both
+    reason: 'The shape illustrates the verified priority rule: place the lower-latency or otherwise preferred source first,
+      then substitute only connector names and required fields supported by the deployment.'
+  caveats:
+  - 'Saving is not first-success: each configured child receives save calls, so adding a backend can increase bandwidth, storage
+    consumption, and completion overhead.'
+  - A child that is first in the list but slow to finish its lookup can delay selection because MultiConnector waits for lookup
+    completion before finalizing a load choice.
+  - CPUOffloadingConnector is deprecated in the pinned Ascend documentation; do not adopt it for a new chain solely because
+    the metadata path still recognizes it.
+  - Validate hybrid KV-cache support across the complete child set on Ascend, or explicitly disable the hybrid manager when
+    the model and deployment permit that tradeoff.
+  quick_guide: Benchmark candidate children individually, put the preferred load source first, add only necessary save targets,
+    and verify Ascend hybrid-cache compatibility before deployment.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

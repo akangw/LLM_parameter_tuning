@@ -1,0 +1,79 @@
+name: --disable-hybrid-kv-cache-manager
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/scheduler.py:132
+- vllm/config/vllm.py:1306
+- vllm_ascend/platform.py:277
+- vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:28
+value_type: bool
+default: null
+valid_choices: true to disable HMA; false (--no-disable-hybrid-kv-cache-manager) to explicitly enable it; null to use runtime
+  selection.
+cli_example: --disable-hybrid-kv-cache-manager
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When true, the scheduler allocates the same KV-cache size for every attention layer instead of using the hybrid
+  KV cache manager (HMA) for differing attention specifications. This can increase KV-cache memory use for models containing
+  sliding-window or Mamba attention. The current runtime also warns that turning HMA off for a KV-transfer configuration reduces
+  performance on such models. Conversely, the runtime automatically disables HMA for unsupported platform/features and rejects
+  an explicit false value in those cases. On Ascend, the platform reports HMA support and its KV-transfer connectors use this
+  setting to select hybrid cache handling; the multi-connector requires every sub-connector to support HMA when HMA remains
+  enabled.
+usage_locations:
+- file: vllm/config/scheduler.py:132
+  context: Defines the nullable Boolean setting and documents that true uses an equal KV-cache size for all attention layers.
+- file: vllm/config/vllm.py:1306
+  context: Resolves automatic behavior, disables HMA for unsupported combinations, and reports reduced performance with KV
+    transfer on sliding-window or Mamba models.
+- file: vllm_ascend/platform.py:277
+  context: Uses enabled HMA together with KV transfer to apply Ascend Mamba block-size alignment logic.
+- file: vllm_ascend/distributed/kv_transfer/ascend_multi_connector.py:28
+  context: Requires all child connectors to support HMA if the manager is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1604
+  context: Determines whether the Ascend Mooncake connector needs hybrid KV-cache handling.
+related_parameters:
+- name: --kv-transfer-config
+  relation: With no explicit preference, current vLLM disables HMA when KV transfer is configured; explicit enable requires
+    connector HMA support.
+- name: --attention-chunk-size
+  relation: Chunked local attention makes runtime disable HMA by default because of a documented latency regression.
+- name: --speculative-config
+  relation: Eagle with chunked local attention requires HMA to be disabled.
+- name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+  relation: Enables HMA despite the chunked-local-attention default disablement.
+constraints:
+- Leave the value null to allow current runtime compatibility checks to choose the setting.
+- An explicit false value requests HMA; vLLM raises an error if the active platform or feature combination requires HMA to
+  be disabled.
+- With AscendMultiConnector and HMA enabled, every configured child connector must support HMA.
+- For Ascend KV transfer with aligned Mamba cache mode, an explicit HMA-enabled setup requires mamba_block_size to be a multiple
+  of block_size when it is specified.
+tuning_advice:
+  summary: Keep the default null for most Ascend deployments so runtime compatibility logic can select HMA. Benchmark an explicit
+    false value only for compatible hybrid-attention models, where HMA can reduce cache use; use true when a selected connector
+    or feature requires non-hybrid cache allocation.
+  suggested_values:
+  - scenario: General Ascend deployment or an unverified feature combination
+    value: null (omit the flag)
+    reason: The current runtime resolves the setting and avoids combinations for which HMA is unsupported or has a known latency
+      regression.
+  - scenario: Compatible hybrid model with sliding-window or Mamba attention, after benchmarking
+    value: false (--no-disable-hybrid-kv-cache-manager)
+    reason: Keeps HMA enabled, avoiding equal-sized allocation for unlike attention layers.
+  - scenario: Connector or runtime feature that cannot use HMA
+    value: true (--disable-hybrid-kv-cache-manager)
+    reason: Uses uniform KV-cache allocation and satisfies configurations that require HMA to be off.
+  caveats:
+  - True can consume more KV-cache memory and reduce performance for sliding-window or Mamba attention models.
+  - 'False is not a universal performance setting: vLLM rejects it when the active platform or feature combination requires
+    HMA to be disabled.'
+  - The effect is material only for models with multiple KV-cache specifications; uniform full-attention models may see little
+    or no benefit.
+  quick_guide: Start unset; explicitly enable HMA only after verifying platform, connector, and workload compatibility.
+analysis_date: '2026-07-27'

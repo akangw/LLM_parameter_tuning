@@ -1,0 +1,72 @@
+name: kv_transfer_config.kv_connector_extra_config.use_layerwise
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When set to true, this parameter enables layerwise KV cache transfer operations in the AscendStoreConnector.
+  The primary performance impact comes from its interaction with CUDA graph compilation: "enabling layerwise operations forces
+  the CUDA graph mode to PIECEWISE (as shown in" the requires_piecewise_for_cudagraph method at ascend_store_connector.py:75-80).
+  PIECEWISE mode captures separate graph segments per layer rather than a single full graph, which reduces graph capture memory
+  overhead but may increase kernel launch overhead. The parameter also affects how KVPoolScheduler and KVPoolWorker are initialized
+  (lines 104-110), controlling whether KV cache blocks are transferred layer-by-layer or as complete blocks. Layerwise transfer
+  can reduce peak memory usage during KV cache operations but adds per-layer synchronization overhead.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:86
+  context: Read from kv_connector_extra_config dict to set self.use_layerwise attribute
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:80
+  context: Checked in requires_piecewise_for_cudagraph to determine CUDA graph mode
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:104
+  context: Passed to KVPoolScheduler constructor to control layerwise scheduling behavior
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/ascend_store_connector.py:106
+  context: Passed to KVPoolWorker constructor to control layerwise worker behavior
+related_parameters:
+- name: kv_transfer_config.kv_connector
+  relation: Must be set to AscendStoreConnector for this parameter to take effect
+- name: compilation_config.cudagraph_mode
+  relation: When use_layerwise is true, cudagraph_mode is forced to PIECEWISE
+- name: kv_transfer_config.kv_role
+  relation: Determines whether the connector acts as scheduler or worker, both of which receive use_layerwise
+constraints:
+- Only effective when kv_connector is set to AscendStoreConnector
+- When enabled, CUDA graph mode is forced to PIECEWISE regardless of user-specified cudagraph_mode
+tuning_advice:
+  summary: 'Enable use_layerwise for large models or memory-constrained scenarios to reduce peak memory during KV cache transfers;
+    disable for latency-sensitive workloads to avoid per-layer synchronization overhead.
+
+    '
+  suggested_values:
+  - scenario: Large models with high memory pressure during KV cache transfer
+    value: 'true'
+    reason: 'Layerwise transfer reduces peak memory by processing one layer at a time, avoiding allocation of full KV cache
+      blocks simultaneously. Documentation examples for UCM deployment with PipelineStore consistently use use_layerwise:
+      "true for prefix cache" scenarios.
+
+      '
+  - scenario: Latency-sensitive inference where KV transfer overhead must be minimized
+    value: 'false'
+    reason: 'Disabling layerwise transfer allows full-block operations with fewer synchronization points, reducing per-transfer
+      latency. The default value is false, and the e2e test for Qwen3-30B also uses false for accuracy testing.
+
+      '
+  caveats:
+  - Enabling use_layerwise forces PIECEWISE CUDA graph mode, which may increase kernel launch overhead compared to FULL graph
+    mode
+  - Layerwise transfer adds per-layer synchronization points that can increase end-to-end KV transfer latency
+  - The performance tradeoff between memory savings and latency overhead depends on model size and layer count
+  quick_guide: Set to true for memory-constrained KV cache transfer scenarios; keep false (default) for latency-sensitive
+    deployments
+analysis_date: '2026-07-06'

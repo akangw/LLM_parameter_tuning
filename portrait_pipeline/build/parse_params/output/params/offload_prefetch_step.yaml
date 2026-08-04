@@ -1,0 +1,71 @@
+name: --offload-prefetch-step
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:66
+- vllm/engine/arg_utils.py:1154
+- vllm/model_executor/offloader/base.py:152
+value_type: int
+default: 1
+valid_choices: integer >= 1 when prefetch offloading is enabled (offload_group_size > 0)
+cli_example: --offload-prefetch-step 2
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: 'This parameter controls the lookahead distance for asynchronous CPU-to-GPU layer prefetching in the prefetch
+  offloading backend. When --offload-group-size > 0 (or --offload-backend prefetch), the PrefetchOffloader divides model layers
+  into groups and offloads the last offload_num_in_group layers of each group to CPU memory. During inference, before executing
+  layer i, the offloader initiates an async H2D transfer for layer i + offload_prefetch_step, overlapping the transfer with
+  computation of the current layer. A higher value increases the overlap window, potentially hiding more CPU-GPU transfer
+  latency and improving throughput. However, each prefetched layer occupies GPU memory, so higher values increase peak GPU
+  memory usage. The tradeoff is latency hiding vs. memory consumption. On Ascend NPU, the same mechanism applies — the parameter
+  is passed through to the upstream PrefetchOffloader without vllm-ascend override. The parameter has no effect when offload_group_size=0
+  (prefetch offloading disabled).
+
+  '
+usage_locations:
+- file: vllm/model_executor/offloader/base.py:152
+  context: Passed as prefetch_step to PrefetchOffloader constructor when backend is 'prefetch'
+- file: vllm/config/offload.py:107
+  context: 'Validated: must be >= 1 when offload_group_size > 0, otherwise raises ValueError'
+related_parameters:
+- name: --offload-group-size
+  relation: Must be > 0 for --offload-prefetch-step to take effect; defines the layer grouping for prefetch offloading
+- name: --offload-num-in-group
+  relation: Determines how many layers per group are offloaded; must be <= offload_group_size
+- name: --offload-backend
+  relation: Must be 'prefetch' or 'auto' (with offload_group_size > 0) for prefetch offloading to be active
+- name: --offload-params
+  relation: Selectively filters which parameters are offloaded within each offloaded layer
+- name: --cpu-offload-gb
+  relation: Alternative UVA offloading backend; mutually exclusive with prefetch offloading in practice
+constraints:
+- --offload-prefetch-step must be >= 1 when --offload-group-size > 0 (prefetch offloading enabled)
+- --offload-prefetch-step has no effect when --offload-group-size is 0 or --offload-backend is not 'prefetch'
+tuning_advice:
+  summary: 'Increase --offload-prefetch-step to hide more CPU-GPU transfer latency at the cost of additional GPU memory; decrease
+    to conserve memory when latency hiding is less critical.
+
+    '
+  suggested_values:
+  - scenario: Default / general use with prefetch offloading enabled
+    value: 1
+    reason: Provides basic overlap of one layer transfer with one layer computation; minimal memory overhead
+  - scenario: High-latency CPU-GPU interconnect (e.g., slow PCIe) where throughput is critical
+    value: 2
+    reason: Prefetching two layers ahead increases the overlap window, hiding more transfer latency at moderate memory cost
+  - scenario: Memory-constrained deployment where offloading is needed but GPU memory is tight
+    value: 1
+    reason: Minimizes the number of prefetched layers resident in GPU memory simultaneously
+  caveats:
+  - Each increment of --offload-prefetch-step keeps one additional layer's parameters in GPU memory, increasing peak memory
+    usage proportionally to layer size
+  - On Ascend NPU, the effectiveness depends on the CPU-to-NPU transfer bandwidth via PCIe; if the transfer is already well-hidden
+    with step=1, higher values yield diminishing returns
+  - This parameter only applies to the prefetch offloading backend; it is silently ignored when using UVA offloading (--cpu-offload-gb)
+    or no offloading
+  quick_guide: Start with default 1; increase to 2 if CPU-GPU transfer is a visible bottleneck and GPU memory headroom exists
+analysis_date: '2026-07-06'

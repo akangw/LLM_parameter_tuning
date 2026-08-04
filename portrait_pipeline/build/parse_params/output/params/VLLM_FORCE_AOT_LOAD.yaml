@@ -1,0 +1,98 @@
+name: VLLM_FORCE_AOT_LOAD
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:650
+- vllm/envs.py:102
+- vllm/compilation/decorators.py:291
+- vllm/compilation/decorators.py:326
+value_type: bool
+default: false
+valid_choices:
+- '0'
+- '1'
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'VLLM_FORCE_AOT_LOAD controls whether vLLM raises a hard error when it fails to load a previously AOT-compiled
+  model from disk cache. When enabled (set to "1" or "true"), any load failure (corrupted cache, version mismatch, etc.) causes
+  an exception to be raised instead of silently falling back to recompilation. This parameter only takes effect when VLLM_USE_AOT_COMPILE
+  is also enabled. On Ascend NPU, the AOT compilation path (torch.compile with Inductor backend) is the same as upstream —
+  vllm-ascend does not override or modify this parameter''s behavior. The performance impact is low because this parameter
+  only changes error handling behavior during model loading; it does not affect the actual compilation process, runtime execution,
+  or memory usage. It is also excluded from the torch.compile cache key (listed in ignored_factors at vllm/envs.py:1891),
+  confirming it has no effect on compilation output.
+
+  '
+usage_locations:
+- file: vllm/compilation/decorators.py:326
+  context: 'In _try_load_aot_compiled_fn, after catching any exception during AOT artifact loading, checks VLLM_FORCE_AOT_LOAD.
+    If true, re-raises the exception; otherwise returns None to trigger recompilation.
+
+    '
+- file: vllm/envs.py:650
+  context: 'Environment variable definition with default "0" (disabled). Comment states it forces vLLM to always load AOT
+    compiled models from disk, with failure resulting in a hard error. Ignored when VLLM_USE_AOT_COMPILE is disabled.
+
+    '
+- file: vllm/envs.py:102
+  context: 'Type-hinted default value in environment_variables dict: "VLLM_FORCE_AOT_LOAD: bool = False."
+
+    '
+- file: vllm/envs.py:1891
+  context: 'Listed in ignored_factors set for torch.compile cache key computation, meaning changes to this env var do not
+    invalidate the compilation cache.
+
+    '
+related_parameters:
+- name: VLLM_USE_AOT_COMPILE
+  relation: 'VLLM_FORCE_AOT_LOAD is ignored when VLLM_USE_AOT_COMPILE is disabled. AOT compilation must be enabled for this
+    parameter to have any effect.
+
+    '
+- name: VLLM_USE_MEGA_AOT_ARTIFACT
+  relation: 'Related AOT compilation feature flag that controls loading compiled models from standalone compile artifacts
+    without re-splitting graph modules.
+
+    '
+constraints:
+- VLLM_FORCE_AOT_LOAD is ignored when VLLM_USE_AOT_COMPILE is disabled.
+tuning_advice:
+  summary: 'Enable VLLM_FORCE_AOT_LOAD in CI/testing environments to catch AOT cache corruption early; keep disabled in production
+    to allow automatic fallback to recompilation.
+
+    '
+  suggested_values:
+  - scenario: Production deployment where availability is critical
+    value: '0'
+    reason: 'Allows vLLM to silently fall back to recompilation if the AOT cache is corrupted or incompatible, preventing
+      startup failures.
+
+      '
+  - scenario: CI/testing or debugging AOT compilation issues
+    value: '1'
+    reason: 'Forces hard errors on cache load failures, making cache corruption or version mismatch issues immediately visible
+      rather than silently falling back to recompilation.
+
+      '
+  caveats:
+  - 'This parameter does not affect compilation speed or runtime performance — it only changes error handling behavior during
+    model loading.
+
+    '
+  - 'On Ascend NPU, the AOT compilation path uses the same torch.compile Inductor backend as upstream; vllm-ascend does not
+    provide any Ascend-specific override for this parameter.
+
+    '
+  - 'Changes to VLLM_FORCE_AOT_LOAD do not invalidate the torch.compile cache, so toggling it does not trigger recompilation.
+
+    '
+  quick_guide: 'Set to "1" only in CI/testing to detect AOT cache issues; leave at default "0" for production resilience.
+
+    '
+analysis_date: '2026-07-06'

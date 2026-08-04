@@ -1,0 +1,70 @@
+name: profiler.delay_iterations
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/config/profiler.py:130
+- vllm/profiler/wrapper.py:21
+value_type: int
+default: 0
+valid_choices: non-negative integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls how many engine iterations are skipped after receiving a /start_profile request before
+  the profiler actually begins collecting trace data. It does not directly affect inference performance during normal operation
+  — it only matters when profiling is active. When profiling is active and delay_iterations > 0, the profiler remains in a
+  "waiting" state (self._active=True, self._running=False) for the specified number of steps, then transitions to actually
+  running. During the waiting period, the profiler overhead is minimal (only a counter increment per step). Once profiling
+  begins, the overhead depends on the profiler backend (e.g., torch profiler can add significant overhead). The delay itself
+  has negligible performance impact — it merely postpones when profiling overhead kicks in. The primary performance concern
+  is indirect: "if delay_iterations is used with the torch profiler without ignore_frontend=True," the combined overhead of
+  frontend tracing plus the eventual profiling window can be substantial, as warned in vllm/config/profiler.py:130.
+
+  '
+usage_locations:
+- file: vllm/profiler/wrapper.py:21
+  context: Stored as self._delay_iters in WorkerProfiler.__init__; used in step() to count iterations before starting the
+    profiler.
+- file: vllm/config/profiler.py:130
+  context: 'Validation: warns if delay_iterations > 0 with torch profiler and ignore_frontend=False due to high overhead risk.'
+related_parameters:
+- name: profiler.max_iterations
+  relation: 'Works together with delay_iterations to define a profiling window: delay_iterations controls when profiling starts,
+    max_iterations controls how long it runs.'
+- name: profiler.profiler
+  relation: The profiler backend (e.g., 'torch') determines the actual overhead incurred once profiling begins after the delay.
+- name: profiler.ignore_frontend
+  relation: When using torch profiler with delay_iterations > 0, setting ignore_frontend=True avoids high overhead from frontend
+    tracing during the profiling window.
+constraints:
+- delay_iterations must be a non-negative integer (>= 0).
+- Using delay_iterations > 0 with profiler='torch' and ignore_frontend=False triggers a warning about high overhead.
+tuning_advice:
+  summary: Set delay_iterations to skip warmup or transient startup iterations before profiling begins, ensuring collected
+    traces reflect steady-state performance.
+  suggested_values:
+  - scenario: Profiling steady-state inference after warmup
+    value: 5
+    reason: Skip the first few iterations where CUDA graphs may be capturing, KV cache is filling, or other one-time initialization
+      occurs. 5 iterations is typically sufficient for most models to reach stable throughput.
+  - scenario: Profiling from the very first request (cold start analysis)
+    value: 0
+    reason: Start profiling immediately to capture cold-start behavior including model loading, CUDA graph capture, and initial
+      memory allocation patterns.
+  - scenario: Using torch profiler to avoid excessive trace file size
+    value: 10
+    reason: Skip initial iterations to reduce trace file size and focus on representative steady-state iterations. Combined
+      with max_iterations, this bounds the profiling window.
+  caveats:
+  - When using the torch profiler backend, delay_iterations > 0 combined with ignore_frontend=False can cause high overhead
+    during the profiling window — the warning in vllm/config/profiler.py:130 should be heeded.
+  - On Ascend NPU, the torch profiler may not be the primary profiling tool (CANN provides its own profiling via msprof/ascend-dump).
+    This parameter only affects vLLM's built-in profiler, not CANN-native profiling tools.
+  - The delay counter is per-worker and counts engine iterations (forward passes), not individual requests. In continuous
+    batching, one iteration may process multiple requests.
+  quick_guide: Use delay_iterations=5~10 to skip warmup when profiling steady-state performance; set to 0 for cold-start analysis.
+analysis_date: '2026-07-06'

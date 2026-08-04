@@ -1,0 +1,99 @@
+name: --nnodes
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:929
+- vllm/config/parallel.py:264
+value_type: int
+default: 1
+valid_choices: positive integer
+cli_example: --nnodes 4
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: "--nnodes controls the number of physical nodes in a multi-node distributed inference deployment when using\
+  \ the multiprocessing (mp) distributed executor backend. On Ascend NPU, this parameter directly affects how the global world\
+  \ size is partitioned across nodes, which in turn determines the per-node local world size and the communication topology\
+  \ for HCCL collectives.\nKey mechanisms: 1. World size partitioning: The total world size (dp_size × pp_size × tp_size)\
+  \ must be\n   evenly divisible by nnodes. The local world size per node is world_size // nnodes.\n   This determines how\
+  \ many NPU devices each node manages and the scope of intra-node\n   vs inter-node HCCL communication.\n\n2. Communication\
+  \ topology: When nnodes > 1, vLLM uses TCP-based distributed init\n   (master_addr/master_port) for inter-node coordination,\
+  \ while intra-node communication\n   uses HCCL via shared memory. The nnodes value determines the ratio of inter-node to\n\
+  \   intra-node traffic, which is critical on Ascend clusters where HCCL inter-node bandwidth\n   may differ significantly\
+  \ from intra-node NPU-to-NPU bandwidth.\n\n3. vllm-ascend override: The vllm-ascend multiproc executor patch\n   (vllm_ascend/patch/platform/patch_multiproc_executor.py:143)\
+  \ asserts that world_size\n   must be divisible by nnodes_within_dp. This is an Ascend-specific validation that\n   ensures\
+  \ proper NPU device allocation across nodes.\n\n4. Data parallel interaction: When nnodes > 1, data_parallel_backend must\
+  \ be \"mp\"\n   (asserted at vllm/engine/arg_utils.py:1758). This constraint is enforced on all\n   platforms including\
+  \ Ascend.\n\n5. Memory implications: The local_world_size determines how many worker processes run\n   per node, each consuming\
+  \ NPU memory for model weights and KV cache. Incorrect nnodes\n   can lead to memory oversubscription or underutilization.\n\
+  \nPerformance impact is medium because nnodes fundamentally shapes the distributed execution topology but does not directly\
+  \ tune compute or memory parameters — it enables or constrains other parallelism strategies.\n"
+usage_locations:
+- file: vllm/engine/arg_utils.py:1758
+  context: Assertion that nnodes > 1 requires data_parallel_backend=mp
+- file: vllm/engine/arg_utils.py:1762-1777
+  context: Computes world_size, local_world_size, and validates divisibility and node_rank bounds
+- file: vllm/distributed/parallel_state.py:1382-1398
+  context: Uses nnodes > 1 to determine inter-node TCP init method vs intra-node shared memory
+- file: vllm_ascend/patch/platform/patch_multiproc_executor.py:143
+  context: 'Ascend-specific assertion: world_size must be divisible by nnodes_within_dp'
+- file: vllm_ascend/worker/worker.py:299
+  context: Ascend worker init checks nnodes_within_dp == 1 for DP local rank adjustment
+- file: vllm_ascend/_310p/worker_310p.py:178
+  context: Ascend 310P worker init checks nnodes_within_dp == 1 for DP local rank adjustment
+related_parameters:
+- name: --distributed-executor-backend
+  relation: nnodes > 1 requires distributed_executor_backend=mp (not ray)
+- name: --data-parallel-backend
+  relation: nnodes > 1 requires data_parallel_backend=mp
+- name: --node-rank
+  relation: Must be set to a unique value in [0, nnodes-1] for each node
+- name: --master-addr
+  relation: Required for inter-node communication when nnodes > 1
+- name: --master-port
+  relation: Required for inter-node communication when nnodes > 1
+- name: --tensor-parallel-size
+  relation: tp_size × pp_size × dp_size must be divisible by nnodes
+- name: --pipeline-parallel-size
+  relation: tp_size × pp_size × dp_size must be divisible by nnodes
+- name: --data-parallel-size
+  relation: dp_size × tp_size × pp_size must be divisible by nnodes
+constraints:
+- nnodes must be a positive integer.
+- When nnodes > 1, distributed_executor_backend must be mp (not ray).
+- When nnodes > 1, data_parallel_backend must be mp.
+- The total world size (dp_size × tp_size × pp_size) must be evenly divisible by nnodes.
+- node_rank must be less than nnodes.
+- On Ascend NPU, world_size must be divisible by nnodes_within_dp (vllm-ascend constraint).
+tuning_advice:
+  summary: 'Set nnodes to the exact number of physical Ascend NPU nodes in your cluster. Ensure the total parallelism (tp
+    × pp × dp) is evenly divisible by nnodes for balanced NPU utilization and minimal inter-node HCCL communication overhead.
+
+    '
+  suggested_values:
+  - scenario: Single-node Ascend NPU deployment
+    value: 1
+    reason: Default value. Avoids inter-node TCP overhead and uses only intra-node HCCL communication via shared memory, which
+      has the lowest latency on Ascend.
+  - scenario: Multi-node deployment with homogeneous NPU count per node
+    value: <number of physical nodes>
+    reason: Set to the actual node count. Ensure tp_size × pp_size × dp_size is divisible by nnodes so each node gets an equal
+      share of workers, balancing NPU memory and compute load.
+  - scenario: Multi-node deployment with data parallelism
+    value: <number of physical nodes>
+    reason: When using data parallelism across nodes, nnodes should match the physical node count. Each node runs one or more
+      DP replicas. The world_size_across_dp must be divisible by nnodes.
+  caveats:
+  - On Ascend NPU, inter-node HCCL communication bandwidth is typically lower than intra-node NPU-to-NPU bandwidth. Minimizing
+    cross-node tensor parallelism (tp) and pipeline parallelism (pp) can reduce inter-node traffic.
+  - vllm-ascend enforces additional constraints via nnodes_within_dp — ensure your configuration satisfies the assertion at
+    vllm_ascend/patch/platform/patch_multiproc_executor.py:143.
+  - When nnodes > 1, the master node (node_rank=0) coordinates distributed init via TCP. Ensure master_addr is reachable from
+    all worker nodes and master_port is not blocked by firewalls.
+  - Incorrect nnodes can cause worker processes to fail to initialize or hang during distributed init, especially on Ascend
+    clusters where HCCL initialization is sensitive to rank assignment.
+  quick_guide: Set --nnodes to the exact number of Ascend NPU nodes and ensure total parallelism divides evenly by it.
+analysis_date: '2026-07-06'

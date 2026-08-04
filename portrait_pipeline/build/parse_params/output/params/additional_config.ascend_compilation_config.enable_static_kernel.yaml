@@ -1,0 +1,77 @@
+name: additional_config.ascend_compilation_config.enable_static_kernel
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:484
+- vllm_ascend/compilation/compiler_interface.py:98
+- vllm_ascend/worker/worker.py:151
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When enabled, the Ascend compiler generates static-shape kernel binaries during graph capture (vllm_ascend/compilation/compiler_interface.py:98-105).
+  This eliminates dynamic shape resolution overhead at runtime, directly reducing per-token latency and increasing throughput.
+  The compiled kernels are shape-specialized to the batch sizes used during cudagraph capture (_compute_decode_cudagraph_batch_sizes),
+  which means the NPU executes pre-optimized operator binaries without runtime shape checks or JIT compilation. However, this
+  comes at the cost of increased compilation time during model loading and higher memory usage for storing multiple shape-specialized
+  kernel binaries. The parameter also affects the AscendCompiler cache hash (compiler_interface.py:222), meaning toggling
+  it invalidates all cached compilations. In the worker (worker.py:151-166), when both enable_npugraph_ex and enable_static_kernel
+  are true, signal handlers are installed to clean up static kernel resources on shutdown via uninstall_static_kernel().
+
+  '
+usage_locations:
+- file: vllm_ascend/compilation/compiler_interface.py:98
+  context: Sets static_kernel_compile option and sym_range for npugraph_ex backend
+- file: vllm_ascend/compilation/compiler_interface.py:114
+  context: Sets _aclnn_static_shape_kernel for torchair (reduce-overhead) backend
+- file: vllm_ascend/compilation/compiler_interface.py:222
+  context: Included in AscendCompiler cache hash computation
+- file: vllm_ascend/worker/worker.py:151
+  context: Triggers signal handler installation for static kernel cleanup on shutdown
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:459
+  context: Stored as enable_npugraph_ex_static_kernel for MoE layer use
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: 'Hard prerequisite: enable_static_kernel requires enable_npugraph_ex to be True (asserted at ascend_config.py:520-521)'
+- name: compilation_config.cudagraph_capture_sizes
+  relation: The batch sizes used for cudagraph capture determine which static kernel shapes are compiled (via _compute_decode_cudagraph_batch_sizes)
+constraints:
+- enable_npugraph_ex must be set to True when enable_static_kernel is True; otherwise an assertion error is raised.
+tuning_advice:
+  summary: 'Enable for production deployments with stable batch sizes to maximize throughput and reduce latency; disable during
+    development or when batch sizes vary significantly to avoid long compilation times and excessive memory usage from multiple
+    shape-specialized kernels.
+
+    '
+  suggested_values:
+  - scenario: Production serving with fixed or predictable batch sizes (e.g., constant concurrency)
+    value: true
+    reason: 'Static kernels eliminate dynamic shape resolution overhead on the NPU, yielding lower per-token latency and higher
+      throughput. The one-time compilation cost during model loading is amortized over the serving lifetime.
+
+      '
+  - scenario: Development, testing, or workloads with highly variable batch sizes
+    value: false
+    reason: 'Static kernel compilation adds significant model loading time and stores multiple shape-specialized binaries,
+      increasing memory pressure. For variable batch sizes, the dynamic shape path avoids recompilation and excessive binary
+      storage.
+
+      '
+  caveats:
+  - Enabling static kernel significantly increases model loading time due to per-shape kernel compilation during graph capture.
+  - Memory usage increases because separate kernel binaries are compiled and stored for each batch size in the cudagraph capture
+    range.
+  - Toggling this parameter invalidates the AscendCompiler cache, requiring full recompilation on next load.
+  - Static kernels are only beneficial when the actual runtime batch sizes match the compiled shapes; mismatched shapes fall
+    back to dynamic kernels, negating the performance gain.
+  quick_guide: Set to true for production with stable batch sizes; keep false for development or variable workloads.
+analysis_date: '2026-07-06'

@@ -1,0 +1,6 @@
+name: VLLM_ELASTIC_EP_DRAIN_REQUESTS
+type: env
+performance_impact: none
+skip_reason: The pinned upstream source only declares and parses this environment variable in vllm/envs.py; no current upstream
+  code reads it, and the pinned vllm-ascend repository contains no definition, use, or override. It therefore has no latency,
+  throughput, or memory effect in the pinned implementations.

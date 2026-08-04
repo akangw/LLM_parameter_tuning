@@ -1,0 +1,106 @@
+name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+type: env
+category: model
+scope: both
+source_file:
+- vllm/envs.py:914
+- vllm/config/model.py:2187
+- docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:84
+- docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:76
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This variable is a safety-check override, not a direct performance knob. When false, vLLM rejects a user-specified
+  --max-model-len that exceeds both the length derived from the model configuration and any larger model_max_length. When
+  true, the same condition emits a warning and accepts the requested length. The accepted --max-model-len then determines
+  the maximum input-plus-output length and contributes to per-request KV-cache capacity requirements; actually processing
+  longer sequences increases KV-cache use and compute, affecting memory, latency, and throughput. The pinned Ascend guides
+  enable the variable for 128K deployments together with --max-model-len 131072 and explicit YaRN RoPE parameters. Leaving
+  --max-model-len within the derived limit means this variable does not change runtime behavior.
+usage_locations:
+- file: vllm/envs.py:914
+  context: Defines the boolean environment variable; after trimming and lowercasing, only the strings 1 and true enable it,
+    and the default string 0 evaluates to false.
+- file: vllm/config/model.py:2194
+  context: Downgrades an oversized user max_model_len from a startup ValueError to a warning when the variable is enabled.
+- file: docs/source/tutorials/features/long_sequence_context_parallel_single_node.md:84
+  context: Enables the override in the Ascend 128K single-node context-parallel deployment that sets max-model-len and max-num-batched-tokens
+    to 131072 with YaRN parameters.
+- file: docs/source/tutorials/features/dynamic_chunked_pipeline_parallel.md:76
+  context: Enables the override in the Ascend dynamic chunked pipeline-parallel 128K startup configuration.
+related_parameters:
+- name: --max-model-len
+  relation: This is the gated value; the environment variable matters only when the requested length exceeds the maximum inferred
+    from model metadata.
+- name: --hf-overrides
+  relation: The pinned Ascend long-sequence guide supplies YaRN rope_parameters through this option so positions beyond the
+    original training length are explicitly scaled.
+- name: --max-num-batched-tokens
+  relation: Controls per-step token capacity and chunking independently of the permitted per-request maximum, shaping long-prefill
+    latency and activation pressure.
+- name: --gpu-memory-utilization
+  relation: Controls the HBM fraction used to size the available KV cache and therefore whether the configured long request
+    can fit.
+- name: --prefill-context-parallel-size
+  relation: The documented Ascend 128K deployment distributes prefill context work and KV capacity across context-parallel
+    ranks.
+constraints:
+- Enable only when a deliberately specified --max-model-len exceeds the maximum derived from model metadata; otherwise it
+  has no effect.
+- The override bypasses validation but does not extend the model by itself. Upstream warns that exceeding the derived limit
+  can produce NaNs with RoPE or an out-of-bounds error with absolute position encoding.
+- Only the case-insensitive, whitespace-trimmed strings 1 and true enable the variable; unset, 0, false, and other values
+  evaluate to false.
+- The requested long sequence must still fit the available KV-cache capacity and comply with scheduler, parallelism, and model-specific
+  limits.
+tuning_advice:
+  summary: Keep the override disabled unless a validated long-context model must accept a --max-model-len above the value
+    inferred from its metadata. Treat the model's position-encoding configuration and measured NPU memory headroom as prerequisites.
+  suggested_values:
+  - scenario: Requests remain within the maximum derived from model metadata
+    value: false
+    reason: The override is unnecessary, and retaining the startup error catches accidental unsafe length configurations.
+  - scenario: Validated Ascend long-context deployment with explicit RoPE scaling and an oversized --max-model-len
+    value: true
+    reason: This permits the requested limit; the pinned Ascend 128K guide uses it with YaRN parameters and max-model-len
+      131072.
+  caveats:
+  - Enabling the variable merely changes an error to a warning; it does not guarantee numerical correctness beyond the model's
+    derived context length.
+  - Longer admitted requests consume more KV-cache capacity and computation, but enabling the variable alone has no performance
+    effect if request lengths and --max-model-len do not change.
+  - Capacity and performance depend on model architecture, KV dtype, batching, max-num-batched-tokens, memory utilization,
+    and context-parallel configuration; the documented 128K values are not universal.
+  quick_guide: Leave unset by default; set to 1 only after configuring and validating position scaling, then benchmark long
+    requests and verify NPU memory headroom.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output

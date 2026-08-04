@@ -1,0 +1,9 @@
+name: VLLM_ASCEND_BALANCE_SCHEDULING
+type: env
+performance_impact: none
+skip_reason: 'In the pinned vllm-ascend source, this deprecated environment variable is parsed into AscendConfig.enable_balance_scheduling
+  and participates in startup compatibility checks, but the balance-scheduler implementation in vllm_ascend/patch/platform/patch_balance_schedule.py
+  enables its scheduling path only from vllm_config.additional_config["enable_balance_scheduling"]. No current-source path
+  copies the environment-derived value into that additional-config key, so setting this environment variable alone does not
+  activate the scheduler optimization and has no latency, throughput, or memory tuning effect. Use the documented replacement
+  --additional-config ''{"enable_balance_scheduling": true}'' instead.'

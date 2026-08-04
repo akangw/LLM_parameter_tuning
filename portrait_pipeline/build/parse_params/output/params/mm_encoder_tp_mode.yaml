@@ -1,0 +1,85 @@
+name: --mm-encoder-tp-mode
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1196
+- vllm/config/multimodal.py:145
+value_type: str
+default: weights
+valid_choices:
+- weights
+- data
+cli_example: --mm-encoder-tp-mode data
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: 'Controls how the multi-modal encoder (vision tower) leverages tensor parallelism (TP). In "weights" mode,
+  encoder layer weights are sharded across TP ranks — each rank holds a portion of the weights and computes a partial result,
+  requiring all-reduce communication per layer. This is the standard TP behavior and works with all models. In "data" mode,
+  each TP rank holds a full copy of the encoder weights and processes a different subset of the input batch (batch-level data
+  parallelism within the encoder). This eliminates encoder-internal all-reduce communication entirely, trading increased per-rank
+  memory (full weight replicas) for higher encoder throughput and lower latency. The mode is checked at runtime in vllm/v1/worker/encoder_cudagraph.py:108
+  where `use_dp` is set to True only when mode is "data" AND tensor_parallel_size > 1. Individual models declare support via
+  the `supports_encoder_tp_data` class attribute (e.g., dots_ocr.py:644, eagle2_5_vl.py:139). If a model does not support
+  "data" mode, it silently falls back to "weights" behavior per the docstring at multimodal.py:156-157. On Ascend NPU, the
+  "data" mode is particularly beneficial because it avoids HCCL all-reduce overhead in the encoder, which can be significant
+  for vision transformers with many small layers. The vllm-ascend documentation explicitly recommends "data" mode for multimodal
+  inference workloads (Kimi-K2.5.md:182).
+
+  '
+usage_locations:
+- file: vllm/config/multimodal.py:145
+  context: Field definition with default 'weights' and docstring explaining both modes
+- file: vllm/v1/worker/encoder_cudagraph.py:108
+  context: Sets use_dp flag when mode is 'data' and tp_size > 1, affecting cudagraph capture strategy
+- file: vllm/model_executor/models/dots_ocr.py:657
+  context: Model reads mm_encoder_tp_mode to set self.use_data_parallel for encoder dispatch
+- file: vllm/model_executor/models/eagle2_5_vl.py:156
+  context: Model reads mm_encoder_tp_mode to set self.use_data_parallel for encoder dispatch
+- file: vllm/config/model.py:332
+  context: InitVar passed through ModelConfig for hash computation
+- file: vllm/config/multimodal.py:303
+  context: Included in compute_hash factors, affecting compilation cache key
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Data mode only activates when tensor_parallel_size > 1; with tp_size=1 both modes behave identically
+- name: --data-parallel-size
+  relation: Encoder-level data parallelism (batch splitting within one engine) is distinct from API request-level DP controlled
+    by data-parallel-size
+- name: --mm-encoder-only
+  relation: When mm-encoder-only is True (disaggregated encoder), tp_mode affects how the standalone encoder process uses
+    its TP ranks
+constraints:
+- Data mode is only supported on a per-model basis; models without supports_encoder_tp_data=True will silently fall back to
+  weights mode
+- Data mode has no effect when tensor_parallel_size is 1
+tuning_advice:
+  summary: Use 'data' mode for multimodal models on Ascend NPU to eliminate encoder all-reduce overhead and improve throughput,
+    but verify model support first.
+  suggested_values:
+  - scenario: Multimodal inference with TP > 1 on Ascend NPU (e.g., Kimi-K2.5, Qwen2-VL)
+    value: data
+    reason: Eliminates HCCL all-reduce communication in the vision encoder, reducing encoder latency and improving overall
+      throughput. Explicitly recommended by vllm-ascend documentation for multimodal workloads.
+  - scenario: Single-GPU or TP=1 deployment
+    value: weights
+    reason: With only one rank, data mode provides no benefit and weights mode is the default; both modes behave identically.
+  - scenario: Model does not support encoder TP data (no supports_encoder_tp_data attribute)
+    value: weights
+    reason: The model will silently fall back to weights mode regardless; using the default avoids confusion.
+  caveats:
+  - Data mode replicates full encoder weights on every TP rank, increasing per-rank NPU memory usage for the vision encoder.
+    Ensure sufficient device memory before enabling.
+  - Not all multimodal models support data mode — check the model's supports_encoder_tp_data class attribute. Unsupported
+    models silently fall back to weights mode.
+  - The encoder data parallelism is batch-level within a single engine and is distinct from --data-parallel-size which operates
+    at the API request level.
+  - On Ascend NPU, the performance gain from avoiding HCCL all-reduce in the encoder can be substantial for models with large
+    vision towers (many transformer layers), but negligible for small encoders.
+  quick_guide: For multimodal models on multi-NPU Ascend deployments, set --mm-encoder-tp-mode data to bypass encoder all-reduce;
+    verify model support and memory headroom first.
+analysis_date: '2026-07-06'

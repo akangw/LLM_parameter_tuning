@@ -1,0 +1,100 @@
+name: --enable-lora
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1239
+- vllm/engine/arg_utils.py:570
+- vllm/config/compilation.py:640
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --enable-lora
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'Enabling LoRA (--enable-lora) activates the LoRA adapter subsystem in vLLM, which has significant performance
+  implications on Ascend NPU. When enabled, the engine allocates additional GPU memory for LoRA weight slots (controlled by
+  --max-loras and --max-lora-rank), and the model forward pass includes extra LoRA matrix operations (A @ B) that are applied
+  to the base model weights. On Ascend NPU, these LoRA operations are executed via CANN operators, and the memory overhead
+  can be substantial due to the need to store multiple adapter weight sets. The vllm-ascend plugin supports LoRA on Ascend
+  hardware, as evidenced by the comprehensive test suite in tests/e2e/pull_request/one_card/lora/ covering various models
+  (Llama, Qwen3, Qwen3.5) and scenarios including multi-LoRA, speculative decoding with LoRA, and runtime LoRA updating. The
+  parameter also interacts with CUDA graph compilation: "when cudagraph_specialize_lora is True (default), separate graphs
+  are compiled" for LoRA and non-LoRA cases, increasing startup time and memory usage but eliminating LoRA overhead when no
+  adapters are active. When enable_lora is False, the entire LoRA subsystem is bypassed, saving memory and avoiding any LoRA-related
+  computation overhead.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:2006
+  context: Controls whether LoRAConfig is created; if False, lora_config is set to None
+- file: vllm/v1/utils.py:404
+  context: Used in usage reporting to track LoRA feature adoption
+- file: vllm/benchmarks/throughput.py:90
+  context: Determines whether LoRA requests are passed to the engine during benchmarking
+- file: vllm/config/compilation.py:640
+  context: Controls whether cudagraph_specialize_lora has any effect
+- file: vllm-ascend/tests/e2e/generate_coverage_md.py:563
+  context: Extracted from test configurations to track LoRA coverage in Ascend test suite
+related_parameters:
+- name: --max-loras
+  relation: Only effective when --enable-lora is True; controls the number of concurrent LoRA adapters
+- name: --max-lora-rank
+  relation: Only effective when --enable-lora is True; controls the maximum rank of LoRA adapters
+- name: --max-cpu-loras
+  relation: Only effective when --enable-lora is True; controls CPU-side LoRA cache size
+- name: --fully-sharded-loras
+  relation: Only effective when --enable-lora is True; controls whether LoRA weights are sharded across GPUs
+- name: --lora-dtype
+  relation: Only effective when --enable-lora is True; controls the data type for LoRA computations
+- name: --lora-modules
+  relation: Only effective when --enable-lora is True; specifies pre-loaded LoRA adapter paths
+- name: --cudagraph-specialize-lora
+  relation: Only effective when --enable-lora is True; controls CUDA graph specialization for LoRA
+constraints:
+- When --enable-lora is True, --lora-path must be provided in benchmarking mode (vllm backend only)
+- LoRA benchmarking is only supported for the vllm backend, not hf or mii backends
+- Saving sharded state with --enable-lora=True is not supported
+- When using speculative decoding with LoRA, max_num_batched_tokens must be at least max_num_seqs × (num_speculative_tokens
+  + 1)
+tuning_advice:
+  summary: 'Enable LoRA only when adapter-based model customization is needed; disable it to save GPU memory and avoid LoRA
+    computation overhead on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: No LoRA adapters needed (standard inference)
+    value: 'False'
+    reason: 'Eliminates all LoRA-related memory allocation and computation overhead, maximizing available GPU memory for KV
+      cache and improving throughput on Ascend NPU.
+
+      '
+  - scenario: Multi-tenant serving with multiple LoRA adapters
+    value: 'True'
+    reason: 'Required for serving multiple fine-tuned adapters from a single base model. On Ascend NPU, carefully tune --max-loras
+      and --max-lora-rank to balance memory usage against the number of concurrent adapters needed.
+
+      '
+  - scenario: Speculative decoding with LoRA
+    value: 'True'
+    reason: 'Supported on Ascend NPU as verified by vllm-ascend test suite. Ensure max_num_batched_tokens is sufficiently
+      large to accommodate both speculative tokens and LoRA operations.
+
+      '
+  caveats:
+  - Enabling LoRA increases GPU memory usage proportional to max_loras × max_lora_rank on Ascend NPU
+  - LoRA operations add computational overhead to each forward pass, which may reduce throughput
+  - When cudagraph_specialize_lora is True (default), enabling LoRA increases startup time due to additional graph compilation
+  - On Ascend NPU, LoRA is compatible with speculative decoding but requires careful memory planning
+  - Runtime LoRA updating (add/remove/reload) is supported on Ascend via VLLM_ALLOW_RUNTIME_LORA_UPDATING environment variable
+  quick_guide: 'Set --enable-lora only when you need to serve LoRA adapters; disable it for standard inference to maximize
+    Ascend NPU memory and throughput.
+
+    '
+analysis_date: '2026-07-06'

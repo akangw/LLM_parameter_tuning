@@ -1,0 +1,55 @@
+name: compilation.traced_files
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:1031
+- vllm/compilation/backends.py:1052
+- vllm/compilation/caching.py:379
+- vllm/compilation/decorators.py:274
+- vllm/compilation/decorators.py:604
+value_type: list[str]
+default: '[]'
+valid_choices: list of file paths (strings)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This parameter is an internal set that collects file paths traced during torch.compile/Dynamo tracing. It
+  is populated automatically by the compilation framework (not user-configured) and used to compute a code hash for the compilation
+  cache key. The hash determines whether a cached compiled graph can be reused or must be recompiled. On cache hit, compilation
+  is skipped, reducing startup latency. On cache miss, recompilation occurs. The parameter itself does not directly control
+  any runtime performance knob — it only affects cache invalidation behavior. It is cleared after hash computation (backends.py:1052)
+  and is not exposed as a user-facing configuration.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:1031
+  context: Read traced_files to compute code hash for compilation cache key
+- file: vllm/compilation/backends.py:1052
+  context: Cleared after hash consumption
+- file: vllm/compilation/caching.py:379
+  context: 'Referenced in docstring: traced_files must be populated before cache dir computation'
+- file: vllm/compilation/decorators.py:274
+  context: Populated with source files during source verification
+- file: vllm/compilation/decorators.py:604
+  context: Populated with traced file names during Dynamo tracing
+related_parameters:
+- name: compilation_config.cache_dir
+  relation: traced_files contributes to the hash used to derive cache_dir when cache_dir is not explicitly set
+- name: VLLM_CACHE_ROOT
+  relation: Environment variable that determines the root directory for compilation cache
+constraints: []
+tuning_advice:
+  summary: 'This is an internal mechanism for compilation cache invalidation and requires no user tuning. It has no direct
+    performance impact on Ascend NPU.
+
+    '
+  suggested_values: []
+  caveats:
+  - This parameter is not user-configurable; it is populated and consumed internally by the compilation framework.
+  - On Ascend NPU, torch.compile behavior may differ from GPU, but traced_files operates at the Python tracing level and is
+    hardware-agnostic.
+  quick_guide: No tuning needed — this is an internal cache invalidation mechanism.
+analysis_date: '2026-07-06'

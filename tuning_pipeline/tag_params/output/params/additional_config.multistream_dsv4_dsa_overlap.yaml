@@ -1,0 +1,104 @@
+name: additional_config.multistream_dsv4_dsa_overlap
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:137
+- vllm_ascend/attention/dsa_v1.py:51
+- vllm_ascend/attention/dsa_v1.py:1683
+- vllm_ascend/attention/dsa_v1.py:2660
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"multistream_dsv4_dsa_overlap":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Enabling this Ascend-only switch selects a dedicated auxiliary NPU stream in the DSA attention implementation
+  for both prefill and decode. The MLA prolog pipelines Q and KV preprocessing so vector, cube, rotary, and KV-cache scatter
+  work can execute concurrently, synchronizing before the serial Q tail. For compression ratio 4 when top-k is not reused,
+  the multistream indexer path also overlaps indexer KV quantization/cache scatter and weights projection with main-stream
+  query matmul, quantization, and compressed-KV scatter. This can reduce DSA attention latency and improve throughput when
+  the overlapped kernels are large enough to amortize stream, event, and synchronization overhead. It changes execution scheduling
+  rather than tensor shapes or persistent model/KV-cache capacity. The pinned upstream vLLM repository has no corresponding
+  option.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:137
+  context: Reads the nested additional-config boolean with a default of false.
+- file: vllm_ascend/attention/dsa_v1.py:1431
+  context: Copies the Ascend configuration value into the standard DSA attention implementation.
+- file: vllm_ascend/attention/dsa_v1.py:1479
+  context: During profiling, warms auxiliary-stream operator patterns when the switch is enabled so ACL graph execution can
+    use the dual-stream forward path.
+- file: vllm_ascend/attention/dsa_v1.py:1683
+  context: Implements the dual-stream MLA prolog used by prefill and decode, overlapping staged Q and KV preprocessing before
+    waiting for KV-cache scatter and completing Q rotary work.
+- file: vllm_ascend/attention/dsa_v1.py:1895
+  context: Selects the multistream MLA prolog for prefill; this branch takes precedence over delayed prefill all-gather overlap.
+- file: vllm_ascend/attention/dsa_v1.py:2175
+  context: Selects the multistream MLA prolog for decode and bypasses the older multistream_dsa_preprocess Q/KV split.
+- file: vllm_ascend/attention/dsa_v1.py:2660
+  context: Implements the compression-ratio-4 multistream indexer path, alternating main and auxiliary submissions to overlap
+    vector, cube, and cache-scatter work.
+related_parameters:
+- name: additional_config.multistream_dsa_preprocess
+  relation: Controls the older decode Q/KV preprocessing split; the DSV4 multistream branch takes precedence when this switch
+    is enabled.
+- name: additional_config.prefill_comm_compute_overlap
+  relation: Delays hidden-state all-gather to overlap communication and computation for pure prefill; that path is disabled
+    when this switch is enabled because the DSV4 multistream path takes precedence.
+constraints:
+- The option affects only the standard Ascend DSA attention implementation in vllm_ascend/attention/dsa_v1.py; upstream vLLM
+  has no matching parameter or usage.
+- The dedicated multistream MLA prolog is used for both prefill and decode whenever the flag is true, but the extra indexer
+  overlap requires compress_ratio equal to 4 and skip_topk false.
+- Enabling the flag disables the delayed-all-gather prefill overlap branch and bypasses the older multistream_dsa_preprocess
+  decode branch; do not expect their benefits to stack.
+- Correctness and graph compatibility depend on the implementation's NPU stream waits, events, and profiling warmup; the option
+  changes scheduling, not numerical intent or cache sizing.
+tuning_advice:
+  summary: Keep false as the compatibility baseline; test true only on Ascend DSA workloads and retain it when representative
+    prefill/decode benchmarks show a stable end-to-end gain.
+  suggested_values:
+  - scenario: Ascend DSA workload with substantial Q/KV preprocessing
+    value: true
+    reason: Enables the staged dual-stream MLA prolog for both prefill and decode, allowing Q and KV work to use NPU execution
+      resources concurrently.
+  - scenario: DSA compression-ratio-4 workload that computes fresh top-k indices
+    value: true
+    reason: Also enables the multistream indexer schedule that overlaps cache scatter and weights projection with query-side
+      work.
+  - scenario: Compatibility baseline, non-DSA implementation, or no measured gain
+    value: false
+    reason: Uses the source default and avoids auxiliary-stream synchronization overhead or replacing another overlap strategy
+      when the workload cannot benefit.
+  caveats:
+  - The pinned source provides no universal speedup, batch-size threshold, or hardware-specific recommendation.
+  - Small batches or short sequences may not expose enough independent work to amortize additional stream and event overhead.
+  - Benchmark this mode against prefill_comm_compute_overlap and multistream_dsa_preprocess separately because their affected
+    branches do not stack with this mode.
+  - The compression-ratio-4 indexer overlap is inactive when cached top-k indices are reused through skip_topk.
+  quick_guide: Start with false. On an Ascend DSA deployment, enable true in isolation, warm up graph execution, then compare
+    TTFT, TPOT, request latency, and throughput on the production batch and sequence-length mix; revert if performance or
+    stability regresses.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - mla
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

@@ -1,0 +1,90 @@
+name: --offload-group-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:54
+- vllm/engine/arg_utils.py:1146
+- vllm/entrypoints/llm.py:233
+value_type: int
+default: 0
+valid_choices: '>= 0'
+cli_example: --offload-group-size 8
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter controls the prefetch-based model weight offloading strategy. When set to a positive integer
+  N, it groups every N consecutive transformer layers together and offloads the last `offload_num_in_group` layers of each
+  group to CPU memory. This reduces GPU memory usage at the cost of CPU-GPU data transfer during inference. Unlike the simpler
+  `cpu_offload_gb` (UVA-based) approach, this uses explicit async prefetching to hide transfer latency by overlapping H2D
+  copies with computation. On Ascend NPU, the memory savings are critical for deploying large models within the limited HBM
+  of NPU cards, but the PCIe/NPU interconnect bandwidth and the effectiveness of async prefetch overlap will determine the
+  actual throughput impact. Setting this to a value > 0 also implicitly selects the "prefetch" offload backend when `offload_backend`
+  is "auto" (see vllm/model_executor/offloader/base.py:141).
+
+  '
+usage_locations:
+- file: vllm/config/offload.py:54
+  context: Field definition with default=0, ge=0 constraint
+- file: vllm/config/offload.py:86
+  context: Used in OffloadConfig to auto-select 'prefetch' backend when > 0
+- file: vllm/config/offload.py:100
+  context: 'Validation: triggers constraint checks for num_in_group and prefetch_step'
+- file: vllm/model_executor/offloader/base.py:141
+  context: create_offloader() selects PrefetchOffloader when group_size > 0
+- file: vllm/engine/arg_utils.py:509
+  context: EngineArgs attribute declaration
+- file: vllm/engine/arg_utils.py:1146
+  context: CLI argument registration under OffloadConfig group
+- file: vllm/entrypoints/llm.py:233
+  context: LLM class constructor parameter
+related_parameters:
+- name: --offload-num-in-group
+  relation: Must be <= offload_group_size; defines how many layers per group are offloaded
+- name: --offload-prefetch-step
+  relation: Must be >= 1 when offload_group_size > 0; controls prefetch lookahead depth
+- name: --offload-backend
+  relation: When set to 'auto', offload_group_size > 0 triggers 'prefetch' backend selection
+- name: --cpu-offload-gb
+  relation: Alternative UVA-based offloading; mutually exclusive in practice (auto selects one)
+- name: --offload-params
+  relation: Selectively filters which parameter names to offload within each layer
+constraints:
+- offload_group_size must be >= 0 (0 disables prefetch offloading)
+- offload_num_in_group must be <= offload_group_size when prefetch offloading is enabled
+- offload_prefetch_step must be >= 1 when offload_group_size > 0
+tuning_advice:
+  summary: 'Set offload_group_size to a value that balances GPU memory savings against the overhead of CPU-GPU transfers.
+    Larger groups mean fewer offloaded layers overall (since only offload_num_in_group layers per group are offloaded), reducing
+    transfer overhead but saving less memory.
+
+    '
+  suggested_values:
+  - scenario: Model fits in GPU memory with small margin
+    value: 0
+    reason: Disable offloading entirely to avoid any transfer overhead; best throughput and latency
+  - scenario: Model slightly exceeds GPU memory (10-20% over)
+    value: 8
+    reason: Offloads ~12.5% of layers (with num_in_group=1), providing moderate memory relief with manageable overhead
+  - scenario: Model significantly exceeds GPU memory (30-50% over)
+    value: 4
+    reason: Offloads ~25% of layers (with num_in_group=1), trading more throughput for memory savings
+  - scenario: Very large model on Ascend NPU with limited HBM
+    value: 2
+    reason: Offloads ~50% of layers; maximizes memory savings at significant throughput cost; ensure prefetch_step is tuned
+      to hide latency
+  caveats:
+  - On Ascend NPU, the effectiveness of async prefetch depends on the NPU's DMA engine capability and PCIe bandwidth; test
+    with realistic workloads to verify overlap
+  - Larger offload_group_size with small offload_num_in_group may leave GPU memory underutilized while still incurring some
+    transfer overhead
+  - The prefetch offloading backend is incompatible with CUDA graphs; Ascend NPU graph capture (if supported) may also be
+    affected
+  - vllm-ascend does not override this parameter, but Ascend-specific memory allocation patterns may affect the actual memory
+    savings achieved
+  quick_guide: Start with offload_group_size=8 and offload_num_in_group=1 for moderate memory savings; decrease group_size
+    for more aggressive offloading if needed
+analysis_date: '2026-07-06'

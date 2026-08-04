@@ -1,0 +1,76 @@
+name: VLLM_DP_MASTER_PORT
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1164
+- vllm/envs.py:148
+- vllm/config/parallel.py:817
+- vllm/utils/network_utils.py:159
+value_type: int
+default: '0'
+valid_choices: any valid TCP port number (1-65535)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'VLLM_DP_MASTER_PORT specifies the TCP port used by the data parallel (DP) master process for coordination
+  among DP ranks. It is read in vllm/config/parallel.py:817 when the distributed executor backend is not "ray" or "mp", falling
+  back to environment variables for offline SPMD data parallel setups. The port is also used in vllm/utils/network_utils.py:159-165
+  to reserve a range of 10 ports (dp_master_port to dp_master_port+9) to avoid port conflicts when vLLM allocates other listening
+  ports. On Ascend NPU, data parallel is supported for MoE models in offline mode (vllm-ascend examples/offline_data_parallel.py:124
+  and tests/e2e/conftest.py:861 demonstrate usage). The parameter itself does not directly affect compute throughput or memory
+  usage, but an incorrect or conflicting port assignment can cause DP initialization failures, preventing multi-rank execution
+  and thus indirectly affecting overall throughput and latency by blocking distributed inference. It is excluded from torch.compile
+  cache key computation (vllm/envs.py:1886), confirming it has no impact on compilation behavior.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:817
+  context: Reads VLLM_DP_MASTER_PORT env var to set data_parallel_master_port when not using ray/mp executor backend
+- file: vllm/utils/network_utils.py:159-165
+  context: Reserves 10 ports starting from VLLM_DP_MASTER_PORT to avoid conflicts when allocating other listening ports
+- file: vllm_ascend/examples/offline_data_parallel.py:124
+  context: Sets VLLM_DP_MASTER_PORT env var for Ascend offline data parallel example
+- file: vllm_ascend/tests/e2e/conftest.py:861
+  context: Sets VLLM_DP_MASTER_PORT env var in DP worker test fixture
+- file: vllm_ascend/tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:83
+  context: Sets VLLM_DP_MASTER_PORT env var in ACL graph capture/replay test worker
+related_parameters:
+- name: VLLM_DP_MASTER_IP
+  relation: Together with VLLM_DP_MASTER_PORT, defines the address of the DP master node for rank coordination
+- name: VLLM_DP_SIZE
+  relation: Must be > 1 for VLLM_DP_MASTER_PORT to be meaningful; DP size determines how many ranks connect to the master
+    port
+- name: VLLM_DP_RANK
+  relation: Each DP rank uses VLLM_DP_MASTER_PORT to connect to the master; rank 0 typically hosts the master
+- name: VLLM_DP_RANK_LOCAL
+  relation: Local DP rank within a node; all local ranks share the same VLLM_DP_MASTER_PORT for master communication
+constraints:
+- VLLM_DP_MASTER_PORT must be a valid TCP port number between 1 and 65535
+- VLLM_DP_MASTER_PORT is only used when data_parallel_size > 1 and the distributed executor backend is not ray or mp
+- Ports in the range VLLM_DP_MASTER_PORT to VLLM_DP_MASTER_PORT+9 are reserved and will not be allocated for other vLLM listening
+  purposes
+tuning_advice:
+  summary: Set VLLM_DP_MASTER_PORT to an available TCP port when using offline data parallel inference; the default of 0 lets
+    the system auto-assign a port, which is usually sufficient.
+  suggested_values:
+  - scenario: Single-node multi-rank DP (default auto-assignment)
+    value: '0'
+    reason: Default value 0 triggers automatic port assignment via get_open_ports_list(5) in vllm/config/parallel.py:801,
+      avoiding manual port management
+  - scenario: Multi-node DP where master port must be known and consistent across nodes
+    value: '29500'
+    reason: Choose a fixed, high-numbered port (e.g., 29500) that is known to be free on all nodes to ensure all DP ranks
+      can reach the master; avoid ports in the ephemeral range (32768-60999) to reduce conflict risk
+  caveats:
+  - When VLLM_DP_MASTER_PORT is set, vLLM reserves 10 consecutive ports starting from that value, so ensure the range is free
+    to avoid port allocation failures for other services
+  - On Ascend NPU, offline data parallel is only supported for MoE models (vllm/config/parallel.py:819-823); for dense models,
+    DP is not useful and this parameter has no effect
+  - This parameter is excluded from torch.compile cache key computation, so changing it does not invalidate compiled kernels
+  quick_guide: Use default 0 for auto-assignment; set a fixed port only for multi-node DP setups where all ranks need a known
+    master address.
+analysis_date: '2026-07-06'

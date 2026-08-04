@@ -1,0 +1,81 @@
+name: --limit-mm-per-prompt
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1171
+- vllm/config/model.py:324
+- vllm/v1/core/encoder_cache_manager.py:291
+value_type: dict
+default: '{''image'': 999, ''video'': 999, ''audio'': 999}'
+valid_choices: dict[str, int | dict[str, int]] — modality name to max item count
+cli_example: '--limit-mm-per-prompt ''{"image": 5, "video": 0}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This parameter caps the number of multimodal input items (images, videos, audio clips) allowed per prompt
+  for each modality. On Ascend NPU, its primary performance impact is on memory: "setting a modality limit to 0 disables that
+  modality entirely, which causes" the encoder cache manager to skip allocating encoder cache for that modality (vllm/v1/core/encoder_cache_manager.py:291-294).
+  This directly reduces NPU memory consumption reserved for multimodal encoder outputs. For video modalities in particular,
+  the vllm-ascend documentation explicitly recommends setting `--limit-mm-per-prompt.video 0` when only image inputs are expected,
+  because enabling video inputs reserves memory for long video embeddings (tutorials/models/Qwen3-VL-30B-A3B-Instruct.md:89-98).
+  Lowering limits also reduces the maximum encoder compute budget, which can improve scheduling throughput by preventing oversized
+  multimodal prefill batches. The parameter is used identically in both vllm upstream and vllm-ascend — no Ascend-specific
+  override exists, but the memory savings are more critical on NPUs due to typically smaller HBM capacity compared to high-end
+  GPUs.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:535
+  context: EngineArgs field definition, passed to MultiModalConfig.limit_per_prompt
+- file: vllm/engine/arg_utils.py:1543
+  context: Passed to ModelConfig during engine initialization
+- file: vllm/config/model.py:324
+  context: ModelConfig init var, forwarded to MultiModalConfig
+- file: vllm/v1/core/encoder_cache_manager.py:291
+  context: Checked to determine if encoder cache should be initialized; empty dict disables cache
+- file: vllm/benchmarks/datasets/datasets.py:872
+  context: Enforces per-modality caps during synthetic multimodal dataset generation
+- file: vllm-ascend/tests/e2e/pull_request/one_card/test_vlm.py:58
+  context: Used in Ascend E2E tests to limit images per prompt to 1
+- file: vllm-ascend/tests/e2e/pull_request/four_card/long_sequence/test_basic.py:445
+  context: 'Used in Ascend multi-card tests with limit_mm_per_prompt={''image'': 2}'
+related_parameters:
+- name: --language-model-only
+  relation: If set to true, all multimodal processing is disabled, making limit-mm-per-prompt irrelevant
+- name: --max-model-len
+  relation: Larger max_model_len combined with high multimodal limits increases encoder cache memory pressure
+- name: --max-num-batched-tokens
+  relation: When chunked MM input is disabled, max_tokens_per_mm_item must not exceed max_num_batched_tokens
+- name: --gpu-memory-utilization
+  relation: Higher multimodal limits consume more encoder cache; may require lowering gpu_memory_utilization to avoid OOM
+constraints:
+- Each modality key must correspond to a modality supported by the model (e.g., 'image', 'video', 'audio')
+- Setting a modality limit to 0 disables that modality and prevents encoder cache allocation for it
+- When chunked MM input is disabled, the maximum tokens per multimodal item must not exceed max_num_batched_tokens
+tuning_advice:
+  summary: Set modality limits to match your actual workload — disable unused modalities to save NPU memory.
+  suggested_values:
+  - scenario: Image-only inference on Ascend NPU
+    value: '{''image'': <expected_max_images_per_prompt>, ''video'': 0, ''audio'': 0}'
+    reason: Disabling video and audio prevents encoder cache allocation for those modalities, saving significant NPU HBM as
+      recommended by vllm-ascend docs
+  - scenario: Mixed image+video inference with known max items
+    value: '{''image'': 5, ''video'': 1}'
+    reason: Limits encoder cache to a predictable size, preventing memory spikes from prompts with unexpectedly many items
+  - scenario: Benchmarking or stress testing
+    value: '{''image'': 255, ''video'': 1}'
+    reason: High limits allow maximum multimodal throughput testing; matches RandomMultiModalDataset defaults
+  caveats:
+  - Setting a modality limit to 0 when that modality is actually used in requests will cause errors — ensure limits match
+    your workload
+  - Video modalities consume disproportionately more encoder cache memory than images due to multi-frame embeddings; disable
+    video if not needed
+  - On Ascend NPUs with limited HBM (e.g., 32GB cards), disabling unused modalities can be the difference between OOM and
+    successful deployment
+  - This parameter does not affect the language model's KV cache directly, only the multimodal encoder cache
+  quick_guide: 'Disable unused modalities (especially video) with --limit-mm-per-prompt ''{"video": 0}'' to reduce NPU memory
+    usage.'
+analysis_date: '2026-07-06'

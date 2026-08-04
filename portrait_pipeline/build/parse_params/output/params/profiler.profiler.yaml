@@ -1,0 +1,84 @@
+name: profiler.profiler
+type: nested
+category: observability
+scope: both
+source_file:
+- vllm/config/profiler.py:135
+- vllm_ascend/profiler/torch_npu_profiler.py:35
+value_type: str
+default: null
+valid_choices:
+- torch
+- cuda
+- null
+cli_example: --profiler-config '{"profiler":"torch","torch_profiler_dir":"/path/to/traces"}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter selects the profiling backend. On Ascend NPU, only "torch" is supported — vllm-ascend''s TorchNPUProfilerWrapper._create_profiler()
+  raises RuntimeError for any other value (vllm_ascend/profiler/torch_npu_profiler.py:39-40). When set to "torch", the Ascend
+  worker creates a torch_npu.profiler.profile() instance that captures both CPU and NPU activities (vllm_ascend/profiler/torch_npu_profiler.py:61-65).
+  Profiling itself introduces runtime overhead: "the torch_npu profiler''s with_stack option is explicitly disabled due to"
+  "significant time overhead" (line 68-69), and the upstream vLLM GPU worker warns that using delay_iterations or max_iterations
+  with ignore_frontend=False "may result in high overhead" (vllm/config/profiler.py:129-132). The performance impact is classified
+  as "low" because profiling is a diagnostic tool, not a production runtime setting — it is only active when explicitly enabled
+  and is expected to add overhead during collection. The parameter does not affect normal inference throughput or memory usage
+  when set to null (disabled).
+
+  '
+usage_locations:
+- file: vllm_ascend/profiler/torch_npu_profiler.py:39
+  context: Validates that profiler is "torch" before creating torch_npu profiler; raises RuntimeError otherwise
+- file: vllm_ascend/worker/worker.py:708
+  context: Checks if profiler_config.profiler is None to determine if profiling is enabled before starting/stopping
+- file: vllm/config/profiler.py:128-140
+  context: Validates profiler value and enforces torch_profiler_dir requirement when profiler is "torch"
+- file: vllm/v1/worker/gpu_worker.py:153
+  context: Validates profiler is one of "torch", "cuda", or None during GPU worker init
+- file: vllm/v1/engine/async_llm.py:179
+  context: Checks if profiler is "torch" to enable AsyncLLM CPU trace collection
+- file: vllm/v1/worker/cpu_worker.py:91
+  context: Checks if profiler is "torch" to create TorchProfilerWrapper for CPU worker
+- file: vllm/v1/worker/xpu_worker.py:46
+  context: Checks if profiler is "torch" to create TorchProfilerWrapper for XPU worker
+related_parameters:
+- name: profiler.torch_profiler_dir
+  relation: Required when profiler is set to "torch"; must be a valid directory path for trace output
+- name: profiler.torch_profiler_with_memory
+  relation: Controls whether memory profiling is enabled in the torch_npu profiler
+- name: profiler.ignore_frontend
+  relation: When false and profiler is "torch", delay_iterations/max_iterations may cause high overhead
+- name: profiler.delay_iterations
+  relation: May cause high overhead when used with "torch" profiler and ignore_frontend=false
+- name: profiler.max_iterations
+  relation: May cause high overhead when used with "torch" profiler and ignore_frontend=false
+constraints:
+- On Ascend NPU, only "torch" is a valid profiler value; any other non-null value raises RuntimeError
+- torch_profiler_dir must be set when profiler is "torch"
+- torch_profiler_dir is only applicable when profiler is set to "torch"
+- MSMONITOR_USE_DAEMON and torch profiler cannot be both enabled at the same time
+tuning_advice:
+  summary: 'Set to "torch" only for diagnostic profiling sessions on Ascend NPU; keep null for production deployments to avoid
+    profiling overhead.
+
+    '
+  suggested_values:
+  - scenario: Production inference on Ascend NPU
+    value: null
+    reason: Profiling adds CPU and NPU trace collection overhead; disable for normal operation
+  - scenario: Operator-level performance analysis on Ascend NPU
+    value: '''"torch"'''
+    reason: Only supported profiler on Ascend; captures both CPU and NPU activities via torch_npu.profiler
+  caveats:
+  - The "cuda" profiler option is not supported on Ascend NPU and will raise a RuntimeError
+  - Profiling with "torch" on Ascend uses torch_npu.profiler internally, not the standard torch.profiler
+  - The torch_npu profiler's with_stack option is disabled by default due to significant time overhead
+  - Using delay_iterations or max_iterations with ignore_frontend=false may result in high profiling overhead
+  - MSMONITOR_USE_DAEMON must be disabled when using torch profiler; they are mutually exclusive
+  quick_guide: 'Keep null for production; set to "torch" with a valid torch_profiler_dir only when collecting Ascend NPU operator
+    traces for debugging.
+
+    '
+analysis_date: '2026-07-06'

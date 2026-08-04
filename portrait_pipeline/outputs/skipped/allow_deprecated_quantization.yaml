@@ -1,0 +1,6 @@
+name: --allow-deprecated-quantization
+type: cli
+performance_impact: none
+skip_reason: This flag only permits selection of quantization methods that vLLM marks as deprecated. It does not itself select
+  a quantization kernel or change runtime execution, and the target vllm-ascend source contains no override or runtime consumer
+  for this flag.

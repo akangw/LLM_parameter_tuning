@@ -1,0 +1,116 @@
+name: SpeculativeConfig.prompt_lookup_max
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:139
+- vllm/config/speculative.py:556
+- vllm_ascend/spec_decode/ngram_proposer.py:5
+- vllm_ascend/spec_decode/ngram_proposer_npu.py:5
+- vllm_ascend/spec_decode/__init__.py:33
+- docs/source/user_guide/feature_guide/speculative_decoding.md:5
+value_type: int
+default: '<computed: 5 when both N-gram lookup bounds are omitted; otherwise mirrors prompt_lookup_min when this field is
+  omitted>'
+valid_choices: Integer greater than or equal to 1; it must also be greater than or equal to prompt_lookup_min
+cli_example: --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This field caps the length of the trailing token sequence that the N-gram proposer tries to match against earlier
+  context. The CPU proposer searches for the longest match in the inclusive prompt_lookup_min through prompt_lookup_max range
+  and allocates an LPS work array sized by this maximum. The accelerator proposer evaluates every candidate length in that
+  range and keeps match state for each length. Raising the maximum may find a longer, more specific repeated context and improve
+  draft-token acceptance, reducing target-model steps and inter-token latency when repetition is strong. It also expands lookup
+  work and temporary state, and an overly restrictive large value can miss useful shorter matches when prompt_lookup_min is
+  made equally large. Lower values reduce proposer overhead but can produce less-specific matches with poorer acceptance.
+  Ascend's ngram and ngram_gpu dispatch paths subclass these upstream proposers, so the same tradeoff applies to CPU and NPU
+  lookup there. The setting adds no draft model weights; its memory effect is limited to lookup workspaces and temporary tensors.
+usage_locations:
+- file: vllm/config/speculative.py:556
+  context: Computes the N-gram defaults, mirrors the other bound when one is omitted, and rejects a minimum lookup length
+    greater than this maximum.
+- file: vllm_ascend/spec_decode/ngram_proposer.py:5
+  context: Ascend's CPU N-gram proposer subclasses the upstream proposer and therefore consumes the same resolved maximum
+    during batch proposal.
+- file: vllm_ascend/spec_decode/ngram_proposer_npu.py:5
+  context: Ascend's NPU proposer subclasses the upstream accelerator proposer, inheriting its maximum-length configuration
+    and lookup behavior.
+- file: vllm_ascend/spec_decode/__init__.py:33
+  context: Dispatches method=ngram to the Ascend CPU proposer and method=ngram_gpu to the Ascend NPU proposer.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md:5
+  context: Demonstrates Ascend prompt matching with method=ngram, num_speculative_tokens=5, and prompt_lookup_max=4.
+related_parameters:
+- name: SpeculativeConfig.prompt_lookup_min
+  relation: Defines the lower endpoint of the searched N-gram lengths, must not exceed this maximum, and is copied into this
+    field when only the minimum is supplied.
+- name: SpeculativeConfig.method
+  relation: This setting is active for ngram and ngram_gpu; other speculative methods normalize both prompt-lookup bounds
+    to zero internally.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Controls how many tokens following a successful N-gram match are proposed; acceptance of those tokens determines
+    whether a wider lookup search pays off.
+- name: ModelConfig.max_model_len
+  relation: Limits the context available for matching and caps how many proposed tokens can be returned near the sequence-length
+    boundary.
+constraints:
+- The configured value must be an integer greater than or equal to 1.
+- For method=ngram or ngram_gpu, prompt_lookup_min must be less than or equal to prompt_lookup_max.
+- If both lookup bounds are omitted for ngram or ngram_gpu, both resolve to 5; if only prompt_lookup_min is supplied, this
+  field resolves to the same value.
+- The field affects only ngram and ngram_gpu proposal paths; other methods overwrite the internal prompt-lookup bounds with
+  zero after validation.
+tuning_advice:
+  summary: Keep the computed value of 5 as a baseline, then tune the lookup range using production-like repeated text while
+    measuring proposer time, accepted tokens, inter-token latency, throughput, and peak memory.
+  suggested_values:
+  - scenario: General N-gram speculative decoding
+    value: 5
+    reason: This is the source-defined default when neither lookup bound is supplied and provides a conservative baseline
+      before workload-specific measurement.
+  - scenario: Ascend prompt-lookup baseline matching the pinned guide
+    value: 4
+    reason: The Ascend guide uses this maximum with five speculative tokens, making it a documented starting configuration
+      for comparison.
+  - scenario: Highly repetitive structured text with useful longer phrases
+    value: benchmark values above 5 while keeping prompt_lookup_min smaller
+    reason: Longer matches may be more specific and improve acceptance, but only if the added lookup work is repaid by more
+      accepted draft tokens.
+  - scenario: Short or weakly repetitive contexts
+    value: benchmark 2 to 4
+    reason: A smaller upper bound reduces the number and size of lookup candidates when long repeated suffixes are unlikely.
+  caveats:
+  - A larger maximum is not automatically faster; it expands lookup work and may not improve acceptance.
+  - Raising prompt_lookup_min together with this field can suppress proposals until enough context exists and can miss shorter
+    repeated patterns.
+  - CPU and accelerator proposers have different overhead profiles, so retune when switching between ngram and ngram_gpu or
+    between hardware backends.
+  - Benefits depend on repetition, sampling behavior, context length, num_speculative_tokens, batch size, and the fraction
+    of proposed tokens the target model accepts.
+  quick_guide: Start at 5, or 4 for the documented Ascend example; keep prompt_lookup_min below it to retain shorter fallback
+    matches, and change the maximum only when acceptance-aware end-to-end benchmarks improve.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

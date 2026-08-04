@@ -1,0 +1,74 @@
+name: --cpu-offload-params
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:34
+- vllm/config/offload.py:36
+- vllm/config/offload.py:116
+- vllm_ascend/worker/model_runner_v1.py:4261
+value_type: list[str]
+default: []
+valid_choices: List of parameter-name segments; unmatched entries are ignored.
+cli_example: --cpu-offload-params <parameter-name-segment>
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This setting selects parameter-name segments for the UVA CPU-offload path. With an empty set, upstream offloads
+  non-selectively until cpu_offload_gb is reached; with entries, unmatched parameters are not offloaded. It therefore controls
+  which weights pay host-device access cost versus remain resident. It inherits the target Ascend limitation of CPU offload:
+  the target model-runner reinitialization path asserts cpu_offload_gb is zero.'
+usage_locations:
+- file: vllm/config/offload.py:34
+  context: Defines the selectable parameter-name segment set.
+- file: vllm/config/offload.py:36
+  context: Documents empty-set non-selective offload and unmatched-entry behavior.
+- file: vllm_ascend/worker/model_runner_v1.py:4261
+  context: Contains the target runtime assertion restricting CPU offloading for a runner path.
+related_parameters:
+- name: --cpu-offload-gb
+  relation: Sets the capacity budget that activates and bounds this selection.
+- name: --offload-backend
+  relation: Controls the broader offload implementation path.
+constraints:
+- Unmatched parameter-name segments are not offloaded.
+- This setting has no CPU-offload effect when --cpu-offload-gb is zero, and positive CPU offload must satisfy the target Ascend
+  runner compatibility restriction.
+tuning_advice:
+  summary: Leave the list empty while CPU offload is disabled; use a narrow, measured selection only with a validated positive
+    offload budget.
+  suggested_values:
+  - scenario: Normal target Ascend serving with CPU offload disabled
+    value: []
+    reason: The default avoids activating a selection for a CPU-offload path that is not enabled.
+  - scenario: Validated CPU-offload experiment
+    value: specific verified parameter-name segments
+    reason: Selective entries let the deployment limit which weights use the offload path rather than offloading indiscriminately.
+  caveats:
+  - Entries that do not match a parameter name do nothing.
+  - The target Ascend runner contains a CPU-offload restriction, so do not treat this upstream selection feature as universally
+    available.
+  quick_guide: Keep [] with --cpu-offload-gb 0; only add verified names after target-runtime offload validation.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

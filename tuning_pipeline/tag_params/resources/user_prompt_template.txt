@@ -1,0 +1,13 @@
+## Parameter to tag
+
+Below is the complete YAML analysis for this parameter. Read all fields carefully — especially `impact_detail`, `constraints`, `tuning_advice`, `performance_scope`, `usage_locations`, and `related_parameters` — to determine which tags apply.
+
+```yaml
+{param_yaml}
+```
+
+## Task
+
+Determine which tag values apply to this parameter for each dimension defined in the system prompt. Use `[]` for dimensions where no value applies.
+
+Output ONLY raw YAML — no markdown fences, no introductory or concluding text.

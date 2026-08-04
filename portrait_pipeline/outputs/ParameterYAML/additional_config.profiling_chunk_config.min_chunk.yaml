@@ -1,0 +1,95 @@
+name: additional_config.profiling_chunk_config.min_chunk
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:607
+- vllm_ascend/core/profiling_chunk_predictor.py:47
+- vllm_ascend/core/scheduler_profiling_chunk.py:83
+- docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:53
+value_type: int
+default: 4096
+valid_choices: Positive integer; when dynamic chunking is enabled, values above max_num_batched_tokens are clamped to max_num_batched_tokens.
+cli_example: --additional-config '{"profiling_chunk_config":{"enabled":true,"min_chunk":4096}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This value is the lower bound applied to chunk sizes predicted by Ascend's profiling-based Dynamic Chunked
+  Pipeline Parallel scheduler. After the predictor solves for a chunk that targets the profiled latency and blends it with
+  the base chunk size, it takes the greater of that result and min_chunk, then rounds upward to the scheduler alignment. A
+  larger floor prevents the predictor from selecting very small late-prefill chunks, which can preserve operator efficiency
+  and reduce the number of scheduling/forward steps, but it can prevent latency equalization as attention cost grows and thereby
+  increase pipeline bubbles and TTFT. A smaller floor gives the predictor more freedom to shrink chunks and keep PP stages
+  synchronized, but excessively small chunks can lose operator efficiency and add per-chunk overhead. It has no runtime effect
+  when profiling_chunk_config.enabled is false.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:607
+  context: Parses the nested value as an integer with default 4096 and rejects non-positive values.
+- file: vllm_ascend/ascend_config.py:56
+  context: When dynamic chunking is enabled, clamps a floor larger than max_num_batched_tokens down to that scheduling budget.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:83
+  context: Passes the configured floor into ProfilingChunkManager when constructing the dynamic scheduler.
+- file: vllm_ascend/core/profiling_chunk_predictor.py:250
+  context: Applies min_chunk to the startup-profile prediction before rounding it upward to at least a 64-token or page-size
+    alignment.
+- file: vllm_ascend/core/profiling_chunk_predictor.py:294
+  context: Applies the same floor to history-aware predictions after online calibration.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:323
+  context: Uses the predicted size to cap new tokens scheduled for a running partially computed request.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:530
+  context: Uses the prediction to cap scheduled prefill tokens for waiting requests with computed prefix history.
+- file: docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:62
+  context: Documents that min_chunk generally needs no adjustment and should be below max-num-batched-tokens.
+related_parameters:
+- name: additional_config.profiling_chunk_config.enabled
+  relation: Enables the profiling-based dynamic scheduler; min_chunk has no runtime scheduling effect when it is false.
+- name: additional_config.profiling_chunk_config.smooth_factor
+  relation: Blends the raw prediction with the base chunk before min_chunk imposes the lower bound.
+- name: additional_config.profiling_chunk_config.need_timing
+  relation: Controls online history-aware calibration, whose predictions use the same min_chunk floor.
+- name: --max-num-batched-tokens
+  relation: Supplies the base chunk and scheduling budget; enabled configurations clamp min_chunk to this value when it is
+    smaller.
+- name: --pipeline-parallel-size
+  relation: Dynamic profiling chunk configuration requires pipeline parallel size greater than one.
+- name: --enable-chunked-prefill
+  relation: The documented Dynamic Chunked Pipeline Parallel serving configuration enables chunked prefill.
+constraints:
+- The value is converted with int() and must be greater than zero; zero or a negative value raises ValueError.
+- The floor is effective only when profiling_chunk_config.enabled is true and the fitted predictor is ready.
+- When enabled and min_chunk exceeds max_num_batched_tokens, Ascend logs a warning and clamps min_chunk to max_num_batched_tokens.
+- Dynamic profiling chunk configuration requires pipeline_parallel_size greater than 1.
+- Dynamic profiling chunk configuration cannot be enabled together with additional_config.enable_balance_scheduling.
+- The realized prediction is rounded upward to a multiple of max(KV-cache page size, 64), so it can exceed an unaligned min_chunk
+  slightly.
+tuning_advice:
+  summary: Keep the 4096 default unless representative PP long-prefill benchmarks show that the predicted floor is limiting
+    TTFT or that small chunks are hurting execution efficiency.
+  suggested_values:
+  - scenario: General Ascend dynamic chunked PP deployment
+    value: 4096
+    reason: This is the documented default and the feature guide says it generally does not need adjustment.
+  - scenario: max_num_batched_tokens at or below 4096
+    value: max_num_batched_tokens
+    reason: The effective floor cannot exceed that scheduling budget; Ascend performs this clamp automatically when the feature
+      is enabled.
+  - scenario: Late long-prefill chunks remain too large and PP TTFT regresses
+    value: 2048
+    reason: A lower experimental floor allows more aggressive shrinking; retain it only if end-to-end TTFT or throughput improves
+      without excessive small-chunk overhead.
+  - scenario: Very small predicted chunks reduce NPU operator efficiency
+    value: 8192
+    reason: A higher experimental floor reduces tiny chunks and scheduling steps, but requires a larger max_num_batched_tokens
+      and workload benchmarking.
+  caveats:
+  - There is no universal optimum; attention history length, model shape, NPU kernels, concurrency, and the base token budget
+    change the trade-off.
+  - Raising the floor can defeat the latency-equalization behavior that dynamic chunking uses to reduce PP bubbles.
+  - Lowering the floor can increase the number of chunks and expose kernel-launch and scheduling overhead.
+  - Benchmark TTFT and input throughput after startup profiling and, when enabled, after online calibration has converged.
+  - The pinned upstream vLLM repository has no min_chunk implementation; this setting is specific to vllm-ascend.
+  quick_guide: Start at 4096 and keep it below max_num_batched_tokens; lower it only to address oversized late-prefill chunks,
+    or raise it only to address measured small-chunk inefficiency.
+analysis_date: '2026-08-02'

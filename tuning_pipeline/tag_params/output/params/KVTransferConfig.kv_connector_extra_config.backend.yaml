@@ -1,0 +1,116 @@
+name: KVTransferConfig.kv_connector_extra_config.backend
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:47
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:105
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:195
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:57
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/memcache_backend.py:23
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:84
+- docs/source/user_guide/feature_guide/kv_pool.md:30
+- vllm/config/kv_transfer.py:60
+value_type: str
+default: mooncake
+valid_choices:
+- mooncake
+- memcache
+- yuanrong
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_both", "kv_connector_extra_config":{"backend":"mooncake"}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This nested option selects the storage implementation used by the AscendStore KV-pool worker. The worker lowercases
+  the value, looks it up in backend_map, dynamically imports the mapped implementation, and delegates KV existence, get, put,
+  and buffer-registration operations to that store. Mooncake, Memcache, and Yuanrong have different client libraries, initialization
+  paths, transfer APIs, buffer-registration rules, and external storage configurations. Consequently the selection can change
+  KV lookup and transfer latency, end-to-end serving throughput, and the memory or storage reserved by the selected service.
+  The pinned upstream vLLM source only defines kv_connector_extra_config as an unvalidated connector-specific dictionary;
+  the choices and default are supplied by vllm-ascend.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:105
+  context: Reads the connector-specific value during KVPoolWorker construction and defaults it to mooncake.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:195
+  context: Lowercases the value, resolves it through backend_map, and imports and constructs the selected backend.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:204
+  context: Passes compressed-model lazy initialization only to the mooncake and memcache implementations.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:57
+  context: Mooncake initializes MooncakeDistributedStore, configures transfer-engine or fabric-memory operation, and may allocate
+    a local buffer or SSD storage.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/memcache_backend.py:23
+  context: Memcache initializes DistributedObjectStore and explicitly registers buffers on A2 devices.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:84
+  context: Yuanrong creates a Datasystem HeteroClient and consumes device pointers directly without explicit buffer registration.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:30
+  context: Documents mooncake, memcache, and yuanrong as supported KV-pool backends and mooncake as the default.
+- file: vllm/config/kv_transfer.py:60
+  context: Upstream declares kv_connector_extra_config as a generic dictionary for connector-specific configuration.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: This backend selector is consumed by the vllm-ascend AscendStoreConnector worker and is not a global selector
+    for other KV connectors.
+- name: KVTransferConfig.kv_role
+  relation: Determines whether the selected store is used to produce, consume, or both produce and consume KV-cache data.
+- name: KVTransferConfig.kv_connector_extra_config.load_async
+  relation: Controls asynchronous loading around the operations supplied by the selected storage backend.
+- name: KVTransferConfig.kv_connector_extra_config.consumer_is_to_put
+  relation: Allows a consumer to write KV data through the selected backend.
+- name: ASCEND_ENABLE_USE_FABRIC_MEM
+  relation: Changes Mooncake setup and buffer registration but is not consumed by the Memcache or Yuanrong backend.
+constraints:
+- The value is case-insensitive because the worker calls lower() before lookup, but it must resolve to mooncake, memcache,
+  or yuanrong; an unknown value fails the backend assertion during worker initialization.
+- All instances sharing a KV pool must use a mutually compatible backend and the corresponding external service configuration.
+- Mooncake requires the mooncake package, a Mooncake configuration, and protocol ascend; its optional fabric-memory path has
+  separate hardware constraints.
+- Memcache requires memfabric-hybrid and memcache-hybrid plus their service configuration.
+- Yuanrong requires openyuanrong-datasystem, DS_WORKER_ADDR, and a reachable Yuanrong Datasystem worker.
+tuning_advice:
+  summary: Keep mooncake when it matches the deployed Mooncake service; choose memcache or yuanrong only when that storage
+    stack is installed and configured, then benchmark the complete prefill/decode topology.
+  suggested_values:
+  - scenario: Existing or new Ascend KV-pool deployment built around Mooncake
+    value: mooncake
+    reason: It is the source and documentation default and has the most extensive configuration example in the pinned guide.
+  - scenario: Deployment provisioned with MemFabric and Memcache services
+    value: memcache
+    reason: Selects the Memcache DistributedObjectStore path, including the device-specific buffer handling implemented for
+      A2 and A3.
+  - scenario: Deployment provisioned with Yuanrong Datasystem
+    value: yuanrong
+    reason: Selects the Yuanrong HeteroClient path, including direct device-pointer blob lists and optional remote host-to-device
+      transfer.
+  caveats:
+  - The pinned sources provide no comparable benchmark showing one backend is universally fastest; performance depends on
+    hardware generation, network, service sizing, model, and traffic.
+  - Changing this value without installing and configuring the matching client and external service causes initialization
+    failure rather than a performance fallback.
+  - Backend-specific environment variables and capacity settings can dominate latency, throughput, and memory behavior, so
+    compare fully tuned configurations and warm up lazy communication paths before measurement.
+  - Case variants such as MoonCake resolve successfully, but use the documented lowercase values for portable configuration.
+  quick_guide: Use the backend that matches the deployed KV-store service; otherwise retain mooncake, validate capacity and
+    connectivity, warm up, and benchmark end to end.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

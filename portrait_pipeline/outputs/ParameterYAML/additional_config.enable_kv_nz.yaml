@@ -1,0 +1,97 @@
+name: additional_config.enable_kv_nz
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:232
+- vllm_ascend/attention/mla_v1.py:747
+- vllm_ascend/attention/mla_v1.py:1326
+- vllm_ascend/attention/mla_v1.py:1416
+- vllm_ascend/attention/mla_v1.py:1482
+- vllm_ascend/device/device_op.py:283
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:826
+- docs/source/user_guide/configuration/additional_config.md:86
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"enable_kv_nz":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling this Ascend-only switch changes DeepSeek-style MLA decode KV cache from the ordinary PA/ND interpretation
+  to the NPU-specific NZ path. Decode cache writes use PA_NZ, the fused MLA preprocessing operator receives cache_mode=nzcache,
+  cached tensors are viewed with a 16-element NZ inner dimension, and non-speculative attention changes its query input layout
+  from BNSD_NBSD to BSND_NBSD. These choices change the kernels and memory-access pattern on the decode hot path, so request
+  latency and throughput can differ; the pinned source does not promise a universal speedup, so representative benchmarking
+  is required. On a disaggregated decode node, received KV blocks are also reformatted into NZ layout. The current Mooncake
+  fallback allocates temporary key/value buffers and performs an NPU synchronization before scattering the reformatted cache,
+  adding transfer-time latency and transient device memory. The persistent cache views retain the same element count, so the
+  source does not establish a change in steady-state KV-cache capacity.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:232
+  context: Reads the nested value with a false default and rejects unsupported model or deployment configurations when it
+    is true.
+- file: vllm_ascend/attention/mla_v1.py:747
+  context: Copies the effective Ascend setting into the MLA attention implementation.
+- file: vllm_ascend/attention/mla_v1.py:1326
+  context: Selects PA_NZ rather than PA when the decode step writes the KV cache.
+- file: vllm_ascend/attention/mla_v1.py:1416
+  context: Views decode key caches in an NZ shape with a 16-element inner dimension instead of the ordinary paged-attention
+    shape.
+- file: vllm_ascend/attention/mla_v1.py:1482
+  context: Selects BSND_NBSD query/output handling for non-speculative decode on the NZ path.
+- file: vllm_ascend/device/device_op.py:283
+  context: Selects the nzcache mode in the fused MLA preprocessing custom operator.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:826
+  context: Triggers post-transfer KV reformatting; the fallback path allocates temporary key/value buffers, synchronizes the
+    NPU, and scatters into NZ views.
+- file: docs/source/user_guide/configuration/additional_config.md:86
+  context: Documents the false default and limits the option to MLA models such as DeepSeek.
+related_parameters:
+- name: kv_transfer_config
+  relation: Must be present and make this process a KV consumer; otherwise enabling enable_kv_nz raises NotImplementedError
+    during Ascend configuration.
+- name: model_config.is_deepseek_mla
+  relation: Must be true; the NZ cache path is implemented for MLA models.
+- name: model_config.hf_text_config.index_topk
+  relation: Its presence identifies the sparse-model path, which is rejected when enable_kv_nz is true even if the model otherwise
+    uses MLA.
+- name: additional_config.enable_sparse_c8
+  relation: This is the separate KV-cache layout feature for sparse DSA models; enable_kv_nz is rejected for that sparse model
+    family.
+constraints:
+- The model must use DeepSeek-style MLA; non-MLA models raise RuntimeError at startup.
+- Sparse models whose hf_text_config exposes index_topk are rejected with RuntimeError.
+- A KV transfer configuration must exist and identify the process as a KV consumer (the disaggregated decode/D node), or startup
+  raises NotImplementedError.
+- The NZ views divide the MLA cache dimensions by 16, so this path relies on the supported MLA dimensions being compatible
+  with that layout.
+tuning_advice:
+  summary: Leave false outside the narrowly supported configuration. On a disaggregated DeepSeek MLA decode node, benchmark
+    true against false using representative sequence lengths, concurrency, and transferred-cache hit rates.
+  suggested_values:
+  - scenario: Disaggregated decode/D node serving a supported DeepSeek MLA model
+    value: true
+    reason: Activates the NZ-specific decode cache, preprocessing, and attention layouts for which this switch is implemented.
+  - scenario: Non-MLA, sparse index_topk, prefill, mixed, or standalone deployment
+    value: false
+    reason: True is rejected during configuration unless the process is a non-sparse MLA KV consumer in a disaggregated deployment.
+  - scenario: Performance qualification of a supported deployment
+    value: false
+    reason: Use the default as the control measurement because the pinned source changes both decode kernels and PD cache-transfer
+      work but does not guarantee that NZ is faster for every workload.
+  caveats:
+  - Measure end-to-end decode latency and throughput; kernel/layout gains can be offset by cache reformatting, temporary buffers,
+    and synchronization after PD transfer.
+  - The cache is viewed with a different layout but the current reshape keeps the same number of persistent elements; do not
+    assume increased KV-cache capacity from this switch.
+  - The option is vllm-ascend-specific and has no matching use in the pinned upstream vLLM repository.
+  - This field is supplied through vLLM additional_config, not as a dedicated top-level command-line flag.
+  quick_guide: Use true only on a supported disaggregated DeepSeek MLA decode consumer and retain it only when representative
+    end-to-end benchmarks beat the false baseline.
+analysis_date: '2026-08-01'

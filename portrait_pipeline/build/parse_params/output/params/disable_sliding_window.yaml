@@ -1,0 +1,89 @@
+name: --disable-sliding-window
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:800
+- vllm/config/model.py:235
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --disable-sliding-window
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'When set to True, this flag disables the model''s native sliding window attention mechanism, capping the effective
+  attention window to the full model context length (max_model_len). This has two primary performance effects on Ascend NPU:
+
+  1. **KV cache memory increase**: Sliding window attention limits the number of KV cache entries stored per layer to the
+  sliding window size. Disabling it means the full max_model_len worth of KV cache must be allocated per sequence, significantly
+  increasing memory consumption. On Ascend NPUs with limited HBM (e.g., 64GB on 910B), this can reduce the maximum batch size
+  or force a lower max_model_len.
+
+  2. **Compute overhead increase**: Without sliding window, every attention operation computes over the full sequence length
+  rather than a fixed small window. This increases the computational cost of attention, especially for long sequences, potentially
+  reducing throughput. The impact is more pronounced on Ascend NPUs where attention kernel efficiency may differ from CUDA
+  implementations.
+
+  The parameter is read in vllm/config/model.py:625 where, if the model''s HF config has sliding_window=0, disable_sliding_window
+  is automatically set to True and the sliding window is nullified. This means some models may have sliding window implicitly
+  disabled regardless of the CLI flag.
+
+  Note: "vllm-ascend does not override or modify this parameter''s behavior. The parameter" affects the model configuration
+  before it reaches Ascend-specific code paths, so its effect is identical to upstream vLLM.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:235
+  context: Field definition with default False; docstring explains it caps sliding window to full size
+- file: vllm/config/model.py:625
+  context: Auto-set to True when model's HF config has sliding_window=0, nullifying the window
+- file: vllm/engine/arg_utils.py:504
+  context: EngineArgs field initialization from ModelConfig default
+- file: vllm/engine/arg_utils.py:800
+  context: CLI argument registration in ModelConfig group
+- file: vllm/engine/arg_utils.py:1537
+  context: Passed to ModelConfig constructor during engine creation
+- file: vllm/v1/attention/backends/flashinfer.py:947
+  context: Referenced in error message suggesting disable_sliding_window=True as a fix for window_left mismatch
+related_parameters:
+- name: --max-model-len
+  relation: When sliding window is disabled, max_model_len becomes the effective attention window; memory usage scales with
+    max_model_len
+- name: --enforce-eager
+  relation: Both affect attention computation path; enforce_eager disables CUDA graphs while disable_sliding_window changes
+    attention window size
+constraints:
+- If the model does not support sliding window, this argument is ignored.
+- Setting this flag on a model with sliding_window=0 in its HF config has no additional effect since it is already auto-disabled.
+tuning_advice:
+  summary: 'Keep sliding window enabled (default) for models that support it to reduce KV cache memory and attention compute
+    overhead on Ascend NPUs. Only disable if you encounter correctness issues or need full-context attention for quality reasons.
+
+    '
+  suggested_values:
+  - scenario: Models with native sliding window support (e.g., Mistral, Qwen2) on memory-constrained Ascend NPUs
+    value: 'False'
+    reason: 'Preserves the model''s sliding window attention, reducing KV cache memory per sequence and attention compute
+      cost. Critical for maximizing batch size on NPUs with limited HBM.
+
+      '
+  - scenario: Debugging attention correctness issues or when full-context attention is required for quality
+    value: 'True'
+    reason: 'Forces full-context attention, eliminating any potential issues from sliding window implementation. Trade-off:
+      higher memory usage and compute cost.
+
+      '
+  caveats:
+  - On Ascend NPUs with limited HBM (e.g., 64GB), disabling sliding window on long-context models may severely limit max batch
+    size or force a reduction in max_model_len.
+  - Some models (e.g., those with sliding_window=0 in HF config) have sliding window auto-disabled regardless of this flag.
+  - The flashinfer attention backend on v1 may require disable_sliding_window=True if layers have inconsistent window_left
+    values.
+  quick_guide: 'Leave at default (False) for best memory efficiency on Ascend NPUs; only set to True if you need full-context
+    attention or encounter attention backend compatibility issues.
+
+    '
+analysis_date: '2026-07-06'

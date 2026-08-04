@@ -1,0 +1,108 @@
+name: LOCAL_RANK
+type: env
+category: parallelism
+scope: both
+source_file:
+- vllm/envs.py:657
+- vllm/envs.py:1935
+- vllm/envs.py:23
+- vllm/v1/executor/ray_utils.py:36
+- vllm/v1/executor/uniproc_executor.py:179
+- vllm/v1/worker/gpu_worker.py:260
+- vllm/v1/worker/xpu_worker.py:78
+- vllm/distributed/parallel_state.py:1457
+- vllm/distributed/parallel_state.py:2087
+value_type: int
+default: '0'
+valid_choices: non-negative integer less than the number of devices per node
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "LOCAL_RANK is the fundamental environment variable that determines which physical device (GPU/NPU) each worker\
+  \ process binds to. On Ascend NPU, it directly controls `torch.npu.set_device(local_rank)` and the HCCL communication backend\
+  \ initialization. The value is used to: 1. Select the NPU device for computation (vllm/v1/worker/gpu_worker.py:260-274,\n\
+  \   vllm/v1/worker/xpu_worker.py:62-78).\n2. Initialize the distributed process group with the correct rank for HCCL\n \
+  \  all-reduce/all-gather operations (vllm/distributed/parallel_state.py:1457).\n3. Determine whether the current process\
+  \ is the first local rank, which affects\n   logging, checkpoint loading, and one-time initialization tasks\n   (vllm/distributed/parallel_state.py:2087-2093).\n\
+  4. In Ray-based deployments, LOCAL_RANK is explicitly excluded from driver-to-worker\n   environment variable copying because\
+  \ it must be set per-worker after device\n   discovery (vllm/v1/executor/ray_utils.py:33-40).\n5. In data-parallel scenarios,\
+  \ LOCAL_RANK is adjusted by DP offset to compute the\n   actual device index (vllm/v1/worker/gpu_worker.py:260-261).\nIncorrect\
+  \ LOCAL_RANK causes processes to bind to wrong NPU devices, leading to HCCL communication failures, device memory conflicts,\
+  \ or silent performance degradation from cross-device contention. On Ascend, the NPU device topology (which NPUs share HCCS\
+  \ links) makes correct LOCAL_RANK assignment critical for achieving optimal all-reduce bandwidth.\n"
+usage_locations:
+- file: vllm/v1/worker/gpu_worker.py:260-274
+  context: Uses self.local_rank (derived from LOCAL_RANK env var) to set the CUDA/NPU device via torch.accelerator.set_device_index()
+- file: vllm/v1/worker/xpu_worker.py:62-78
+  context: Sets LOCAL_RANK env var from self.local_rank and uses it for XPU device selection and distributed initialization
+- file: vllm/distributed/parallel_state.py:1457
+  context: Reads envs.LOCAL_RANK when distributed_init_method is 'env://' to determine the local rank for world group initialization
+- file: vllm/distributed/parallel_state.py:2087-2093
+  context: Checks if LOCAL_RANK == 0 to determine if current process is the first local rank on its node
+- file: vllm/v1/executor/uniproc_executor.py:179-185
+  context: Reads LOCAL_RANK from environment as a required env var for torchrun-compatible launchers in deterministic execution
+    mode
+- file: vllm/v1/executor/ray_utils.py:33-40
+  context: Explicitly excludes LOCAL_RANK from driver-to-worker env var copying in Ray deployments
+- file: vllm_ascend/examples/offline_external_launcher.py:176
+  context: Sets LOCAL_RANK env var before initializing torch.distributed with HCCL backend on Ascend NPU
+- file: vllm_ascend/tests/e2e/nightly/multi_node/external_dp/scripts/runtime.py:93
+  context: Uses LOCAL_RANK as a template variable for multi-node external DP launch scripts
+related_parameters:
+- name: RANK
+  relation: Global rank across all processes; LOCAL_RANK is the rank within a single node
+- name: WORLD_SIZE
+  relation: Total number of processes; LOCAL_RANK must be less than the number of devices per node
+- name: MASTER_ADDR
+  relation: Required alongside LOCAL_RANK for env:// distributed initialization
+- name: MASTER_PORT
+  relation: Required alongside LOCAL_RANK for env:// distributed initialization
+- name: CUDA_VISIBLE_DEVICES
+  relation: GPU equivalent; on Ascend NPU, device visibility is controlled by ASCEND_RT_VISIBLE_DEVICES instead
+- name: ASCEND_RT_VISIBLE_DEVICES
+  relation: Ascend NPU equivalent of CUDA_VISIBLE_DEVICES; controls which NPUs are visible to the process
+- name: VLLM_DP_MASTER_IP
+  relation: Data-parallel master IP; LOCAL_RANK is used to compute DP-local device offsets
+- name: VLLM_DP_MASTER_PORT
+  relation: Data-parallel master port; used with LOCAL_RANK for DP group initialization
+constraints:
+- LOCAL_RANK must be set when using env:// distributed initialization (e.g., torchrun launcher)
+- LOCAL_RANK must be a non-negative integer less than the number of visible devices per node
+- In Ray deployments, LOCAL_RANK must not be copied from the driver process; it is set per-worker after device discovery
+- When data-parallel is enabled, the DP-adjusted local rank must not exceed the total device count
+tuning_advice:
+  summary: LOCAL_RANK is typically set automatically by the launcher (torchrun, Ray, or external scripts). Do not manually
+    override it unless you are writing a custom launcher for Ascend NPU.
+  suggested_values:
+  - scenario: Single-node multi-NPU deployment with torchrun
+    value: 0, 1, 2, ..., N-1 (one per process)
+    reason: torchrun automatically assigns LOCAL_RANK based on the number of processes per node. Each process gets a unique
+      LOCAL_RANK corresponding to its NPU device index.
+  - scenario: Multi-node deployment with torchrun
+    value: 0, 1, 2, ..., N-1 (one per process per node)
+    reason: Each node independently assigns LOCAL_RANK 0 through N-1 to its local processes. The global RANK distinguishes
+      processes across nodes.
+  - scenario: Ray deployment
+    value: Set automatically by Ray per worker
+    reason: Ray discovers available devices and assigns LOCAL_RANK per worker. vLLM explicitly prevents copying LOCAL_RANK
+      from the driver to ensure correct per-worker assignment.
+  - scenario: Custom external launcher on Ascend NPU
+    value: 0, 1, 2, ..., N-1 (matching ASCEND_RT_VISIBLE_DEVICES order)
+    reason: When writing a custom launcher for Ascend, set LOCAL_RANK to match the index within ASCEND_RT_VISIBLE_DEVICES.
+      The Ascend HCCL backend uses LOCAL_RANK to select the correct NPU for communication.
+  caveats:
+  - On Ascend NPU, LOCAL_RANK determines which NPU device is used for HCCL communication. Assigning the wrong LOCAL_RANK can
+    cause processes to use NPUs on different HCCS domains, severely degrading all-reduce performance.
+  - When using data-parallel (DP) with tensor-parallel (TP), the effective device index is computed as DP_LOCAL_RANK * TP_PP_WORLD_SIZE
+    + TP_LOCAL_RANK. Ensure LOCAL_RANK is set correctly before this adjustment.
+  - In vllm-ascend external launcher examples, LOCAL_RANK is set alongside RANK, WORLD_SIZE, MASTER_ADDR, and MASTER_PORT
+    before initializing the HCCL process group. All five variables must be consistent.
+  - The vllm-ascend test suite consistently sets LOCAL_RANK equal to RANK for single-node tests (WORLD_SIZE=1), but in multi-node
+    scenarios they differ.
+  quick_guide: Let your launcher (torchrun, Ray, or Ascend cluster manager) set LOCAL_RANK automatically. Only set it manually
+    in custom launchers, ensuring it matches the NPU device index within ASCEND_RT_VISIBLE_DEVICES.
+analysis_date: '2026-07-06'

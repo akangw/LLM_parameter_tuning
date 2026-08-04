@@ -1,0 +1,42 @@
+schema_version: codex-tag-manifest/v2
+build_timestamp: '2026-08-03T05:44:42.847908+00:00'
+builder: Codex CLI (authenticated local agent)
+tagger_version: codex-five-dimension/v2
+codex_cli_version: codex-cli 0.145.0
+prompt_sha256: 165eb7e738cb66df935ccfdc7b49d0d38c6ebe4e3397e89a9198d3702c8599c0
+output_schema_sha256: 189a0c1f6d43b000f5d960468c7f880fafb83bd631bb83b3298c731b040d3357
+tag_definition_sha256: bcf77f16f58a7ea5eeb51bbd97255fce90cdb058c5bc5715bd7d8f5dcdbeb82e
+input_params_dir: C:\Users\25308\Desktop\vllmTKB\portrait_pipeline\outputs\ParameterYAML
+output_params_dir: C:\Users\25308\Desktop\vllmTKB\tuning_pipeline\tag_params\output\params
+tagging_results:
+  total: 340
+  pending: 0
+  in_progress: 0
+  completed: 340
+  error: 0
+tag_distribution:
+  model:
+    dense: 250
+    moe: 287
+    mla: 265
+    vlm: 269
+    quantized: 255
+  optimize_target:
+    tpot: 150
+    throughput: 306
+    memory: 212
+    ttft: 159
+  deploy_topology:
+    single_node: 327
+    multi_node: 339
+  hardware:
+    a2: 297
+    a3: 295
+  deploy_scenario:
+    high_concurrency: 163
+    long_input: 75
+    long_output: 47
+source_commits:
+  vllm: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm-ascend: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+target_context: C:\Users\25308\Desktop\vllmTKB\portrait_pipeline\build\target-context.snapshot.yaml

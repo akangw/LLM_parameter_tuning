@@ -1,0 +1,59 @@
+name: compilation.encoder_cudagraph_max_frames_per_batch
+type: nested
+category: compilation
+scope: vllm
+source_file: []
+value_type: int
+default: '300'
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: 'This parameter controls the maximum total video frames per batch for encoder CUDA graph capture. It determines
+  the size of the cu_seqlens buffer (one entry per attention sequence, i.e. one per video frame) used during CUDA graph capture
+  for encoder models. On Ascend NPU, CUDA graphs are not natively supported — vllm-ascend uses its own graph capture mechanism
+  (torch_npu graph or CANN-based compilation). The parameter may affect memory allocation for the cu_seqlens buffer and the
+  number of encoder CUDA graph instances captured. However, since encoder CUDA graphs are primarily relevant for multimodal
+  models with video input, and Ascend NPU has limited CUDA graph support, the practical performance impact is low for most
+  Ascend deployments. The parameter was not found in vllm-ascend source code, suggesting it has no Ascend-specific override
+  and follows upstream vLLM behavior where applicable.
+
+  '
+usage_locations: []
+related_parameters:
+- name: compilation.cudagraph_capture_sizes
+  relation: Defines the batch sizes for which CUDA graphs are captured; encoder_cudagraph_max_frames_per_batch limits the
+    video frame dimension within those captures
+- name: compilation.cudagraph_mode
+  relation: Must be enabled for any CUDA graph capture to occur; encoder graphs are a subset of the overall CUDA graph capture
+constraints:
+- Must be a positive integer.
+- Only has effect when CUDA graph capture is enabled (compilation.cudagraph_mode is not NONE).
+- Only relevant for multimodal encoder models that process video frames.
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has minimal impact due to limited CUDA graph support. Use the default value unless
+    you encounter OOM errors with large video batches, in which case reduce it.
+
+    '
+  suggested_values:
+  - scenario: Default usage on Ascend NPU with video multimodal models
+    value: '300'
+    reason: The upstream default provides a reasonable balance between memory usage and graph capture coverage for typical
+      video batch sizes.
+  - scenario: Memory-constrained Ascend NPU deployment with large video inputs
+    value: '100'
+    reason: Reducing the max frames per batch lowers the cu_seqlens buffer size, saving memory at the cost of potentially
+      missing CUDA graph capture for larger video batches.
+  caveats:
+  - CUDA graph support on Ascend NPU is limited; vllm-ascend may not fully utilize encoder CUDA graphs even if this parameter
+    is set.
+  - This parameter only affects encoder models (e.g., vision encoders in multimodal LLMs) and has no effect on text-only decoder
+    models.
+  - Setting this value too low may cause the encoder to fall back to eager execution for batches with many video frames, increasing
+    latency.
+  quick_guide: Keep the default value of 300 on Ascend NPU; reduce only if encountering OOM during encoder graph capture with
+    video inputs.
+analysis_date: '2026-07-06'

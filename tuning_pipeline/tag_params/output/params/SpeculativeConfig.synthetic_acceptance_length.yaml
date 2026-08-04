@@ -1,0 +1,115 @@
+name: SpeculativeConfig.synthetic_acceptance_length
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:204
+- vllm/config/speculative.py:210
+- vllm/config/speculative.py:221
+- vllm/config/speculative.py:952
+- vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:315
+value_type: float
+default: null
+valid_choices: null or a float in the inclusive range from 1 through num_speculative_tokens + 1
+cli_example: --speculative-config '{"method":"draft_model","model":"Qwen/Qwen3-0.6B","num_speculative_tokens":5,"rejection_sample_method":"synthetic","synthetic_acceptance_length":4.0}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This optional synthetic-rejection control requests the mean number of output tokens produced by a speculative
+  verification step, including the target bonus token. For num_speculative_tokens equal to n, vLLM converts a requested length
+  L into a minimum-variance unconditional acceptance schedule: the first floor(L - 1) draft positions are accepted with probability
+  1, the next has probability equal to the fractional part of L - 1, and all remaining positions have probability 0. Thus
+  increasing the value schedules longer accepted runs and, in a runtime that consumes the resolved rates, can improve inter-token
+  latency and throughput by yielding more output tokens per target verification step; lowering it intentionally shortens runs.
+  The pinned upstream tree validates and normalizes this value into synthetic_acceptance_rates, then clears synthetic_acceptance_length,
+  but has no runtime consumer of the resolved rates in this snapshot, so the setting alone does not establish a realized upstream
+  speed change. Ascend behavior takes precedence: its NPU v2 rejection sampler raises NotImplementedError when synthetic rates
+  are supplied because NPU Triton lacks the required 64-bit random operation. Consequently this parameter is unsupported for
+  pinned Ascend serving despite its potentially large experimental effect.'
+usage_locations:
+- file: vllm/config/speculative.py:204
+  context: Declares the optional target mean acceptance length and its dynamic range.
+- file: vllm/config/speculative.py:210
+  context: Converts the requested mean into a minimum-variance list of unconditional per-position acceptance rates.
+- file: vllm/config/speculative.py:221
+  context: Enforces mutual exclusivity with explicit rates and validates the inclusive range from 1 through num_speculative_tokens
+    plus 1.
+- file: vllm/config/speculative.py:952
+  context: Resolves this value only in synthetic mode, stores the resulting rates, clears this field, and rejects it in standard
+    mode.
+- file: vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:315
+  context: Implements the Ascend NPU v2 rejection entry point, which rejects the non-null synthetic rate schedule derived
+    from this value.
+related_parameters:
+- name: SpeculativeConfig.rejection_sample_method
+  relation: Must be synthetic for this field to be valid; the default standard mode rejects it.
+- name: SpeculativeConfig.synthetic_acceptance_rates
+  relation: Is the mutually exclusive explicit-schedule alternative and also receives the internally resolved schedule from
+    this value.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Sets both the maximum accepted draft-token count and this field's upper bound of num_speculative_tokens plus 1.
+constraints:
+- The value is optional and defaults to null.
+- When set, the value must be between 1 and num_speculative_tokens + 1 inclusive.
+- It is valid only when rejection_sample_method is synthetic.
+- Synthetic mode requires exactly one of synthetic_acceptance_length and synthetic_acceptance_rates.
+- After validation, vLLM converts the value to synthetic_acceptance_rates and resets synthetic_acceptance_length to null.
+- Synthetic rejection sampling is unsupported by the pinned Ascend NPU v2 rejection kernel and raises NotImplementedError
+  when the derived rates reach it.
+- In the pinned upstream snapshot, configuration code resolves the schedule but no upstream runtime path consumes the resolved
+  rates.
+tuning_advice:
+  summary: Leave this unset for normal and all Ascend serving. Use it only for a controlled upstream synthetic-acceptance
+    experiment after confirming that the deployed runtime consumes the resolved schedule, then sweep valid mean lengths and
+    measure end-to-end latency and throughput.
+  suggested_values:
+  - scenario: Ascend NPU serving
+    value: unset (null)
+    reason: Synthetic rejection sampling is unsupported by the pinned Ascend kernel, so rejection_sample_method should remain
+      standard and this synthetic-only field must remain unset.
+  - scenario: General production serving
+    value: unset (null)
+    reason: The field deliberately imposes an artificial acceptance schedule and is rejected with the default standard rejection
+      method.
+  - scenario: Conservative synthetic benchmark with five draft tokens
+    value: 2.0
+    reason: This schedules one always-accepted draft token followed by zeros, producing a mean accepted length of two while
+      staying within the required range.
+  - scenario: Aggressive synthetic benchmark with five draft tokens
+    value: 6.0
+    reason: This is the maximum valid value and schedules all five draft positions for acceptance, useful only as an upper-bound
+      experiment.
+  caveats:
+  - Do not set this on the pinned Ascend stack; the NPU v2 kernel refuses the derived synthetic rates rather than silently
+    using an incorrect random implementation.
+  - The pinned upstream repository contains rate resolution but no runtime consumer, so verify the deployed runtime plumbing
+    before expecting a performance effect.
+  - 'The length counts the bonus token: a value of 1 means zero expected draft tokens accepted, while num_speculative_tokens
+    plus 1 means all drafts are scheduled for acceptance.'
+  - Fractional values are supported; for example, 3.5 produces unconditional rates [1, 1, 0.5, 0, ...].
+  - A larger synthetic acceptance length does not reduce the target model's verification work for the step and should not
+    be treated as evidence of output quality or distribution correctness.
+  quick_guide: Keep null with standard rejection sampling. For an upstream-only controlled benchmark whose runtime is verified
+    to consume synthetic rates, choose a value in [1, num_speculative_tokens + 1], increase it to schedule more accepted draft
+    tokens per verification step, and measure actual latency and throughput.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output

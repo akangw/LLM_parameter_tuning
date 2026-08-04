@@ -1,0 +1,94 @@
+name: CompilationConfig.compile_cache_save_format
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:441
+- vllm/config/compilation.py:854
+- vllm/envs.py:1707
+- docs/design/torch_compile.md:30
+- docs/design/debug_vllm_compile.md:297
+value_type: str
+default: binary
+valid_choices:
+- binary
+- unpacked
+cli_example: -cc.compile_cache_save_format=unpacked
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: This field selects the on-disk serialization format used by upstream vLLM's InductorStandaloneAdaptor when
+  it saves and loads standalone torch.compile artifacts. The default binary form stores an artifact as a binary file and is
+  documented as safe when multiple vLLM processes share the compile cache. The unpacked form writes an inspectable directory
+  tree but is not multiprocess safe, so concurrent processes can race. The format can therefore affect compile-cache save/load
+  work and the reliability of warm cache reuse during engine startup; it does not change the compiled graph's steady-state
+  inference execution. The field is only passed to this adaptor when the backend is upstream Inductor, standalone compile
+  is enabled and supported, and the compile cache is enabled. The pinned vllm-ascend platform installs its custom Ascend compiler
+  and contains no consumer or override of this field.
+usage_locations:
+- file: vllm/config/compilation.py:441
+  context: Defines the nested field and obtains its default from VLLM_COMPILE_CACHE_SAVE_FORMAT.
+- file: vllm/config/compilation.py:854
+  context: Rejects every value other than binary or unpacked.
+- file: vllm/envs.py:1707
+  context: Defines the environment-backed default as binary and restricts the environment variable to the same two choices.
+- file: docs/design/torch_compile.md:30
+  context: Documents binary as the default artifact format and unpacked as the debugging choice for interacting with generated
+    code.
+- file: docs/design/debug_vllm_compile.md:297
+  context: Shows the nested-command-line spelling and explains that unpacked output permits editing and debugging generated
+    TorchInductor code.
+related_parameters:
+- name: VLLM_COMPILE_CACHE_SAVE_FORMAT
+  relation: Supplies the field's default when compile_cache_save_format is not set explicitly.
+- name: VLLM_USE_STANDALONE_COMPILE
+  relation: This format is consumed only when standalone Inductor compilation is selected and supported by the installed PyTorch
+    build.
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: When the compilation cache is disabled, compiled artifacts are not saved in either format.
+- name: CompilationConfig.backend
+  relation: Only the upstream inductor backend constructs the standalone adaptor that consumes this field; eager and custom
+    backends do not.
+- name: CompilationConfig.cache_dir
+  relation: Selects the directory in which the formatted artifacts are stored.
+constraints:
+- The only accepted values are binary and unpacked.
+- Unpacked format is not safe for multiple vLLM processes concurrently accessing the same torch compile cache.
+- The setting has no effect unless upstream standalone Inductor compilation and compile-cache artifact saving are active.
+- A cache must be loaded with the same format used to save its compiled artifact.
+tuning_advice:
+  summary: Keep binary for production and shared-cache deployments. Use unpacked only in an isolated debugging run that needs
+    editable generated Inductor files.
+  suggested_values:
+  - scenario: Production or multiple vLLM processes sharing one compile cache
+    value: binary
+    reason: It is the default, multiprocess-safe representation and preserves normal warm-cache reuse without exposing generated
+      files for editing.
+  - scenario: Single-process investigation of generated TorchInductor code
+    value: unpacked
+    reason: It produces an inspectable directory structure in which generated code can be viewed, edited, or given breakpoints.
+  caveats:
+  - Do not use unpacked with concurrent processes sharing a cache directory; the pinned source explicitly warns that races
+    may occur.
+  - This is a debugging and persistence-format choice, not a steady-state request-latency, throughput, or accelerator-memory
+    tuning knob.
+  - Disabling the compile cache, using the non-standalone adaptor, or selecting a custom compiler makes this field ineffective.
+  - The pinned vllm-ascend path selects AscendCompiler rather than the upstream standalone Inductor adaptor, so changing this
+    field has no source-backed Ascend performance effect.
+  quick_guide: Leave binary unchanged in normal deployments; switch to unpacked only for a single-process generated-code debugging
+    session.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

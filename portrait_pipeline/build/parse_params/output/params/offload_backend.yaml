@@ -1,0 +1,99 @@
+name: --offload-backend
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1139
+- vllm/config/offload.py:83
+- vllm/model_executor/offloader/base.py:129
+value_type: str
+default: auto
+valid_choices:
+- auto
+- uva
+- prefetch
+cli_example: --offload-backend uva
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: "This parameter selects the backend for model weight offloading from GPU/NPU memory to CPU memory. On Ascend\
+  \ NPU, weight offloading is critical for deploying large models that exceed device HBM capacity. The three backends have\
+  \ fundamentally different performance profiles: - \"\\\"auto\\\": Automatically selects prefetch if --offload-group-size\
+  \ > 0, UVA if --cpu-offload-gb > 0,\"\n  otherwise disables offloading entirely (NoopOffloader). This is the default and\
+  \ safest choice.\n- \"\\\"uva\\\": Uses Unified Virtual Addressing for zero-copy access to CPU memory. On Ascend NPU,\"\n\
+  \  UVA offloading relies on the host-to-device DMA engine. Each layer access triggers a\n  synchronous or asynchronous copy\
+  \ from CPU to NPU, which can severely impact throughput\n  if the model has many layers and the PCIe/NPU-link bandwidth\
+  \ is insufficient.\n- \"\\\"prefetch\\\": Uses async prefetch with group-based layer offloading. Layers are divided into\"\
+  \n  groups (controlled by --offload-group-size), and a subset (--offload-num-in-group) is kept\n  on NPU while the rest\
+  \ reside on CPU. The prefetch step (--offload-prefetch-step) determines\n  how many layers ahead to prefetch. This is generally\
+  \ more throughput-friendly than UVA\n  because it overlaps computation with data transfer, but requires careful tuning of\
+  \ group\n  parameters to avoid stalls.\n\nThe selection logic in create_offloader() (vllm/model_executor/offloader/base.py:129-162)\
+  \ shows that when backend=\"auto\" and neither offload_group_size nor cpu_offload_gb is set, a NoopOffloader is returned\
+  \ — meaning no offloading occurs and all weights stay on NPU. This is the highest-performance option when model fits in\
+  \ HBM.\nNote: \"vllm-ascend does NOT override or modify this parameter's behavior. The offloading\" mechanism is upstream\
+  \ vLLM code and works identically on Ascend NPU as on GPU, subject to the NPU's DMA and PCIe bandwidth characteristics.\n"
+usage_locations:
+- file: vllm/engine/arg_utils.py:506
+  context: Field declaration in EngineArgs, default from OffloadConfig.offload_backend
+- file: vllm/engine/arg_utils.py:2143
+  context: Passed to OffloadConfig constructor when building VllmConfig
+- file: vllm/config/offload.py:83
+  context: OffloadConfig field definition with docstring describing backend options
+- file: vllm/config/offload.py:97-137
+  context: 'Validation logic: warns if backend conflicts with sub-config settings'
+- file: vllm/model_executor/offloader/base.py:129-162
+  context: create_offloader() dispatches to PrefetchOffloader, UVAOffloader, or NoopOffloader
+related_parameters:
+- name: --cpu-offload-gb
+  relation: When offload-backend='uva' or 'auto', this value determines how many GB of weights to offload via UVA
+- name: --cpu-offload-params
+  relation: When offload-backend='uva', specifies which parameter types to offload
+- name: --offload-group-size
+  relation: When offload-backend='prefetch' or 'auto', this value triggers prefetch offloading and determines group size
+- name: --offload-num-in-group
+  relation: When offload-backend='prefetch', controls how many layers per group stay on device
+- name: --offload-prefetch-step
+  relation: When offload-backend='prefetch', controls prefetch lookahead distance
+- name: --offload-params
+  relation: When offload-backend='prefetch', specifies which parameter types to offload
+constraints:
+- When offload-backend is explicitly set to 'uva', any prefetch settings (--offload-group-size, etc.) are silently ignored
+- When offload-backend is explicitly set to 'prefetch', any UVA settings (--cpu-offload-gb, etc.) are silently ignored
+- When offload-backend='auto' and both UVA and prefetch fields have non-default values, prefetch takes precedence with a warning
+- When offload-backend='auto' and neither --offload-group-size nor --cpu-offload-gb is set (>0), no offloading occurs (NoopOffloader)
+tuning_advice:
+  summary: Use 'auto' (default) unless you have a specific reason to force a particular offloading strategy; prefer fitting
+    the model in NPU HBM without offloading for best throughput.
+  suggested_values:
+  - scenario: Model fits entirely in NPU HBM
+    value: auto
+    reason: With no offload parameters set, 'auto' selects NoopOffloader — all weights stay on NPU, achieving maximum throughput
+      and minimum latency
+  - scenario: Model slightly exceeds NPU HBM, need simple offloading
+    value: uva
+    reason: UVA zero-copy offloading is simpler to configure (just set --cpu-offload-gb) and works well when only a small
+      portion of weights needs offloading; the DMA overhead is manageable for infrequently accessed layers
+  - scenario: Model significantly exceeds NPU HBM, need high throughput
+    value: prefetch
+    reason: Prefetch offloading overlaps data transfer with computation, maintaining higher throughput than UVA for large
+      models; requires tuning --offload-group-size, --offload-num-in-group, and --offload-prefetch-step for optimal pipeline
+      efficiency
+  - scenario: Unsure which backend to use
+    value: auto
+    reason: The auto-selection logic picks the appropriate backend based on which sub-config fields are set; this is the safest
+      choice and avoids misconfiguration warnings
+  caveats:
+  - On Ascend NPU, UVA offloading performance depends heavily on PCIe bandwidth between host CPU and NPU; Huawei Atlas systems
+    with HCCS (Huawei Cache Coherence System) may have different DMA characteristics than typical GPU setups
+  - Prefetch offloading on Ascend NPU may require tuning --offload-prefetch-step based on the NPU's compute-to-memory-bandwidth
+    ratio; too small a step causes compute stalls, too large wastes CPU memory
+  - When offload-backend='auto' and both UVA and prefetch fields are set, prefetch silently wins — this can be surprising
+    if you intended to use UVA
+  - Offloading always trades throughput for memory savings; even with prefetch, expect 20-50% throughput reduction compared
+    to fully on-device execution
+  quick_guide: Leave as 'auto' (default) and set either --cpu-offload-gb for simple UVA offloading or --offload-group-size
+    for higher-throughput prefetch offloading; do not set both simultaneously unless you explicitly want prefetch to take
+    precedence.
+analysis_date: '2026-07-06'

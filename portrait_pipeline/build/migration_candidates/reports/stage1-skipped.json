@@ -1,0 +1,7667 @@
+[
+  {
+    "id": "param.45f59580c2d09c03",
+    "name": "--additional-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c9ae23e9c3c794ed",
+    "name": "--aggregate-engine-logging",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.45e46299d4a6738c",
+    "name": "--alloc-policy",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4dc6a4c946f85af3",
+    "name": "--allowed-local-media-path",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.eb77f30ffa347be0",
+    "name": "--allowed-media-domains",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.24fd5a9acb610675",
+    "name": "--attention-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.cf4433676ff54ed4",
+    "name": "--audio-path1",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.df51aa9fad146cb1",
+    "name": "--audio-path2",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.3fa1d3ff63594691",
+    "name": "--bs",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.90367dabb8cee05d",
+    "name": "--code-revision",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9a12e15c7915ece0",
+    "name": "--collect-detailed-traces",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.763e50ea020e626c",
+    "name": "--compilation-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.200f9a711088b71c",
+    "name": "--compress-process-num",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.5f38051241780abe",
+    "name": "--config-format",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b3c9271fe5c8b5a1",
+    "name": "--convert",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.04590be1ed5ecd57",
+    "name": "--cudagraph-metrics",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1d16d612b5a5d5c6",
+    "name": "--data-parallel-rank",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8e162ee08b8155a9",
+    "name": "--data-parallel-rpc-port",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.dfc65625e1eecf25",
+    "name": "--data-parallel-start-rank",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a161618bc940790d",
+    "name": "--dcp",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8d25c4b51de816b4",
+    "name": "--decode-servers-urls",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.70a7585956c6d6f9",
+    "name": "--decoder-hosts",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.168cd0409187fdab",
+    "name": "--decoder-ports",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b3640c915553c0c8",
+    "name": "--default-resource-points",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.d218eabec1c910c1",
+    "name": "--disable-log-stats",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4a9565abf017caed",
+    "name": "--download-dir",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f3aa2a1b1943c063",
+    "name": "--dp-address",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.47179e59e17e6415",
+    "name": "--dp-hosts",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9c3c7ed53b82f14a",
+    "name": "--dp-ports",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b9e8efe50c0d4a53",
+    "name": "--dp-rank-start",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.80412be7b2dd0a7b",
+    "name": "--dp-rpc-port",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.57a8998a7f406010",
+    "name": "--dp-size",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6a9a69989a6a2ee9",
+    "name": "--dp-size-local",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6eb286b091507eb2",
+    "name": "--ec-transfer-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5f771142a29a4d0d",
+    "name": "--enable-compress",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.e1f9fc6b31e8c34c",
+    "name": "--enable-layerwise-nvtx-tracing",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.09cf4aedf9a41c35",
+    "name": "--enable-log-requests",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d02023b4d5662b3c",
+    "name": "--enable-logging-iteration-details",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.06e3d96032990cc4",
+    "name": "--enable-mfu-metrics",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7c55cdca6517566e",
+    "name": "--enable-prompt-embeds",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7158dac57b033374",
+    "name": "--encode-servers-urls",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.1e7bf98a473981a4",
+    "name": "--encoder-dispatch-mode",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4aec06607970c1d8",
+    "name": "--encoder-hosts",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.ed8ef5a3c6acc71e",
+    "name": "--encoder-ports",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.314b00b2edd975cb",
+    "name": "--eplb-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.660555eef28d427c",
+    "name": "--exp_name",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.679a59ad63e6a4fe",
+    "name": "--fail-on-environ-validation",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fddb993635541503",
+    "name": "--generation-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9c69e779d1bfae73",
+    "name": "--heartbeat-sweep-sec",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f1e97aa9f487d58b",
+    "name": "--heartbeat-ttl-sec",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6197fad4daa6fc1a",
+    "name": "--hf-config-path",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4fa1e264a4e242df",
+    "name": "--hf-overrides",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5a6cf5e2def80ef2",
+    "name": "--hf-token",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4441802028eff63c",
+    "name": "--host",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.70a77ce7807e7fc7",
+    "name": "--ignore-patterns",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.40e01736e886b457",
+    "name": "--input_len",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.ecb478b84ce7ddcd",
+    "name": "--input_path",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.3dedec1d5bfad239",
+    "name": "--io-processor-plugin",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a2e9036ac3190ea3",
+    "name": "--iter_times",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.fe30120aae9ce544",
+    "name": "--kernel-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.61aba224497ec90b",
+    "name": "--kv-cache-metrics",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6092862864bdd8c2",
+    "name": "--kv-cache-metrics-sample",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.57f719c7f9414e45",
+    "name": "--kv-events-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5579aaf81cb66de9",
+    "name": "--kv-transfer-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.628beb00aceaa096",
+    "name": "--language-model-only",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a7e9f4dd3aa7abea",
+    "name": "--logits-processors",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0ab72769a576e7fe",
+    "name": "--logprobs-mode",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a051ef28b92dbeea",
+    "name": "--master-addr",
+    "type": "cli",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f5b2d199e730a948",
+    "name": "--master-port",
+    "type": "cli",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2db379c443a08041",
+    "name": "--max-logprobs",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.590bcaa097841de8",
+    "name": "--max-retries",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.353d7ae107c44941",
+    "name": "--max-waiting-retries",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.027f32c36bad3797",
+    "name": "--media-io-kwargs",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7eff44b2ae6613e1",
+    "name": "--mm-encoder-fp8-scale-path",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4d6ddad302e55774",
+    "name": "--mm-encoder-fp8-scale-save-path",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5a9453451cf71b5b",
+    "name": "--model",
+    "type": "cli",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.765167bb6f421a7a",
+    "name": "--model-loader-extra-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.eea215a5a0f6bca6",
+    "name": "--model-weight-gib",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.d070109dbc39e646",
+    "name": "--model_path",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.99308baf2615ae12",
+    "name": "--nnodes",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2edfd466820444bc",
+    "name": "--node-rank",
+    "type": "cli",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.534d410d18e167f3",
+    "name": "--node-size",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.e48ee59a22eba8b9",
+    "name": "--num_devices",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b0517a3e390f87ec",
+    "name": "--num_groups",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9eb1d5688e387373",
+    "name": "--num_nodes",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.eb914b4a411d4640",
+    "name": "--num_original_expert",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.03e276840058b2c9",
+    "name": "--num_redundancy_expert",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f611bf4e116c3f4d",
+    "name": "--otlp-traces-endpoint",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2113bdabd9f59583",
+    "name": "--output",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8b3c84699123d4af",
+    "name": "--output_len",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b01ec5d3c5f36102",
+    "name": "--output_path",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.557259aba8673e64",
+    "name": "--override-generation-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e3fe4566020ec7bb",
+    "name": "--pcp",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f9251a96b8d25909",
+    "name": "--pd-hosts",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.fad8b4205401d86a",
+    "name": "--pd-ports",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.270ff5afd438822e",
+    "name": "--pooler-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.30a88893eb24cf24",
+    "name": "--port",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.72e6c3f30c277ab9",
+    "name": "--prefill-servers-urls",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.bc139eebf1e9270c",
+    "name": "--prefiller-hosts",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f8bd0db5b27c76d5",
+    "name": "--prefiller-ports",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8bf6ae493c8cdba7",
+    "name": "--prefix",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f72b5832d845e3f8",
+    "name": "--proc-per-node",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.dace537479582f86",
+    "name": "--profiler-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3f180d2e04e0910e",
+    "name": "--pt-load-map-location",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.632f226e880f3fd3",
+    "name": "--ray-workers-use-nsight",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6abd3850fcd02905",
+    "name": "--reasoning-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5ebe486089082fdf",
+    "name": "--reasoning-parser",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c668a42f15c4e35d",
+    "name": "--reasoning-parser-plugin",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6bfbcb6aa3920b83",
+    "name": "--retry-delay",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c11a7be66fa2d99a",
+    "name": "--revision",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d81fe3df2441ff32",
+    "name": "--runner",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.dd5cc14e6d29bdb0",
+    "name": "--seed",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e46f721fb6545b45",
+    "name": "--served-model-name",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a87a04777f45def9",
+    "name": "--show-hidden-metrics-for-version",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ef9381fa009e93fd",
+    "name": "--skip-tokenizer-init",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f7011b33c6c1b7bc",
+    "name": "--sleep-mode-level",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.83d214caa7d0859b",
+    "name": "--speculative-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0bd652998c9b3fcd",
+    "name": "--structured-outputs-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e6574e6e5faa8415",
+    "name": "--temperature",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.929524957eac554c",
+    "name": "--tokenizer",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ae7d4843247496e8",
+    "name": "--tokenizer-mode",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b6deb414b8461820",
+    "name": "--tokenizer-revision",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.79e94535feb6a32f",
+    "name": "--tp",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.bbcab9f6ca736993",
+    "name": "--tp-size",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.2c091998d3692817",
+    "name": "--trust-remote-code",
+    "type": "cli",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fcbb718dbcbed9e0",
+    "name": "--use-tqdm-on-load",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0f2d4ca3c4733b8d",
+    "name": "--vllm-start-port",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.96ee07639d705c63",
+    "name": "--waiting-retry-interval",
+    "type": "cli",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9b8bc1f15c9b2b20",
+    "name": "--weight-transfer-config",
+    "type": "cli",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c27fcb94c57eec53",
+    "name": "ASCEND_HOME_PATH",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d44297f88bf82587",
+    "name": "ASCEND_RT_VISIBLE_DEVICES",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.d1b2ebe68877060d",
+    "name": "BENCHMARK_JOB_NAME",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.df4e9ff5a310a6ff",
+    "name": "CANN_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.1f6657cb3588594c",
+    "name": "CMAKE_ARGS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0c9a8649f162c584",
+    "name": "CMAKE_BUILD_TYPE",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.8f25fceea9e2e45f",
+    "name": "CONDA_EXE",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f47a4be074adffde",
+    "name": "CONDA_PREFIX",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.6a65bda2d60104cc",
+    "name": "CONFIG_BASE_PATH",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c2d3885aedac446f",
+    "name": "CONFIG_YAML_PATH",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.2de48984732f96aa",
+    "name": "CUDA_HOME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.e8a6d6321986fbaf",
+    "name": "CUDA_MODULE_LOADING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.94293187825823dc",
+    "name": "CUDA_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.4f020412d78e9364",
+    "name": "CUDA_VISIBLE_DEVICES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.35b0a2b23c88f561",
+    "name": "CUDNN_LIBRARY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.7ade474768d3e419",
+    "name": "CXX_COMPILER",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.78e13c8ac008bb28",
+    "name": "C_COMPILER",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.677e3c5c6d967653",
+    "name": "DO_NOT_TRACK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.18723bd53859e10d",
+    "name": "DS_WORKER_ADDR",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f5e3f05303c15138",
+    "name": "EXPERT_MAP_RECORD",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f3803e9275b59310",
+    "name": "EXTERNAL_DP_LOG_DIR",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.494e051684445873",
+    "name": "EXTERNAL_DP_MAX_WAIT_SECONDS",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8aac02490e4d51de",
+    "name": "FETCHCONTENT_BASE_DIR",
+    "type": "env",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.56ea1a13ee00af42",
+    "name": "GH_TOKEN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0ad61ee7717bfb3e",
+    "name": "GITHUB_TOKEN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.3a0aacd1dee28411",
+    "name": "HCCL_DETERMINISTIC",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4615450d3295afcc",
+    "name": "HCCL_SO_PATH",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e32862287817ed8a",
+    "name": "JAX_PLATFORMS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a266c714f440e076",
+    "name": "LCCL_DETERMINISTIC",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.68a91efbcb27bb76",
+    "name": "LD_LIBRARY_PATH",
+    "type": "env",
+    "scope": "both",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.77653ba39b534871",
+    "name": "LOCAL_RANK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.7e8dddf6ded0db34",
+    "name": "LOG_PREFIX",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4232652c3a16a563",
+    "name": "LWS_LEADER_ADDRESS",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c8980742c0643b2c",
+    "name": "LWS_WORKER_INDEX",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a5ce44b716156b1d",
+    "name": "MAX_JOBS",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.09c9086ce9879237",
+    "name": "MOONCAKE_CONFIG_PATH",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3e6441fcb90b0834",
+    "name": "MOONCAKE_MASTER",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.1fb881715a299dcc",
+    "name": "MSMONITOR_USE_DAEMON",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.bf0515609ecc79a2",
+    "name": "NO_COLOR",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.cda957523758216b",
+    "name": "NVCC_THREADS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.2310255c372bcd0d",
+    "name": "OPENAI_API_KEY",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0489a4fa07ef78ac",
+    "name": "PROGRAMFILES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fe66e9cd1399e884",
+    "name": "PYTORCH_CUDA_ALLOC_CONF",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.8119e9cdf812cf6e",
+    "name": "RANK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0eceff7053939196",
+    "name": "READTHEDOCS_VERSION_TYPE",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ec095ecff902193d",
+    "name": "RFORK_MOCK_ALLOC_POLICY",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.472982e48e484cb3",
+    "name": "RFORK_MOCK_DEFAULT_RESOURCE_POINTS",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a33f22c5143cf117",
+    "name": "RFORK_MOCK_HEARTBEAT_SWEEP_SEC",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0f4cb28a27758a2d",
+    "name": "RFORK_MOCK_HEARTBEAT_TTL_SEC",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6c0bd48cc649dd3d",
+    "name": "RFORK_MOCK_HOST",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.2930cfe377125db7",
+    "name": "RFORK_MOCK_PORT",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a50e2d46348d5eca",
+    "name": "ROCM_HOME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.95b043fe46bb5e39",
+    "name": "ROCM_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.8b752d7d66f1852b",
+    "name": "S3_ACCESS_KEY_ID",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.719fdee1a9955d5a",
+    "name": "S3_ENDPOINT_URL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ce1a128ee8431a6b",
+    "name": "S3_SECRET_ACCESS_KEY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.169c0fe11daaafd4",
+    "name": "SFA_V1_PRECISION_METRICS_LOG",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a0c2000fe9521550",
+    "name": "SOC_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.539665a8bacf33a9",
+    "name": "SYSTEMROOT",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b86bb0480bab0bb9",
+    "name": "TILELANG_CLEANUP_TEMP_FILES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ff745afea71c419c",
+    "name": "TORCH_CUDA_ARCH_LIST",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.2fe9ac1979135637",
+    "name": "TORCH_NPU_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.1d541e3e16d70fc3",
+    "name": "TORCH_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.51b44402464d4ccb",
+    "name": "USE_FLAGOS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.776da007aa2c366e",
+    "name": "VERBOSE",
+    "type": "env",
+    "scope": "both",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.5b8e686c51ff1c76",
+    "name": "VLLM_ALLOW_INSECURE_SERIALIZATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.cf4bd089d53f1d3b",
+    "name": "VLLM_ALLREDUCE_USE_FLASHINFER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.f8baa909bc2bd850",
+    "name": "VLLM_API_KEY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bb93ba1acb1561a1",
+    "name": "VLLM_ASCEND_COMMIT",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.430dfd18ca49cac9",
+    "name": "VLLM_ASCEND_REF",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f43abfdd65c1c979",
+    "name": "VLLM_ASCEND_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.990ca90d1d863a44",
+    "name": "VLLM_ASSETS_CACHE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ccb04c90d5f785c1",
+    "name": "VLLM_ASSETS_CACHE_MODEL_CLEAN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.920b2336f58e020c",
+    "name": "VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.0743f0fa09d923d4",
+    "name": "VLLM_CI_DTYPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a00d3afc5db0507b",
+    "name": "VLLM_CI_ENFORCE_EAGER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c4a35042d626109d",
+    "name": "VLLM_CI_HEAD_DTYPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.307cad19f4d998cd",
+    "name": "VLLM_CI_HF_DTYPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.ba568b36a8f6c75c",
+    "name": "VLLM_CI_NO_SKIP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f53a1ca0f6de36b1",
+    "name": "VLLM_CI_RUNNER",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.cc8e98260cf57330",
+    "name": "VLLM_CI_USE_S3",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b9c78630d6a27f0c",
+    "name": "VLLM_COMMIT",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9c656de990cd6487",
+    "name": "VLLM_COMPUTE_NANS_IN_LOGITS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.d9a4bdfb4c52ab73",
+    "name": "VLLM_CONFIGURE_LOGGING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9117b81f8eb82961",
+    "name": "VLLM_CONFIG_ROOT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.96a3f29a4573eccb",
+    "name": "VLLM_CPU_ATTN_SPLIT_KV",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.e0da98f7dfdb3fec",
+    "name": "VLLM_CPU_INT4_W4A8",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.8c6c04451c09ddc2",
+    "name": "VLLM_CPU_KVCACHE_SPACE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.c3e372353435d0bc",
+    "name": "VLLM_CPU_NUM_OF_RESERVED_CPU",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.4ba0a58fc34cd38d",
+    "name": "VLLM_CPU_OMP_THREADS_BIND",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.faa85c5ca6e3d34a",
+    "name": "VLLM_CPU_SGL_KERNEL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.b23629924513a4ad",
+    "name": "VLLM_CUDART_SO_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8abb85c5d381f028",
+    "name": "VLLM_CUDA_COMPATIBILITY_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.6083edc165fce008",
+    "name": "VLLM_CUSTOM_SCOPES_FOR_PROFILING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b30a596c77622569",
+    "name": "VLLM_DBO_COMM_SMS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.3d104cb833e5c480",
+    "name": "VLLM_DEBUG_DUMP_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8448376b8b79769b",
+    "name": "VLLM_DEBUG_LOG_API_SERVER_RESPONSE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.191a7fd4254a9efd",
+    "name": "VLLM_DEBUG_MFU_METRICS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1894431e7b799e8a",
+    "name": "VLLM_DEBUG_WORKSPACE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bd189ea156390a14",
+    "name": "VLLM_DEEPEPLL_NVFP4_DISPATCH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.7859662a1091cd16",
+    "name": "VLLM_DEEP_GEMM_WARMUP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.c75e4ec3b8c236a3",
+    "name": "VLLM_DISABLE_LOG_LOGO",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6ee272693b50ca0f",
+    "name": "VLLM_DISABLE_REQUEST_ID_RANDOMIZATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.606f0422a1de5e34",
+    "name": "VLLM_DISABLE_SCCACHE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ea0a759e8f134c65",
+    "name": "VLLM_DOCKER_BUILD_CONTEXT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.651996cddd17b306",
+    "name": "VLLM_DO_NOT_TRACK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.02f8d19bf2fed54b",
+    "name": "VLLM_DP_MASTER_IP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.51145ca3b3fb836e",
+    "name": "VLLM_DP_MASTER_PORT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a56a8385a399e6bb",
+    "name": "VLLM_DP_RANK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f3e82d199b81c89d",
+    "name": "VLLM_DP_RANK_LOCAL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f0f81efa5922c3a9",
+    "name": "VLLM_DP_SIZE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.077e0333cf273ac1",
+    "name": "VLLM_ENABLE_CUDAGRAPH_GC",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.8be5480b4b9c8454",
+    "name": "VLLM_ENABLE_CUDA_COMPATIBILITY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.16a72841057c66a9",
+    "name": "VLLM_ENABLE_RESPONSES_API_STORE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.732bc9950a7b35f6",
+    "name": "VLLM_ENFORCE_STRICT_TOOL_CALLING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.1e5d562c71e37734",
+    "name": "VLLM_FLASHINFER_ALLREDUCE_BACKEND",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.41ea26ef04c6b05b",
+    "name": "VLLM_FLASHINFER_ALLREDUCE_FUSION_THRESHOLDS_MB",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3c5be28fc07ad2f0",
+    "name": "VLLM_FLASHINFER_MOE_BACKEND",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3a7735ecf8e11417",
+    "name": "VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.42d593fe627cc712",
+    "name": "VLLM_GC_DEBUG",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f6461ad1bb67c924",
+    "name": "VLLM_GPT_OSS_HARMONY_SYSTEM_INSTRUCTIONS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.edf9b1c3102794dd",
+    "name": "VLLM_GPT_OSS_SYSTEM_TOOL_MCP_LABELS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.32909b8f43712cef",
+    "name": "VLLM_GPU_MEMORY_UTILIZATION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9742a1487b8c7c6d",
+    "name": "VLLM_HAS_FLASHINFER_CUBIN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.faade644b03161e3",
+    "name": "VLLM_HOST_IP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.05e57ced68c1c5d8",
+    "name": "VLLM_HUMMING_INPUT_QUANT_CONFIG",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.89dc882c1175f635",
+    "name": "VLLM_HUMMING_MOE_GEMM_TYPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.7ec00c879b18f4cc",
+    "name": "VLLM_HUMMING_ONLINE_QUANT_CONFIG",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.9d47e41c5de5b297",
+    "name": "VLLM_HUMMING_USE_F16_ACCUM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.b6bceee14b4a14a0",
+    "name": "VLLM_KEEP_ALIVE_ON_ENGINE_DEATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.cc123758b0563e38",
+    "name": "VLLM_LOGGING_COLOR",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.272c915e94a43a54",
+    "name": "VLLM_LOGGING_CONFIG_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.05e40e17cc5b3550",
+    "name": "VLLM_LOGGING_LEVEL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.57e2374d7465a6b2",
+    "name": "VLLM_LOGGING_PREFIX",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a9735ff29264ec72",
+    "name": "VLLM_LOGGING_STREAM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2e9aed1ef5bff5f5",
+    "name": "VLLM_LOG_BATCHSIZE_INTERVAL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.58cf2c9614557a75",
+    "name": "VLLM_LOG_MODEL_INSPECTION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.890d0f03bc36d3c2",
+    "name": "VLLM_LOG_STATS_INTERVAL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b8fb5855854fbabd",
+    "name": "VLLM_LOOPBACK_IP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a96d20a7cd5e9425",
+    "name": "VLLM_LORA_RESOLVER_CACHE_DIR",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7a7697cd05daae77",
+    "name": "VLLM_LORA_RESOLVER_HF_REPO_LIST",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ce773056cc338adb",
+    "name": "VLLM_MAIN_CUDA_VERSION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3caec87e5e20e935",
+    "name": "VLLM_MARLIN_INPUT_DTYPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.c7d6436d8bcaa02e",
+    "name": "VLLM_MARLIN_USE_ATOMIC_ADD",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3428e93ce17ae4ba",
+    "name": "VLLM_MAX_AUDIO_CLIP_FILESIZE_MB",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.01f31f884cbeff34",
+    "name": "VLLM_MAX_MODEL_LEN",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.259cb46ef8802267",
+    "name": "VLLM_MAX_N_SEQUENCES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.5d89c88117b4d6fb",
+    "name": "VLLM_MAX_PROMPT",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.47a9c145c4af804c",
+    "name": "VLLM_MEDIA_CONNECTOR",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.46d1565543cedf06",
+    "name": "VLLM_MEDIA_FETCH_MAX_RETRIES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.3256f22578e5367c",
+    "name": "VLLM_MEDIA_URL_ALLOW_REDIRECTS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.55371f2394ebf7e8",
+    "name": "VLLM_MIN_PROMPT",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.81a328a258fa3790",
+    "name": "VLLM_MODEL_REDIRECT_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a293a6921e523776",
+    "name": "VLLM_MOE_USE_DEEP_GEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.a35ec58ed53466de",
+    "name": "VLLM_MOONCAKE_BOOTSTRAP_PORT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f1acb3535ccd5f44",
+    "name": "VLLM_MORIIO_CONNECTOR_READ_MODE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.00f8d691789c2664",
+    "name": "VLLM_MXFP4_USE_MARLIN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.fe0174086c0c10fe",
+    "name": "VLLM_NCCL_INCLUDE_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.ceaf9d748f3a0ae0",
+    "name": "VLLM_NCCL_SO_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.404d516966ddd519",
+    "name": "VLLM_NEEDLE_BATCH_SIZE",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8ab9486d95902efa",
+    "name": "VLLM_NEEDLE_MAX_TOKENS",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.31729335e0577336",
+    "name": "VLLM_NEEDLE_TEMPERATURE",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.24fdc969a925eda6",
+    "name": "VLLM_NEEDLE_TOP_P",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.db5c1d00e2b9dcd2",
+    "name": "VLLM_NEEDLE_TRIALS",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.15456559ad3cd2d0",
+    "name": "VLLM_NIXL_EP_MAX_NUM_RANKS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.aa70d50f685cd321",
+    "name": "VLLM_NIXL_SIDE_CHANNEL_HOST",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.84d8f47b541c2c10",
+    "name": "VLLM_NIXL_SIDE_CHANNEL_PORT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.c13aa02c2908388d",
+    "name": "VLLM_NO_USAGE_STATS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.e26e14cf4c822f2c",
+    "name": "VLLM_NVFP4_GEMM_BACKEND",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.2fb7ec58b0cd2fdb",
+    "name": "VLLM_NVTX_SCOPES_FOR_PROFILING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4ef2eb7419df9c9a",
+    "name": "VLLM_OBJECT_STORAGE_SHM_BUFFER_NAME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0180b0d822f3145b",
+    "name": "VLLM_PATTERN_MATCH_DEBUG",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9d31f477fe654821",
+    "name": "VLLM_PLUGINS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.29a915f6dc1e9ccd",
+    "name": "VLLM_PORT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fecc5d3af7a39a28",
+    "name": "VLLM_PRECOMPILED_WHEEL_COMMIT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7a37c5035f1a64e6",
+    "name": "VLLM_PRECOMPILED_WHEEL_LOCATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1bc500ed41eb4f49",
+    "name": "VLLM_PRECOMPILED_WHEEL_VARIANT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ee135726c8d53f5c",
+    "name": "VLLM_PROCESS_NAME_PREFIX",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f7b3d0f6d54cac8f",
+    "name": "VLLM_RANDOMIZE_DP_DUMMY_INPUTS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0394e27e6c36dac5",
+    "name": "VLLM_RAY_EXTRA_ENV_VARS_TO_COPY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.919dfe0d5b24fb51",
+    "name": "VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.76a9c8a15540b916",
+    "name": "VLLM_ROCM_FP8_MFMA_PAGE_ATTN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.7e9cc1d9b7b95e27",
+    "name": "VLLM_ROCM_FP8_PADDING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.d9e52d1d9e79fc47",
+    "name": "VLLM_ROCM_MOE_PADDING",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.f665d40624f6b51e",
+    "name": "VLLM_ROCM_QUICK_REDUCE_CAST_BF16_TO_FP16",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.16c0aa4c5afd5a9f",
+    "name": "VLLM_ROCM_QUICK_REDUCE_MAX_SIZE_BYTES_MB",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3bcce5acf9dab42e",
+    "name": "VLLM_ROCM_QUICK_REDUCE_QUANTIZATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.2f845dae57d554aa",
+    "name": "VLLM_ROCM_SHUFFLE_KV_CACHE_LAYOUT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.850c9dde85287ee2",
+    "name": "VLLM_ROCM_SLEEP_MEM_CHUNK_SIZE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.221e92c4a8d5f687",
+    "name": "VLLM_ROCM_USE_AITER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.45115b4083ac5dd2",
+    "name": "VLLM_ROCM_USE_AITER_FP4BMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.62541b28ce74bc93",
+    "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3898350e41460b88",
+    "name": "VLLM_ROCM_USE_AITER_FP8BMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.b1b8e9c6e1a6c891",
+    "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.ba92e98cd464e372",
+    "name": "VLLM_ROCM_USE_AITER_LINEAR",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.e95b188e46303cef",
+    "name": "VLLM_ROCM_USE_AITER_MHA",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.1a8185325d7b56f7",
+    "name": "VLLM_ROCM_USE_AITER_MLA",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.64feeafc45e8bdc6",
+    "name": "VLLM_ROCM_USE_AITER_MOE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.dfea8c4772028d99",
+    "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.67690765d4693795",
+    "name": "VLLM_ROCM_USE_AITER_RMSNORM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.0c7f3b99f0497c60",
+    "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.cade26526b7160b2",
+    "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.aa6f180c5d2c7a26",
+    "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.a036356d874cede3",
+    "name": "VLLM_ROCM_USE_SKINNY_GEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.1343ee2631dd741d",
+    "name": "VLLM_ROCM_WHEEL_INDEX",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.1e7f9dd984c69e60",
+    "name": "VLLM_RPC_BASE_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.17b1b90caee9c4be",
+    "name": "VLLM_SERVER_DEV_MODE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.df9117f31540ad22",
+    "name": "VLLM_SKIP_MODEL_NAME_VALIDATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.dc61547dca83d247",
+    "name": "VLLM_SKIP_PRECOMPILED_VERSION_SUFFIX",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3cf9e29c482e9339",
+    "name": "VLLM_SYSTEM_START_DATE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.96d6b173bb702d60",
+    "name": "VLLM_TARGET_DEVICE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.6acf442d8b6a5379",
+    "name": "VLLM_TEST_CLEAN_GPU_MEMORY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c4901d9b8698bb4b",
+    "name": "VLLM_TEST_FORCE_FP8_MARLIN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.859f0a18213af130",
+    "name": "VLLM_TEST_FORCE_LOAD_FORMAT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e5035a0d3f08b958",
+    "name": "VLLM_TEST_SEED",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8aa4c7ac0db4b83c",
+    "name": "VLLM_TEST_TP_SIZE",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.39225e037e35f297",
+    "name": "VLLM_TOOL_JSON_ERROR_AUTOMATIC_RETRY",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.5660e357cd13760c",
+    "name": "VLLM_TPU_BUCKET_PADDING_GAP",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.05b2c60c16a0f37d",
+    "name": "VLLM_TPU_MOST_MODEL_LEN",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.13bbe8456e286ff0",
+    "name": "VLLM_TPU_USING_PATHWAYS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.5fb88e8b462558aa",
+    "name": "VLLM_TP_SIZE",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.2e2d2b571685ba50",
+    "name": "VLLM_TRACE_FUNCTION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.75a6230263bbeee6",
+    "name": "VLLM_TUNED_CONFIG_FOLDER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.48ba1d3063c08220",
+    "name": "VLLM_USAGE_SOURCE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.4bd782fe9d1e1993",
+    "name": "VLLM_USAGE_STATS_SERVER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.086e4f061d012e45",
+    "name": "VLLM_USE_BYTECODE_HOOK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.493efd40b510ebf5",
+    "name": "VLLM_USE_DEEP_GEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.7b1371220d8e35b4",
+    "name": "VLLM_USE_DEEP_GEMM_E8M0",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.c07e8ef6d9308267",
+    "name": "VLLM_USE_DEEP_GEMM_TMA_ALIGNED_SCALES",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.419ec3386054661b",
+    "name": "VLLM_USE_EXPERIMENTAL_PARSER_CONTEXT",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.3ab045c59207f313",
+    "name": "VLLM_USE_FBGEMM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.92c594e0bda778f8",
+    "name": "VLLM_USE_FLASHINFER_MOE_FP16",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.7fd4ede0adb940dc",
+    "name": "VLLM_USE_FLASHINFER_MOE_FP4",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.41454627937f8b57",
+    "name": "VLLM_USE_FLASHINFER_MOE_FP8",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.e6f39b5e93809bd4",
+    "name": "VLLM_USE_FLASHINFER_MOE_INT4",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.c70e262ef00af365",
+    "name": "VLLM_USE_FLASHINFER_MOE_MXFP4_BF16",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.2a042d87e5ff29d6",
+    "name": "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.4ca5629fd1d01286",
+    "name": "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8_CUTLASS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.3ff3b5a0a477f9eb",
+    "name": "VLLM_USE_FLASHINFER_SAMPLER",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.5157e788bc1ff2df",
+    "name": "VLLM_USE_LAYERNAME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.c8162c351329ee5c",
+    "name": "VLLM_USE_MODELSCOPE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.098a12fa3da63f57",
+    "name": "VLLM_USE_NCCL_SYMM_MEM",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.471bb98aa0c8e255",
+    "name": "VLLM_USE_NVFP4_CT_EMULATIONS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.be7c055af18270e8",
+    "name": "VLLM_USE_OINK_OPS",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fd6ac8afd43311c4",
+    "name": "VLLM_USE_PRECOMPILED",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.101a971a7a8e1c6c",
+    "name": "VLLM_USE_TRITON_AWQ",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.7e167e17b056503e",
+    "name": "VLLM_VERSION",
+    "type": "env",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b8f19f12fea12465",
+    "name": "VLLM_VERSION_OVERRIDE",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.de8eb40bc8525d9f",
+    "name": "VLLM_XLA_CACHE_PATH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.1ae73c7d0488967f",
+    "name": "VLLM_XLA_CHECK_RECOMPILATION",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.5e0700ec00edf348",
+    "name": "VLLM_XLA_USE_SPMD",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.46aa91e23e71d0eb",
+    "name": "VLLM_XPU_ENABLE_XPU_GRAPH",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.d900dc238c0045c7",
+    "name": "VLLM_XPU_USE_SAMPLER_KERNEL",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_ascend_backend"
+  },
+  {
+    "id": "param.33b623db4c6e9980",
+    "name": "VLLM_ZENTORCH_WEIGHT_PREPACK",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.1c0d4ab1c5b55758",
+    "name": "XDG_CACHE_HOME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.563b56a9b5245bcc",
+    "name": "XDG_CONFIG_HOME",
+    "type": "env",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a0769a8e39a12871",
+    "name": "AscendStoreKVConnectorWorkerMetadata.completed_events",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4bb70dd220504e6c",
+    "name": "AsyncEngineArgs.enable_log_requests",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3c61d9fb2c5447bf",
+    "name": "AttentionConfig.backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.82b96bc0b606ab4a",
+    "name": "AudioDummyOptions.length",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7d01e24f65e7cbb6",
+    "name": "BaseDummyOptions.count",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f11344f191f7a736",
+    "name": "CacheConfig.DEFAULT_BLOCK_SIZE",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.a7cbd07242a7c222",
+    "name": "CacheConfig._block_size_resolved",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.3d1a70e33db5add4",
+    "name": "CacheConfig.block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8bdf103760b6651f",
+    "name": "CacheConfig.cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c264fd58ad2a854c",
+    "name": "CacheConfig.calculate_kv_scales",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6f607d82423d4063",
+    "name": "CacheConfig.enable_prefix_caching",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2713239d355110d4",
+    "name": "CacheConfig.gpu_memory_utilization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b1cdcb2d788191c2",
+    "name": "CacheConfig.hash_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d5dc1907d0933196",
+    "name": "CacheConfig.is_attention_free",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.36afdc396da03ead",
+    "name": "CacheConfig.kv_cache_dtype_skip_layers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ff297b2305360e2b",
+    "name": "CacheConfig.kv_cache_memory_bytes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.40fdf0fdf72d882e",
+    "name": "CacheConfig.kv_offloading_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.80c2d627ad451abb",
+    "name": "CacheConfig.kv_offloading_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b4eb6065095810d5",
+    "name": "CacheConfig.kv_sharing_fast_prefill",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.76b6ab4cae6d27b4",
+    "name": "CacheConfig.mamba_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7cebba05ad91b902",
+    "name": "CacheConfig.mamba_cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.15cddf6087fe819d",
+    "name": "CacheConfig.mamba_cache_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.66c16cec83c79739",
+    "name": "CacheConfig.mamba_page_size_padded",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fcc14e20c06e19e0",
+    "name": "CacheConfig.mamba_ssm_cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.716d460360ba8d8b",
+    "name": "CacheConfig.num_cpu_blocks",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.be2185835223e145",
+    "name": "CacheConfig.num_gpu_blocks",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e49cc1eef3f55692",
+    "name": "CacheConfig.num_gpu_blocks_override",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a75362d81983026c",
+    "name": "CacheConfig.prefix_caching_hash_algo",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.46704f9c1acea4ce",
+    "name": "CacheConfig.sliding_window",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e2a97f1acb680144",
+    "name": "CacheConfig.user_specified_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a2da22f8dc7219c9",
+    "name": "CacheConfig.user_specified_mamba_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b58541df008646de",
+    "name": "CompilationConfig._attention_ops",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.6e846be4863c52be",
+    "name": "CompilationConfig.cache_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5940b72b5c4d5c0c",
+    "name": "CompilationConfig.compilation_time",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.86459eaddec9a377",
+    "name": "CompilationConfig.cudagraph_capture_sizes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d23e6d5a8459398e",
+    "name": "CompilationConfig.debug_dump_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.696dc91a46338b2b",
+    "name": "CompilationConfig.dynamic_shapes_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.0ab89eddd96aad75",
+    "name": "CompilationConfig.encoder_compilation_time",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.8e99580f4b838806",
+    "name": "CompilationConfig.ir_enable_torch_wrap",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.41ab083e77cb9749",
+    "name": "CompilationConfig.local_cache_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7ea694f85ec7ebaa",
+    "name": "CompilationConfig.max_cudagraph_capture_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a7543cfaa591f1ba",
+    "name": "CompilationConfig.pass_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.98cf6344b7d3b9d9",
+    "name": "CompilationConfig.static_forward_context",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.d58a8f6b7171666e",
+    "name": "CompilationConfig.traced_files",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ffad8dce0c0eb483",
+    "name": "DeviceConfig.device",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.f5012026a93eddf7",
+    "name": "DeviceConfig.device_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.c27516932e03cbb6",
+    "name": "DynamicShapesConfig.assume_32_bit_indexing",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.e0b5cf774217d9b6",
+    "name": "DynamicShapesConfig.evaluate_guards",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.0d11058747ce5598",
+    "name": "DynamicShapesConfig.type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.e53153618ebb515e",
+    "name": "ECTransferConfig.ec_connector_extra_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.267fbb33c7540fe6",
+    "name": "ECTransferConfig.ec_connector_module_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.32a92478e43d7e36",
+    "name": "ECTransferConfig.ec_ip",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.4c0cb63d020b40fc",
+    "name": "ECTransferConfig.ec_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.c7b94b1b065107b9",
+    "name": "ECTransferConfig.ec_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ae036822294e4e69",
+    "name": "ECTransferConfig.ec_role",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.1a231adb4eac2417",
+    "name": "ECTransferConfig.engine_id",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fbc4582588230911",
+    "name": "EPLBConfig.log_balancedness",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fe284b0fb7aea353",
+    "name": "EPLBConfig.log_balancedness_interval",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ed774203f2ede063",
+    "name": "EngineArgs._api_process_count",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.11332ff022c6dd0b",
+    "name": "EngineArgs._api_process_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.45f36b63839718ec",
+    "name": "EngineArgs.additional_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.72ff5f100ae6d014",
+    "name": "EngineArgs.aggregate_engine_logging",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fd60feb4fbc32af1",
+    "name": "EngineArgs.all2all_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c1baa4bd9a69b861",
+    "name": "EngineArgs.allow_deprecated_quantization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5cc07824379a655f",
+    "name": "EngineArgs.allowed_local_media_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.517a0625ae01c52d",
+    "name": "EngineArgs.allowed_media_domains",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.443a642ea0af582a",
+    "name": "EngineArgs.async_scheduling",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.be5e283c9e528858",
+    "name": "EngineArgs.attention_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a0304d25175ca8e6",
+    "name": "EngineArgs.attention_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3ec6fcb04d194452",
+    "name": "EngineArgs.block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8d1a34677f9516d4",
+    "name": "EngineArgs.calculate_kv_scales",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.aa7a4544ac1b3586",
+    "name": "EngineArgs.code_revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a43be056bc4ba4ba",
+    "name": "EngineArgs.collect_detailed_traces",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c2b586c44e1ef59e",
+    "name": "EngineArgs.compilation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c68e22ddc04128b7",
+    "name": "EngineArgs.config_format",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.20974e59321b19d9",
+    "name": "EngineArgs.convert",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.631136a366546ce8",
+    "name": "EngineArgs.cp_kv_cache_interleave_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.364abd1fc27ef9b7",
+    "name": "EngineArgs.cpu_offload_gb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.13b6eda74558387d",
+    "name": "EngineArgs.cpu_offload_params",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.964ab0f7aea0d04b",
+    "name": "EngineArgs.cudagraph_capture_sizes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b4495e205ac09c00",
+    "name": "EngineArgs.cudagraph_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.13228bc89be4b32e",
+    "name": "EngineArgs.data_parallel_address",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.dbcc9c362b499b81",
+    "name": "EngineArgs.data_parallel_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.db6fd2eff256f6e1",
+    "name": "EngineArgs.data_parallel_external_lb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d9bb3db7e7745702",
+    "name": "EngineArgs.data_parallel_hybrid_lb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.15e8813c4e71ba5a",
+    "name": "EngineArgs.data_parallel_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d24bd7638d87d327",
+    "name": "EngineArgs.data_parallel_rpc_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3bf295cf4a690517",
+    "name": "EngineArgs.data_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.16506e2855da8b29",
+    "name": "EngineArgs.data_parallel_size_local",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.352e5a8f0d70a076",
+    "name": "EngineArgs.data_parallel_start_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.50366489583e9048",
+    "name": "EngineArgs.dbo_decode_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7aabdf72b16d7fd2",
+    "name": "EngineArgs.dbo_prefill_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c4773e70397d1e79",
+    "name": "EngineArgs.dcp_comm_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d96b8a4f8b48c80c",
+    "name": "EngineArgs.dcp_kv_cache_interleave_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.920132a5dc71c162",
+    "name": "EngineArgs.decode_context_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.58f3d7da05513d2d",
+    "name": "EngineArgs.default_mm_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.095bfd842851e425",
+    "name": "EngineArgs.disable_cascade_attn",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fe5c3450e00ec869",
+    "name": "EngineArgs.disable_chunked_mm_input",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.985b6fe20bec547f",
+    "name": "EngineArgs.disable_custom_all_reduce",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0b7658491d546eee",
+    "name": "EngineArgs.disable_hybrid_kv_cache_manager",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7533c27bd52aebb2",
+    "name": "EngineArgs.disable_log_stats",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.31e36e2d8175069b",
+    "name": "EngineArgs.disable_nccl_for_dp_synchronization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d321ad709a14e691",
+    "name": "EngineArgs.disable_sliding_window",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c560b3d62eaf3bd9",
+    "name": "EngineArgs.distributed_executor_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5d82b12f1c78fbdd",
+    "name": "EngineArgs.distributed_timeout_seconds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.029e5da828a1822f",
+    "name": "EngineArgs.download_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a1828444631ddf86",
+    "name": "EngineArgs.dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.01aa365d26fdc929",
+    "name": "EngineArgs.ec_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f9f85639cb3e6377",
+    "name": "EngineArgs.enable_chunked_prefill",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5a460df20869d144",
+    "name": "EngineArgs.enable_dbo",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6b71e8c93664bc6e",
+    "name": "EngineArgs.enable_elastic_ep",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.844660565130f4e2",
+    "name": "EngineArgs.enable_ep_weight_filter",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7cceadc546ed44b7",
+    "name": "EngineArgs.enable_eplb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5692d4a5bf163f98",
+    "name": "EngineArgs.enable_expert_parallel",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.83b8dc755382bde8",
+    "name": "EngineArgs.enable_flashinfer_autotune",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.db3de3fa4cfdfbca",
+    "name": "EngineArgs.enable_layerwise_nvtx_tracing",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2fed089b9464bb19",
+    "name": "EngineArgs.enable_logging_iteration_details",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.65f0dff74adc51c1",
+    "name": "EngineArgs.enable_lora",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b54f18ad9a310aa8",
+    "name": "EngineArgs.enable_mamba_cache_stochastic_rounding",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7a9d8d2b15df9c04",
+    "name": "EngineArgs.enable_mfu_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bd248bd6b6c2ec2f",
+    "name": "EngineArgs.enable_mm_embeds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.74d974d74f993f04",
+    "name": "EngineArgs.enable_prefix_caching",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.23766ef7459766af",
+    "name": "EngineArgs.enable_prompt_embeds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d66f4d92da1e6812",
+    "name": "EngineArgs.enable_return_routed_experts",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.07b9bc43978a6cd5",
+    "name": "EngineArgs.enable_sleep_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.01b30c5ff4090d20",
+    "name": "EngineArgs.enable_tower_connector_lora",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.28b46fad69ffd77f",
+    "name": "EngineArgs.enforce_eager",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f067936db8c13547",
+    "name": "EngineArgs.eplb_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.cb19ab0dae1b193a",
+    "name": "EngineArgs.expert_placement_strategy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2b0d9ac61e7c7c32",
+    "name": "EngineArgs.fail_on_environ_validation",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f004fb015ba53882",
+    "name": "EngineArgs.fully_sharded_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ed36ef6b119c666a",
+    "name": "EngineArgs.gdn_prefill_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.602b7c295f2ea000",
+    "name": "EngineArgs.generation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f114e514d8912e02",
+    "name": "EngineArgs.gpu_memory_utilization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8c6192a636d96617",
+    "name": "EngineArgs.hf_config_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.805832f09862bbf0",
+    "name": "EngineArgs.hf_overrides",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.dfb80471233539ec",
+    "name": "EngineArgs.hf_token",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.168916fbca84adb7",
+    "name": "EngineArgs.ignore_patterns",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.88476fcfc780c448",
+    "name": "EngineArgs.interleave_mm_strings",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5d76116c308dd3d3",
+    "name": "EngineArgs.io_processor_plugin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2720968df0e4a150",
+    "name": "EngineArgs.ir_op_priority",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2e8e3a148daca7cb",
+    "name": "EngineArgs.kernel_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a0fadcb7681bd050",
+    "name": "EngineArgs.kv_cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.327ee055182d32af",
+    "name": "EngineArgs.kv_cache_dtype_skip_layers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.21539081ed0c234d",
+    "name": "EngineArgs.kv_cache_memory_bytes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.572ba8b7a2d46878",
+    "name": "EngineArgs.kv_cache_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.207a9f5221e75dfd",
+    "name": "EngineArgs.kv_cache_metrics_sample",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9eb729634bbae245",
+    "name": "EngineArgs.kv_events_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.776cfba0c98654a3",
+    "name": "EngineArgs.kv_offloading_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.be5241240b2523a3",
+    "name": "EngineArgs.kv_offloading_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ac0dd6f3208aa1ad",
+    "name": "EngineArgs.kv_sharing_fast_prefill",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9a3d5de1702769ba",
+    "name": "EngineArgs.kv_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b0f7cb89d223af6b",
+    "name": "EngineArgs.language_model_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6162779d843c0fa7",
+    "name": "EngineArgs.limit_mm_per_prompt",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.94ca12a2329c03bf",
+    "name": "EngineArgs.load_format",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e776e5ad752c4c66",
+    "name": "EngineArgs.logits_processors",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2e1a2301c0d21079",
+    "name": "EngineArgs.logprobs_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.00062bcd8caf95e8",
+    "name": "EngineArgs.long_prefill_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3f584ada41ad436a",
+    "name": "EngineArgs.lora_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.e97af3e9a9996ba3",
+    "name": "EngineArgs.lora_target_modules",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d65cb783a38105bf",
+    "name": "EngineArgs.mamba_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.43303405007e9ec6",
+    "name": "EngineArgs.mamba_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5b39073c98f07eca",
+    "name": "EngineArgs.mamba_cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.799125b8e951a96e",
+    "name": "EngineArgs.mamba_cache_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ff958ad1d2725aab",
+    "name": "EngineArgs.mamba_cache_philox_rounds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f4f9539cb37f6195",
+    "name": "EngineArgs.mamba_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ba25170ef1994209",
+    "name": "EngineArgs.mamba_ssm_cache_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.443026a92d4468dc",
+    "name": "EngineArgs.master_addr",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.504a17a54f7aece7",
+    "name": "EngineArgs.master_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.23da7ca503b57551",
+    "name": "EngineArgs.max_cpu_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.861914e835c78f12",
+    "name": "EngineArgs.max_cudagraph_capture_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.50e240e06779628d",
+    "name": "EngineArgs.max_logprobs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c2056d67eef43196",
+    "name": "EngineArgs.max_long_partial_prefills",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7154049c1d8f38e4",
+    "name": "EngineArgs.max_lora_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8791173e58fb87f9",
+    "name": "EngineArgs.max_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.dad2267b6189aa04",
+    "name": "EngineArgs.max_model_len",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.4e457383d8bac715",
+    "name": "EngineArgs.max_num_batched_tokens",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.cfd046a8087a10c4",
+    "name": "EngineArgs.max_num_partial_prefills",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.eaae94ba409db5c0",
+    "name": "EngineArgs.max_num_seqs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.891727d4b34fade5",
+    "name": "EngineArgs.max_parallel_loading_workers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3c60a10e17919271",
+    "name": "EngineArgs.media_io_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5d32897c8b664824",
+    "name": "EngineArgs.mm_encoder_attn_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.76ed6cb66d63c5dc",
+    "name": "EngineArgs.mm_encoder_attn_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0ecc6d5ab0424b52",
+    "name": "EngineArgs.mm_encoder_fp8_scale_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b4ec78f075c30004",
+    "name": "EngineArgs.mm_encoder_fp8_scale_save_margin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d3449ae86cd2b8bd",
+    "name": "EngineArgs.mm_encoder_fp8_scale_save_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f74c0185a4bd1d96",
+    "name": "EngineArgs.mm_encoder_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5367db4db58f25d0",
+    "name": "EngineArgs.mm_encoder_tp_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.381f3ef920a1f21f",
+    "name": "EngineArgs.mm_processor_cache_gb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3ad51e71bd480115",
+    "name": "EngineArgs.mm_processor_cache_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.96b7c6157c6aea77",
+    "name": "EngineArgs.mm_processor_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.97c214f23c087c39",
+    "name": "EngineArgs.mm_shm_cache_max_object_size_mb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9df32cb9f7b6f5ff",
+    "name": "EngineArgs.mm_tensor_ipc",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0e7dd7f2c9d85299",
+    "name": "EngineArgs.model",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.18ed3be6db5b892d",
+    "name": "EngineArgs.model_impl",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0d231d6eaf0fccd3",
+    "name": "EngineArgs.model_loader_extra_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b0b4df5052a70cc3",
+    "name": "EngineArgs.model_weights",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f23542b15d9dd1dc",
+    "name": "EngineArgs.moe_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.873479e28249a477",
+    "name": "EngineArgs.nnodes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c66b52cc250f256f",
+    "name": "EngineArgs.node_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e1a9130854006820",
+    "name": "EngineArgs.num_gpu_blocks_override",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.37281bb968fadacd",
+    "name": "EngineArgs.numa_bind",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.534df3300cb9bb82",
+    "name": "EngineArgs.numa_bind_cpus",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0abc5bee8f4de550",
+    "name": "EngineArgs.numa_bind_nodes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1e75b71e92c89f2d",
+    "name": "EngineArgs.offload_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8d17b5369ea67b79",
+    "name": "EngineArgs.offload_group_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.dee0cc60031383fb",
+    "name": "EngineArgs.offload_num_in_group",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f833297323591fe2",
+    "name": "EngineArgs.offload_params",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.4769bc23c58ef624",
+    "name": "EngineArgs.offload_prefetch_step",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fd16b2ba2bfa154b",
+    "name": "EngineArgs.optimization_level",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.eca4bec1c563d957",
+    "name": "EngineArgs.otlp_traces_endpoint",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a1d1fe5699243991",
+    "name": "EngineArgs.override_attention_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ebd280e5c15099c9",
+    "name": "EngineArgs.override_generation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.322f607c48276960",
+    "name": "EngineArgs.performance_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.abc92efde078fef2",
+    "name": "EngineArgs.pipeline_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.668ae56de0181641",
+    "name": "EngineArgs.pooler_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c2e3f96ffc68ebc8",
+    "name": "EngineArgs.prefill_context_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c18926c9ee8afac2",
+    "name": "EngineArgs.prefix_caching_hash_algo",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d8399b32b4de834d",
+    "name": "EngineArgs.profiler_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f08c82a7e80fdcc4",
+    "name": "EngineArgs.pt_load_map_location",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0dd8b46339a6b930",
+    "name": "EngineArgs.quantization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.43f59e709955d4fc",
+    "name": "EngineArgs.ray_workers_use_nsight",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5a8ca366c1241af6",
+    "name": "EngineArgs.reasoning_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.35fae1aabaa391e5",
+    "name": "EngineArgs.reasoning_parser",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d040665c7a29c70d",
+    "name": "EngineArgs.reasoning_parser_plugin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b155f25bb9d5edbf",
+    "name": "EngineArgs.renderer_num_workers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.601ac57063190bc1",
+    "name": "EngineArgs.revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.01c4c62b5a839895",
+    "name": "EngineArgs.runner",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d86cdf962fb0fd3b",
+    "name": "EngineArgs.safetensors_load_strategy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a67bcc5fda1d1648",
+    "name": "EngineArgs.safetensors_prefetch_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8f13b58a8a31ab4c",
+    "name": "EngineArgs.safetensors_prefetch_num_threads",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.3d3f14f64a653424",
+    "name": "EngineArgs.scheduler_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0815b2cb4390fe64",
+    "name": "EngineArgs.scheduler_reserve_full_isl",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0923ef582a813d82",
+    "name": "EngineArgs.scheduling_policy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.59521a27ca9dea97",
+    "name": "EngineArgs.seed",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a04a47d6f153a246",
+    "name": "EngineArgs.served_model_name",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a77185d13955448e",
+    "name": "EngineArgs.show_hidden_metrics_for_version",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2d8fc5cb407aec68",
+    "name": "EngineArgs.shutdown_timeout",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1e40567b532bb141",
+    "name": "EngineArgs.skip_mm_profiling",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.102fcf1b5ad1206f",
+    "name": "EngineArgs.skip_tokenizer_init",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d7320b1d6c17f6f3",
+    "name": "EngineArgs.specialize_active_lora",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.21ec4db0a2e0deb9",
+    "name": "EngineArgs.speculative_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e16b7d4bf43a13cb",
+    "name": "EngineArgs.stream_interval",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9d6d32e5838aea18",
+    "name": "EngineArgs.structured_outputs_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1dd855d43be200db",
+    "name": "EngineArgs.tensor_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0849b405a06b369f",
+    "name": "EngineArgs.tokenizer",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.84344453ad7e5084",
+    "name": "EngineArgs.tokenizer_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a00e53a9d6e7c5d5",
+    "name": "EngineArgs.tokenizer_revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0a632730d995e6c4",
+    "name": "EngineArgs.tokens_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.e190ad8d7cbce273",
+    "name": "EngineArgs.trust_remote_code",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a4fcd4600d2ff246",
+    "name": "EngineArgs.ubatch_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9b1cf89216440fe0",
+    "name": "EngineArgs.use_tqdm_on_load",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1a0396b44bf3a8f2",
+    "name": "EngineArgs.video_pruning_rate",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ec7c3058cea59fee",
+    "name": "EngineArgs.weight_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b1f7d1e0244e19da",
+    "name": "EngineArgs.worker_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e0abdbf1bdd81466",
+    "name": "EngineArgs.worker_extension_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.18afbbf283057e89",
+    "name": "ExternalDPConfig.benchmark_cases",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.524a3eac2ac701e6",
+    "name": "ExternalDPConfig.cluster_hosts",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c422958d7b25be0d",
+    "name": "ExternalDPConfig.cluster_ips",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0a6fa7a5dbeaf36d",
+    "name": "ExternalDPConfig.launch_templates",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.3fd3f7541eddcdc8",
+    "name": "ExternalDPConfig.model",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.bb2923fc7013a048",
+    "name": "ExternalDPConfig.nodes",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a6855cbe825d6a36",
+    "name": "ExternalDPConfig.npu_per_node",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.45a216e912dfd70c",
+    "name": "ExternalDPConfig.num_nodes",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c40a974843118dd5",
+    "name": "ExternalDPConfig.routing",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.7764a3bb7c5b786c",
+    "name": "ExternalDPConfig.special_dependencies",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b2346be15cb40bd9",
+    "name": "ExternalDPConfig.test_name",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a99f384b728fb28d",
+    "name": "ImageDummyOptions.height",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.443bcd31eaaa919e",
+    "name": "ImageDummyOptions.width",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a2a74efedf77fa58",
+    "name": "IrOpPriorityConfig.fused_add_rms_norm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.36134f4c9ac52747",
+    "name": "IrOpPriorityConfig.rms_norm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.93184f1f24bb9150",
+    "name": "KVEventsConfig.buffer_steps",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.839d3439a9a9eecc",
+    "name": "KVEventsConfig.enable_kv_cache_events",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.daed710b6be18df1",
+    "name": "KVEventsConfig.endpoint",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c1f9c812836f4484",
+    "name": "KVEventsConfig.hwm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a7fbc566e9c28033",
+    "name": "KVEventsConfig.max_queue_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e16dfd9a29f72a41",
+    "name": "KVEventsConfig.publisher",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e6468bfe8204a78c",
+    "name": "KVEventsConfig.replay_endpoint",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.43b14be0e89ebd20",
+    "name": "KVEventsConfig.topic",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.884af1d84ae162f1",
+    "name": "KVTransferConfig.kv_connector_extra_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.370cdeebb73694c1",
+    "name": "KVTransferConfig.kv_connector_module_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.acc57bb2b5e81320",
+    "name": "KVTransferConfig.kv_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b89ba535c3135996",
+    "name": "KVTransferConfig.kv_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.37af392d37dd5272",
+    "name": "KernelConfig.enable_flashinfer_autotune",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.73d7719cd02ff260",
+    "name": "KernelConfig.ir_op_priority",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.1cb6ae9d2d07b37d",
+    "name": "KernelConfig.moe_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c5d035cca115aa8e",
+    "name": "KeyMetadata.cache_family",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.780af41081caae7b",
+    "name": "KeyMetadata.cache_role",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.dd5d30b6d6cd4227",
+    "name": "KeyMetadata.dcp_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9f6b835751725117",
+    "name": "KeyMetadata.head_or_tp_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ea244f95abbc9c24",
+    "name": "KeyMetadata.kv_cache_group_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6e49ecd2ef1cfc0f",
+    "name": "KeyMetadata.model_name",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.230fae185ac04e5f",
+    "name": "KeyMetadata.pcp_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2d66683e025c05f5",
+    "name": "KeyMetadata.pp_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.494c42ccbea92c86",
+    "name": "LayerMultiBlockReqMeta.block_hashes",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.51bb5a27c37e9172",
+    "name": "LayerMultiBlockReqMeta.block_ids_by_group",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e740c01e1ebd69a7",
+    "name": "LayerMultiBlockReqMeta.current_event",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.87d7a74b7d92cb2d",
+    "name": "LayerMultiBlockReqMeta.ends",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8e6fb36260d43aa0",
+    "name": "LayerMultiBlockReqMeta.is_last_chunk",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ce09307f16a9fee1",
+    "name": "LayerMultiBlockReqMeta.keys",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.248534896e2c6a23",
+    "name": "LayerMultiBlockReqMeta.kv_cache_group_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7fd13bf27c343055",
+    "name": "LayerMultiBlockReqMeta.layer_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0f20da581c3676fa",
+    "name": "LayerMultiBlockReqMeta.original_block_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.73f3d00c5bd3308f",
+    "name": "LayerMultiBlockReqMeta.req_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4c1d416b81ef39b8",
+    "name": "LayerMultiBlockReqMeta.starts",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f101b03735911ca9",
+    "name": "LayerMultiBlockReqMeta.token_ids",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.126fa60581280566",
+    "name": "LayerPoolKey.layer_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f89fecdbb32a322d",
+    "name": "LoRAConfig.default_mm_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.48a3733843da0527",
+    "name": "LoRAConfig.enable_tower_connector_lora",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e44ae4ec5f12c3af",
+    "name": "LoRAConfig.fully_sharded_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e5b99594c7f12c9d",
+    "name": "LoRAConfig.lora_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.8557325ca1a2b9fb",
+    "name": "LoRAConfig.max_cpu_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7a280b832fd3fe2d",
+    "name": "LoRAConfig.max_lora_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d241f16620a63bb3",
+    "name": "LoRAConfig.max_loras",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.894c043d2869a8d5",
+    "name": "LoRAConfig.specialize_active_lora",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1389297dcde07763",
+    "name": "LoRAConfig.target_modules",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a6cf6962734f73eb",
+    "name": "LoadConfig.device",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.452354bee64a3f93",
+    "name": "LoadConfig.download_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8126e9059c0c93d4",
+    "name": "LoadConfig.ignore_patterns",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.44d0d0fabda6cd57",
+    "name": "LoadConfig.load_format",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f66c9d3284e9689c",
+    "name": "LoadConfig.model_loader_extra_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1f4bb8bd13dc4273",
+    "name": "LoadConfig.pt_load_map_location",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.bdb6345d7b46f2bf",
+    "name": "LoadConfig.safetensors_load_strategy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e933eeff1c008fcd",
+    "name": "LoadConfig.safetensors_prefetch_block_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6bec30cfa5941bc6",
+    "name": "LoadConfig.safetensors_prefetch_num_threads",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.749496a3952cc1c7",
+    "name": "LoadConfig.use_tqdm_on_load",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0a6721a0a026b2e4",
+    "name": "LoadSpec.can_load",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.64a5cc585a21a4be",
+    "name": "LoadSpec.kvpool_cached_tokens",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.68e6b3b635bb6fbb",
+    "name": "LoadSpec.token_len",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e32fa7c6b8bdb360",
+    "name": "LoadSpec.vllm_cached_tokens",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f7a9ea26537c8c91",
+    "name": "MambaConfig.backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.4af5a79f6f4e1c62",
+    "name": "MambaConfig.enable_stochastic_rounding",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5dc6f94502b2b63b",
+    "name": "MambaConfig.stochastic_rounding_philox_rounds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.036cc831b996a316",
+    "name": "ModelArchitectureConfig.architectures",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.919901aff521cccb",
+    "name": "ModelArchitectureConfig.derived_max_model_len_and_key",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d0ea7931ec46fb51",
+    "name": "ModelArchitectureConfig.head_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6720093c5ee2b51c",
+    "name": "ModelArchitectureConfig.hidden_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.768543fe47982a60",
+    "name": "ModelArchitectureConfig.is_deepseek_mla",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.974943ad5f95cc9d",
+    "name": "ModelArchitectureConfig.is_mm_prefix_lm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e84b7d324c67159e",
+    "name": "ModelArchitectureConfig.model_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6a9dc43a5fb5e75d",
+    "name": "ModelArchitectureConfig.num_experts",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.75c7d3e4814b49a1",
+    "name": "ModelArchitectureConfig.quantization_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b700b8b1a3126b1c",
+    "name": "ModelArchitectureConfig.text_model_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c5380a3b7bebf0bf",
+    "name": "ModelArchitectureConfig.total_num_attention_heads",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.75e874d7c75c3e81",
+    "name": "ModelArchitectureConfig.total_num_hidden_layers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bbf063f0debdcdec",
+    "name": "ModelArchitectureConfig.total_num_kv_heads",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5492602348cad03c",
+    "name": "ModelArchitectureConfig.vocab_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.070798e3c9507eae",
+    "name": "ModelConfig.allow_deprecated_quantization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.801c19fd4f72e92e",
+    "name": "ModelConfig.allowed_local_media_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.41581afd96052251",
+    "name": "ModelConfig.allowed_media_domains",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3f89418f0865bd3b",
+    "name": "ModelConfig.code_revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9ffc7dcea93a8563",
+    "name": "ModelConfig.config_format",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.cba8ad742a7db42f",
+    "name": "ModelConfig.convert",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9adb5b384a4173ce",
+    "name": "ModelConfig.disable_cascade_attn",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.56b6a3ee952d0691",
+    "name": "ModelConfig.disable_sliding_window",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7efc2985bf5d14b3",
+    "name": "ModelConfig.dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.8cc2c6351064f41e",
+    "name": "ModelConfig.enable_mm_embeds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.35e8b5f3d23422fe",
+    "name": "ModelConfig.enable_prompt_embeds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.57254f0bf0197039",
+    "name": "ModelConfig.enable_return_routed_experts",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.db96971ee7689598",
+    "name": "ModelConfig.enable_sleep_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.175b3a9c59c0652e",
+    "name": "ModelConfig.enforce_eager",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.247ef49e5640059b",
+    "name": "ModelConfig.generation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.99a160cb15b2187c",
+    "name": "ModelConfig.hf_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.b26b6cd65e97b224",
+    "name": "ModelConfig.hf_config_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.614efed5d573129b",
+    "name": "ModelConfig.hf_overrides",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.be10b3d8c50bc612",
+    "name": "ModelConfig.hf_text_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.f11fc320ac41bdaf",
+    "name": "ModelConfig.hf_token",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5479be35a41fdb34",
+    "name": "ModelConfig.interleave_mm_strings",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.0b9a895c012a6251",
+    "name": "ModelConfig.io_processor_plugin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.56e394214c2171f3",
+    "name": "ModelConfig.language_model_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.ffc84eaaaa922537",
+    "name": "ModelConfig.limit_mm_per_prompt",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.28c3fd52bee7211e",
+    "name": "ModelConfig.logits_processors",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5a66f6bfbaf1e3f7",
+    "name": "ModelConfig.logprobs_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.684ea0572975b976",
+    "name": "ModelConfig.max_logprobs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4eb46c42b12be994",
+    "name": "ModelConfig.max_model_len",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.09152fba1a1904c1",
+    "name": "ModelConfig.media_io_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.4b53c89770b83609",
+    "name": "ModelConfig.mm_encoder_attn_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.34035e9b280cf8a9",
+    "name": "ModelConfig.mm_encoder_attn_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.d208e3ce46275486",
+    "name": "ModelConfig.mm_encoder_fp8_scale_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6b893a98d1a269e6",
+    "name": "ModelConfig.mm_encoder_fp8_scale_save_margin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.9f34340e2d83a739",
+    "name": "ModelConfig.mm_encoder_fp8_scale_save_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2312a3026f50f46c",
+    "name": "ModelConfig.mm_encoder_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.7b58480b38e55f57",
+    "name": "ModelConfig.mm_encoder_tp_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.425a08770dfa8e61",
+    "name": "ModelConfig.mm_processor_cache_gb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.820d33b346ee23dc",
+    "name": "ModelConfig.mm_processor_cache_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.78996f91e3ed1c1a",
+    "name": "ModelConfig.mm_processor_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.5433a3617c6dc3bd",
+    "name": "ModelConfig.mm_shm_cache_max_object_size_mb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.c04d63709e9d7a2f",
+    "name": "ModelConfig.mm_tensor_ipc",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.5ab5667dcd2d1fdf",
+    "name": "ModelConfig.model",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.83fe5edbd061eedd",
+    "name": "ModelConfig.model_impl",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c9585f284db308a3",
+    "name": "ModelConfig.model_weights",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.6413216c4e30839b",
+    "name": "ModelConfig.override_attention_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1ac5650dea00a033",
+    "name": "ModelConfig.override_generation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.286096f29f7f9874",
+    "name": "ModelConfig.pooler_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.9d3d7d28a9cc694c",
+    "name": "ModelConfig.quantization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c6b26afd4bf2aa2b",
+    "name": "ModelConfig.renderer_num_workers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fb2fd904e04cd789",
+    "name": "ModelConfig.revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.62ac12ad423eed7c",
+    "name": "ModelConfig.runner",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ab3a1a26d953e193",
+    "name": "ModelConfig.seed",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.78e58c2efbcf348a",
+    "name": "ModelConfig.served_model_name",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6264fbe6a7bf5f23",
+    "name": "ModelConfig.skip_mm_profiling",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c31c922d785badc6",
+    "name": "ModelConfig.skip_tokenizer_init",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a08ecc2ab77d5fac",
+    "name": "ModelConfig.tokenizer",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.52f401910b456771",
+    "name": "ModelConfig.tokenizer_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.13d09cceca69775c",
+    "name": "ModelConfig.tokenizer_revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6bf9316d6f1e1c50",
+    "name": "ModelConfig.trust_remote_code",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.ffa3b3c86bd42fee",
+    "name": "ModelConfig.video_pruning_rate",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.f7e148be5a2b6e34",
+    "name": "MultiModalConfig.enable_mm_embeds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.abf0d6221097c059",
+    "name": "MultiModalConfig.interleave_mm_strings",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0e4b0bf48137e557",
+    "name": "MultiModalConfig.language_model_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2acbe0325d8f4038",
+    "name": "MultiModalConfig.limit_per_prompt",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.bd7e05d06193db5e",
+    "name": "MultiModalConfig.media_io_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.88deb7b2d8ed21d7",
+    "name": "MultiModalConfig.mm_encoder_attn_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.24babf915b1bb9a7",
+    "name": "MultiModalConfig.mm_encoder_attn_dtype",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2f07fca15d691e2a",
+    "name": "MultiModalConfig.mm_encoder_fp8_scale_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4a881f22f2947165",
+    "name": "MultiModalConfig.mm_encoder_fp8_scale_save_margin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.83967fb04462058b",
+    "name": "MultiModalConfig.mm_encoder_fp8_scale_save_path",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.94523e306234f19c",
+    "name": "MultiModalConfig.mm_encoder_only",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b75b5cd8e5847d8c",
+    "name": "MultiModalConfig.mm_encoder_tp_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6a6fc670be106589",
+    "name": "MultiModalConfig.mm_processor_cache_gb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.502bb74e7eda9528",
+    "name": "MultiModalConfig.mm_processor_cache_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5d5ad1e2a019bb1c",
+    "name": "MultiModalConfig.mm_processor_kwargs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5fd26d3c91574acd",
+    "name": "MultiModalConfig.mm_shm_cache_max_object_size_mb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a3befaefe19f4564",
+    "name": "MultiModalConfig.mm_tensor_ipc",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fca1f9331e1e1ac5",
+    "name": "MultiModalConfig.skip_mm_profiling",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1c20c2b6b750c100",
+    "name": "MultiModalConfig.video_pruning_rate",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e2696f19296c255e",
+    "name": "MultiModalDummyOptionsBuiltins.audio",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5d4c5c76bfc18ea7",
+    "name": "MultiModalDummyOptionsBuiltins.image",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c49b3befa025e566",
+    "name": "MultiModalDummyOptionsBuiltins.video",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1659e650183a24fb",
+    "name": "NodeInfo.cp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.da2c9bdf1806efc7",
+    "name": "NodeInfo.dp_address",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4918a0a0fe6b3724",
+    "name": "NodeInfo.dp_rank_start",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.54e63885816cc518",
+    "name": "NodeInfo.dp_rpc_port",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.36469013376afb0e",
+    "name": "NodeInfo.dp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0668d8c3512c7d71",
+    "name": "NodeInfo.dp_size_local",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.779adc4b54a78abc",
+    "name": "NodeInfo.envs",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.69dee552afbbe4c6",
+    "name": "NodeInfo.headless",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.93242ed4140eda2c",
+    "name": "NodeInfo.index",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8dd5762b18e49800",
+    "name": "NodeInfo.ip",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6c239f172ca822be",
+    "name": "NodeInfo.port_start",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b428989ce3668a1e",
+    "name": "NodeInfo.pp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.facc3db7a64fa554",
+    "name": "NodeInfo.server_cmd",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.c93f7bf06cfff6c6",
+    "name": "NodeInfo.sp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.e55f2066a822fff6",
+    "name": "NodeInfo.tp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.6b85a75f4ad8d300",
+    "name": "NodeTemplate.envs",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.d04e034236870bf2",
+    "name": "NodeTemplate.server_cmd_template",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0a857ae8fd469603",
+    "name": "ObservabilityConfig.collect_detailed_traces",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5ca2bfd7d7fd2a3d",
+    "name": "ObservabilityConfig.cudagraph_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.145f9537b36f7a73",
+    "name": "ObservabilityConfig.enable_layerwise_nvtx_tracing",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5890c0edcac87356",
+    "name": "ObservabilityConfig.enable_logging_iteration_details",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9fefbd8a02295536",
+    "name": "ObservabilityConfig.enable_mfu_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.76b5512a7a4f7db1",
+    "name": "ObservabilityConfig.enable_mm_processor_stats",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8ac60b3b30db7eb7",
+    "name": "ObservabilityConfig.kv_cache_metrics",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.00b95b5bbdeb723d",
+    "name": "ObservabilityConfig.kv_cache_metrics_sample",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.51c6e81d65915798",
+    "name": "ObservabilityConfig.otlp_traces_endpoint",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7c04cebfe7cd74b4",
+    "name": "ObservabilityConfig.show_hidden_metrics_for_version",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2f25a5f86f60e531",
+    "name": "OffloadConfig.offload_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.cb9c68c43bf13519",
+    "name": "ParallelConfig._api_process_count",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.471dd4f40c8c9667",
+    "name": "ParallelConfig._api_process_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.816b4d2d8e60100d",
+    "name": "ParallelConfig._coord_store_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.a64ac939651413e2",
+    "name": "ParallelConfig._data_parallel_master_port_list",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.830aeecaf7f7abfb",
+    "name": "ParallelConfig.all2all_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d14ec47b349f89f8",
+    "name": "ParallelConfig.cp_kv_cache_interleave_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0e57ed665e4235e0",
+    "name": "ParallelConfig.data_parallel_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1f2b64699fed4920",
+    "name": "ParallelConfig.data_parallel_external_lb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f0414fafb73b437c",
+    "name": "ParallelConfig.data_parallel_hybrid_lb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f46749a4e9470376",
+    "name": "ParallelConfig.data_parallel_index",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2e36e52c23b0fe66",
+    "name": "ParallelConfig.data_parallel_master_ip",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.72bee0c6165eed47",
+    "name": "ParallelConfig.data_parallel_master_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b2ed9186a6dac598",
+    "name": "ParallelConfig.data_parallel_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f9370ec43b0c6b08",
+    "name": "ParallelConfig.data_parallel_rank_local",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.eac41739d31610b2",
+    "name": "ParallelConfig.data_parallel_rpc_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7fcbb98b419c2a9b",
+    "name": "ParallelConfig.data_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6e6307a673aaeb98",
+    "name": "ParallelConfig.data_parallel_size_local",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.4eba64cbcf5ad75f",
+    "name": "ParallelConfig.dbo_decode_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.bf78dd38bb734793",
+    "name": "ParallelConfig.dbo_prefill_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7aef2c4a5bf91701",
+    "name": "ParallelConfig.dcp_comm_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b2bd74702ecbe20d",
+    "name": "ParallelConfig.dcp_kv_cache_interleave_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.29595e737751758d",
+    "name": "ParallelConfig.decode_context_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.0b5bdda9479590a4",
+    "name": "ParallelConfig.disable_custom_all_reduce",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8f928e8e50a0407a",
+    "name": "ParallelConfig.disable_nccl_for_dp_synchronization",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.47a7fc278243daaa",
+    "name": "ParallelConfig.distributed_executor_backend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a520eca153eb6dc3",
+    "name": "ParallelConfig.distributed_timeout_seconds",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1de1ed91a230ebbb",
+    "name": "ParallelConfig.enable_dbo",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d7a46a3a6f40fcdb",
+    "name": "ParallelConfig.enable_elastic_ep",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.289e30d9b419f038",
+    "name": "ParallelConfig.enable_ep_weight_filter",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.586544ca7d637e84",
+    "name": "ParallelConfig.enable_eplb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fde925205a7941a5",
+    "name": "ParallelConfig.enable_expert_parallel",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ffd49e345722a23a",
+    "name": "ParallelConfig.eplb_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ae37eab24467312a",
+    "name": "ParallelConfig.expert_placement_strategy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.8b4983a5d053234b",
+    "name": "ParallelConfig.is_moe_model",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.13a9266af97c314b",
+    "name": "ParallelConfig.master_addr",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5f5c7493ae2d8693",
+    "name": "ParallelConfig.master_port",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c9eabbdce2927e90",
+    "name": "ParallelConfig.max_parallel_loading_workers",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.846f298d4294c01b",
+    "name": "ParallelConfig.nnodes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b736bbea9a6a8275",
+    "name": "ParallelConfig.node_rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.cd3593f400272bec",
+    "name": "ParallelConfig.numa_bind",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b0fe020fe9aa59f6",
+    "name": "ParallelConfig.numa_bind_cpus",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.918e2d0316267355",
+    "name": "ParallelConfig.numa_bind_nodes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fea95a4972f32e0f",
+    "name": "ParallelConfig.pipeline_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2bd41b56f5f47e4c",
+    "name": "ParallelConfig.placement_group",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b65eab64fa244730",
+    "name": "ParallelConfig.prefill_context_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f059f81c92aeab4e",
+    "name": "ParallelConfig.rank",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b17f7a9df3197964",
+    "name": "ParallelConfig.ray_runtime_env",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.07913536e8fbce4e",
+    "name": "ParallelConfig.ray_workers_use_nsight",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2eae742c16385cfa",
+    "name": "ParallelConfig.tensor_parallel_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.7e3876ac70878fb7",
+    "name": "ParallelConfig.ubatch_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5af3f850357089b7",
+    "name": "ParallelConfig.worker_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1fb24a3a6d09d767",
+    "name": "ParallelConfig.worker_extension_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.40d10eaf3632fdbc",
+    "name": "ParallelConfig.world_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a6c7f03b4fedb0d7",
+    "name": "PassConfig.eliminate_noops",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.a1860d9abb45da86",
+    "name": "PassConfig.enable_qk_norm_rope_fusion",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.ffbc4bef4526c37a",
+    "name": "PassConfig.enable_sp",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.6c2bc87ad0fc4563",
+    "name": "PassConfig.fi_allreduce_fusion_max_size_mb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.35270601140ed510",
+    "name": "PassConfig.fuse_act_padding",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.634a353570e72bda",
+    "name": "PassConfig.fuse_act_quant",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.3e031896b7f4abfc",
+    "name": "PassConfig.fuse_allreduce_rms",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.e928bb3728fe08bb",
+    "name": "PassConfig.fuse_attn_quant",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.7276ffd2c8fa7763",
+    "name": "PassConfig.fuse_gemm_comms",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.e0f161abddf3b45b",
+    "name": "PassConfig.fuse_minimax_qk_norm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.3e8bf89daf5a0b72",
+    "name": "PassConfig.fuse_mla_dual_rms_norm",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.55fba160ebb3074c",
+    "name": "PassConfig.fuse_norm_quant",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.f148e4289f2932b7",
+    "name": "PassConfig.fuse_rope_kvcache",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.771fa4eb6789ef74",
+    "name": "PassConfig.rope_kvcache_fusion_max_token_num",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.5d095d9314be15b7",
+    "name": "PassConfig.sp_min_token_num",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.641cfc19d5a7371d",
+    "name": "PoolKey.chunk_hash",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a8dcd8748b5da49a",
+    "name": "PoolKey.key_metadata",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.4a548dd07effccb2",
+    "name": "PoolerConfig.dimensions",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.64e939d0a48f546b",
+    "name": "PoolerConfig.logit_bias",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.f8f266d7f9fbbdfa",
+    "name": "PoolerConfig.logit_mean",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.4f631843f5582efd",
+    "name": "PoolerConfig.logit_scale",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.48b737c43d920939",
+    "name": "PoolerConfig.logit_sigma",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.ca1504e6dcc95d22",
+    "name": "PoolerConfig.max_embed_len",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.e1d01272f60de1c5",
+    "name": "PoolerConfig.pooling_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.72a3d6e30daa91ec",
+    "name": "PoolerConfig.returned_token_ids",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.89aa07cd66aae2fc",
+    "name": "PoolerConfig.seq_pooling_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0f81df06e82eb20e",
+    "name": "PoolerConfig.step_tag_id",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.acc90aef56d11d37",
+    "name": "PoolerConfig.task",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fd6e4ebec0913e90",
+    "name": "PoolerConfig.tok_pooling_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.84257082e41c13d2",
+    "name": "PoolerConfig.use_activation",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0bb3a2a6e7e512e7",
+    "name": "PrefetchOffloadConfig.offload_group_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.b6f54977062f8b23",
+    "name": "PrefetchOffloadConfig.offload_num_in_group",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.fbf8c1ad46c75813",
+    "name": "PrefetchOffloadConfig.offload_params",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c9d822b013bc26d8",
+    "name": "PrefetchOffloadConfig.offload_prefetch_step",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d90e75e9d84d8eac",
+    "name": "ProfilerConfig.active_iterations",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.faaa31b721b8c41d",
+    "name": "ProfilerConfig.delay_iterations",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0ae0a354210b1b48",
+    "name": "ProfilerConfig.ignore_frontend",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5c0d6b06cdcf15e2",
+    "name": "ProfilerConfig.max_iterations",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.efd54644cb30e404",
+    "name": "ProfilerConfig.profiler",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.407e998768db76c9",
+    "name": "ProfilerConfig.torch_profiler_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a4cef44306157984",
+    "name": "ProfilerConfig.torch_profiler_dump_cuda_time_total",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.be7051eae4f4f535",
+    "name": "ProfilerConfig.torch_profiler_record_shapes",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b18fb9aa56f86ba8",
+    "name": "ProfilerConfig.torch_profiler_use_gzip",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.76572d3d2d7e664b",
+    "name": "ProfilerConfig.torch_profiler_with_flops",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5035e9702511c4cf",
+    "name": "ProfilerConfig.torch_profiler_with_memory",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.7d3c4402a9d347c3",
+    "name": "ProfilerConfig.torch_profiler_with_stack",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.facdea12d2d90d8f",
+    "name": "ProfilerConfig.wait_iterations",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.cd4e1785aa47d95e",
+    "name": "ProfilerConfig.warmup_iterations",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.d4caffd9eba9e299",
+    "name": "Range.end",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.88620d242bf49e35",
+    "name": "Range.start",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.2d0b60d034fd3dcd",
+    "name": "RankInfo.cp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.3a402a248ec1f319",
+    "name": "RankInfo.dp_address",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.271af54604dd9633",
+    "name": "RankInfo.dp_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.04363e3fc51539f1",
+    "name": "RankInfo.dp_rpc_port",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.43e1f1320a7fee8d",
+    "name": "RankInfo.dp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.961307891b06d0b4",
+    "name": "RankInfo.dp_size_local",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.fb1a567aab1a4afe",
+    "name": "RankInfo.host",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.7b98ed8d3966caeb",
+    "name": "RankInfo.local_rank",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.7f8e3eb9c9f820f8",
+    "name": "RankInfo.node_index",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4f28d427759c47da",
+    "name": "RankInfo.port",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4e3b4af303645c3d",
+    "name": "RankInfo.port_start",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a604d1bb73784e21",
+    "name": "RankInfo.pp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.007436285cf6e943",
+    "name": "RankInfo.role",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.61d178bc942d6c08",
+    "name": "RankInfo.sp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.37d54bda26640f66",
+    "name": "RankInfo.tp_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.7deee3f40809961e",
+    "name": "RankInfo.visible_devices",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f33cae18e06edd63",
+    "name": "ReasoningConfig._enabled",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.0ba352e3f7fd979d",
+    "name": "ReasoningConfig._reasoning_end_token_ids",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.29b5e3e2572c4926",
+    "name": "ReasoningConfig._reasoning_start_token_ids",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.27d0bb5142e39492",
+    "name": "ReasoningConfig.reasoning_end_str",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.cd9fde6711effa99",
+    "name": "ReasoningConfig.reasoning_parser",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0724ade79a26dbea",
+    "name": "ReasoningConfig.reasoning_start_str",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b81a29908bd4cdaa",
+    "name": "ReqMeta.block_hashes",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.eeb221c7b9daadb5",
+    "name": "ReqMeta.block_ids_by_group",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6482382d96149691",
+    "name": "ReqMeta.can_save",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.de66dba0f2fec012",
+    "name": "ReqMeta.current_event",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9b9d302ecee7b786",
+    "name": "ReqMeta.disable_tp_key_sharding",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.72aa2cd7a5baec41",
+    "name": "ReqMeta.event_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4b24875cac911364",
+    "name": "ReqMeta.is_last_chunk",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4599b2a22edc2f09",
+    "name": "ReqMeta.kv_cache_families_by_group",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c21f74fc7599a2ba",
+    "name": "ReqMeta.kv_cache_group_ids",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fc626a0a1aa3324c",
+    "name": "ReqMeta.load_spec",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.636dc8b08cf1e7a3",
+    "name": "ReqMeta.original_block_size",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1a1a47a25af94940",
+    "name": "ReqMeta.req_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.14a72a49a3b5a1a4",
+    "name": "ReqMeta.skip_null_blocks_by_group",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9049dbb67735a921",
+    "name": "ReqMeta.token_ids",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.22fc45b1497de7b0",
+    "name": "ReqMeta.token_len_chunk",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.8a39f403aeb31c97",
+    "name": "RequestTracker.allocated_block_ids_by_group",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5c39c7e17b97b10c",
+    "name": "RequestTracker.num_saved_tokens",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6e500c5e59125ba4",
+    "name": "RequestTracker.req_id",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.3c9259fce381530a",
+    "name": "RequestTracker.token_ids",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.c21db51c559f78ca",
+    "name": "RequestTracker.token_len",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e04d95c2c50148e1",
+    "name": "RoutingConfig.groups",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.b0abc96d61c1572f",
+    "name": "RoutingConfig.proxy_host",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0234e708c0a81bcd",
+    "name": "RoutingConfig.proxy_node_index",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.2b9a740d530eb1b6",
+    "name": "RoutingConfig.proxy_port",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.580b2a3e39409994",
+    "name": "RoutingConfig.proxy_script",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4ad752ec5e6653cb",
+    "name": "RoutingConfig.type",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.cde889fe18e1812a",
+    "name": "SchedulerConfig.DEFAULT_MAX_NUM_BATCHED_TOKENS",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.c03fc1f101e6c96e",
+    "name": "SchedulerConfig.DEFAULT_MAX_NUM_BATCHED_TOKENS_FOR_BATCHED_DP",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.860ba841781adfa4",
+    "name": "SchedulerConfig.DEFAULT_MAX_NUM_SEQS",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.45728b1eac0d7fff",
+    "name": "SchedulerConfig.async_scheduling",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.f30d6c96db45299d",
+    "name": "SchedulerConfig.disable_chunked_mm_input",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.05dabaddb296bbfa",
+    "name": "SchedulerConfig.disable_hybrid_kv_cache_manager",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.e900575158bc75d6",
+    "name": "SchedulerConfig.enable_chunked_prefill",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.2e84246915c2673e",
+    "name": "SchedulerConfig.encoder_cache_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.6c24315670029777",
+    "name": "SchedulerConfig.is_encoder_decoder",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.97f793610928f9bc",
+    "name": "SchedulerConfig.is_multimodal_model",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.de504dac98670238",
+    "name": "SchedulerConfig.long_prefill_token_threshold",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.047143b85b7f5570",
+    "name": "SchedulerConfig.max_long_partial_prefills",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ba0594ea4da3c8eb",
+    "name": "SchedulerConfig.max_model_len",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.95a96f570e068417",
+    "name": "SchedulerConfig.max_num_batched_tokens",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.ef6729494d687515",
+    "name": "SchedulerConfig.max_num_encoder_input_tokens",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.95b169a030f2d309",
+    "name": "SchedulerConfig.max_num_partial_prefills",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d7af113d91639246",
+    "name": "SchedulerConfig.max_num_seqs",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.169e62d9a7cf5d33",
+    "name": "SchedulerConfig.policy",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6544b446967af8a7",
+    "name": "SchedulerConfig.runner_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.cd66aa65e333c17f",
+    "name": "SchedulerConfig.scheduler_cls",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.68359caf1a670262",
+    "name": "SchedulerConfig.scheduler_reserve_full_isl",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.5b4b384cf193777e",
+    "name": "SchedulerConfig.stream_interval",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c6e78c09367838fd",
+    "name": "SingleNodeConfig.api_keyword_args",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.a59334aefe145d3f",
+    "name": "SingleNodeConfig.benchmarks",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.d08f80f225467eae",
+    "name": "SingleNodeConfig.envs",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.8de571ed30128389",
+    "name": "SingleNodeConfig.epd_proxy_args",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.646c36cef668c194",
+    "name": "SingleNodeConfig.epd_server_cmds",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.67c48f1f0d0334ae",
+    "name": "SingleNodeConfig.extra_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.3c05c255589f5a04",
+    "name": "SingleNodeConfig.model",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.9f0e890f553502ac",
+    "name": "SingleNodeConfig.name",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.84072f1587d46c78",
+    "name": "SingleNodeConfig.prompts",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.5b42463272b75a19",
+    "name": "SingleNodeConfig.server_cmd",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.f491847424d04cb1",
+    "name": "SingleNodeConfig.service_mode",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.0c81a74602783d10",
+    "name": "SingleNodeConfig.special_dependencies",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.4e13e6aa2c666149",
+    "name": "SingleNodeConfig.test_content",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "nonproduction_source"
+  },
+  {
+    "id": "param.d8e30ff80816fc5f",
+    "name": "SpeculativeConfig.code_revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.0e8c233e822ae3ec",
+    "name": "SpeculativeConfig.draft_load_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.180a9f8251a40539",
+    "name": "SpeculativeConfig.draft_load_config.download_dir",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.4ade7da7b3917428",
+    "name": "SpeculativeConfig.revision",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f17249f3e6fe0dc3",
+    "name": "SpeechToTextConfig.max_audio_clip_s",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.2794d24f2f622722",
+    "name": "SpeechToTextConfig.min_energy_split_window_size",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.852b855f31dd0746",
+    "name": "SpeechToTextConfig.overlap_chunk_second",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.4fce910483640fb3",
+    "name": "SpeechToTextConfig.sample_rate",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.28bc7f6c4edfbcfb",
+    "name": "SpeechToTextParams.audio",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "runtime_state_type"
+  },
+  {
+    "id": "param.8c90be4b0a7daf50",
+    "name": "SpeechToTextParams.hotwords",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.7889ab8cd8675426",
+    "name": "SpeechToTextParams.language",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.fbddd2c78dfa4fb5",
+    "name": "SpeechToTextParams.model_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.04e43f439995b35e",
+    "name": "SpeechToTextParams.request_prompt",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.bb97ad6ee50718df",
+    "name": "SpeechToTextParams.stt_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b0dbc00841630e02",
+    "name": "SpeechToTextParams.task_type",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.7bf68ba60d7a9924",
+    "name": "SpeechToTextParams.to_language",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.c840f27fbac7dfd2",
+    "name": "StructuredOutputsConfig.disable_additional_properties",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.67adac5c5e217a45",
+    "name": "StructuredOutputsConfig.disable_any_whitespace",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.0114806ee5fc2301",
+    "name": "StructuredOutputsConfig.enable_in_reasoning",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.3f986cd95d862dcd",
+    "name": "StructuredOutputsConfig.reasoning_parser",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.c9fd0ab8525de3fd",
+    "name": "StructuredOutputsConfig.reasoning_parser_plugin",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.d09b42b060b0916a",
+    "name": "UVAOffloadConfig.cpu_offload_gb",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.a3940d0a97c064ea",
+    "name": "UVAOffloadConfig.cpu_offload_params",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.6609ec8ba65777a2",
+    "name": "VideoDummyOptions.height",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.de9e252bbbd187da",
+    "name": "VideoDummyOptions.num_frames",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.e4b4e3043d926dbe",
+    "name": "VideoDummyOptions.width",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9bcb4a64609ff148",
+    "name": "VllmConfig.additional_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.82b00949e1f3284d",
+    "name": "VllmConfig.attention_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.2e95088ef2c1d380",
+    "name": "VllmConfig.cache_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.1dec8a764d27b868",
+    "name": "VllmConfig.compilation_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.fea664d1ec5c5c8d",
+    "name": "VllmConfig.device_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.01c6d300ddd61bf6",
+    "name": "VllmConfig.ec_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.368ed8beff9a567f",
+    "name": "VllmConfig.instance_id",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.a398875e6655a72a",
+    "name": "VllmConfig.kernel_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5705a127c7e8ed2f",
+    "name": "VllmConfig.kv_events_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.88629cf169caf8b5",
+    "name": "VllmConfig.kv_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.88afd921bc71d456",
+    "name": "VllmConfig.load_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.78bb42ac9c9d893a",
+    "name": "VllmConfig.lora_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bdda43c6e671b004",
+    "name": "VllmConfig.mamba_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.aee8ec2cfda9deb7",
+    "name": "VllmConfig.model_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.f1c882d01f24a9f6",
+    "name": "VllmConfig.observability_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9d7cd7b52b141ba8",
+    "name": "VllmConfig.offload_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.5e5690cfaac7a7c3",
+    "name": "VllmConfig.optimization_level",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.66d1061e0961c8cb",
+    "name": "VllmConfig.parallel_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.bcd57987d7a4093e",
+    "name": "VllmConfig.performance_mode",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "duplicate_cli_mirror"
+  },
+  {
+    "id": "param.1a35d6411f4d2c61",
+    "name": "VllmConfig.profiler_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.faeb17eb616722e5",
+    "name": "VllmConfig.quant_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a6994d56fa0a7078",
+    "name": "VllmConfig.reasoning_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.b3747a4ca05033ef",
+    "name": "VllmConfig.scheduler_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.66ecc6d9a65c85b4",
+    "name": "VllmConfig.speculative_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.aefdf892572bb02f",
+    "name": "VllmConfig.structured_outputs_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.37bd8bb3a3144fda",
+    "name": "VllmConfig.weight_transfer_config",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.a774264093606d06",
+    "name": "WeightPrefetchConfig.prefetch_ratio",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "duplicate_nested_helper"
+  },
+  {
+    "id": "param.ad828c6b5bd7fb69",
+    "name": "_TestConfigFields.a",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.6ebced5a4def2f5f",
+    "name": "_TestConfigFields.b",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.952d12c856d696a0",
+    "name": "_TestConfigFields.c",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.9b64e114dae569e6",
+    "name": "_TestNestedConfig.a",
+    "type": "nested",
+    "scope": "vllm",
+    "reason": "internal_private_field"
+  },
+  {
+    "id": "param.457b83b628512885",
+    "name": "additional_config.ascend_compilation_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.0aa676c66c4336fa",
+    "name": "additional_config.ascend_fusion_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.c86a35c37b33fa68",
+    "name": "additional_config.dump_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.af90fc287801ffd5",
+    "name": "additional_config.dump_config_path",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "non_tuning_control_surface"
+  },
+  {
+    "id": "param.9feb86182840c683",
+    "name": "additional_config.eplb_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.e0bb916c6377bf60",
+    "name": "additional_config.finegrained_tp_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.9178d7d29e2346ee",
+    "name": "additional_config.profiling_chunk_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.d6ba9df2721ec34e",
+    "name": "additional_config.refresh",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "no_performance_signal"
+  },
+  {
+    "id": "param.b7ff2acd5102e29e",
+    "name": "additional_config.weight_prefetch_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  },
+  {
+    "id": "param.ab8c31878f7d5f3d",
+    "name": "additional_config.xlite_graph_config",
+    "type": "nested",
+    "scope": "vllm-ascend",
+    "reason": "container_with_extracted_leaves"
+  }
+]

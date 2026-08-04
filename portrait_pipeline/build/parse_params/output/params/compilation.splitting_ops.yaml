@@ -1,0 +1,109 @@
+name: compilation.splitting_ops
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:611
+- vllm_ascend/platform.py:439
+value_type: list[str]
+default: '[]'
+valid_choices: list of operator name strings (e.g., ['vllm::unified_attention', 'vllm::unified_kv_cache_update'])
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter controls which operators are excluded from CUDA graphs during piecewise compilation. On Ascend\
+  \ NPU, its behavior is significantly constrained by vllm-ascend overrides:\n1. **Eager mode override (vllm-ascend):** When\
+  \ `enforce_eager=True` (which can be triggered by\n   xlite full mode or model config), vllm-ascend sets `compilation_config.mode\
+  \ = CompilationMode.NONE`\n   and forces `splitting_ops = []` if it was None (vllm_ascend/platform.py:439-440). This means\n\
+  \   splitting_ops has no effect in eager mode — all compilation is disabled.\n\n2. **Piecewise CUDA graph requirement (upstream):**\
+  \ For piecewise CUDA graphs to work,\n   `splitting_ops` must be non-empty AND `compilation_config.mode` must be `VLLM_COMPILE`\n\
+  \   (vllm/config/compilation.py:611). If splitting_ops is empty while cudagraph_mode is\n   PIECEWISE or FULL_AND_PIECEWISE,\
+  \ upstream code downgrades the cudagraph mode\n   (vllm/config/compilation.py:1125-1150).\n\n3. **Full-graph compilation\
+  \ requirement (upstream):** Several advanced compilation passes\n   (SequenceParallelismPass, AsyncTPPass) assert that splitting_ops\
+  \ must be empty OR\n   use_inductor_graph_partition must be True — they require full-graph compilation\n   (vllm/compilation/passes/fusion/sequence_parallelism.py:602-605,\n\
+  \   vllm/compilation/passes/fusion/collective_fusion.py:970-973,\n   vllm/v1/worker/utils.py:533-536). If splitting_ops\
+  \ is non-empty without inductor\n   graph partition, these optimizations are disabled.\n\n4. **FX-level vs Inductor-level\
+  \ splitting (upstream):** When `use_inductor_graph_partition=False`\n   (default), splitting_ops is used for Dynamo FX-level\
+  \ graph splitting\n   (vllm/compilation/backends.py:1165-1171). When True, Inductor handles partitioning\n   and splitting_ops\
+  \ is passed to inductor partition rules instead\n   (vllm/compilation/backends.py:155-158).\n\n5. **NPU compilation mode\
+  \ restriction (vllm-ascend):** vllm-ascend only supports\n   CompilationMode.NONE and CompilationMode.VLLM_COMPILE. Any\
+  \ other mode triggers\n   cudagraph_mode = NONE (vllm_ascend/platform.py:444-449). This limits the effective\n   combinations\
+  \ of splitting_ops and cudagraph modes on Ascend.\n\nPerformance impact: \"On Ascend NPU, splitting_ops directly affects\
+  \ whether piecewise CUDA graphs\" can be used, which impacts decode latency and throughput. Empty splitting_ops with piecewise\
+  \ cudagraph modes causes silent downgrade to FULL or NONE, potentially losing performance. Non-empty splitting_ops prevents\
+  \ sequence parallelism and async TP optimizations from being applied, which can reduce throughput for large-batch scenarios.\n"
+usage_locations:
+- file: vllm_ascend/platform.py:439-440
+  context: vllm-ascend forces splitting_ops to empty list when enforce_eager is True (e.g., xlite full mode)
+- file: vllm/config/compilation.py:1122-1150
+  context: Upstream auto-populates splitting_ops with KV cache update ops and validates piecewise cudagraph requirements
+- file: vllm/v1/cudagraph_dispatcher.py:59
+  context: v1 cudagraph dispatcher asserts that piecewise cudagraph requires attention in splitting_ops or inductor splitting
+- file: vllm/compilation/backends.py:1165-1171
+  context: VllmBackend uses splitting_ops for FX-level graph splitting when use_inductor_graph_partition is False
+- file: vllm/compilation/backends.py:155-158
+  context: When use_inductor_graph_partition is True, splitting_ops is passed to inductor partition rule context
+- file: vllm/compilation/passes/fusion/sequence_parallelism.py:602-605
+  context: SequenceParallelismPass asserts full-graph compilation (empty splitting_ops or inductor partition)
+- file: vllm/compilation/passes/fusion/collective_fusion.py:970-973
+  context: AsyncTPPass asserts full-graph compilation (empty splitting_ops or inductor partition)
+- file: vllm/v1/worker/utils.py:533-536
+  context: Sequence parallelism residual scatter check asserts full-graph compilation
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: Piecewise cudagraph modes (PIECEWISE, FULL_AND_PIECEWISE) require non-empty splitting_ops; empty splitting_ops
+    causes automatic downgrade to FULL or NONE
+- name: compilation_config.use_inductor_graph_partition
+  relation: When True, Inductor handles partitioning and splitting_ops is used differently; when False, splitting_ops controls
+    FX-level graph splitting
+- name: compilation_config.mode
+  relation: Must be VLLM_COMPILE for splitting_ops to have effect; vllm-ascend only supports NONE and VLLM_COMPILE modes
+- name: compilation_config.pass_config.enable_sp
+  relation: Sequence parallelism requires full-graph compilation (empty splitting_ops or inductor partition)
+- name: compilation_config.pass_config.fuse_gemm_comms
+  relation: AsyncTP fusion requires full-graph compilation (empty splitting_ops or inductor partition)
+- name: model_config.enforce_eager
+  relation: When True, vllm-ascend forces splitting_ops to empty list and disables all compilation
+- name: ascend_config.xlite_graph_config.enabled
+  relation: xlite full mode triggers enforce_eager, which forces splitting_ops to empty
+constraints:
+- Piecewise cudagraph modes (PIECEWISE, FULL_AND_PIECEWISE) require non-empty splitting_ops; empty splitting_ops causes automatic
+  downgrade of cudagraph_mode
+- Sequence parallelism (enable_sp) requires full-graph compilation, meaning splitting_ops must be empty or use_inductor_graph_partition
+  must be True
+- AsyncTP fusion (fuse_gemm_comms) requires full-graph compilation, meaning splitting_ops must be empty or use_inductor_graph_partition
+  must be True
+- On Ascend NPU, compilation_config.mode is restricted to NONE or VLLM_COMPILE; other modes force cudagraph_mode to NONE
+- When enforce_eager is True on Ascend NPU, splitting_ops is forced to empty list and has no effect
+tuning_advice:
+  summary: On Ascend NPU, keep splitting_ops at default (auto-populated) for piecewise cudagraph support; only set to empty
+    list if you need sequence parallelism or async TP optimizations with full-graph compilation
+  suggested_values:
+  - scenario: Default usage with piecewise CUDA graphs on Ascend NPU (v1 worker)
+    value: '[] (let upstream auto-populate with KV cache update ops)'
+    reason: Upstream code automatically appends vllm::unified_kv_cache_update and vllm::unified_mla_kv_cache_update when cudagraph_mode
+      is PIECEWISE or FULL_AND_PIECEWISE; manual configuration is unnecessary for standard attention backends
+  - scenario: Using sequence parallelism (enable_sp=True) or async TP fusion (fuse_gemm_comms=True) on Ascend NPU
+    value: '[] (empty list)'
+    reason: These optimizations require full-graph compilation; non-empty splitting_ops will cause assertion failures or disable
+      the optimizations
+  - scenario: Eager mode or xlite full mode on Ascend NPU
+    value: '[] (forced by vllm-ascend)'
+    reason: vllm-ascend automatically sets splitting_ops to empty when enforce_eager is True; any user-specified value is
+      overridden
+  caveats:
+  - On Ascend NPU, vllm-ascend forces splitting_ops to empty list when enforce_eager is True (e.g., xlite full mode), overriding
+    any user configuration
+  - Non-empty splitting_ops prevents sequence parallelism and async TP optimizations from being applied, which can reduce
+    throughput for large-batch prefill scenarios
+  - Empty splitting_ops with PIECEWISE cudagraph mode causes automatic downgrade to NONE, losing all cudagraph benefits; with
+    FULL_AND_PIECEWISE it downgrades to FULL only
+  - The v1 cudagraph dispatcher asserts that attention ops must be in splitting_ops when using piecewise cudagraphs without
+    inductor graph partition
+  quick_guide: Leave splitting_ops at default (auto-populated) for standard Ascend NPU deployment; only explicitly set to
+    empty list if enabling sequence parallelism or async TP fusion
+analysis_date: '2026-07-06'

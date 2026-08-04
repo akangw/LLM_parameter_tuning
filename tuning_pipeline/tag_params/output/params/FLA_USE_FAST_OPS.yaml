@@ -1,0 +1,90 @@
+name: FLA_USE_FAST_OPS
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ops/triton/fla/sigmoid_gating.py:17
+- vllm_ascend/patch/worker/patch_triton.py:9
+- vllm_ascend/patch/worker/__init__.py:25
+value_type: str
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: At import time, the exact string "1" binds the Ascend FLA recurrent gated delta-rule kernel's exponential helper
+  to tldevice.fast_expf; the default path binds it to tl.exp. That exponential is evaluated inside the kernel's per-token
+  recurrent loop to decay the hidden state, for both ordinary GDN gating and the per-key KDA branch. The Ascend worker patch
+  installs this kernel in vLLM's FLA implementation when a Triton backend is available, so reducing the cost of the repeated
+  exponential can affect model latency and throughput. The setting does not change tensor shapes, allocation, or state layout,
+  and therefore has no direct memory-capacity effect. Although the module also binds fast divide, log, and log2 helpers, the
+  pinned file does not call those aliases; the separate fused sigmoid-gating kernel uses tl.exp and tl.log directly and is
+  unaffected. Neither pinned repository provides benchmark numbers, and pinned upstream vLLM contains no reference to this
+  environment variable.
+usage_locations:
+- file: vllm_ascend/ops/triton/fla/sigmoid_gating.py:17
+  context: Reads the variable during module import and selects fast device math helpers only for the exact string "1"; all
+    other values select standard Triton math.
+- file: vllm_ascend/ops/triton/fla/sigmoid_gating.py:145
+  context: Uses the selected exponential once per recurrent token to apply scalar gating to the hidden state in the ordinary
+    GDN path.
+- file: vllm_ascend/ops/triton/fla/sigmoid_gating.py:148
+  context: Uses the selected exponential once per recurrent token on the per-key gating vector in the KDA path.
+- file: vllm_ascend/patch/worker/patch_triton.py:16
+  context: Replaces vLLM's FLA recurrent gated delta-rule forward kernel with this Ascend implementation.
+- file: vllm_ascend/patch/worker/__init__.py:25
+  context: Loads the Triton worker patch only when vLLM reports an active Triton backend.
+related_parameters: []
+constraints:
+- Only the exact environment string "1" enables fast operations; unset, "0", and every other value use the standard path.
+- The value is captured when vllm_ascend.ops.triton.fla.sigmoid_gating is imported, so changing the environment afterward
+  does not change the already-bound helpers; set it before worker startup and restart workers after changing it.
+- The setting affects the patched recurrent gated delta-rule Triton kernel only when HAS_TRITON is true; the no-Triton PyTorch
+  fallback does not read it.
+- In the pinned implementation only the exp alias is called. The selected div, log, and log2 aliases are unused, and the fused_sigmoid_gating_delta_rule_update_kernel
+  calls tl.exp and tl.log directly.
+tuning_advice:
+  summary: Keep the default standard exponential unless target-model benchmarks and numerical checks show that the fast device
+    exponential is beneficial and sufficiently accurate on the deployed Ascend Triton stack.
+  suggested_values:
+  - scenario: Default or accuracy-first deployment
+    value: '0'
+    reason: Retains tl.exp, which is the pinned default, and avoids opting into a potentially different fast-math approximation
+      without workload evidence.
+  - scenario: Triton-backed FLA model after performance and numerical validation
+    value: '1'
+    reason: Uses tldevice.fast_expf in the per-token recurrent loop and may reduce the cost of hidden-state gating.
+  caveats:
+  - Fast math can trade numerical accuracy for speed; compare model outputs and recurrent states as well as latency and throughput
+    before rollout.
+  - The benefit is workload- and backend-dependent because the source gives no measured speedup and the recurrent loop contains
+    substantial work beyond the exponential.
+  - This switch does not accelerate the other fused sigmoid-gating kernel in the same file, because that kernel calls Triton
+    math functions directly.
+  - Benchmark after a fresh worker start so module import and Triton compilation use the intended setting.
+  quick_guide: Use 0 by default; test 1 only for Triton-backed FLA workloads, then retain it only if end-to-end speed improves
+    without unacceptable numerical drift.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output

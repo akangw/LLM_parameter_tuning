@@ -1,0 +1,69 @@
+name: COMPILE_CUSTOM_KERNELS
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:43
+value_type: bool
+default: 'True'
+valid_choices:
+- '''True (1)'''
+- '''False (0)'''
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'COMPILE_CUSTOM_KERNELS controls whether vllm-ascend''s custom AscendC kernels (rotary embedding, MatmulAllReduce
+  fusion, FlashComm, and other ops) are compiled and loaded at build time and runtime. When set to False, setup.py skips the
+  entire CMake build process (setup.py:366-367) and the build_aclnn command (setup.py:437-439), meaning no custom .so files
+  are produced. At runtime, NPUWorker.__init__ (worker.py:93-97) checks this flag and emits a warning that "without custom
+  kernels, vllm-ascend will not function correctly." The custom kernels provide optimized implementations of attention, rotary
+  embedding, and communication ops that are critical for inference performance on Ascend NPUs. Without them, vllm-ascend falls
+  back to generic PyTorch ops which are significantly slower on Da Vinci architecture. As of recent releases (v0.12.0+), this
+  env var has been removed entirely — custom kernels are now mandatory and cannot be disabled (release_notes.md:990: "we removed
+  the env COMPILE_CUSTOM_KERNELS. You can not set it to 0 now.").
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:43
+  context: Environment variable definition with default True (1)
+- file: vllm_ascend/setup.py:366
+  context: build_extensions() skips all CMake compilation when False
+- file: vllm_ascend/setup.py:437
+  context: run() skips build_aclnn command when False
+- file: vllm_ascend/worker/worker.py:93
+  context: NPUWorker.__init__ warns if custom kernels are not compiled
+related_parameters:
+- name: MAX_JOBS
+  relation: Controls parallelism of the custom kernel compilation process
+- name: CMAKE_BUILD_TYPE
+  relation: Sets optimization level (Release/Debug) for compiled custom kernels
+- name: SOC_VERSION
+  relation: Specifies target Ascend chip version for kernel compilation
+- name: VLLM_ASCEND_ENABLE_MATMUL_ALLREDUCE
+  relation: Depends on custom kernels being compiled to provide the MatmulAllReduce fusion op
+constraints:
+- Must be set to True (1) for vllm-ascend to function correctly in any non-test environment
+- Setting to False (0) is only valid for unit test scenarios in environments without an NPU
+- As of v0.12.0+, this env var has been removed and custom kernels are always compiled
+tuning_advice:
+  summary: Always leave at default True (1) — custom kernels are essential for Ascend NPU performance and functionality
+  suggested_values:
+  - scenario: Normal production or development deployment with Ascend NPU
+    value: '1'
+    reason: Custom kernels provide optimized AscendC implementations critical for throughput and latency; disabling them causes
+      severe performance degradation and potential functional issues
+  - scenario: Unit testing in CI environments without NPU hardware
+    value: '0'
+    reason: Allows package installation without NPU present for testing purposes only; not for inference workloads
+  caveats:
+  - Setting to False causes vllm-ascend to skip compilation of all custom ops including rotary embedding, attention kernels,
+    and communication fusion ops — expect major performance regression
+  - This env var has been deprecated and removed in recent releases (v0.12.0+); custom kernels are now mandatory
+  - When False, NPUWorker emits a warning that vllm-ascend will not function correctly
+  - Requires gcc, cmake, and CANN toolkit to be installed when enabled (True)
+  quick_guide: Keep the default True (1) — never disable custom kernels for actual inference workloads on Ascend NPU
+analysis_date: '2026-07-06'

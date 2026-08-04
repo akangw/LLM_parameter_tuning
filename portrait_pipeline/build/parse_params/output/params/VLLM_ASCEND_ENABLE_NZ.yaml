@@ -1,0 +1,80 @@
+name: VLLM_ASCEND_ENABLE_NZ
+type: env
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:92
+- vllm_ascend/ascend_config.py:215
+- vllm_ascend/utils.py:240
+value_type: int
+default: 1
+valid_choices: 0, 1, 2
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'Controls whether model weights are cast to FRACTAL_NZ format on Ascend NPU. FRACTAL_NZ is a Da Vinci architecture-specific
+  memory layout that can improve compute efficiency for matrix operations but may increase memory usage. The parameter has
+  three modes: - "0: Disabled — weights remain in their original format." - "1: Only quantized weights (e.g., W8A8) are converted
+  to NZ (default)." - "2: BF16/FP16 weights are also converted to NZ whenever possible." On 310P devices, NZ conversion is
+  always applied regardless of this setting. On non-310P devices, the mode is respected. FP32 weights are never converted.
+  The conversion happens in `maybe_trans_nz()` via `torch_npu.npu_format_cast()`. According to release notes, mode 2 was disabled
+  by default for float weights due to performance regressions in some cases, but users can still enable it if it benefits
+  their specific workload.
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:92
+  context: Environment variable definition with default value 1
+- file: vllm_ascend/ascend_config.py:215
+  context: Read into AscendConfig.weight_nz_mode via _get_config_value
+- file: vllm_ascend/utils.py:240
+  context: _should_trans_nz() checks weight_nz_mode to decide NZ conversion
+- file: vllm_ascend/utils.py:243
+  context: maybe_trans_nz() performs the actual format cast
+related_parameters:
+- name: weight_nz_mode
+  relation: The additional_config key that supersedes this env var; same semantics
+- name: enable_kv_nz
+  relation: Separate NZ control for KV cache (MLA models only), independent of weight NZ
+constraints:
+- FP32 weights are never converted to FRACTAL_NZ regardless of this setting.
+- On 310P devices, NZ conversion is always applied for supported dtypes; this env var has no effect.
+- Meta tensors are never converted to FRACTAL_NZ.
+tuning_advice:
+  summary: 'Keep the default (1) for most workloads; only enable mode 2 for BF16/FP16 if you have verified it improves throughput
+    on your specific model and NPU.
+
+    '
+  suggested_values:
+  - scenario: Default / general-purpose inference
+    value: 1
+    reason: 'Enables NZ only for quantized weights, which is the safe default that balances performance and memory. The vllm-ascend
+      team recommends this as the default.
+
+      '
+  - scenario: BF16/FP16 models where NZ layout is known to improve throughput
+    value: 2
+    reason: 'Converts all supported weight dtypes to FRACTAL_NZ, which can improve matrix operation throughput on Da Vinci
+      cores. However, the release notes warn that this caused performance regressions in some float cases, so it should only
+      be used after benchmarking.
+
+      '
+  - scenario: Memory-constrained deployments or debugging NZ-related issues
+    value: 0
+    reason: 'Disables NZ conversion entirely, keeping weights in their original format. This reduces memory overhead from
+      format conversion and is useful for isolating NZ-related problems.
+
+      '
+  caveats:
+  - 'Mode 2 was disabled by default for float weights due to observed performance regressions in some cases (see PR #4878).
+    Test thoroughly before enabling.'
+  - FRACTAL_NZ conversion may increase NPU memory usage due to padding requirements of the fractal layout.
+  - This env var is deprecated in favor of the `weight_nz_mode` key in `--additional-config`. The env var still works but
+    may be removed in a future release.
+  - On 310P devices, this setting is ignored — NZ conversion is always applied for supported dtypes.
+  quick_guide: Use default (1) unless you have benchmarked mode 2 and confirmed a throughput gain for your specific BF16/FP16
+    model.
+analysis_date: '2026-07-06'

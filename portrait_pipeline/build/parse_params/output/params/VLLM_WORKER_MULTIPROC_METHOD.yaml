@@ -1,0 +1,107 @@
+name: VLLM_WORKER_MULTIPROC_METHOD
+type: env
+category: hardware
+scope: both
+source_file:
+- vllm/envs.py:791
+- vllm/envs.py:65
+- vllm/entrypoints/utils.py:169
+- vllm/platforms/cpu.py:199
+- vllm/platforms/xpu.py:252
+value_type: str
+default: fork
+valid_choices:
+- fork
+- spawn
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls the Python multiprocessing start method used to create worker processes
+  in vLLM. The choice between "fork" and "spawn" has significant implications for Ascend NPU runtime performance and stability.
+
+  On Ascend NPU, the vllm-ascend examples consistently set this to "spawn" (see examples/offline_inference_npu.py:24, examples/offline_data_parallel.py:68,
+  examples/offline_disaggregated_prefill_npu.py:25, and others). This is because the "fork" method can cause issues with NPU
+  device contexts and CANN runtime initialization. When using "fork", the child process inherits the parent''s memory space
+  including NPU device state, which can lead to hangs, crashes, or incorrect behavior with HCCL communication and CANN driver
+  interactions.
+
+  The upstream vLLM CLI entrypoint (vllm/entrypoints/utils.py:169) automatically sets this to "spawn" if not already set,
+  citing compatibility issues with accelerators. The CPU platform (vllm/platforms/cpu.py:199) and XPU platform (vllm/platforms/xpu.py:252)
+  both force "spawn" as the only supported method.
+
+  Performance impact: "\"spawn\" creates a fresh Python interpreter for each worker," which incurs additional startup overhead
+  (model reloading, CANN context initialization per worker). However, this is necessary for correct operation on Ascend NPU.
+  Using "fork" may appear to start faster but can cause intermittent failures, deadlocks in HCCL collective operations, or
+  silent correctness issues that manifest as degraded throughput or hangs under load.
+
+  The vllm-ascend documentation for large-scale expert parallelism (user_guide/feature_guide/large_scale_ep.md:206) explicitly
+  sets this to "fork" for distributed DP server scenarios, suggesting that "fork" may be acceptable in specific multi-node
+  configurations where workers are launched via external process managers rather than Python''s multiprocessing module.
+
+  Additionally, NUMA binding (vllm/utils/numa_utils.py:297) requires "spawn" and will be silently ineffective with "fork",
+  which can impact memory access locality and throughput on multi-socket Ascend servers.
+
+  The Whisper model architecture (vllm/config/vllm.py:1168) and torch_shm IPC for multimodal tensors (vllm/config/vllm.py:920)
+  both require "spawn" and will raise errors or warnings if "fork" is used.
+
+  '
+usage_locations:
+- file: vllm/envs.py:791
+  context: Environment variable definition with choices ["spawn", "fork"], default "fork"
+- file: vllm/envs.py:65
+  context: Type declaration in environment_variables dict as Literal["fork", "spawn"]
+- file: vllm/entrypoints/utils.py:169
+  context: CLI entrypoint auto-sets to "spawn" if not already set for accelerator safety
+- file: vllm/platforms/cpu.py:199
+  context: CPU platform forces "spawn" unconditionally
+- file: vllm/platforms/xpu.py:252
+  context: XPU platform forces "spawn" if not already set
+- file: vllm/config/vllm.py:920
+  context: Validates "spawn" is set when using torch_shm for multimodal tensor IPC
+- file: vllm/config/vllm.py:1168
+  context: Warns about Whisper model issues with forked workers
+- file: vllm/utils/numa_utils.py:297
+  context: NUMA binding requires "spawn"; silently ineffective with "fork"
+- file: vllm/entrypoints/openai/api_server.py:84
+  context: Checks for "forkserver" method for pre-import optimization
+related_parameters:
+- name: VLLM_ASCEND_EXTERNAL_DP_LB_ENABLED
+  relation: When using external DP load balancing, documentation recommends setting VLLM_WORKER_MULTIPROC_METHOD to "fork"
+- name: distributed_executor_backend
+  relation: The multiprocessing method affects how Ray and mp executors spawn workers
+constraints:
+- torch_shm multimodal tensor IPC requires VLLM_WORKER_MULTIPROC_METHOD to be set to spawn, otherwise a ValueError is raised
+- NUMA binding is silently ineffective unless VLLM_WORKER_MULTIPROC_METHOD is set to spawn
+- Whisper model architecture may hang during startup if VLLM_WORKER_MULTIPROC_METHOD is not set to spawn
+tuning_advice:
+  summary: Always use 'spawn' on Ascend NPU for reliable operation; only consider 'fork' in externally-managed multi-node
+    deployments with expert parallelism
+  suggested_values:
+  - scenario: Standard single-node or multi-node Ascend NPU inference
+    value: spawn
+    reason: Ensures clean NPU device context initialization per worker, avoids HCCL deadlocks, and is required by vllm-ascend
+      examples and upstream accelerator safety defaults
+  - scenario: Large-scale expert parallelism with external DP load balancing (multi-node)
+    value: fork
+    reason: vllm-ascend documentation recommends 'fork' when VLLM_ASCEND_EXTERNAL_DP_LB_ENABLED is set, as workers are managed
+      externally and 'fork' avoids re-initialization overhead
+  - scenario: NUMA-aware deployment on multi-socket Ascend servers
+    value: spawn
+    reason: NUMA binding requires 'spawn' to function; with 'fork' the binding is silently skipped, losing memory locality
+      benefits
+  caveats:
+  - '''spawn'' incurs higher worker startup latency because each worker must re-import all modules and re-initialize the CANN
+    runtime from scratch'
+  - '''fork'' may appear to work initially but can cause intermittent HCCL communication failures or silent hangs under heavy
+    load on Ascend NPU'
+  - The upstream CLI entrypoint (vllm serve) automatically sets this to 'spawn' if not explicitly configured, but library
+    usage (LLM() constructor) does not
+  - When using 'spawn', ensure your inference script is guarded with 'if __name__ == "__main__":' to avoid recursive process
+    spawning
+  - The 'forkserver' method (checked in api_server.py) is not listed in valid_choices and is not supported on Ascend
+  quick_guide: Set VLLM_WORKER_MULTIPROC_METHOD=spawn for all Ascend NPU deployments unless using external DP load balancing
+    with expert parallelism
+analysis_date: '2026-07-06'

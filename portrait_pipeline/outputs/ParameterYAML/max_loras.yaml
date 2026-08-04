@@ -1,0 +1,79 @@
+name: --max-loras
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/lora.py:36
+- vllm/engine/arg_utils.py:1243
+- vllm_ascend/core/scheduler_dynamic_batch.py:337
+- vllm_ascend/worker/model_runner_v1.py:3297
+- vllm/v1/cudagraph_dispatcher.py:120
+value_type: int
+default: 1
+valid_choices: Integer greater than or equal to 1.
+cli_example: --enable-lora --max-loras 4
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This sets the maximum number of distinct LoRA adapters allowed in one batch. In the target Ascend dynamic-batch
+  scheduler, a waiting request with an adapter not already in the batch is skipped when scheduled_loras has reached this value,
+  directly limiting batch composition and potentially increasing its queueing latency. Raising the limit can therefore improve
+  throughput and latency for mixed-adapter traffic, subject to available resources. The Ascend v1 model runner also passes
+  lora_config.max_loras as num_active_loras for its LoRA dummy-run path, so the setting affects the graph/run shape prepared
+  for LoRA. Upstream graph dispatch additionally derives its captured LoRA cases from max_loras; with active-LoRA specialization
+  it captures counts up to the limit, while without cudagraph LoRA specialization it uses max_loras + 1. Those additional
+  graph cases can increase startup work and memory use.
+usage_locations:
+- file: vllm/config/lora.py:36
+  context: Defines max_loras with default 1 and a >= 1 validation constraint.
+- file: vllm/engine/arg_utils.py:1243
+  context: Registers the --max-loras command-line option.
+- file: vllm/engine/arg_utils.py:1995
+  context: Passes the parsed value into LoRAConfig when LoRA is enabled.
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:337
+  context: Skips a waiting request when adding its distinct LoRA adapter would exceed max_loras.
+- file: vllm_ascend/worker/model_runner_v1.py:3297
+  context: Uses the configured maximum as num_active_loras in the LoRA dummy-run path.
+- file: vllm/v1/cudagraph_dispatcher.py:120
+  context: Builds LoRA CUDA-graph capture cases from max_loras.
+related_parameters:
+- name: --enable-lora
+  relation: LoRAConfig is created only when LoRA handling is enabled, so this limit otherwise has no runtime effect.
+- name: --max-cpu-loras
+  relation: When set, it must be at least max_loras; otherwise LoRAConfig raises a validation error.
+- name: --max-lora-rank
+  relation: The rank and active-adapter limit together determine the scale of LoRA work and storage.
+- name: --specialize-active-lora
+  relation: When used with CUDA-graph LoRA specialization, it selects separate captured counts up to max_loras.
+constraints:
+- --max-loras must be an integer greater than or equal to 1.
+- --max-cpu-loras must be greater than or equal to --max-loras when explicitly set.
+- The setting is effective only with --enable-lora, which creates the LoRA configuration.
+- A batch cannot contain more distinct LoRA adapters than --max-loras; Ascend schedulers defer requests that would exceed
+  it.
+tuning_advice:
+  summary: Set this to the number of distinct adapters expected to share a batch concurrently. Keep it at 1 for one-adapter
+    traffic; increase it for mixed-adapter workloads only after checking memory, startup, and queueing behavior on the target
+    Ascend deployment.
+  suggested_values:
+  - scenario: Serving one LoRA adapter at a time
+    value: 1
+    reason: This is the default and avoids admitting additional adapter identities into each batch.
+  - scenario: Mixed traffic expected to use up to four distinct adapters in one batch
+    value: 4
+    reason: Allows those four adapter identities without the scheduler deferring the fifth distinct identity solely due to
+      this limit.
+  - scenario: Higher adapter diversity with adequate measured headroom
+    value: 8
+    reason: Raises the scheduling cap but also expands the configured LoRA graph/dummy-run active-adapter shape.
+  caveats:
+  - A larger value does not guarantee higher throughput; it only removes this distinct-adapter scheduling constraint and should
+    be benchmarked with the actual request mix.
+  - Higher values can increase graph-capture startup work and memory use through additional or larger LoRA graph cases.
+  - Ensure --max-cpu-loras is not set below this value.
+  quick_guide: Start at 1 for a single adapter, use 4 for modest mixed-adapter traffic, then raise only when queueing data
+    and memory measurements justify it.
+analysis_date: '2026-07-27'

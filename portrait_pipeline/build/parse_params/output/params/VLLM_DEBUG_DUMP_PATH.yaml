@@ -1,0 +1,52 @@
+name: VLLM_DEBUG_DUMP_PATH
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:637
+- vllm/envs.py:239
+- vllm/config/vllm.py:1377
+value_type: str
+default: null
+valid_choices: any valid filesystem path string
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls the output directory for FX graph dumps during torch.compile. When set,
+  it overrides the CompilationConfig.debug_dump_path (vllm/config/vllm.py:1377-1385). The primary performance impact is on
+  cold-start latency: "writing FX graphs to disk adds I/O overhead during the initial compilation" phase. However, this variable
+  is explicitly excluded from the torch.compile cache key (vllm/envs.py:1880), meaning changing it does NOT invalidate cached
+  compilations. On Ascend NPU, where CANN graph compilation is already a significant portion of cold-start time, enabling
+  debug dumps adds marginal additional overhead. It has zero impact on steady-state inference throughput or memory usage.
+  This is purely a debugging aid for inspecting compilation artifacts.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:1377
+  context: Overrides CompilationConfig.debug_dump_path when set; resolves to absolute expanded path
+- file: vllm/envs.py:1880
+  context: Explicitly excluded from compile cache key factors (ignored_factors set)
+related_parameters:
+- name: CompilationConfig.debug_dump_path
+  relation: VLLM_DEBUG_DUMP_PATH overrides this config value if both are set
+- name: VLLM_PATTERN_MATCH_DEBUG
+  relation: Related debug env var for pattern matching inside custom passes; both aid compilation debugging
+constraints: []
+tuning_advice:
+  summary: Leave unset in production; only set when debugging torch.compile FX graph issues.
+  suggested_values:
+  - scenario: Production deployment on Ascend NPU
+    value: null
+    reason: Avoids unnecessary I/O overhead during cold-start compilation; has no benefit for steady-state inference
+  - scenario: Debugging torch.compile issues or inspecting FX graphs
+    value: /tmp/vllm_debug_dumps
+    reason: Provides a writable location for FX graph artifacts without polluting the working directory
+  caveats:
+  - Writing FX graphs to disk increases cold-start latency slightly due to I/O, but does not affect steady-state throughput
+    or memory.
+  - This variable is excluded from the compile cache key, so toggling it does not trigger recompilation.
+  - On Ascend NPU, CANN graph compilation dominates cold-start time; the relative overhead of FX graph dumping is negligible.
+  quick_guide: Set only for debugging torch.compile FX graphs; leave unset in production.
+analysis_date: '2026-07-06'

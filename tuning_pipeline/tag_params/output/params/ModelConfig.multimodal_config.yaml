@@ -1,0 +1,114 @@
+name: ModelConfig.multimodal_config
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:320
+- vllm/config/model.py:635
+- vllm/config/multimodal.py:73
+- vllm/model_executor/models/interfaces.py:228
+- vllm_ascend/platform.py:962
+value_type: dict
+default: null
+valid_choices:
+- null
+- MultiModalConfig
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This field is the resolved container that enables and configures vLLM''s multimodal execution path. Its declared
+  default is null, but ModelConfig replaces it with a MultiModalConfig when the inspected model architecture supports multimodal
+  input; text-only architectures normally retain null. The container''s child settings control whether language or modality
+  towers are loaded, per-prompt media limits, processor-cache allocation, encoder tensor-parallel strategy, encoder attention
+  backend and dtype, profiling, video-token pruning, and multimodal tensor IPC. Those choices can change model weight residency,
+  preprocessing and encoder work, startup profiling, interprocess copies, computation-graph hashes, latency, throughput, and
+  host or device memory. The parent field is derived state rather than a practical standalone CLI knob: users tune the individual
+  multimodal CLI arguments that ModelConfig uses to construct it. On Ascend the container is retained, but platform normalization
+  clears a requested mm_encoder_attn_backend because Ascend uses its own multimodal-attention mechanism.'
+usage_locations:
+- file: vllm/config/model.py:635
+  context: ModelConfig detects whether the resolved architecture supports multimodal input and constructs MultiModalConfig
+    from the multimodal initialization arguments; unsupported architectures leave the field null.
+- file: vllm/config/multimodal.py:73
+  context: Defines the child controls and defaults collected by this container, including the 4-GiB-per-process processor
+    cache, encoder TP mode, profiling behavior, video pruning, attention settings, and tensor IPC.
+- file: vllm/model_executor/models/interfaces.py:228
+  context: Multimodal model construction reads the resolved container to omit the language model in encoder-only mode and
+    to avoid loading modality towers whose per-prompt limits are all zero.
+- file: vllm/config/vllm.py:386
+  context: VllmConfig includes the container's computation hash when multimodal encoder compilation is enabled, so graph-affecting
+    encoder choices participate in compile-cache identity.
+- file: vllm_ascend/platform.py:962
+  context: Ascend platform normalization reads the container and resets mm_encoder_attn_backend to null because Ascend uses
+    a different multimodal-attention mechanism.
+related_parameters:
+- name: ModelConfig.language_model_only
+  relation: Becomes MultiModalConfig.language_model_only and can disable all multimodal inputs while keeping the language
+    component.
+- name: ModelConfig.limit_mm_per_prompt
+  relation: Populates the container's modality limits; zero limits allow supported model implementations to skip loading the
+    corresponding modality tower.
+- name: ModelConfig.mm_processor_cache_gb
+  relation: Sets processor-cache capacity inside this container; the default 4 GiB is duplicated across API and engine processes.
+- name: ModelConfig.mm_encoder_tp_mode
+  relation: Selects weight sharding or data-parallel encoder execution and falls back to weights when the model does not support
+    encoder data parallelism.
+- name: ModelConfig.skip_mm_profiling
+  relation: Controls whether multimodal encoder activation memory is included in startup profiling.
+- name: ModelConfig.video_pruning_rate
+  relation: Can reduce video-token computation for model implementations that consume the pruning setting.
+constraints:
+- 'The effective value is inferred from the inspected model architecture: supported multimodal models receive a newly constructed
+  MultiModalConfig, while ordinary text-only models retain null.'
+- Tune the child multimodal arguments rather than assigning this parent field directly; construction replaces it for architectures
+  registered as multimodal.
+- Encoder data-parallel mode is model-specific and is normalized back to weights when the registered model does not advertise
+  support.
+- A positive multimodal processor cache cannot be combined with more than one renderer worker because the cache is not thread-safe.
+- On Ascend, mm_encoder_attn_backend inside the resolved container is ignored and reset to null.
+tuning_advice:
+  summary: Treat multimodal_config as a derived container, not as one scalar tuning choice. Tune its child CLI controls for
+    the selected multimodal model and workload, and leave text-only model resolution at null.
+  suggested_values:
+  - scenario: Text-only model
+    value: null (architecture-derived)
+    reason: The architecture does not require multimodal preprocessing, encoder modules, or processor-cache state.
+  - scenario: Normal multimodal serving
+    value: architecture-inferred MultiModalConfig
+    reason: ModelConfig constructs the required container automatically and applies validated defaults; tune individual child
+      flags after measuring the workload.
+  - scenario: Memory-constrained multimodal serving
+    value: inferred config with child limits and cache size tuned
+    reason: Lower modality limits or processor-cache capacity and disabled modality towers can save memory, but may increase
+      preprocessing latency or remove input capabilities.
+  - scenario: Ascend multimodal serving
+    value: inferred config with mm_encoder_attn_backend unset
+    reason: Ascend retains the other multimodal controls but forcibly clears that upstream attention-backend override.
+  caveats:
+  - The 4-GiB processor-cache default is per API and engine process, so total host-memory cost scales with process topology.
+  - Skipping multimodal profiling reduces startup time but can cause out-of-memory failures if the user underestimates encoder
+    activation memory.
+  - Encoder TP, pruning, cache, IPC, and dtype effects are model-, hardware-, media-shape-, and batch-dependent; benchmark
+    child settings separately.
+  quick_guide: Let architecture detection create the container. First size modality limits and processor cache, then benchmark
+    encoder TP and supported pruning or dtype options; on Ascend leave the encoder attention backend unset.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

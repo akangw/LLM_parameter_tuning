@@ -1,0 +1,95 @@
+name: compilation.pass_config.fuse_act_quant
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/passes/pass_manager.py:161
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this flag activates the ActivationQuantFusionPass during the post-grad compilation phase. This
+  pass fuses the SiLU activation + element-wise multiplication (SiluMul) with the subsequent dynamic per-token FP8 quantization
+  operation into a single fused kernel. On Ascend NPU, this fusion eliminates intermediate tensor materialization and reduces
+  kernel launch overhead, which directly improves the latency of the activation-quantization sequence in FP8-quantized models.
+  The pass is applied unconditionally when fuse_act_quant=True — there is no Ascend-specific guard in the upstream code, meaning
+  it will be attempted on Ascend hardware. However, the actual effectiveness depends on whether the torch.compile backend
+  (e.g., torch_npu / CANN graph capture) can successfully fuse the pattern on Da Vinci architecture. If the backend cannot
+  fuse the pattern, the pass may be a no-op or could even introduce graph breaks, negating the benefit. The parameter also
+  affects the compilation cache UUID, so toggling it will trigger recompilation.
+
+  '
+usage_locations:
+- file: vllm/compilation/passes/pass_manager.py:161
+  context: 'Checks fuse_act_quant in PostGradPassManager.configure() to conditionally add ActivationQuantFusionPass and RocmAiterSiluMulFp8GroupQuantFusionPass
+    (ROCm only).
+
+    '
+- file: vllm/tests/compile/passes/test_pass_manager.py:77
+  context: 'Test verifying that toggling fuse_act_quant changes the pass manager UUID, confirming it affects compilation cache
+    keying.
+
+    '
+- file: vllm/tests/compile/passes/test_silu_mul_quant_fusion.py:324
+  context: 'Test for ActivationQuantFusionPass correctness, setting fuse_act_quant=True in PassConfig to enable the fusion
+    pass during model compilation.
+
+    '
+related_parameters:
+- name: compilation.pass_config.fuse_norm_quant
+  relation: 'Sibling fusion flag that fuses RMSNorm with quantization. Both are part of the same PassConfig and are often
+    enabled together for FP8 models to maximize kernel fusion.
+
+    '
+- name: compilation.pass_config.eliminate_noops
+  relation: 'Often used together in tests; eliminate_noops cleans up the graph after fusion passes, which can affect whether
+    the fused pattern is ultimately preserved.
+
+    '
+- name: compilation.custom_ops
+  relation: 'The custom_ops list (e.g., "+silu_and_mul", "+quant_fp8") controls which operations are marked as custom for
+    the compiler. The fusion pass depends on these ops being present in the graph to match the fusion pattern.
+
+    '
+constraints:
+- This flag has no effect unless compilation.mode is set to VLLM_COMPILE (torch.compile-based compilation).
+- The fusion pass requires the SiluAndMul and dynamic per-token FP8 quantization operations to be present in the model graph;
+  it is only applicable to FP8-quantized models.
+tuning_advice:
+  summary: 'Enable for FP8-quantized models on Ascend NPU to fuse SiLU+Mul+Quant into a single kernel, reducing memory bandwidth
+    and kernel launch overhead. Verify with a benchmark as the actual fusion depends on the CANN/torch_npu backend''s ability
+    to compile the fused pattern.
+
+    '
+  suggested_values:
+  - scenario: FP8-quantized model inference on Ascend NPU with torch.compile enabled
+    value: 'true'
+    reason: 'Fuses the activation path (SiLU + element-wise multiply + FP8 quantization) into one kernel, reducing intermediate
+      tensor writes and kernel launch overhead. This is particularly beneficial on Ascend NPUs where kernel launch latency
+      can be significant.
+
+      '
+  - scenario: Non-FP8 models or models without SiLU activation (e.g., GELU-based models)
+    value: 'false'
+    reason: 'The fusion pattern will not match any operations in the graph, so the pass is a no-op. Keeping it disabled avoids
+      unnecessary graph analysis overhead during compilation.
+
+      '
+  caveats:
+  - The fusion pass is upstream vLLM code with no Ascend-specific adaptation. Its effectiveness on Ascend NPU depends on whether
+    the torch_npu/CANN backend can successfully compile the fused pattern. Test with a small benchmark before deploying in
+    production.
+  - Toggling this flag changes the compilation cache key (UUID), so enabling/disabling it will trigger a full recompilation
+    of affected models.
+  - This pass only fuses SiLU+Mul+Quant patterns. Models using other activation functions (GELU, ReLU) or static quantization
+    schemes will not benefit.
+  quick_guide: Enable for FP8 models with SiLU activation on Ascend NPU; benchmark to confirm fusion actually occurs in the
+    compiled graph.
+analysis_date: '2026-07-06'

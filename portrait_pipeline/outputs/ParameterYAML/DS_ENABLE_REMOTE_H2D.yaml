@@ -1,0 +1,82 @@
+name: DS_ENABLE_REMOTE_H2D
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:37
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:114
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:56
+- docs/source/user_guide/feature_guide/kv_pool.md:830
+- docs/source/user_guide/feature_guide/kv_pool.md:841
+- docs/source/user_guide/feature_guide/kv_pool.md:896
+value_type: bool
+default: false
+valid_choices:
+- 0 (false)
+- 1 (true)
+cli_example: export DS_ENABLE_REMOTE_H2D=1
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: YuanrongConfig.load_from_env() parses this environment variable with bool(int(...)), defaulting to false, and
+  YuanrongBackend passes the result unchanged as HeteroClient(enable_remote_h2d=...). That client services the Yuanrong backend's
+  host-to-device KV-cache reads, so selecting the Remote H2D client path can affect KV-transfer latency and effective request
+  throughput. The setting applies only to AscendStoreConnector deployments selecting the yuanrong backend; the pinned upstream
+  vLLM repository contains no reference to it. The pinned sources document the required deployment support but provide no
+  benchmark or guaranteed direction or magnitude of the performance change.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:37
+  context: Parses the environment string as an integer and then a boolean while loading YuanrongConfig.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/yuanrong_backend.py:114
+  context: Passes the parsed boolean to the Yuanrong HeteroClient constructor before client initialization.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:56
+  context: Registers yuanrong as the backend name that instantiates YuanrongBackend; other backends do not consume this setting.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:830
+  context: Documents 0 as the default and states that the value is passed to HeteroClient.enable_remote_h2d.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:841
+  context: Begins the deployment requirements that must be satisfied before enabling Remote H2D.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:896
+  context: Directs users to retain 0 and the default Datasystem transfer path when the Remote H2D checks fail.
+related_parameters:
+- name: DS_WORKER_ADDR
+  relation: Required Yuanrong worker address used to construct the same HeteroClient.
+- name: DS_ENABLE_EXCLUSIVE_CONNECTION
+  relation: Sibling boolean environment variable passed to the same HeteroClient constructor to select its connection mode.
+- name: backend
+  relation: Must select yuanrong in kv_connector_extra_config for KVPoolWorker to instantiate the code that reads this variable.
+constraints:
+- The value must be accepted by Python int(); an empty or non-integer string raises ValueError during backend initialization.
+- The guide documents 0 and 1; although bool(int(value)) maps any nonzero integer to true, use the documented values.
+- DS_WORKER_ADDR must be set to a valid host:port value and the Yuanrong Datasystem worker must be available.
+- Before using 1, reserve sufficient 2 MiB HugeTLB pages and start each Datasystem worker with --remote_h2d_device_ids, --enable_huge_tlb
+  true, --arena_per_tenant 1, and --enable_fallocate false.
+- The required NPU driver, firmware, CANN toolkit, selected NPU devices, topology, optical modules, and RoCE links must be
+  installed, visible, and verified for the worker environment.
+- The variable has no effect when AscendStoreConnector is not configured with the yuanrong backend.
+tuning_advice:
+  summary: Keep the documented default until the Yuanrong deployment satisfies every Remote H2D prerequisite; then benchmark
+    value 1 under the target KV-cache workload and retain it only when it provides a measured benefit.
+  suggested_values:
+  - scenario: Baseline, unsupported, or unverified Yuanrong deployment
+    value: 0
+    reason: This uses the documented default Datasystem transfer path and avoids enabling a client feature whose HugeTLB,
+      NPU, and RoCE requirements have not been verified.
+  - scenario: Verified Yuanrong Remote H2D deployment
+    value: 1
+    reason: This passes true to HeteroClient.enable_remote_h2d after the worker, HugeTLB, device, driver, and network prerequisites
+      have been satisfied.
+  caveats:
+  - The pinned vLLM Ascend sources do not quantify the latency or throughput difference between the default and Remote H2D
+    paths; benchmark representative KV-cache reads and end-to-end request traffic.
+  - For the guide's 40 GiB shared-memory example, at least 20480 free 2 MiB huge pages must be reserved before the worker
+    starts.
+  - Enabling only the client environment variable is insufficient; each Datasystem worker must be started with the matching
+    Remote H2D options and available NPU IDs.
+  - Changing the environment after YuanrongBackend initialization does not reconfigure the constructed HeteroClient; restart
+    the vLLM process.
+  - Yuanrong get failures are caught and logged by the backend, so include error logs, KV-cache hit behavior, and recomputation
+    in performance comparisons.
+  quick_guide: Use 0 by default; use 1 only after validating the complete Yuanrong Remote H2D stack and measuring the workload.
+analysis_date: '2026-07-28'

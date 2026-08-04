@@ -1,0 +1,89 @@
+name: CompilationConfig.cudagraph_mm_encoder
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:517
+- docs/design/cuda_graphs_multimodal.md:1
+- vllm/model_executor/models/interfaces.py:1507
+- vllm/model_executor/models/qwen2_5_vl.py:1564
+- vllm/model_executor/models/qwen3_vl.py:1766
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: vllm serve Qwen/Qwen3-VL-32B --compilation-config '{"cudagraph_mm_encoder":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Setting this field to true enables full CUDA Graph capture and replay for a supported multimodal vision encoder.
+  The manager captures one graph per token budget during initialization, greedily packs runtime items into the smallest fitting
+  budget, and falls back to eager execution for inputs that exceed every budget. Replaying a captured graph reduces host-side
+  CUDA kernel-launch overhead, which can improve encoder latency and throughput, especially for small batches or small images.
+  The tradeoff is extra startup capture work and device memory for budget-specific graphs and preallocated input, metadata,
+  and output buffers. False keeps the default eager encoder path.
+usage_locations:
+- file: docs/design/cuda_graphs_multimodal.md:16
+  context: Describes the budget-based capture/replay manager, greedy packing, eager fallback, preallocated buffers, and user-facing
+    enablement through compilation_config.
+- file: vllm/model_executor/models/interfaces.py:1507
+  context: Defines the SupportsEncoderCudaGraph protocol that a model must implement to opt in to encoder capture, replay,
+    buffer preparation, and eager fallback.
+- file: vllm/model_executor/models/qwen2_5_vl.py:1564
+  context: Implements the encoder CUDA Graph configuration and budget behavior for Qwen2.5-VL, disabling supported modalities
+    when EVS pruning is active.
+- file: vllm/model_executor/models/qwen3_vl.py:1766
+  context: Implements image and conditional video encoder CUDA Graph support for Qwen3-VL; video capture is excluded when
+    EVS makes token counts data-dependent.
+related_parameters:
+- name: CompilationConfig.encoder_cudagraph_token_budgets
+  relation: Selects the fixed token capacities captured when this flag is enabled; an empty list requests model-specific automatic
+    power-of-two budgets.
+- name: CompilationConfig.encoder_cudagraph_max_vision_items_per_batch
+  relation: Bounds the number of image or video items represented by each captured graph; zero requests automatic inference.
+- name: CompilationConfig.encoder_cudagraph_max_frames_per_batch
+  relation: Bounds video frames represented by a captured graph and is automatically inferred when unset.
+- name: CompilationConfig.compile_mm_encoder
+  relation: Separately controls torch.compile for the multimodal encoder; encoder CUDA Graph capture is independent of decoder
+    CUDA Graph capture.
+- name: --mm-encoder-attn-backend
+  relation: Determines the vision attention implementation; pinned documentation reports testing encoder graphs with FLASH_ATTN
+    and FLASHINFER on Blackwell GPUs.
+constraints:
+- The model must implement SupportsEncoderCudaGraph. The pinned documentation lists Qwen3-VL and Qwen2.5-VL as supported architectures.
+- Qwen encoder graph support is modality-dependent when Efficient Video Sampling pruning is enabled because data-dependent
+  token counts cannot be captured; Qwen2.5-VL disables all encoder graph modalities in that case, while Qwen3-VL excludes
+  video.
+- When this flag is true, encoder_cudagraph_max_vision_items_per_batch must be non-negative, and encoder_cudagraph_max_frames_per_batch
+  must be non-negative when it is not null.
+- The pinned documentation reports testing on Blackwell GPUs with FLASH_ATTN or FLASHINFER; compatibility and benefit outside
+  the documented models and backends require validation.
+tuning_advice:
+  summary: Keep the default for unsupported or startup-sensitive deployments. Enable for a supported Qwen multimodal workload
+    when steady-state encoder launch overhead is important and device memory can accommodate the captured budget levels.
+  suggested_values:
+  - scenario: Supported Qwen3-VL or Qwen2.5-VL production serving on tested CUDA hardware
+    value: true
+    reason: Reuses captured full-encoder graphs and can reduce host launch overhead for repeated image or video encoder shapes.
+  - scenario: Unsupported model, limited device-memory headroom, or startup-sensitive service
+    value: false
+    reason: Preserves eager encoder execution and avoids graph capture time and budget-specific graph buffers.
+  - scenario: Initial compatibility troubleshooting
+    value: false
+    reason: Removes the encoder capture/replay path while leaving decoder CUDA Graph configuration independent.
+  caveats:
+  - More or larger token budgets can increase capture time and graph-buffer memory; tune the sibling budget and batch-limit
+    fields together.
+  - Inputs larger than every captured budget miss the graph and execute eagerly, so gains depend on the workload's image/video
+    sizes and batching pattern.
+  - The optimization targets only the multimodal encoder and therefore may have modest end-to-end impact when decoder time
+    dominates.
+  - The pinned vllm-ascend repository has no cudagraph_mm_encoder field or encoder capture/replay implementation, so this
+    profile does not claim an Ascend benefit.
+  quick_guide: Start with false. For a supported model, enable it with auto-inferred budgets, measure warm steady-state latency,
+    throughput, startup time, and device memory, then customize token budgets only from observed encoder input sizes.
+analysis_date: '2026-07-30'

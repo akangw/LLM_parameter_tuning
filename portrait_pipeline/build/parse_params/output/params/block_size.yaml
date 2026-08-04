@@ -1,0 +1,113 @@
+name: --block-size
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1081
+- vllm/config/cache.py:47
+- vllm_ascend/ascend_config.py:560
+- vllm_ascend/patch/platform/patch_kv_cache_utils.py:20
+value_type: int
+default: '16'
+valid_choices: positive integer; None (uses default 16)
+cli_example: --block-size 128
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "--block-size controls the number of tokens stored in each contiguous KV cache block. On Ascend NPU, this parameter\
+  \ has multiple performance-critical effects:\n1. **KV cache memory efficiency**: Larger block sizes reduce per-block metadata\
+  \ overhead\n   but increase internal fragmentation (wasted space when sequences don't fill blocks).\n   The page_size_bytes\
+  \ property in vllm_ascend/patch/platform/patch_kv_cache_interface.py:86\n   shows that each page stores block_size * num_kv_heads\
+  \ * head_size bytes, so block_size\n   directly scales per-page memory consumption.\n\n2. **Context Parallelism alignment**:\
+  \ In vllm/config/parallel.py:338-342, when using\n   Decode Context Parallelism (DCP) or Prefill Context Parallelism (PCP),\
+  \ the\n   cp_kv_cache_interleave_size must be compatible with block_size. The constraint is\n   that block_size must be\
+  \ >= cp_kv_cache_interleave_size and divisible by it. The\n   vllm-ascend documentation at user_guide/feature_guide/context_parallel.md:69\n\
+  \   explicitly states that for KV cache transfer scenarios (KV pooling, PD disaggregation),\n   cp_kv_cache_interleave_size\
+  \ must equal block_size (default: 128 on Ascend).\n\n3. **Ascend-specific block size resolution**: vllm_ascend/patch/platform/patch_kv_cache_utils.py:20-40\n\
+  \   patches the upstream resolve_kv_cache_block_sizes function. The Ascend version\n   computes scheduler_block_size as\
+  \ lcm(group_block_sizes) * dcp * pcp for hybrid\n   KV cache groups with CP, overriding the upstream restriction that hybrid\
+  \ groups\n   with multiple block sizes cannot use CP. This means block_size interacts with\n   dcp_size and pcp_size multiplicatively\
+  \ on Ascend.\n\n4. **Xlite graph mode compatibility**: vllm_ascend/ascend_config.py:560-565 shows that\n   when xlite graph\
+  \ mode is enabled, a block_size other than 128 triggers a warning\n   that performance may be suboptimal. The recommended\
+  \ block_size for xlite graph\n   mode is 128.\n\n5. **Prefix caching granularity**: The hash_block_size parameter (vllm/config/cache.py:54-65)\n\
+  \   controls the granularity of prefix-caching hash computation. When hash_block_size\n   differs from block_size, the effective\
+  \ block size for hashing can be a multiple\n   of hash_block_size (vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:98-107),\n\
+  \   with the constraint that block_size must be divisible by hash_block_size.\n\n6. **CPU offloading**: In KV cache CPU\
+  \ offloading scenarios (user_guide/feature_guide/kv_cache_cpu_offload.md:68-69),\n   the CPU-side block_size should be a\
+  \ multiple of the NPU-side block_size, with a\n   typical value of 128. Each CPU block consumes memory proportional to\n\
+  \   block_size × num_layers × (key_size + value_size).\n\nThe upstream default is 16, but vllm-ascend documentation and\
+  \ examples consistently recommend 128 for Ascend NPU deployments, as seen in tutorials/models/Mixtral-8x7B-Instruct-v0.1.md:93-105.\n"
+usage_locations:
+- file: vllm/config/cache.py:47
+  context: CacheConfig.block_size field definition with default 16
+- file: vllm/config/vllm.py:1943
+  context: validate_block_size() checks DCP interleave-size compatibility
+- file: vllm_ascend/ascend_config.py:560
+  context: XliteGraphConfig warns if block_size != 128
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:20-40
+  context: Ascend-specific block size resolution for hybrid KV cache groups with CP
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:98-107
+  context: hash_block_size divisibility check against effective block_size
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:67-86
+  context: page_size_bytes calculation uses block_size for memory sizing
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:42
+  context: BalanceScheduler receives block_size for KV cache management
+related_parameters:
+- name: --hash-block-size
+  relation: block_size must be divisible by hash_block_size when prefix caching is enabled
+- name: --cp-kv-cache-interleave-size
+  relation: block_size must be >= cp_kv_cache_interleave_size and divisible by it; must equal block_size for KV cache transfer
+    scenarios
+- name: --decode-context-parallel-size / --prefill-context-parallel-size
+  relation: On Ascend, scheduler_block_size = lcm(group_block_sizes) * dcp * pcp for hybrid KV groups
+- name: --gpu-memory-utilization
+  relation: Together with block_size, determines how many KV cache blocks can be allocated in NPU memory
+- name: --mamba-block-size
+  relation: Separate block size for Mamba cache layers; must be multiple of 8
+- name: --enable-prefix-caching
+  relation: When enabled, hash_block_size granularity interacts with block_size
+constraints:
+- block_size must be a positive integer.
+- block_size must be divisible by hash_block_size when prefix caching is enabled.
+- block_size must be greater than or equal to cp_kv_cache_interleave_size.
+- block_size must be divisible by cp_kv_cache_interleave_size.
+- For KV cache transfer scenarios (KV pooling, PD disaggregation), cp_kv_cache_interleave_size must equal block_size.
+- mamba_block_size must be a multiple of 8 to align with causal_conv1d kernel.
+tuning_advice:
+  summary: Use --block-size 128 for Ascend NPU deployments; this is the recommended value across vllm-ascend documentation
+    and examples, and is required for optimal xlite graph mode performance.
+  suggested_values:
+  - scenario: General Ascend NPU deployment (v1 or v2 engine)
+    value: '128'
+    reason: Recommended by vllm-ascend documentation and tutorials; balances memory efficiency and fragmentation; required
+      for xlite graph mode optimal performance.
+  - scenario: Context Parallelism with KV cache transfer (KV pooling, PD disaggregation)
+    value: '128'
+    reason: cp_kv_cache_interleave_size must equal block_size for block-interleave KV cache splitting; 128 is the documented
+      default.
+  - scenario: CPU offloading enabled
+    value: '128'
+    reason: CPU-side block_size should be a multiple of NPU-side block_size; 128 is the typical documented value.
+  - scenario: Short sequences / low max_model_len (testing only)
+    value: '16'
+    reason: Upstream default; reduces internal fragmentation for very short sequences but not recommended for production Ascend
+      workloads.
+  - scenario: Xlite graph mode enabled
+    value: '128'
+    reason: XliteGraphConfig warns if block_size != 128; using other values may cause suboptimal graph compilation performance.
+  caveats:
+  - The upstream vLLM default is 16, but vllm-ascend documentation and examples consistently use 128. Using 16 on Ascend may
+    cause suboptimal performance, especially with xlite graph mode.
+  - Larger block_size values (e.g., 256, 512) reduce metadata overhead but increase internal fragmentation — wasted KV cache
+    space when sequences don't fill complete blocks.
+  - When using Context Parallelism (DCP/PCP), block_size interacts multiplicatively with dcp_size and pcp_size on Ascend due
+    to the patched block size resolution in patch_kv_cache_utils.py.
+  - Changing block_size after prefix caching has been enabled with a different hash_block_size may cause hash mismatches.
+  - For hybrid models with multiple KV cache groups, the Ascend patch allows CP with different block sizes per group, but
+    the scheduler_block_size becomes lcm(group_block_sizes) * dcp * pcp, which can grow large.
+  quick_guide: Always set --block-size 128 on Ascend NPU unless you have a specific reason to deviate (e.g., extremely short
+    sequences in testing).
+analysis_date: '2026-07-06'

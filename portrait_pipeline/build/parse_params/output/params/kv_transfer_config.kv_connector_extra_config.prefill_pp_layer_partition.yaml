@@ -1,0 +1,53 @@
+name: kv_transfer_config.kv_connector_extra_config.prefill_pp_layer_partition
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file: []
+value_type: list[int]
+default: <computed>
+valid_choices: list of integers representing layer partition boundaries
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter defines the layer partition boundaries for pipeline parallelism (PP) on the Prefill node when
+  using KV Cache transfer/pooling in a disaggregated Prefill-Decode architecture on Ascend NPU. It directly controls how model
+  layers are distributed across PP stages on the Prefill side. An improper partition can cause severe load imbalance between
+  PP stages, leading to pipeline bubbles that degrade throughput and increase time-to-first-token (TTFT) latency. It also
+  affects per-stage memory consumption, as each stage holds a subset of model weights and KV cache. The parameter is only
+  effective when prefill_pp_size > 1 and the KV connector is configured for pooling.
+
+  '
+usage_locations: []
+related_parameters:
+- name: kv_transfer_config.kv_connector_extra_config.prefill_pp_size
+  relation: Must be set when prefill_pp_size > 1; defines the number of PP stages on the Prefill node.
+- name: kv_transfer_config.kv_connector
+  relation: The parent KV connector configuration that enables KV cache transfer/pooling.
+constraints:
+- prefill_pp_layer_partition must be set when prefill_pp_size > 1 and Prefill node enables PP.
+- The number of partition boundaries must be consistent with prefill_pp_size (i.e., prefill_pp_size - 1 boundaries).
+- Partition values must be strictly increasing integers within the valid layer range of the model.
+tuning_advice:
+  summary: 'Distribute model layers evenly across PP stages to minimize pipeline bubbles and balance memory usage on Ascend
+    NPU.
+
+    '
+  suggested_values:
+  - scenario: Homogeneous model with uniform layer cost (e.g., Llama, Qwen)
+    value: 'Evenly spaced layer indices, e.g., for a 32-layer model with prefill_pp_size=4: [8, 16, 24]'
+    reason: Even partitioning minimizes idle time (pipeline bubbles) and balances memory across NPU devices.
+  - scenario: Model with non-uniform layer cost or memory requirements
+    value: Profile-based partition, e.g., [10, 18, 26] for a 32-layer model
+    reason: Some layers (e.g., the first embedding layer or layers with larger MLP) may require more memory or compute; adjust
+      boundaries to balance per-stage load.
+  caveats:
+  - On Ascend NPU, pipeline parallelism introduces communication overhead via HCCL. Uneven partitions amplify pipeline bubbles
+    and reduce throughput.
+  - Each PP stage consumes separate NPU memory for its layer subset. Ensure no single stage exceeds device memory limits.
+  - This parameter is only relevant in disaggregated Prefill-Decode setups with KV cache pooling enabled.
+  quick_guide: For most models, use evenly spaced layer partitions; profile and adjust if per-stage memory or latency is imbalanced.
+analysis_date: '2026-07-06'

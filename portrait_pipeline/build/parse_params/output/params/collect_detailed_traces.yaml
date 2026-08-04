@@ -1,0 +1,75 @@
+name: --collect-detailed-traces
+type: cli
+category: observability
+scope: vllm
+source_file:
+- vllm/config/observability.py:39
+- vllm/engine/arg_utils.py:607
+- vllm/engine/arg_utils.py:1286
+value_type: list[str]
+default: None
+valid_choices: '[''all'', ''model'', ''worker''] or comma-separated combinations (e.g., ''model,worker'')'
+cli_example: --collect-detailed-traces model,worker
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When `--collect-detailed-traces` is set (and `--otlp-traces-endpoint` is configured), vLLM collects fine-grained
+  timing information for each request at the module level. The `ObservabilityConfig` docstring explicitly warns: "This involves
+  use of possibly costly and or blocking operations and hence might have a performance impact" and "collecting detailed timing
+  information for each request can be expensive." The `collect_model_forward_time` and `collect_model_execute_time` cached
+  properties (observability.py:80-93) gate whether per-request timing is collected for the model forward pass and worker execution
+  respectively. These timing operations add overhead to every request''s critical path, directly increasing per-token latency
+  and reducing overall throughput. On Ascend NPU, this overhead is additive to the existing CANN runtime profiling overhead
+  and may interact poorly with NPU-specific execution patterns (e.g., graph-mode execution, HCCL communication). The parameter
+  has no vllm-ascend override — it behaves identically on Ascend as on upstream GPU, but the relative performance impact may
+  differ due to Ascend''s different execution characteristics.
+
+  '
+usage_locations:
+- file: vllm/config/observability.py:39-46
+  context: Field definition with docstring warning about performance cost
+- file: vllm/config/observability.py:80-93
+  context: Cached properties collect_model_forward_time and collect_model_execute_time gate per-request timing based on this
+    parameter
+- file: vllm/engine/arg_utils.py:607-609
+  context: EngineArgs attribute declaration with type list[DetailedTraceModules] | None
+- file: vllm/engine/arg_utils.py:1279-1288
+  context: CLI argument registration with choices including 'all', 'model', 'worker' and comma-separated combinations
+related_parameters:
+- name: --otlp-traces-endpoint
+  relation: Required prerequisite — detailed traces are only collected when an OTLP endpoint is configured. Setting --collect-detailed-traces
+    without --otlp-traces-endpoint has no effect.
+constraints:
+- --collect-detailed-traces has no effect unless --otlp-traces-endpoint is also set.
+- Valid values are 'all', 'model', 'worker', or comma-separated combinations of 'model' and 'worker'.
+tuning_advice:
+  summary: Disable in production deployments; enable only for targeted debugging sessions where trace data is needed, and
+    always pair with --otlp-traces-endpoint.
+  suggested_values:
+  - scenario: Production inference serving
+    value: None (do not set the flag)
+    reason: Avoids per-request timing overhead that directly increases latency and reduces throughput. The docstring explicitly
+      warns about costly/blocking operations.
+  - scenario: Debugging model forward pass latency
+    value: model
+    reason: Collects timing only for the model forward pass, limiting overhead to the most critical path while providing actionable
+      profiling data.
+  - scenario: Debugging worker-level execution bottlenecks
+    value: worker
+    reason: Collects timing for worker execution, useful for diagnosing scheduling or dispatch overhead without the full cost
+      of 'all'.
+  - scenario: Comprehensive performance profiling (non-production)
+    value: all
+    reason: Enables all detailed trace modules for maximum visibility, but with maximum performance overhead. Only suitable
+      for offline profiling.
+  caveats:
+  - On Ascend NPU, the overhead of detailed tracing may compound with CANN's own profiling infrastructure, potentially causing
+    larger relative slowdowns than on GPU.
+  - Detailed tracing involves blocking operations that can serialize otherwise parallel execution, particularly harmful under
+    high concurrency.
+  - The parameter has no effect without --otlp-traces-endpoint — setting it alone wastes no performance but provides no benefit
+    either.
+  quick_guide: Leave unset for production; use 'model' or 'worker' for targeted debugging with --otlp-traces-endpoint configured.
+analysis_date: '2026-07-06'

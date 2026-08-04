@@ -1,0 +1,90 @@
+name: compilation.pass_config.fuse_rope_kvcache
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:941
+- vllm/config/compilation.py:1112
+- vllm/config/vllm.py:1714
+- vllm/compilation/passes/pass_manager.py:172
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this parameter activates a series of compilation passes (SplitCoalescingPass, ScatterSplitReplacementPass,
+  and RopeKVCacheFusionPass) that fuse the QK rotary position embedding (RoPE) operation with the KV cache update into a single
+  kernel. This fusion reduces kernel launch overhead and improves data locality by eliminating intermediate memory reads/writes
+  between the RoPE computation and the KV cache store. On Ascend NPU, kernel fusion is particularly beneficial because it
+  reduces the number of discrete operator invocations that must be dispatched to the CANN runtime, lowering CPU-NPU synchronization
+  overhead. The parameter also triggers the addition of "+rotary_embedding" to the custom ops list, which influences how Inductor
+  handles the RoPE operation during compilation. However, this fusion has constraints: it requires either Inductor graph partition
+  to be enabled or splitting_ops to be explicitly set to an empty list; otherwise the parameter is silently disabled with
+  a warning. Additionally, the fusion can be restricted to a maximum token count via the related parameter rope_kvcache_fusion_max_token_num,
+  which creates a compile range endpoint to limit fusion to smaller batch sizes where it is most effective.
+
+  '
+usage_locations:
+- file: vllm/config/compilation.py:941
+  context: When fuse_rope_kvcache is true, appends '+rotary_embedding' to custom_ops list to ensure RoPE is handled as a custom
+    op during compilation.
+- file: vllm/config/compilation.py:1112
+  context: Checks whether fuse_rope_kvcache can be enabled given the current splitting_ops and graph partition configuration;
+    disables it with a warning if prerequisites are not met.
+- file: vllm/config/vllm.py:1714
+  context: When fuse_rope_kvcache is true, adds a compile range endpoint based on rope_kvcache_fusion_max_token_num to control
+    when the fusion applies.
+- file: vllm/compilation/passes/pass_manager.py:172
+  context: When fuse_rope_kvcache is true, registers SplitCoalescingPass, ScatterSplitReplacementPass, and RopeKVCacheFusionPass
+    into the compilation pipeline.
+related_parameters:
+- name: compilation.pass_config.rope_kvcache_fusion_max_token_num
+  relation: Controls the maximum number of tokens for which the RoPE+KV cache fusion is applied; only effective when fuse_rope_kvcache
+    is true.
+- name: compilation.use_inductor_graph_partition
+  relation: Must be true (or splitting_ops must be empty) for fuse_rope_kvcache to take effect; otherwise the fusion is silently
+    disabled.
+- name: compilation.splitting_ops
+  relation: If set to an empty list, allows fuse_rope_kvcache to work without Inductor graph partition; otherwise the fusion
+    requires graph partition to be enabled.
+- name: compilation.custom_ops
+  relation: When fuse_rope_kvcache is enabled, '+rotary_embedding' is automatically appended to custom_ops to ensure proper
+    compilation handling.
+constraints:
+- fuse_rope_kvcache requires either use_inductor_graph_partition to be true or splitting_ops to be set to an empty list; otherwise
+  it is silently disabled with a warning.
+- fuse_rope_kvcache cannot be used when splitting_ops is None and Inductor graph partition is not enabled; the parameter will
+  be set to false automatically in this case.
+tuning_advice:
+  summary: Enable fuse_rope_kvcache on Ascend NPU to reduce kernel launch overhead by fusing RoPE and KV cache operations,
+    but ensure Inductor graph partition is enabled or splitting_ops is empty.
+  suggested_values:
+  - scenario: General Ascend NPU inference with Inductor graph partition enabled
+    value: 'true'
+    reason: Fuses RoPE and KV cache into a single kernel, reducing CPU-NPU dispatch overhead and improving data locality.
+      On Ascend NPU, reducing discrete operator invocations is critical for throughput.
+  - scenario: Without Inductor graph partition and with default splitting_ops
+    value: 'false'
+    reason: The fusion will be silently disabled anyway if prerequisites are not met; explicitly setting to false avoids confusion
+      and the warning log message.
+  - scenario: Large batch sizes where fusion overhead outweighs benefits
+    value: 'false'
+    reason: The fusion may not be beneficial for very large token counts; use rope_kvcache_fusion_max_token_num to limit fusion
+      scope instead of disabling entirely.
+  caveats:
+  - On Ascend NPU, this parameter is from upstream vLLM and has no vllm-ascend-specific override; its behavior depends entirely
+    on the upstream compilation pipeline.
+  - The fusion is silently disabled if splitting_ops is None and use_inductor_graph_partition is false — check logs for the
+    warning message to confirm whether fusion is actually active.
+  - When enabled, '+rotary_embedding' is automatically added to custom_ops, which may interact with other custom op configurations.
+  - The fusion adds three compilation passes (SplitCoalescingPass, ScatterSplitReplacementPass, RopeKVCacheFusionPass) which
+    increase compilation time.
+  quick_guide: Set to true when using Inductor graph partition on Ascend NPU to fuse RoPE and KV cache operations for reduced
+    kernel launch overhead; verify fusion is active via logs.
+analysis_date: '2026-07-06'

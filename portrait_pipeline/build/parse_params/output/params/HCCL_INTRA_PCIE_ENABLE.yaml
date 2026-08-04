@@ -1,0 +1,86 @@
+name: HCCL_INTRA_PCIE_ENABLE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:1218
+- vllm_ascend/ops/fused_moe/token_dispatcher.py:114
+value_type: str
+default: ''
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether HCCL (Huawei Collective Communication Library) uses PCIe for intra-node
+  communication on Ascend NPUs. When set to "1" together with HCCL_INTRA_ROCE_ENABLE="0", it enables hierarchical communication
+  mode for MC2 (Multi-Core Communication) operations in MoE (Mixture of Experts) models. The function `is_hierarchical_communication_enabled()`
+  in vllm_ascend/utils.py checks this combination to determine whether to use optimized dispatch/combine operators in `TokenDispatcherWithMC2`.
+  When enabled, the dispatcher passes `expert_scales` parameter to the MC2 dispatch/combine operators, which reduces cross-machine
+  communication traffic and significantly improves communication performance on A2 devices. This directly affects the token
+  dispatch path in MoE models, which is a critical performance bottleneck.
+
+  '
+usage_locations:
+- file: vllm_ascend/utils.py:1216-1219
+  context: '`is_hierarchical_communication_enabled()` checks HCCL_INTRA_PCIE_ENABLE=="1" AND HCCL_INTRA_ROCE_ENABLE=="0" to
+    determine if hierarchical communication is active.
+
+    '
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:114-118
+  context: '`TokenDispatcherWithMC2.__init__()` uses `is_hierarchical_communication_enabled()` to set `self.need_expert_scale`,
+    which controls whether `expert_scales` is passed to MC2 dispatch/combine operators for optimized communication.
+
+    '
+related_parameters:
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: 'Must be set to "0" for HCCL_INTRA_PCIE_ENABLE="1" to take effect. Both are checked together in `is_hierarchical_communication_enabled()`.
+
+    '
+- name: enable_mc2_hierarchy_comm
+  relation: 'Ascend config parameter that can independently enable hierarchical communication regardless of HCCL_INTRA_PCIE_ENABLE
+    setting. The function returns True if either condition is met.
+
+    '
+constraints:
+- HCCL_INTRA_ROCE_ENABLE must be set to "0" for HCCL_INTRA_PCIE_ENABLE="1" to activate hierarchical communication.
+- This optimization is specifically noted for A2 devices; behavior on other Ascend device types may differ.
+tuning_advice:
+  summary: 'On A2 Ascend devices running MoE models with MC2, set HCCL_INTRA_PCIE_ENABLE=1 and HCCL_INTRA_ROCE_ENABLE=0 to
+    enable hierarchical communication and reduce cross-machine traffic for improved dispatch/combine performance.
+
+    '
+  suggested_values:
+  - scenario: 'Running MoE models with MC2 communication on A2 Ascend devices where cross-machine communication is a bottleneck.
+
+      '
+    value: '1'
+    reason: 'Enables PCIe-based intra-node communication path, which combined with HCCL_INTRA_ROCE_ENABLE=0 activates hierarchical
+      communication mode. This reduces cross-machine communication traffic and significantly improves MC2 dispatch/combine
+      operator performance as documented in the source code comments.
+
+      '
+  - scenario: 'Non-MoE models, or MoE models not using MC2 communication, or non-A2 Ascend devices.
+
+      '
+    value: ''
+    reason: 'The hierarchical communication optimization is specific to MC2 dispatch/combine operators in MoE models. Leaving
+      the variable unset avoids unnecessary configuration that has no effect on other workloads.
+
+      '
+  caveats:
+  - This optimization is specifically documented for A2 devices; effectiveness on A3, A5, or other Ascend device types is
+    not guaranteed and may have no effect or different behavior.
+  - Both HCCL_INTRA_PCIE_ENABLE and HCCL_INTRA_ROCE_ENABLE must be set correctly together; setting only one will not activate
+    hierarchical communication.
+  - The `enable_mc2_hierarchy_comm` Ascend config parameter can override this behavior and enable hierarchical communication
+    independently.
+  quick_guide: 'For MoE models on A2 devices, set HCCL_INTRA_PCIE_ENABLE=1 and HCCL_INTRA_ROCE_ENABLE=0 to reduce cross-machine
+    communication overhead in MC2 dispatch/combine operations.
+
+    '
+analysis_date: '2026-07-06'

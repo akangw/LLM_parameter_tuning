@@ -1,0 +1,85 @@
+name: --performance-mode
+type: cli
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/vllm.py:346
+- vllm/engine/arg_utils.py:685
+- vllm/engine/arg_utils.py:1444
+- vllm/engine/arg_utils.py:2182
+value_type: str
+default: balanced
+valid_choices:
+- balanced
+- interactivity
+- throughput
+cli_example: --performance-mode interactivity
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter sets the `PerformanceMode` enum on `VllmConfig`, which is a hint consumed by the vLLM engine
+  to select between latency-optimized and throughput-optimized code paths. The docstring in vllm/config/vllm.py:346-351 states
+  that ''interactivity'' favors low end-to-end per-request latency at small batch sizes (fine-grained CUDA graphs, latency-oriented
+  kernels), while ''throughput'' favors aggregate tokens/sec at high concurrency (larger CUDA graphs, more aggressive batching,
+  throughput-oriented kernels). On Ascend NPU, CUDA graphs are not used (the platform uses CANN graph compilation via torch_npu
+  instead), so the CUDA-graph-related tuning hints have no direct effect. However, the mode value is still read by the scheduler
+  and model runner to adjust batching aggressiveness and kernel selection, which can indirectly influence Ascend runtime behavior.
+  The vllm-ascend plugin does NOT override or intercept this parameter — it passes through to the upstream VllmConfig unchanged.
+  The impact on Ascend is therefore limited to the upstream code paths that check `performance_mode` and adjust scheduling
+  or kernel dispatch accordingly.
+
+  '
+usage_locations:
+- file: vllm/config/vllm.py:346
+  context: Field definition with default 'balanced' and docstring describing three modes.
+- file: vllm/config/vllm.py:764
+  context: Logs a message when performance_mode is not 'balanced'.
+- file: vllm/engine/arg_utils.py:685
+  context: EngineArgs field declaration, default taken from VllmConfig.
+- file: vllm/engine/arg_utils.py:1444
+  context: CLI argument registration under VllmConfig group.
+- file: vllm/engine/arg_utils.py:2182
+  context: Passed to VllmConfig constructor during engine config creation.
+related_parameters:
+- name: --optimization-level
+  relation: Both are top-level VllmConfig fields that influence runtime performance tradeoffs; optimization-level controls
+    compilation aggressiveness while performance-mode controls scheduling/kernel selection.
+- name: --enforce-eager
+  relation: enforce-eager disables CUDA graphs entirely; performance-mode's CUDA graph hints are irrelevant when enforce-eager
+    is set.
+constraints: []
+tuning_advice:
+  summary: 'On Ascend NPU, this parameter has limited effect since CUDA graph hints are not applicable; use ''balanced'' unless
+    you have a specific latency or throughput workload and have verified the mode changes Ascend kernel selection.
+
+    '
+  suggested_values:
+  - scenario: Default / general-purpose Ascend deployment
+    value: balanced
+    reason: 'The default mode avoids extreme tuning in either direction. Since Ascend does not use CUDA graphs, the primary
+      effect is on scheduler batching behavior, and ''balanced'' provides a safe middle ground.
+
+      '
+  - scenario: Latency-sensitive interactive workloads on Ascend
+    value: interactivity
+    reason: 'May reduce batch sizes and select latency-oriented kernels, which can lower per-request latency at the cost of
+      aggregate throughput. Test thoroughly on Ascend as kernel selection differs from CUDA.
+
+      '
+  - scenario: High-concurrency batch processing on Ascend
+    value: throughput
+    reason: 'May increase batch sizes and select throughput-oriented kernels, improving tokens/sec under high load. Ascend
+      kernel availability for this mode should be verified.
+
+      '
+  caveats:
+  - CUDA graph hints in the docstring (fine-grained vs larger CUDA graphs) do not apply to Ascend NPU; the actual effect depends
+    on upstream scheduler and kernel dispatch code that checks performance_mode.
+  - vllm-ascend does not override or intercept this parameter, so any Ascend-specific kernel selection based on performance_mode
+    must be implemented in the upstream model runner.
+  - The performance difference between modes on Ascend may be negligible or absent; benchmark before adopting a non-default
+    mode in production.
+  quick_guide: Use --performance-mode balanced on Ascend unless benchmarks show a clear benefit from interactivity or throughput.
+analysis_date: '2026-07-06'

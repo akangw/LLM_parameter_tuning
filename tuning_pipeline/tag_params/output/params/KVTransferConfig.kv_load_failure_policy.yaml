@@ -1,0 +1,117 @@
+name: KVTransferConfig.kv_load_failure_policy
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:70
+- docs/features/nixl_connector_usage.md:200
+- vllm_ascend/platform.py:781
+- docs/source/user_guide/feature_guide/kv_pool.md:13
+- vllm_ascend/core/recompute_scheduler.py:824
+value_type: str
+default: fail
+valid_choices:
+- recompute
+- fail
+cli_example: --kv-transfer-config '{"kv_connector":"AscendStoreConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail"}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This policy is consulted only after a connector reports externally computed KV blocks that failed to load,
+  so it does not change the successful-load hot path. With the default `fail`, the scheduler terminates each affected request
+  with an error and avoids executing its missing prefill work on the decode instance. With `recompute`, the scheduler rolls
+  each affected request back to its longest valid prefix and reschedules the missing and downstream tokens. Recompute can
+  keep a request alive through a transient transfer or storage failure, but the extra prefill consumes accelerator time on
+  a node normally optimized for decode, increases that request's latency, and can delay other active decode requests and reduce
+  throughput. The pinned upstream NIXL guide specifically warns about production performance jitter and increased tail latency.
+  Ascend connectors report invalid block IDs into the same scheduler protocol, and the Ascend recompute scheduler contains
+  the failure-versus- reschedule branch. Ascend additionally rejects `recompute` for hybrid models. Neither repository quantifies
+  a universal penalty; impact depends on failure frequency, failed-prefix length, concurrency, and decode-node prefill efficiency.
+usage_locations:
+- file: vllm/config/kv_transfer.py:70
+  context: Declares the two-value policy with `fail` as the default and describes immediate failure versus rescheduling for
+    recomputation.
+- file: docs/features/nixl_connector_usage.md:200
+  context: Documents decoder-side behavior and warns that recomputation introduces performance jitter, inefficient prefill
+    on decode-optimized instances, and higher tail latency for other decode requests.
+- file: vllm_ascend/core/recompute_scheduler.py:824
+  context: Detects invalid externally loaded blocks, maps them to affected requests, and skips normal output processing while
+    those requests are failed or rescheduled.
+- file: vllm_ascend/core/recompute_scheduler.py:1024
+  context: Finishes affected requests with FINISHED_ERROR when the inherited recompute_kv_load_failures selection is false;
+    otherwise the adjusted requests remain eligible for recomputation.
+- file: vllm_ascend/platform.py:781
+  context: Validates the Ascend configuration and rejects `recompute` when the model uses a hybrid cache layout.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:13
+  context: Documents the Ascend-visible semantics, the `fail` default, and the rule that MultiConnector configurations place
+    this field at the top level.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: A connector must be active and report KV load errors for this policy to have any runtime effect.
+- name: KVTransferConfig.kv_role
+  relation: KV loading normally occurs on a consumer-capable instance; the recomputation cost is therefore paid where that
+    consumer runs.
+- name: KVTransferConfig.kv_connector_extra_config.connectors
+  relation: With MultiConnector, child connectors are configured in this list but the failure policy belongs to the enclosing
+    top-level KVTransferConfig.
+- name: KVTransferConfig.kv_connector_extra_config.load_async
+  relation: Load errors may be discovered through synchronous or asynchronous connector paths; this policy determines the
+    affected request's outcome after either path reports invalid blocks.
+constraints:
+- The only valid values are `recompute` and `fail`; the pinned default is `fail`.
+- The field matters only when a configured KV connector reports block IDs whose external load failed. It has no performance
+  effect on requests whose KV loads succeed.
+- On vllm-ascend, hybrid models cannot use `recompute`; platform validation raises an assertion before serving starts.
+- For MultiConnector, configure this field once on the top-level kv-transfer-config, not inside an individual child connector
+  dictionary.
+- '`recompute` preserves request progress only by executing the missing prefix and its dependent tokens again; it does not
+  repair the external KV source or eliminate repeated load failures.'
+tuning_advice:
+  summary: Retain `fail` for latency-sensitive production disaggregated serving. Choose `recompute` only when completing requests
+    through occasional KV-load failures is more important than predictable decode latency, and validate the tradeoff with
+    injected-failure tests.
+  suggested_values:
+  - scenario: Latency-sensitive production prefill/decode disaggregation
+    value: fail
+    reason: Terminates only affected requests and prevents failed prefill work from consuming decode capacity or increasing
+      other requests' tail latency.
+  - scenario: Best-effort availability with rare transient KV-load failures
+    value: recompute
+    reason: Reschedules affected requests from their last valid prefix so they can complete without relying on the missing
+      external blocks.
+  - scenario: Ascend hybrid model
+    value: fail
+    reason: Ascend explicitly rejects recompute mode for hybrid models, leaving `fail` as the supported choice.
+  caveats:
+  - '`fail` improves failure isolation but converts a recoverable cache-load miss into a client-visible request error; upstream
+    serving layers propagate that failure response.'
+  - The cost of `recompute` grows with the number of tokens after the first failed block and with the number and concurrency
+    of affected requests.
+  - A low average failure rate can still create severe tail-latency spikes if failures affect long prefixes or arrive in bursts.
+  - 'Benchmark successful-load latency separately: neither value should be credited with a normal-path gain because the branch
+    is exercised only after a reported load failure.'
+  quick_guide: Use `fail` by default. Consider `recompute` only for non-hybrid models when availability is the priority, then
+    measure affected-request completion, decode throughput, and p95/p99 latency under realistic injected KV-load failures.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

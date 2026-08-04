@@ -1,0 +1,122 @@
+name: additional_config.ascend_compilation_config
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:39
+value_type: dict
+default: '{}'
+valid_choices: 'dict with optional boolean keys: enable_npugraph_ex, enable_static_kernel, fuse_norm_quant, fuse_qknorm_rope,
+  fuse_allreduce_rms, fuse_muls_add'
+cli_example: --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true, "enable_static_kernel":true}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This nested dict controls Ascend-specific graph compilation optimizations that directly affect model execution\
+  \ performance on NPU. It is consumed in two critical paths:\n1. **Graph fusion passes** (vllm_ascend/compilation/graph_fusion_pass_manager.py:53):\n\
+  \   The keys `fuse_norm_quant`, `fuse_qknorm_rope`, `fuse_allreduce_rms`, and `fuse_muls_add`\n   (all defaulting to `True`)\
+  \ enable NPU-specific operator fusion passes that reduce kernel\n   launch overhead and memory bandwidth usage. Disabling\
+  \ any of these fusions increases the\n   number of discrete kernel launches per forward pass, directly degrading throughput\
+  \ and latency.\n\n2. **NPU graph mode** (vllm_ascend/ascend_config.py:381-409):\n   `enable_npugraph_ex` (default `False`)\
+  \ toggles between two graph capture modes:\n   - \"When `False`: uses the standard vLLM CUDA graph path adapted for Ascend,\
+  \ with\"\n     `fuse_allreduce_rms` applied as a compile-range split point.\n   - \"When `True`: enables the Ascend-specific\
+  \ \\\"npugraph_ex\\\" mode, which uses a different\"\n     graph capture mechanism. This mode also supports `enable_static_kernel`\
+  \ for additional\n     static shape optimization.\n\n   The choice of graph mode significantly impacts memory usage (graph\
+  \ replay buffers) and\n   decode latency. `enable_npugraph_ex` also affects whether `fuse_allreduce_rms` is applied\n  \
+  \ via compile-range splitting (line 381-392 vs 394-409).\n\nThe parameter is parsed in `AscendConfig.__init__` (vllm_ascend/ascend_config.py:39-40)\
+  \ and stored as `self.ascend_compilation_config`. It is later merged back into `vllm_config.additional_config` in `platform.py:399-403`\
+  \ for downstream consumers.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:39-40
+  context: Parsed from additional_config and stored as AscendCompilationConfig instance
+- file: vllm_ascend/ascend_config.py:381-409
+  context: Controls compile_ranges_split_points for allreduce-rmsnorm fusion based on enable_npugraph_ex
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:53-72
+  context: Reads fuse_norm_quant, fuse_qknorm_rope, fuse_allreduce_rms, fuse_muls_add to register fusion passes
+- file: vllm_ascend/platform.py:399-403
+  context: Merged back into vllm_config.additional_config for downstream access
+- file: tests/e2e/pull_request/one_card/aclgraph/test_aclgraph_accuracy.py:112-126
+  context: Test cases explicitly toggle enable_npugraph_ex for accuracy comparison
+- file: tests/e2e/pull_request/one_card/_310p/test_dense_model_310p.py:50
+  context: 310P tests disable fuse_norm_quant for correctness on that hardware variant
+related_parameters:
+- name: compilation_config.cudagraph_mode
+  relation: enable_npugraph_ex is an Ascend-specific graph mode that interacts with vLLM's cudagraph capture; both control
+    graph replay behavior
+- name: compilation_config.cudagraph_capture_sizes
+  relation: When enable_npugraph_ex is True, cudagraph_capture_sizes are used for npugraph_ex capture sizes
+- name: additional_config.ascend_fusion_config
+  relation: Sibling config dict for Ascend fusion optimizations; both affect compilation behavior
+- name: VLLM_BATCH_INVARIANT
+  relation: When batch_invariant mode is enabled, some compilation optimizations may be disabled (see enable_async_exponential
+    logic)
+constraints:
+- fuse_norm_quant is automatically disabled on 310P hardware (is_310p() check in graph_fusion_pass_manager.py:54)
+- enable_npugraph_ex and the standard graph mode are mutually exclusive; only one graph capture path is active at a time
+tuning_advice:
+  summary: 'Enable all fusion passes (defaults) for best performance; toggle enable_npugraph_ex based on model compatibility
+    and memory constraints — npugraph_ex can reduce memory but may have different accuracy characteristics.
+
+    '
+  suggested_values:
+  - scenario: General production deployment on non-310P hardware
+    value:
+      enable_npugraph_ex: false
+      fuse_norm_quant: true
+      fuse_qknorm_rope: true
+      fuse_allreduce_rms: true
+      fuse_muls_add: true
+    reason: 'Default fusion passes are all enabled and provide the best throughput/latency by reducing kernel launch overhead.
+      Standard graph mode (enable_npugraph_ex=false) is the more mature and tested path.
+
+      '
+  - scenario: Memory-constrained deployment or models with large capture graphs
+    value:
+      enable_npugraph_ex: true
+      enable_static_kernel: true
+      fuse_norm_quant: true
+      fuse_qknorm_rope: true
+      fuse_allreduce_rms: true
+      fuse_muls_add: true
+    reason: 'npugraph_ex mode can reduce graph replay memory footprint. enable_static_kernel further optimizes for static
+      input shapes, reducing compilation overhead.
+
+      '
+  - scenario: 310P hardware (e.g., Atlas 300I Duo)
+    value:
+      enable_npugraph_ex: false
+      fuse_norm_quant: false
+      fuse_qknorm_rope: true
+      fuse_allreduce_rms: true
+      fuse_muls_add: true
+    reason: 'fuse_norm_quant is automatically disabled on 310P due to hardware incompatibility. Explicitly setting it to false
+      avoids confusion.
+
+      '
+  - scenario: Debugging or accuracy verification
+    value:
+      enable_npugraph_ex: false
+      fuse_norm_quant: false
+      fuse_qknorm_rope: false
+      fuse_allreduce_rms: false
+      fuse_muls_add: false
+    reason: 'Disabling all fusions provides a baseline execution path for isolating performance or accuracy issues. This is
+      the pattern used in e2e accuracy tests.
+
+      '
+  caveats:
+  - Fusion passes are enabled by default and should rarely be disabled in production — disabling them significantly increases
+    kernel launch count and reduces throughput.
+  - enable_npugraph_ex changes the graph capture mechanism; test accuracy before deploying to production as it may produce
+    slightly different numerical results.
+  - On 310P hardware, fuse_norm_quant is silently disabled regardless of configuration — do not rely on it being active.
+  - The interaction between enable_npugraph_ex and cudagraph_capture_sizes means capture sizes must be set appropriately for
+    the chosen graph mode.
+  quick_guide: 'Keep all fusion defaults (true) and use enable_npugraph_ex=false for stability or enable_npugraph_ex=true
+    with enable_static_kernel=true for memory savings on compatible models.
+
+    '
+analysis_date: '2026-07-06'

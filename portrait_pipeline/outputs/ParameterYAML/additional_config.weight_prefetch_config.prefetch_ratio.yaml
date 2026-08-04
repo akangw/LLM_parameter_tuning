@@ -1,0 +1,146 @@
+name: additional_config.weight_prefetch_config.prefetch_ratio
+type: nested
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:573
+- vllm_ascend/ops/weight_prefetch.py:12
+- vllm_ascend/ops/weight_prefetch.py:23
+- vllm_ascend/ops/weight_prefetch.py:46
+- vllm_ascend/ops/weight_prefetch.py:71
+- vllm_ascend/ops/weight_prefetch.py:88
+- vllm_ascend/ops/weight_prefetch.py:110
+- docs/source/user_guide/feature_guide/weight_prefetch.md:1
+- docs/source/user_guide/configuration/additional_config.md:112
+value_type: dict
+default:
+  attn:
+    qkv: 1.0
+    o: 1.0
+  moe:
+    gate_up: 0.8
+  mlp:
+    gate_up: 1.0
+    down: 1.0
+valid_choices: A mapping whose supported module keys are attn, moe, and mlp; their supported layer keys are qkv/o, gate_up,
+  and gate_up/down respectively, with numeric ratios in the inclusive range 0.0 through 1.0.
+cli_example: --additional-config '{"weight_prefetch_config":{"enabled":true,"prefetch_ratio":{"attn":{"qkv":1.0,"o":1.0},"moe":{"gate_up":0.8},"mlp":{"gate_up":1.0,"down":1.0}}}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This Ascend-only mapping scales the number of bytes requested for prefetch from each supported linear weight.
+  Attention QKV/O, MoE gate-up, and dense MLP gate-up/down paths multiply the weight's byte size by their effective ratio
+  before issuing a prefetch operation. Prefetching can overlap weight movement with vector work and warm L2 before the following
+  matrix multiplication, reducing MTE contention and improving throughput when concurrency provides sufficient overlap. The
+  operation itself competes for resources, however, so larger ratios can hurt latency or throughput when the overlap window
+  is short. Ratios also change L2-cache pressure, but not model-weight or KV-cache capacity. The documented backend maximum
+  is 18 MiB, and the Python implementation explicitly caps both dense MLP projections at that size. The setting has no module-ratio
+  effect until sibling enabled is true; MoE ratios apply only to MoE models, while MLP ratios apply only to dense models.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:573
+  context: Defines the default nested mapping; the constructor replaces it with the supplied prefetch_ratio mapping when present.
+- file: vllm_ascend/ops/weight_prefetch.py:23
+  context: Filters each module's entries to numeric ratios satisfying 0 <= ratio <= 1 and disables a module when all retained
+    ratios are zero.
+- file: vllm_ascend/ops/weight_prefetch.py:50
+  context: Selects the attention sub-map, restoring qkv=1.0 and o=1.0 when that sub-map is missing or empty.
+- file: vllm_ascend/ops/weight_prefetch.py:59
+  context: Selects the MoE sub-map and its gate_up=0.8 fallback, with the entire MoE path gated by model type.
+- file: vllm_ascend/ops/weight_prefetch.py:65
+  context: Selects the dense MLP sub-map and its gate_up/down=1.0 fallback, with the path disabled for MoE models.
+- file: vllm_ascend/ops/weight_prefetch.py:78
+  context: Multiplies attention weight bytes by the qkv or o ratio passed to prefetch_preprocess.
+- file: vllm_ascend/ops/weight_prefetch.py:88
+  context: Activates MoE prefetch only at 96 or more tokens and scales the expert gate-up weight size by its ratio.
+- file: vllm_ascend/ops/weight_prefetch.py:110
+  context: Restricts dense MLP prefetch to an available forward context and fewer than 500 tokens.
+- file: vllm_ascend/ops/weight_prefetch.py:146
+  context: Scales dense gate-up weight bytes and clamps the requested prefetch to 18 MiB.
+- file: vllm_ascend/ops/weight_prefetch.py:157
+  context: Scales dense down-projection weight bytes and clamps the requested prefetch to 18 MiB.
+- file: docs/source/user_guide/feature_guide/weight_prefetch.md:13
+  context: Documents the overlap-versus-contention tradeoff, defaults, profiling method, sequence-parallel dependency, and
+    18 MiB maximum.
+related_parameters:
+- name: additional_config.weight_prefetch_config.enabled
+  relation: Must be true before these ratios can enable the module-specific prefetch paths; its source default is false.
+- name: compilation_config.pass_config.enable_sp
+  relation: Sequence parallel must be enabled for the documented dense MLP down-projection prefetch optimization.
+- name: --max-num-seqs
+  relation: Concurrency changes the available overlap and therefore whether larger ratios improve performance; the documented
+    defaults were measured at specific Qwen3 W8A8 concurrency points.
+constraints:
+- This mapping is interpreted by vllm-ascend; upstream vLLM only transports and hashes additional_config as opaque platform
+  configuration.
+- Ratios retained by ModuleWeightPrefetchConfig must satisfy 0 <= ratio <= 1. Out-of-range numeric entries are silently removed,
+  while a nonnumeric value can fail the comparison during initialization.
+- Omitting a module key or supplying an empty mapping does not disable that module; the implementation restores its module-specific
+  defaults through an `or` fallback. Use explicit zero ratios for all supported layer keys to disable its ratio-driven work.
+- Unsupported module keys are not consumed. Unsupported layer keys may survive filtering but are not queried by the implemented
+  attention, MoE, or MLP prefetch call sites.
+- The documented maximum effective prefetch is 18 MiB; dense MLP gate-up and down paths explicitly clamp to this limit in
+  Python, so increasing a ratio after reaching the cap has no further size effect.
+- MoE weight prefetch is active only for MoE models and forwards with at least 96 tokens. Dense MLP prefetch is active only
+  for non-MoE models, an available Ascend forward context, and forwards with fewer than 500 tokens.
+- The current guide requires sequence parallel for dense MLP down-projection prefetch.
+tuning_advice:
+  summary: Begin with the module defaults only after enabling weight prefetch, then profile the CMO prefetch against the vector
+    operation intended to hide it and adjust each supported layer independently.
+  suggested_values:
+  - scenario: MoE Qwen3 W8A8 throughput workload near the documented max-num-seqs 144 reference point
+    value:
+      attn:
+        qkv: 1.0
+        o: 1.0
+      moe:
+        gate_up: 0.8
+    reason: These are the documented MoE defaults reported to perform well for Qwen3-235B-A22B-W8A8 at that concurrency and
+      preserve the intended attention and expert-weight overlap.
+  - scenario: Dense Qwen3 W8A8 throughput workload near the documented max-num-seqs 72 reference point with sequence parallel
+    value:
+      mlp:
+        gate_up: 1.0
+        down: 1.0
+    reason: These are the documented dense defaults for Qwen3-32B-W8A8 at that concurrency; sequence parallel satisfies the
+      down-projection dependency.
+  - scenario: Low-concurrency or latency-first serving where profiling shows no useful overlap
+    value:
+      attn:
+        qkv: 0.0
+        o: 0.0
+      moe:
+        gate_up: 0.0
+      mlp:
+        gate_up: 0.0
+        down: 0.0
+    reason: Explicit zeros prevent the missing-or-empty fallback from restoring nonzero defaults and disable ratio-driven
+      module prefetch work that would otherwise add contention without hiding transfer time.
+  - scenario: Prefetch CMO finishes after its overlapping vector operation or causes L2/resource contention
+    value:
+      attn:
+        qkv: 0.5
+        o: 0.5
+      moe:
+        gate_up: 0.5
+      mlp:
+        gate_up: 0.5
+        down: 0.5
+    reason: A lower starting ratio reduces requested bytes and cache pressure; tune individual keys from the profiling timeline
+      rather than assuming the same reduction is optimal for every projection.
+  caveats:
+  - The defaults are workload examples, not universal optima; model architecture, quantization, tensor shapes, concurrency,
+    and software version change the useful overlap window.
+  - Higher concurrency can justify a larger prefetch, while lower concurrency may make prefetching disadvantageous; compare
+    end-to-end latency and throughput at the deployment's actual request mix.
+  - Values above the size needed to reach the 18 MiB maximum cannot increase the effective prefetch further.
+  - A partial top-level mapping still activates fallback defaults for missing module sections. Include explicit zero mappings
+    when the intent is to keep a module off.
+  - The attention, MoE, and dense MLP paths have different eligibility and token thresholds, so the same ratio mapping does
+    not imply the same work on every model or forward pass.
+  quick_guide: Enable weight prefetch, start from the relevant MoE or dense defaults, verify in an Ascend profiling timeline
+    that each CMO completes within its overlapping vector work, then lower late or contending projections and retain only
+    changes that improve representative end-to-end results.
+analysis_date: '2026-08-02'

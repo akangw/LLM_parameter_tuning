@@ -1,0 +1,111 @@
+name: compilation.pass_config.enable_qk_norm_rope_fusion
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/config/compilation.py:934
+- vllm/compilation/passes/pass_manager.py:181
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this flag activates the QKNormRoPEFusionPass in the Inductor post-grad pass pipeline (vllm/compilation/passes/pass_manager.py:181-183).
+  This pass fuses the Q/K RMSNorm and Rotary Position Embedding (RoPE) operations into a single kernel, reducing the number
+  of GPU kernel launches and intermediate memory accesses during the attention computation. Additionally, enabling this flag
+  automatically appends "+rotary_embedding" to the custom_ops list (vllm/config/compilation.py:934-939), which forces the
+  Inductor to treat rotary embedding as a custom operator rather than decomposing it, further enabling fusion opportunities.
+  The net effect is reduced latency per attention layer and improved throughput, particularly for models with many attention
+  heads or long sequences where RoPE computation is significant. However, this is a compilation-time optimization that only
+  takes effect when compilation mode is VLLM_COMPILE (not eager execution). On Ascend NPU, the actual performance gain depends
+  on CANN''s ability to fuse these operations — the Inductor fusion pass generates a fused graph, but CANN''s own graph compiler
+  may or may not further optimize it. The flag is disabled by default.
+
+  '
+usage_locations:
+- file: vllm/config/compilation.py:934
+  context: 'When enable_qk_norm_rope_fusion is True, appends "+rotary_embedding" to custom_ops to prevent Inductor from decomposing
+    RoPE, enabling the fusion pass to match the pattern.
+
+    '
+- file: vllm/compilation/passes/pass_manager.py:181
+  context: 'When enable_qk_norm_rope_fusion is True, adds SplitCoalescingPass and QKNormRoPEFusionPass to the post-grad pass
+    pipeline for fusing Q/K norm and RoPE.
+
+    '
+- file: tests/compile/fusions_e2e/conftest.py:137
+  context: 'Test configuration disables this fusion for sparse MLA models (e.g., DSv3.2) due to a known inductor assertion
+    bug when +rotary_embedding is forced into the compile graph.
+
+    '
+related_parameters:
+- name: compilation.pass_config.fuse_rope_kvcache
+  relation: 'Similar fusion pass that also appends "+rotary_embedding" to custom_ops when enabled. Both flags share the same
+    custom_ops side effect and may interact.
+
+    '
+- name: compilation.custom_ops
+  relation: 'This flag automatically appends "+rotary_embedding" to custom_ops, which controls which operations Inductor treats
+    as custom (non-decomposed).
+
+    '
+- name: compilation.mode
+  relation: 'This fusion pass only takes effect when compilation mode is VLLM_COMPILE. In eager mode or other non-compiling
+    modes, the pass is not applied.
+
+    '
+constraints:
+- This flag only takes effect when compilation mode is VLLM_COMPILE; in eager execution mode the fusion pass is not applied.
+- Sparse MLA models (e.g., DeepSeek-V3.2) may hit an inductor assertion error when this flag is enabled due to a known torch
+  bug with +rotary_embedding in the compile graph.
+tuning_advice:
+  summary: 'Enable this flag for models with Q/K RMSNorm + RoPE to reduce kernel launch overhead, but verify correctness on
+    Ascend NPU as CANN may handle fusion differently than CUDA.
+
+    '
+  suggested_values:
+  - scenario: 'Standard dense transformer models (e.g., Llama, Qwen) with Q/K RMSNorm and RoPE, running with VLLM_COMPILE
+      mode on Ascend NPU.
+
+      '
+    value: 'true'
+    reason: 'Fuses Q/K norm and RoPE into a single kernel, reducing GPU kernel launches and improving attention computation
+      throughput. The automatic "+rotary_embedding" custom op prevents Inductor decomposition, enabling the fusion pattern
+      match.
+
+      '
+  - scenario: 'Sparse MLA models (e.g., DeepSeek-V3.2) or models where compilation correctness is prioritized over minor latency
+      gains.
+
+      '
+    value: 'false'
+    reason: 'Sparse MLA models have a known inductor assertion bug when +rotary_embedding is forced into the compile graph.
+      Disabling avoids compilation failures. Also appropriate when debugging or when CANN''s own graph compiler already provides
+      equivalent fusion.
+
+      '
+  caveats:
+  - 'On Ascend NPU, the Inductor-generated fused kernel is ultimately compiled by CANN. CANN may apply its own fusion passes,
+    so the net performance gain from this flag may be smaller than on CUDA. Benchmark with and without this flag on your specific
+    Ascend hardware.
+
+    '
+  - 'Enabling this flag automatically adds "+rotary_embedding" to custom_ops, which affects the entire compilation graph.
+    If you have manually set custom_ops, be aware of this side effect.
+
+    '
+  - 'This is a compilation-time optimization only. It has no effect in eager execution mode or when use_inductor_graph_partition
+    results in piecewise compilation that does not include the attention layers.
+
+    '
+  quick_guide: 'Enable for dense models with VLLM_COMPILE on Ascend NPU to reduce attention kernel overhead; disable for sparse
+    MLA models or when debugging compilation.
+
+    '
+analysis_date: '2026-07-06'

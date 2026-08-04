@@ -1,0 +1,121 @@
+name: speculative.attention_backend
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: null
+valid_choices:
+- null
+- FLASH_ATTN
+- FLASHINFER
+- TRITON_ATTN
+- FLEX_ATTENTION
+- ROCM_AITER_FA
+- TORCH_SDPA
+- FLASH_ATTN_VLLM_V1
+- FLASHMLHA
+- FLASHMLA
+- FLASHMLA_SPARSE
+- FLASH_ATTN_VARLEN_V1
+- CUTLASS_MLA
+- PALI_GEMMA
+- NO_ATTN
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter controls which attention backend the draft model uses during speculative decoding. When set
+  to None (default), the draft model inherits the target model''s attention backend via auto-selection. However, some draft
+  models (e.g., DFlash) require non-causal attention, which certain backends like FLASH_ATTN_VLLM_V1 do not support. Setting
+  this explicitly to a non-causal-capable backend (e.g., FLASH_ATTN) enables the draft model to function correctly. On Ascend
+  NPU, the attention backend directly affects which CANN operators are used for attention computation, impacting both draft
+  model inference speed and memory usage. The vllm-ascend documentation explicitly recommends FLASH_ATTN for FA3 support when
+  combined with VLLM_BATCH_INVARIANT=1. An incompatible backend selection can cause the draft model to fail or fall back to
+  a slower implementation, directly reducing speculative decoding throughput and increasing latency.
+
+  '
+usage_locations:
+- file: tests/kernels/attention/test_attention_selector.py:490
+  context: 'Test verifying that when attention_backend=None with use_non_causal=True, auto-selection picks a backend supporting
+    non-causal attention (simulating DFlash scenario).
+
+    '
+- file: tests/v1/spec_decode/test_eagle.py:807
+  context: 'Test creating EAGLE proposer with explicit attention_backend parameter, verifying backend is passed through to
+    draft model initialization.
+
+    '
+- file: tests/v1/spec_decode/test_eagle.py:856
+  context: 'Test creating EAGLE proposer with attention_backend parameter for multi-token speculative decode validation.
+
+    '
+related_parameters:
+- name: attention_backend
+  relation: 'When speculative.attention_backend is None, the draft model inherits the target model''s attention_backend. Setting
+    it explicitly overrides this inheritance.
+
+    '
+- name: speculative_config.method
+  relation: 'Different speculation methods (eagle, ngram, mtp, medusa, dflash) may require different attention backends. DFlash
+    specifically requires a non-causal-capable backend.
+
+    '
+- name: VLLM_BATCH_INVARIANT
+  relation: 'On Ascend NPU, setting this env var to 1 is required to enable FA3 when using FLASH_ATTN as the attention backend.
+
+    '
+constraints:
+- When using DFlash speculative decoding, the selected attention backend must support non-causal attention.
+- TRITON_ATTN does not support multi-token eagle spec decode on certain platforms.
+tuning_advice:
+  summary: 'On Ascend NPU, set to FLASH_ATTN for best draft model performance when using FA3, or leave as None to auto-select
+    based on the target model''s backend.
+
+    '
+  suggested_values:
+  - scenario: 'Using FA3 on Ascend NPU with speculative decoding (any method)
+
+      '
+    value: FLASH_ATTN
+    reason: 'vllm-ascend documentation recommends FLASH_ATTN for FA3 support. Combined with VLLM_BATCH_INVARIANT=1, this enables
+      the optimized flash attention implementation on Ascend hardware, improving draft model throughput.
+
+      '
+  - scenario: 'Using DFlash speculative decoding (requires non-causal attention)
+
+      '
+    value: FLASH_ATTN
+    reason: 'DFlash draft models require non-causal attention. FLASH_ATTN supports non-causal mode, while some backends like
+      FLASH_ATTN_VLLM_V1 do not. Auto-selection (None) will also pick a compatible backend, but explicit setting avoids ambiguity.
+
+      '
+  - scenario: 'Standard speculative decoding where draft model can share target model''s backend
+
+      '
+    value: null
+    reason: 'When the draft model is compatible with the target model''s attention backend, leaving this as None allows auto-selection
+      to inherit the target''s backend, avoiding unnecessary configuration complexity.
+
+      '
+  caveats:
+  - 'On Ascend NPU, FLASH_ATTN requires VLLM_BATCH_INVARIANT=1 to enable FA3 optimizations. Without this env var, FLASH_ATTN
+    may fall back to a slower implementation.
+
+    '
+  - 'Not all attention backends support non-causal attention. If the draft model requires non-causal attention (e.g., DFlash),
+    using an incompatible backend will cause errors or silent fallback to a slower path.
+
+    '
+  - 'TRITON_ATTN has known limitations with multi-token eagle speculative decoding on certain platforms and should be avoided
+    for that use case.
+
+    '
+  quick_guide: 'On Ascend NPU, set to FLASH_ATTN with VLLM_BATCH_INVARIANT=1 for best draft model performance; leave as None
+    for auto-selection otherwise.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,88 @@
+name: additional_config.eplb_config.dynamic_eplb
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:630
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Enabling dynamic EPLB changes the Ascend MoE runtime rather than only recording metadata. The v1 model runner
+  launches a separate EplbProcess and creates an EplbUpdator and D2DExpertWeightLoader; the updater periodically gathers per-expert
+  workload across the dynamic-EPLB communication group, computes a new placement, and asynchronously transfers expert weights
+  before installing the new expert map. This can improve throughput and token latency when uneven expert routing would otherwise
+  leave some expert-parallel ranks as stragglers, but load collection, planning, synchronization, and D2D transfers add overhead
+  and can hurt latency when placement is already balanced or changes too frequently. Dynamic mode also selects EPLB-aware
+  MoE and quantized-weight paths; several quantization implementations clone per-expert weights and scales into lists for
+  updates, while num_redundant_experts permits additional physical expert copies, so enabling it can increase device memory
+  use. The exact benefit and overhead depend on routing skew, interval settings, quantization, and redundant-expert count;
+  the pinned sources provide no universal percentage improvement.
+usage_locations:
+- file: vllm_ascend/worker/model_runner_v1.py:466
+  context: Reads the flag and, when true, launches the EPLB process, updater, and D2D expert-weight loader.
+- file: vllm_ascend/eplb/eplb_updator.py:76
+  context: Schedules load collection, placement calculation, and expert-map/weight updates around the configured intervals.
+- file: vllm_ascend/distributed/parallel_state.py:98
+  context: Creates the dedicated dynamic_eplb communication group only when the flag is enabled.
+- file: vllm_ascend/eplb/core/eplb_utils.py:75
+  context: Enables dynamic EPLB placement and applies num_redundant_experts only in dynamic mode.
+- file: vllm_ascend/eplb/core/eplb_device_transfer_loader.py:78
+  context: Starts asynchronous point-to-point expert-weight transfers and waits before installing updated weights and maps.
+- file: vllm_ascend/worker/v2/model_runner.py:71
+  context: Rejects dynamic EPLB with NotImplementedError in the Ascend NPU v2 model runner.
+- file: vllm_ascend/quantization/methods/w8a8_dynamic.py:367
+  context: Clones per-expert weights and scales into updateable lists when dynamic EPLB is enabled.
+related_parameters:
+- name: additional_config.eplb_config.expert_map_record_path
+  relation: A non-null recording path forces dynamic_eplb to true during configuration validation.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Controls extra physical expert copies in dynamic mode and therefore its balancing capacity and memory cost.
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: Controls the number of forward iterations before the updater gathers load and wakes the planner.
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Adds the planning interval between load collection and applying expert updates.
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Selects the placement policy used by the dynamic EPLB process.
+- name: additional_config.eplb_config.expert_map_path
+  relation: Enables a static expert placement independently of dynamic_eplb.
+constraints:
+- Enabling dynamic_eplb requires DYNAMIC_EPLB to be true or 1, or EXPERT_MAP_RECORD to be exactly true, otherwise configuration
+  validation asserts.
+- Dynamic EPLB requires expert parallelism with ep_size greater than 1; initialization asserts when ep_size is 1.
+- The Ascend NPU v2 model runner does not support dynamic_eplb and raises NotImplementedError.
+- Setting expert_map_record_path forces dynamic_eplb to true even if the supplied dynamic_eplb value is false.
+tuning_advice:
+  summary: Enable dynamic EPLB only for supported multi-NPU MoE workloads whose measured expert-routing imbalance outweighs
+    redistribution overhead.
+  suggested_values:
+  - scenario: Skewed MoE expert utilization on the Ascend v1 runner with expert parallelism
+    value: true
+    reason: Runtime load measurement and expert redistribution can reduce straggler ranks and improve measured throughput
+      and token latency.
+  - scenario: Balanced routing, latency-sensitive traffic with little observed imbalance, or a deployment that does not need
+      runtime redistribution
+    value: false
+    reason: Avoids the background process, load all-gathers, placement work, D2D transfers, and EPLB-specific weight storage.
+  - scenario: Ascend NPU v2 model runner or ep_size equal to 1
+    value: false
+    reason: These configurations reject dynamic EPLB rather than merely running it without benefit.
+  caveats:
+  - Set the required environment variable before constructing the Ascend configuration; the nested flag alone is insufficient.
+  - Benchmark representative routing patterns because the sources do not establish a universal speedup and redistribution
+    can introduce synchronization overhead.
+  - Memory overhead depends on the quantization implementation and num_redundant_experts; inspect device headroom before adding
+    redundant copies.
+  - Tune the collection and algorithm intervals together, since shorter cycles react faster but perform load gathering and
+    redistribution more often.
+  quick_guide: Start with false, enable it on the v1 runner only after observing MoE rank imbalance, and keep it only if end-to-end
+    benchmarks improve.
+analysis_date: '2026-08-01'

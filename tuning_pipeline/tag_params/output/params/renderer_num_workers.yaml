@@ -1,0 +1,82 @@
+name: --renderer-num-workers
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:565
+- vllm/engine/arg_utils.py:837
+- vllm/engine/arg_utils.py:1570
+- vllm/config/model.py:309
+- vllm/config/model.py:676
+value_type: int
+default: 1
+valid_choices: positive integer
+cli_example: --renderer-num-workers 4
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This value sizes the shared ThreadPoolExecutor used by the renderer for blocking tokenizer work and multimodal
+  preprocessing. More workers can reduce request-side preprocessing queueing and improve throughput when concurrent CPU-bound
+  rendering is the bottleneck, but they add thread scheduling overhead and, for fast Hugging Face tokenizers, the renderer
+  prepares a tokenizer pool with renderer_num_workers + 1 deep copies. That makes host-memory use grow with the worker count.
+  The pinned vllm-ascend repository contains no override or direct use of this option, so its behavior on Ascend comes from
+  the pinned upstream vLLM renderer rather than an Ascend-specific execution path.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1570
+  context: Propagates the CLI value into ModelConfig when constructing the engine configuration.
+- file: vllm/config/model.py:309
+  context: Defines the default and documents that the pool handles async tokenization, chat-template rendering, and multimodal
+    preprocessing.
+- file: vllm/config/model.py:676
+  context: Rejects more than one renderer worker when the multimodal processor cache is enabled.
+related_parameters:
+- name: --mm-processor-cache-gb
+  relation: Must be 0 before renderer_num_workers can be greater than 1 because the multimodal processor cache is not thread-safe.
+constraints:
+- Values must be positive; ThreadPoolExecutor rejects max_workers less than or equal to zero during renderer construction.
+- A value greater than 1 is rejected for a multimodal model when --mm-processor-cache-gb is greater than 0.
+tuning_advice:
+  summary: Keep one worker unless concurrent tokenization or multimodal preprocessing is measurably limiting request admission;
+    disable the multimodal processor cache before testing a larger pool.
+  suggested_values:
+  - scenario: Text-only, low-concurrency, or latency-sensitive serving
+    value: 1
+    reason: The default avoids extra tokenizer copies and thread contention when renderer-side work is not a bottleneck.
+  - scenario: Concurrent multimodal serving with the processor cache disabled
+    value: 2
+    reason: A small increase permits overlapping CPU-side preprocessing while limiting tokenizer-copy memory growth.
+  - scenario: High-concurrency multimodal serving after host-side profiling
+    value: 4
+    reason: More workers may reduce renderer queueing when CPU preprocessing remains saturated, but the benefit must be benchmarked.
+  caveats:
+  - More workers do not create additional model or NPU inference workers; they only parallelize renderer-side host work.
+  - Fast Hugging Face tokenizers may require multiple deep-copied tokenizer instances, so monitor host memory as the value
+    rises.
+  - A value above 1 requires --mm-processor-cache-gb 0 for multimodal models; otherwise configuration validation raises ValueError.
+  - Excess workers can cause CPU contention and worsen latency, so compare request throughput and tail latency under representative
+    concurrency.
+  quick_guide: Start at 1; if CPU profiling shows renderer queueing, set --mm-processor-cache-gb 0 and benchmark 2, then 4,
+    while watching host memory and tail latency.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

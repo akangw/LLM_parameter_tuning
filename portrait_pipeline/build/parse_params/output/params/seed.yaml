@@ -1,0 +1,86 @@
+name: --seed
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/model.py:158
+- vllm/engine/arg_utils.py:437
+- vllm/engine/arg_utils.py:773
+- vllm_ascend/worker/worker.py:310
+- vllm_ascend/platform.py:1141
+value_type: int
+default: 0
+valid_choices: any non-negative integer
+cli_example: --seed 42
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: "The --seed parameter sets the global random seed for reproducibility across tensor parallel workers. On Ascend\
+  \ NPU, it is consumed in two distinct paths:\n1. **Worker initialization** (vllm_ascend/worker/worker.py:310-311): During\n\
+  \   NPUWorker._init_device(), set_random_seed(self.model_config.seed) is called\n   to synchronize random states across\
+  \ all workers. This ensures consistent\n   sampling across tensor parallel ranks.\n\n2. **Speculative decoding kernels**\
+  \ (vllm_ascend/worker/v2/sample/gumbel.py:89,\n   vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:37): In v2\n\
+  \   worker path, the seed is passed as seeds_ptr to Gumbel-max sampling kernels\n   on Ascend NPU. The seed is combined\
+  \ with token position via tl.randint(seed, pos)\n   to generate per-token Gumbel noise. On Ascend, pos is cast to int32\
+  \ (instead\n   of uint64) because the NPU compiler's philox implementation only supports\n   int32/uint32 for umulhi operations.\n\
+  \nThe seed does NOT directly affect throughput or latency in a measurable way for standard inference. However, in speculative\
+  \ decoding (v2 worker), the Gumbel noise generation path is on the critical path of draft token sampling. The seed value\
+  \ itself has no performance impact, but the code path that uses seeds (Gumbel sampling) is performance-sensitive on Ascend\
+  \ due to the int32 cast workaround for NPU compiler limitations.\nvllm-ascend's platform.py:1141 defines manual_seed_all(seed)\
+  \ as a no-op (pass), meaning Ascend does not use the upstream manual seed-all mechanism. The seed is only applied via set_random_seed\
+  \ in the worker init path.\nIn parallel sampling (n > 1), each child request gets seed + index as its unique seed (vllm/v1/engine/parallel_sampling.py:80),\
+  \ which has no performance impact beyond the sampling computation itself.\n"
+usage_locations:
+- file: vllm_ascend/worker/worker.py:310
+  context: NPUWorker._init_device() calls set_random_seed(self.model_config.seed) to synchronize random states across Ascend
+    workers
+- file: vllm_ascend/worker/v2/sample/gumbel.py:89
+  context: Gumbel sampling kernel reads seeds_ptr for per-request seed in v2 worker speculative decoding path
+- file: vllm_ascend/worker/v2/spec_decode/rejection_sampler_utils.py:37
+  context: Rejection sampler Gumbel block argmax reads seeds_ptr for draft token verification on Ascend NPU
+- file: vllm_ascend/worker/v2/spec_decode/eagle/speculator.py:101
+  context: Eagle speculator propose() receives seeds tensor for draft model sampling on Ascend
+- file: vllm/config/model.py:158
+  context: ModelConfig.seed field definition with default 0
+- file: vllm/engine/arg_utils.py:1504
+  context: Warning logged when VLLM_ENABLE_V1_MULTIPROCESSING is False about seed affecting Python process random state
+- file: vllm/v1/engine/parallel_sampling.py:80
+  context: Child requests in parallel sampling get seed + index as unique seed
+- file: vllm_ascend/platform.py:1141
+  context: manual_seed_all is a no-op on Ascend (pass)
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Seed ensures consistent sampling across tensor parallel workers; without a fixed seed, different TP ranks would
+    sample different tokens
+- name: VLLM_ENABLE_V1_MULTIPROCESSING
+  relation: When False, setting seed may affect the random state of the launching Python process (logged as warning)
+- name: sampling_params.seed
+  relation: Per-request seed in SamplingParams overrides the global --seed for individual requests; used in parallel sampling
+    (n > 1) to derive child seeds
+constraints:
+- seed must be a non-negative integer (int type, default 0)
+tuning_advice:
+  summary: 'Set --seed to a fixed non-zero value for reproducible outputs across runs. The seed value itself has negligible
+    performance impact on Ascend NPU.
+
+    '
+  suggested_values:
+  - scenario: Production deployment requiring reproducible outputs
+    value: 42
+    reason: Any fixed non-zero seed ensures consistent sampling across tensor parallel workers and across restarts
+  - scenario: Benchmarking or performance testing where reproducibility is not required
+    value: 0
+    reason: Default value; avoids any potential overhead from seed-dependent code paths (though overhead is negligible)
+  caveats:
+  - On Ascend NPU, manual_seed_all() is a no-op — only set_random_seed() in worker init actually applies the seed
+  - In v2 worker speculative decoding, the Gumbel noise generation uses int32 cast for position (instead of uint64) due to
+    NPU compiler limitations — this is a correctness adaptation, not a performance concern
+  - When VLLM_ENABLE_V1_MULTIPROCESSING is False, setting --seed may alter the random state of the Python process that launched
+    vLLM
+  - Per-request seed in SamplingParams overrides the global --seed; for parallel sampling (n > 1), child seeds are derived
+    as seed + index
+  quick_guide: Set --seed to a fixed integer (e.g., 42) for reproducible outputs; the value has negligible performance impact
+    on Ascend NPU
+analysis_date: '2026-07-06'

@@ -1,0 +1,80 @@
+name: HCCL_RDMA_TC
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:188
+value_type: unknown
+default: <external-default>
+valid_choices: Traffic-class values supported by the installed CANN/HCCL and RDMA fabric; neither pinned repository defines
+  the encoding, range, or default.
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'The pinned vLLM Ascend performance guide lists HCCL_RDMA_TC among HCCL optimization variables for specific
+  scenarios and says that it configures the traffic class of the RDMA NIC. This places the setting on the distributed communication
+  path: the selected traffic class can affect how the external HCCL/network stack handles RDMA traffic and therefore can affect
+  communication latency and end-to-end throughput when network traffic classes receive different treatment. Neither pinned
+  repository reads or validates the variable, supplies a value, documents its default or supported range, or provides benchmark
+  deltas; the pinned upstream vLLM repository contains no reference to HCCL_RDMA_TC. Its exact effect is therefore determined
+  by the installed CANN/HCCL release and fabric configuration rather than by vLLM scheduling logic.'
+usage_locations:
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:188
+  context: Documents HCCL_RDMA_TC as an HCCL performance setting for specific scenarios and defines it as configuring the
+    traffic class of the RDMA NIC.
+related_parameters:
+- name: HCCL_RDMA_SL
+  relation: The same pinned guide lists this adjacent HCCL variable for configuring the RDMA NIC service level; traffic-class
+    and service-level policy should be coordinated with the deployed network rather than tuned independently by vLLM.
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: The same guide uses this variable to select an RDMA rather than SDMA mesh interconnect in its documented scenario;
+    HCCL_RDMA_TC matters only on communication paths where the external stack and fabric use the configured RDMA traffic class.
+constraints:
+- Export the variable before HCCL communicators are initialized and use a fabric-supported value consistently across the participating
+  deployment.
+- The value syntax, legal range, unset behavior, and default are owned by the installed CANN/HCCL and RDMA stack; neither
+  pinned repository defines or validates them.
+- A traffic class is a fabric policy selector, not a universally faster numeric setting; the matching network QoS configuration
+  determines its behavior.
+- The pinned source provides no benchmark or scenario-specific value, so no non-default value can be recommended from repository
+  evidence alone.
+tuning_advice:
+  summary: Leave HCCL_RDMA_TC at the external stack default unless the network administrator provides a traffic class for
+    the target RDMA QoS policy; then validate it under representative distributed inference load.
+  suggested_values:
+  - scenario: No deployment-specific RDMA traffic-class policy
+    value: <external-default>
+    reason: Neither pinned repository supplies a value or shows that overriding the external default improves performance,
+      so inheriting the validated CANN/HCCL and fabric configuration is the evidence-bounded starting point.
+  - scenario: Fabric has an administrator-defined QoS/traffic-class mapping
+    value: <fabric-approved-traffic-class>
+    reason: The variable exists to select the RDMA NIC traffic class; a concrete override should therefore match the value
+      approved for the deployed CANN/HCCL release and network policy rather than an unverified generic number.
+  caveats:
+  - The pinned guide links to external vendor details but does not itself specify values, range, default, or performance measurements.
+  - A mismatched or unsupported traffic class may provide no benefit or direct traffic to an unintended QoS policy.
+  - Benchmark end-to-end latency and throughput under representative multi-node contention; an idle-network test may not reveal
+    traffic-class effects.
+  - Apply the same policy across all participating hosts and coordinate any change with the RDMA fabric administrator.
+  quick_guide: Keep the external default unless a fabric-approved value is available. If an override is required, export it
+    before launch on all participating hosts, confirm the traffic-class mapping with the network administrator, and compare
+    tail latency and throughput under representative contention.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  deploy_topology:
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

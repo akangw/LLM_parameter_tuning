@@ -1,0 +1,55 @@
+name: speculative.target_model_config
+type: nested
+category: speculation
+scope: both
+source_file: []
+value_type: dict
+default: <computed>
+valid_choices: <computed>
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This nested config object is used in vllm-ascend''s DeepSeek MTP (Multi-Token Prediction) speculative decoding
+  path to determine the target model type. Specifically, in vllm_ascend/patch/worker/patch_deepseek_mtp.py:29, the code reads
+  `vllm_config.speculative_config.target_model_config.hf_text_config.model_type` to check whether the target model is "glm_moe_dsa".
+  If it is, and if quantization config indicates `is_rot_used`, an additional linear layer (`self.rot`) is created. This affects
+  memory usage (one extra linear layer) and potentially latency (one extra matrix multiply per MTP forward pass). The performance
+  impact is low because it only affects a narrow code path (DeepSeek MTP with GLM MoE DSA target model and specific quantization
+  config). For all other model combinations, this config field has no runtime effect.
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/worker/patch_deepseek_mtp.py:29
+  context: 'Reads target_model_config.hf_text_config.model_type to determine if the target model is "glm_moe_dsa" for conditional
+    ROT layer creation in AscendDeepSeekMultiTokenPredictorLayer.
+
+    '
+related_parameters:
+- name: speculative_config
+  relation: Parent config object that contains target_model_config.
+- name: quant_config.quant_description.is_rot_used
+  relation: 'Must be True for target_model_config to trigger the ROT layer creation in the DeepSeek MTP path.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'This parameter has no direct tuning knobs; its effect is limited to a conditional code path in vllm-ascend''s
+    DeepSeek MTP implementation for GLM MoE DSA models.
+
+    '
+  suggested_values: []
+  caveats:
+  - 'The ROT layer is only created when target_model_config.hf_text_config.model_type is "glm_moe_dsa" AND quant_config.quant_description.is_rot_used
+    is True. For all other configurations, this parameter has no runtime effect.
+
+    '
+  - 'This is a vllm-ascend specific usage; upstream vLLM does not reference target_model_config in this manner.
+
+    '
+  quick_guide: 'No tuning required unless using DeepSeek MTP with GLM MoE DSA target model and ROT-enabled quantization.
+
+    '
+analysis_date: '2026-07-06'

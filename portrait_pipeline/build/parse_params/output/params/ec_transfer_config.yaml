@@ -1,0 +1,64 @@
+name: --ec-transfer-config
+type: cli
+category: other
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1424
+- vllm/engine/arg_utils.py:642
+- vllm/config/vllm.py:327
+value_type: dict
+default: 'null'
+valid_choices: A JSON string representing an ECTransferConfig object
+cli_example: '--ec-transfer-config ''{"is_ec_producer": true, "is_ec_consumer": false}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter configures distributed encoder cache (EC) transfer between producer and consumer instances.
+  When set, it enables the EC connector infrastructure (vllm/v1/core/sched/scheduler.py:140-143), which allows sharing encoder
+  caches (e.g., multimodal embeddings) across instances. The performance impact is indirect: "it affects whether encoder computation"
+  can be skipped on consumer instances by loading pre-computed caches from a producer. On Ascend NPU, this can reduce redundant
+  encoder computation and associated memory usage, but the parameter itself only enables the feature — actual performance
+  gains depend on the specific EC connector implementation and workload characteristics. The parameter also affects whether
+  a sampler is used (vllm/v1/executor/ray_executor.py:92-95) and whether the instance acts as a consumer (vllm/v1/engine/core.py:196-199).
+
+  '
+usage_locations:
+- file: vllm/v1/core/sched/scheduler.py:140-143
+  context: Creates EC connector if ec_transfer_config is not None
+- file: vllm/v1/engine/core.py:196-199
+  context: Determines if instance is EC consumer based on config
+- file: vllm/v1/executor/ray_executor.py:92-95
+  context: Disables sampler on EC producer instances
+- file: vllm/distributed/ec_transfer/ec_connector/base.py:64-68
+  context: Reads is_ec_producer and is_ec_consumer from config
+- file: vllm/distributed/ec_transfer/ec_connector/example_connector.py:53-61
+  context: Reads shared_storage_path from extra_config
+related_parameters:
+- name: --kv-transfer-config
+  relation: Both are distributed cache transfer mechanisms; KV transfer handles KV cache while EC transfer handles encoder
+    cache
+constraints:
+- ec_transfer_config must be set (not None) when using ECConnectorBase, otherwise a ValueError is raised
+- Encoder-decoder models are not currently supported with KV connectors (assert in scheduler.py:120-122)
+tuning_advice:
+  summary: 'Only set this parameter when deploying a distributed encoder cache architecture with separate producer and consumer
+    instances; leave as default (None) for standard single-instance deployments.
+
+    '
+  suggested_values:
+  - scenario: Standard single-instance deployment
+    value: null (do not set)
+    reason: EC transfer adds overhead without benefit when there is no separate producer instance
+  - scenario: Multi-modal model with separate encoder producer and consumer instances
+    value: '''{"is_ec_producer": true, "is_ec_consumer": false}'' on producer; ''{"is_ec_producer": false, "is_ec_consumer":
+      true}'' on consumer'
+    reason: Enables encoder cache sharing to avoid redundant encoder computation on consumers
+  caveats:
+  - On Ascend NPU, the EC connector implementation must be compatible with the platform; the example connector uses disk-based
+    storage which may have high latency
+  - EC transfer is distinct from KV transfer — ensure you are using the correct mechanism for your use case
+  - Producer instances skip the sampler (ray_executor.py:92-95), so they cannot generate tokens directly
+  quick_guide: Leave unset unless deploying a distributed encoder cache architecture with separate producer/consumer instances
+analysis_date: '2026-07-06'

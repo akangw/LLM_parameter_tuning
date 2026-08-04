@@ -1,0 +1,92 @@
+name: VLLM_ALLOW_RUNTIME_LORA_UPDATING
+type: env
+category: model
+scope: vllm
+source_file:
+- vllm/envs.py:964
+value_type: bool
+default: false
+valid_choices:
+- 'true'
+- '1'
+- 'false'
+- '0'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: This flag gates runtime LoRA mutation rather than changing the inference kernels or reserving adapter memory
+  by itself. When enabled, the API server registers load and unload endpoints, and an otherwise unknown model name may be
+  passed to configured LoRA resolvers. Resolving an adapter and engine_client.add_lora are awaited before the initiating request
+  can continue, so filesystem lookup, remote download, adapter validation, and device loading can add substantial one-time
+  latency. A successfully loaded adapter then occupies the LoRA manager's configured CPU/device capacity until it is evicted
+  or removed. Requests using adapters have the ordinary LoRA execution costs, but the flag adds no steady-state latency, throughput,
+  or memory cost when no runtime adapter is resolved or loaded. Ascend does not override this upstream environment gate; its
+  worker supplies the NPU LoRA add/remove implementation used after the gate admits a runtime operation.
+usage_locations:
+- file: docs/features/lora.md:112
+  context: Documents the flag as the gate for dynamic LoRA configuration and the runtime load/unload API.
+- file: docs/features/lora.md:159
+  context: Documents request-time resolver lookup and loading for previously unknown adapter names.
+- file: docs/usage/security.md:308
+  context: Records that dynamic loading requires both --enable-lora and this environment flag.
+- file: vllm_ascend/worker/worker.py:736
+  context: Ascend delegates an admitted add_lora operation to its NPU model runner.
+related_parameters:
+- name: --enable-lora
+  relation: LoRA must be enabled in the engine for dynamically loaded adapters to execute.
+- name: VLLM_PLUGINS
+  relation: Selects resolver plugins that can locate an unknown adapter name.
+- name: VLLM_LORA_RESOLVER_CACHE_DIR
+  relation: Configures the local-filesystem resolver used for runtime lookup.
+- name: VLLM_LORA_RESOLVER_HF_REPO_LIST
+  relation: Configures repositories from which the Hugging Face resolver may download adapters.
+- name: --max-loras
+  relation: Limits distinct LoRAs active in one batch and determines device-side adapter slot capacity.
+- name: --max-cpu-loras
+  relation: Limits the number of adapters retained in CPU memory.
+- name: --max-lora-rank
+  relation: Bounds supported adapter rank and helps determine the size of allocated LoRA slots.
+constraints:
+- The value is stripped and lowercased; only "1" and "true" enable the flag, while other strings evaluate false.
+- Runtime LoRA updating is rejected when api_server_count is greater than 1.
+- The engine must have LoRA support enabled for a loaded adapter to be usable.
+- Resolver-based loading also requires the corresponding plugin and resolver configuration.
+tuning_advice:
+  summary: Leave disabled for fixed-adapter serving; enable only when runtime adapter changes are required and their load
+    latency and memory residency are acceptable.
+  suggested_values:
+  - scenario: Fixed production model and adapter set
+    value: 'false'
+    reason: Avoids runtime mutation and unpredictable on-demand load latency without changing normal fixed-LoRA performance.
+  - scenario: Trusted development or controlled dynamic-adapter service
+    value: 'true'
+    reason: Allows adapters to be added, removed, or resolved without restarting the server.
+  caveats:
+  - Enabling the flag alone does not preallocate adapter weights or consume additional LoRA capacity.
+  - The first request for an unresolved adapter waits for resolution and loading; a remote resolver can also incur download
+    time.
+  - Loaded adapters consume CPU and accelerator memory subject to the configured LoRA capacity and rank limits.
+  - Dynamic loading is explicitly documented as unsafe for untrusted clients; restrict the mutation endpoints to trusted administrators.
+  - More than one API server process is incompatible with runtime LoRA updating.
+  quick_guide: Keep false unless a single, trusted API server must add or resolve LoRA adapters at runtime.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

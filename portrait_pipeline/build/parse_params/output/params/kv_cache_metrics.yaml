@@ -1,0 +1,69 @@
+name: --kv-cache-metrics
+type: cli
+category: observability
+scope: both
+source_file:
+- vllm/config/observability.py:48
+- vllm/engine/arg_utils.py:610
+- vllm/engine/arg_utils.py:1290
+- vllm/v1/core/sched/scheduler.py:84
+- vllm/v1/metrics/loggers.py:425
+- vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:12
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --kv-cache-metrics
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, this flag activates the KVCacheMetricsCollector in the v1 scheduler (vllm/v1/core/sched/scheduler.py:84-87).
+  The collector samples a fraction of KV cache blocks (controlled by --kv-cache-metrics-sample, default 0.01 = 1%) and tracks
+  metrics such as block lifetime, idle time, and reuse gaps. The sampling mechanism is designed to minimize overhead, but
+  it still adds per-block tracking logic during block allocation and freeing in the scheduler''s hot path. On Ascend NPU,
+  the vllm-ascend patch (vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:12) imports KVCacheMetricsCollector for
+  use in the AscendHybridKVCacheCoordinator, confirming this feature is active on Ascend. The metrics are exposed via Prometheus
+  when log stats are enabled (--disable-log-stats not set). The performance cost is proportional to the sampling rate and
+  the number of KV cache blocks in use. At the default 1% sampling rate, the overhead is negligible for most deployments.
+
+  '
+usage_locations:
+- file: vllm/v1/core/sched/scheduler.py:84
+  context: Conditionally instantiates KVCacheMetricsCollector when kv_cache_metrics is True
+- file: vllm/v1/metrics/loggers.py:425
+  context: Checks kv_cache_metrics_enabled flag to register KV cache Prometheus metrics
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:12
+  context: Imports KVCacheMetricsCollector for use in AscendHybridKVCacheCoordinator
+- file: vllm/v1/core/kv_cache_coordinator.py:8
+  context: Imports KVCacheMetricsCollector for use in upstream KVCacheCoordinator
+- file: vllm/v1/core/block_pool.py:14
+  context: Imports KVCacheMetricsCollector for block pool integration
+- file: vllm/v1/core/kv_cache_manager.py:12
+  context: Imports KVCacheMetricsCollector for KV cache manager integration
+related_parameters:
+- name: --kv-cache-metrics-sample
+  relation: Controls the sampling rate for KV cache metrics; only effective when --kv-cache-metrics is enabled
+- name: --disable-log-stats
+  relation: KV cache metrics require log stats to be enabled; if --disable-log-stats is set, metrics are not collected
+constraints:
+- Log stats must be enabled (--disable-log-stats must not be set) for KV cache metrics to be collected
+tuning_advice:
+  summary: Enable only when debugging KV cache behavior; keep disabled in production for minimal overhead
+  suggested_values:
+  - scenario: Production deployment with stable KV cache performance
+    value: 'False'
+    reason: Avoids any scheduler overhead from block sampling and metric collection; KV cache metrics are primarily diagnostic
+  - scenario: Debugging KV cache reuse, prefix caching efficiency, or block eviction patterns
+    value: 'True'
+    reason: Provides visibility into block lifetime, idle time, and reuse gaps to diagnose cache inefficiencies
+  caveats:
+  - On Ascend NPU, the AscendHybridKVCacheCoordinator inherits the same metrics collection path as upstream, so overhead characteristics
+    are similar to GPU
+  - The default sampling rate of 1% (--kv-cache-metrics-sample 0.01) keeps overhead minimal; increasing the sample rate increases
+    per-block tracking cost proportionally
+  - Metrics are only emitted when log stats are printed; if log stats interval is very short, the metric aggregation cost
+    may become noticeable
+  quick_guide: Leave disabled (default) for production; enable temporarily with default 1% sampling when investigating KV
+    cache behavior
+analysis_date: '2026-07-06'

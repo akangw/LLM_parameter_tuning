@@ -1,0 +1,83 @@
+name: --enable-eplb
+type: cli
+category: parallelism
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1052
+- vllm/config/parallel.py:160
+- vllm_ascend/models/deepseek_v4.py:263
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-eplb
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: Enables vLLM expert-parallel load balancing for MoE layers. The parallel configuration validates the feature,
+  and MoE model implementations pass it with the redundant-expert count to FusedMoE; this changes expert placement and can
+  reduce routing imbalance across ranks, improving throughput on imbalanced MoE workloads. Redundant experts, configured separately,
+  add physical expert capacity and therefore memory use. On the pinned Ascend integration, DeepSeek V4 also forwards this
+  field to FusedMoE, but the current upstream validation rejects --enable-eplb on Ascend because its platform is not CUDA-alike;
+  Ascend's tested dynamic EPLB path is configured independently through --additional-config eplb_config.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1052
+  context: Registers the --enable-eplb CLI option from EngineArgs parallel arguments.
+- file: vllm/config/parallel.py:446
+  context: Validates CUDA/ROCm support, expert parallelism, and TP*DP greater than one when EPLB is enabled.
+- file: vllm/config/parallel.py:893
+  context: Selects the EPLB communicator when the feature is enabled and none was explicitly configured.
+- file: vllm/model_executor/models/deepseek_v2.py:286
+  context: Reads ParallelConfig.enable_eplb and the redundant-expert configuration for a DeepSeek MoE layer.
+- file: vllm/model_executor/models/deepseek_v2.py:344
+  context: Passes enable_eplb and num_redundant_experts to FusedMoE.
+- file: vllm_ascend/models/deepseek_v4.py:263
+  context: The Ascend DeepSeek V4 layer reads the same parallel configuration field.
+- file: vllm_ascend/models/deepseek_v4.py:328
+  context: Forwards the field and redundant-expert count to the Ascend FusedMoE constructor.
+- file: tests/e2e/pull_request/two_card/test_qwen3_moe_eplb.py:54
+  context: Ascend's EPLB integration test enables its native dynamic path through DYNAMIC_EPLB and additional-config eplb_config,
+    not this CLI flag.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Must be enabled before --enable-eplb can pass validation.
+- name: --eplb-config
+  relation: Sets EPLB details including redundant experts, policy, asynchronous operation, and communicator behavior.
+- name: --tensor-parallel-size
+  relation: Together with data parallel size, must provide more than one rank for EPLB.
+- name: --data-parallel-size
+  relation: Together with tensor parallel size, must provide more than one rank for EPLB.
+- name: --additional-config
+  relation: The pinned Ascend implementation tests native dynamic EPLB through its eplb_config subconfiguration instead of
+    --enable-eplb.
+constraints:
+- The pinned vLLM validation supports --enable-eplb only on CUDA- or ROCm-like platforms.
+- The pinned Ascend platform states that is_cuda_alike is false, so this CLI option is currently rejected on Ascend before
+  model construction.
+- --enable-expert-parallel must be true.
+- tensor_parallel_size multiplied by data_parallel_size must be greater than one.
+- A nonzero eplb_config.num_redundant_experts requires EPLB to be enabled.
+- eplb_config.use_async supports only the default EPLB policy.
+tuning_advice:
+  summary: For supported CUDA or ROCm multi-rank MoE inference, enable EPLB when routing is imbalanced and tune the companion
+    EPLB configuration. Do not enable this CLI option for the pinned Ascend runtime; use its native additional-config EPLB
+    settings where applicable.
+  suggested_values:
+  - scenario: Multi-rank CUDA or ROCm MoE serving with expert parallelism and observed expert-load imbalance
+    value: true
+    reason: Enables the load-balancing path used by MoE layers, which can improve throughput by distributing routed work more
+      evenly across ranks.
+  - scenario: Single-rank serving, dense models, or an Ascend NPU deployment using the pinned sources
+    value: false
+    reason: A single rank cannot satisfy the EPLB topology requirement, dense models have no routed experts, and the current
+      Ascend platform rejects this CLI option.
+  caveats:
+  - Enabling EPLB without expert parallelism or with TP multiplied by DP equal to one raises a configuration error.
+  - Redundant experts configured through --eplb-config can increase model memory consumption.
+  - Ascend's native dynamic EPLB configuration is separate from this CLI flag in the pinned integration tests.
+  quick_guide: On supported CUDA or ROCm MoE deployments, combine --enable-eplb with --enable-expert-parallel and a multi-rank
+    TP/DP topology; configure redundant experts only when the available memory justifies them.
+analysis_date: '2026-07-27'

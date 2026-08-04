@@ -1,0 +1,94 @@
+name: VLLM_SSM_CONV_STATE_LAYOUT
+type: env
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/envs.py:1453
+- vllm/model_executor/models/olmo_hybrid.py:434
+- vllm/model_executor/models/plamo2.py:270
+- vllm_ascend/_310p/ops/causal_conv1d.py:122
+value_type: str
+default: null
+valid_choices:
+- SD
+- DS
+cli_example: VLLM_SSM_CONV_STATE_LAYOUT=DS vllm serve <model>
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: Selects the in-memory orientation of each Mamba/SSM convolution-state cache block. SD stores (state_len, dim),
+  leaving the feature dimension contiguous, and is the effective default when the variable is unset. DS stores (dim, state_len),
+  matching the temporal-state/HND-style layout and making the tensor-parallel-sharded feature dimension the first per-block
+  dimension. The element count and cache byte size are unchanged, but kernel paths may avoid or require transposed views depending
+  on the orientation, so decode latency and throughput can differ by model and backend. DS is also mandatory for upstream
+  NIXL HMA's three-read Mamba transfer because its x/B/C sub-projections must be contiguous. The pinned vllm-ascend repository
+  contains no direct reference to this environment variable, so its DS performance and compatibility should be verified on
+  the active Ascend model and operator path.
+usage_locations:
+- file: vllm/envs.py:1453
+  context: Parses the optional environment value and restricts it to SD or DS.
+- file: vllm/model_executor/models/olmo_hybrid.py:434
+  context: Uses dimension-first storage directly and transposes state-length-first storage into the convolution kernel's expected
+    view.
+- file: vllm/model_executor/models/plamo2.py:270
+  context: Selects a direct state tensor or a transpose according to the resolved convolution-state layout.
+- file: vllm_ascend/_310p/ops/causal_conv1d.py:122
+  context: The Ascend 310P convolution implementation accepts either trailing orientation and transposes state-length-first
+    input before operating on it.
+- file: vllm_ascend/_310p/ops/causal_conv1d.py:205
+  context: The Ascend 310P update path likewise detects and transposes the alternate state orientation.
+related_parameters:
+- name: --mamba-cache-mode
+  relation: In align mode, DS does not support speculative state copies when more than one token is accepted.
+- name: --kv-transfer-config
+  relation: The upstream NIXL HMA three-read Mamba transfer path requires this variable to be DS.
+- name: --speculative-config
+  relation: Speculative decoding can request offset state copies that DS currently rejects with mamba-cache-mode=align.
+- name: --tensor-parallel-size
+  relation: DS places the tensor-parallel-sharded feature dimension first within each convolution-state block.
+constraints:
+- The only explicit values accepted by the environment parser are SD and DS.
+- Unset does not mean an adaptive choice; get_conv_state_layout resolves it to SD.
+- NIXL HMA three-read Mamba transfer asserts that the effective layout is DS and currently supports only Mamba2 state decomposition.
+- DS with mamba-cache-mode=align raises NotImplementedError when a speculative state copy has num_accepted_tokens greater
+  than one.
+- The layout decision is LRU-cached in-process; set the environment variable before engine/model initialization.
+- The pinned vllm-ascend source has no parameter-specific validation or override, so DS must be tested against the selected
+  Ascend operator path.
+tuning_advice:
+  summary: Keep the effective SD default for ordinary serving. Use DS when the upstream NIXL HMA three-read Mamba transfer
+    path requires it, or after a model/backend benchmark shows that dimension-first storage removes useful transpose overhead.
+  suggested_values:
+  - scenario: General Mamba or hybrid-model serving without three-read NIXL HMA transfer
+    value: unset
+    reason: Uses the established SD default and retains the supported align-mode speculative-copy behavior.
+  - scenario: Upstream NIXL HMA three-read transfer for a supported Mamba2 model
+    value: DS
+    reason: This transfer decomposition asserts DS so the x, B, and C convolution sub-projections are contiguous.
+  - scenario: Ascend deployment considering DS
+    value: SD
+    reason: The pinned vllm-ascend code does not explicitly integrate or validate this environment switch; SD is the safer
+      baseline until the exact operator path is benchmarked.
+  caveats:
+  - DS does not reduce the number of cache elements or its nominal memory footprint; it changes strides and contiguity.
+  - A layout that avoids a transpose for one kernel can introduce a non-contiguous view or copy in another path.
+  - Do not use DS with align-mode speculative copies that can accept more than one token.
+  - Restart the process when changing the value because the resolved layout is cached.
+  quick_guide: Leave unset for SD; set DS only for the required NIXL HMA three-read path or after end-to-end validation, and
+    avoid DS with multi-token speculative copies in align mode.
+analysis_date: '2026-07-29'
+tags:
+  model:
+  - dense
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

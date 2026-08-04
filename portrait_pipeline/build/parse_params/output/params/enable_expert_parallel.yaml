@@ -1,0 +1,117 @@
+name: --enable-expert-parallel
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1021
+- vllm/config/parallel.py:151
+- vllm_ascend/ascend_config.py:108
+- vllm_ascend/platform.py:646
+- vllm_ascend/ascend_forward_context.py:270
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:217
+- vllm_ascend/ops/fused_moe/moe_comm_method.py:261
+- vllm_ascend/quantization/methods/w4a8.py:363
+- vllm_ascend/utils.py:697
+- vllm_ascend/xlite/xlite.py:418
+- vllm_ascend/xlite/xlite.py:483
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --enable-expert-parallel
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "When enabled, MoE layers use expert parallelism (EP) instead of tensor parallelism (TP). On Ascend NPU, this\
+  \ triggers a fundamentally different communication path:\n1. **Communication method selection** (vllm_ascend/ascend_forward_context.py:270):\n\
+  \   If enable_expert_parallel is True and EP group world_size > 1, the system selects\n   between MC2 (Communication-Computation\
+  \ fusion) and ALLGATHER methods based on\n   soc_version (A2 vs A3), num_experts_per_device, ep_world_size, and num_tokens.\n\
+  \   When disabled or EP world_size=1, it falls back to ALLGATHER.\n\n2. **MC2/FusedMC2 communication** (vllm_ascend/ops/fused_moe/moe_comm_method.py:217,261):\n\
+  \   Both MC2CommImpl and FusedMC2CommImpl require enable_expert_parallel=True.\n   These use npu_moe_distribute_dispatch\
+  \ and npu_moe_distribute_combine for\n   optimized all-to-all communication on Ascend devices, overlapping\n   communication\
+  \ with computation.\n\n3. **Weight loading** (vllm_ascend/quantization/methods/w4a8.py:363):\n   When enable_expert_parallel\
+  \ is True, tp_size is set to 1 for MoE weight\n   partitioning, meaning each device loads only its expert shard. This\n\
+  \   drastically reduces per-device memory usage for large MoE models.\n\n4. **FlashComm1 compatibility** (vllm_ascend/platform.py:646):\n\
+  \   FlashComm1 optimization for MoE models requires enable_expert_parallel=True.\n   An assertion enforces this: \"\\\"\
+  Flash Comm v1 requires enable_expert_parallel=True\"\n   for MoE models.\"\n\n5. **Shared expert DP** (vllm_ascend/ascend_config.py:108):\n\
+  \   enable_shared_expert_dp is only activated when enable_expert_parallel is True\n   AND tensor_parallel_size > 1.\n\n\
+  6. **ACL graph capture** (vllm_ascend/utils.py:697):\n   When HCCL_OP_EXPANSION_MODE=AIV, enable_expert_parallel adds an\
+  \ extra\n   parallel_factor, reducing the maximum supported batch sizes for ACL graph\n   capture.\n\n7. **XLite backend**\
+  \ (vllm_ascend/xlite/xlite.py:418,483):\n   For QwenMoe and GLM4Moe models, enable_expert_parallel determines whether\n\
+  \   moe_ep_size equals ep_group.world_size (EP mode) or 1 (TP mode), and\n   moe_tp_size is set to 1 (EP mode) or ep_group.world_size\
+  \ (TP mode).\n\nOverall, enabling this parameter on Ascend NPU for MoE models: - \"Reduces per-device memory by loading\
+  \ only local expert shards\" - \"Enables MC2/FusedMC2 optimized communication (lower latency, higher throughput)\" - \"\
+  Is required for FlashComm1 optimization\" - \"May reduce max batch sizes in ACL graph mode due to additional stream usage\"\
+  \ - \"Changes the parallelism strategy from TP (all experts replicated across TP group)\"\n  to EP (experts distributed\
+  \ across EP group)\n"
+usage_locations:
+- file: vllm_ascend/ascend_forward_context.py:270
+  context: Determines MoE communication type (MC2 vs ALLGATHER) based on enable_expert_parallel
+- file: vllm_ascend/platform.py:646
+  context: Asserts enable_expert_parallel=True when FlashComm1 is used with MoE models
+- file: vllm_ascend/ascend_config.py:108
+  context: Gates enable_shared_expert_dp feature
+- file: vllm_ascend/quantization/methods/w4a8.py:363
+  context: Sets tp_size=1 for MoE weight loading when EP is enabled
+- file: vllm_ascend/utils.py:697
+  context: Affects ACL graph capture parallel_factor calculation
+- file: vllm_ascend/xlite/xlite.py:418
+  context: Configures moe_ep_size and moe_tp_size for QwenMoe XLite models
+- file: vllm_ascend/xlite/xlite.py:483
+  context: Configures moe_ep_size and moe_tp_size for GLM4Moe XLite models
+- file: vllm/config/parallel.py:452
+  context: EPLB validation requires enable_expert_parallel=True
+- file: vllm/config/model.py:1149
+  context: Triggers expert parallelism model verification
+related_parameters:
+- name: --tensor-parallel-size
+  relation: When enable_expert_parallel is True, MoE layers use EP instead of TP; TP still applies to non-MoE (dense) layers
+- name: --data-parallel-size
+  relation: EP group size is derived from world_size_across_dp / pp_size; DP and EP interact in multi-node deployments
+- name: --enable-eplb
+  relation: EPLB (expert parallelism load balancing) requires enable_expert_parallel=True
+- name: --enable-ep-weight-filter
+  relation: Only effective when enable_expert_parallel is True; skips non-local expert weights during loading
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: FlashComm1 for MoE models requires enable_expert_parallel=True (enforced by assertion)
+- name: --enable-elastic-ep
+  relation: Elastic EP scaling builds on expert parallelism
+- name: --enable-shared-expert-dp
+  relation: Only activated when enable_expert_parallel=True and tensor_parallel_size > 1
+constraints:
+- FlashComm1 (VLLM_ASCEND_ENABLE_FLASHCOMM1=1) requires enable_expert_parallel=True for MoE models
+- EPLB (--enable-eplb) requires enable_expert_parallel=True
+- MC2 and FusedMC2 communication methods require enable_expert_parallel=True
+- vLLM does not support mixed ETP and EP; MoE layers use either pure EP or pure TP
+tuning_advice:
+  summary: Enable for all MoE model deployments on Ascend NPU to reduce memory usage and enable optimized MC2 communication;
+    required for FlashComm1 optimization.
+  suggested_values:
+  - scenario: MoE model deployment on Ascend NPU (any scale)
+    value: 'True'
+    reason: Enables expert parallelism which distributes experts across devices, reducing per-device memory and enabling MC2/FusedMC2
+      optimized all-to-all communication. Required for FlashComm1 optimization which further improves throughput.
+  - scenario: Non-MoE (dense) model deployment
+    value: 'False'
+    reason: Expert parallelism has no effect on dense models; the parameter is ignored.
+  - scenario: Single-device MoE deployment (tp_size=1, dp_size=1)
+    value: 'False'
+    reason: With only one device, EP group world_size=1, so the system falls back to ALLGATHER regardless. Enabling EP provides
+      no benefit and may add unnecessary overhead.
+  caveats:
+  - When HCCL_OP_EXPANSION_MODE=AIV, enabling expert parallelism adds an extra parallel_factor, which reduces the maximum
+    supported batch sizes for ACL graph capture
+  - EP distributes experts across devices; if expert load is imbalanced, some devices may be underutilized while others are
+    overloaded. Consider using EPLB for load balancing
+  - On A2 devices, MC2 is only selected when num_experts_per_device <= 24, ep_world_size >= 16, and num_tokens <= mc2_tokens_capacity;
+    otherwise ALLGATHER is used
+  - On A3 devices, FusedMC2 requires ep_world_size <= 32 and non-draft-model mode; dispatch_ffn_combine has additional constraints
+  - W4A8 quantization with new_quant_version and tp_size > 16 raises an error when EP is enabled (tp_size becomes 1 internally,
+    avoiding this limit)
+  quick_guide: Always use --enable-expert-parallel for MoE models on Ascend NPU with multi-device deployments; pair with VLLM_ASCEND_ENABLE_FLASHCOMM1=1
+    for best performance.
+analysis_date: '2026-07-06'

@@ -1,0 +1,80 @@
+name: --enable-return-routed-experts
+type: cli
+category: observability
+scope: both
+source_file:
+- vllm/config/model.py:220
+- vllm/config/vllm.py:1898
+- vllm_ascend/ops/fused_moe/fused_moe.py:181
+- vllm_ascend/worker/model_runner_v1.py:2302
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-return-routed-experts
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: On Ascend, enabled MoE layers capture every forward pass's selected expert IDs (topk_ids) through the routed-experts
+  capturer in vllm_ascend/ops/fused_moe/fused_moe.py:181. The model runner then extracts the results for the batch; on non-0.21.0
+  compatibility paths it copies both routing data and slot mappings from NPU buffers to CPU buffers and synchronizes the NPU
+  stream in vllm_ascend/worker/model_runner_v1.py:2302. This adds capture work, host/device transfer and buffer storage proportional
+  to routed tokens, MoE layers and experts selected per token, so it can slightly raise step latency, reduce throughput and
+  consume additional device and host memory.
+usage_locations:
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:181
+  context: Captures selected MoE top-k expert IDs when the model option is enabled.
+- file: vllm_ascend/worker/model_runner_v1.py:2302
+  context: Extracts routed-expert results; compatibility paths copy device buffers to CPU and synchronize.
+- file: vllm_ascend/core/recompute_scheduler.py:849
+  context: Stores batch routing data in the scheduler-side routed-experts manager on non-0.21.0 paths.
+- file: vllm/config/vllm.py:1898
+  context: Validates parallelism and async-scheduling combinations for the upstream feature.
+related_parameters:
+- name: --enable-expert-parallel
+  relation: Expert parallelism is validated with routed-expert capture and is commonly used for MoE deployments.
+- name: --async-scheduling
+  relation: Upstream validation rejects async scheduling when routed-expert return is enabled.
+constraints:
+- Only produces routed-expert data for models that execute MoE layers; dense models have no MoE routing IDs to capture.
+- Upstream rejects this option with pipeline parallelism greater than one, prefill or decode context parallelism greater than
+  one, or async scheduling.
+- The Ascend integration has separate behavior for vLLM 0.21.0, which uses a process-wide capturer, and other supported compatibility
+  paths.
+tuning_advice:
+  summary: Keep disabled for normal serving; enable it only when consumers need per-token MoE routing data for debugging,
+    analysis, or replay.
+  suggested_values:
+  - scenario: Production serving without routed-expert analysis
+    value: false
+    reason: Avoids MoE routing capture, extra routing buffers, and result extraction or transfer work.
+  - scenario: Debugging or replaying MoE routing decisions
+    value: true
+    reason: Returns the selected experts needed for routing inspection while accepting the additional capture overhead.
+  caveats:
+  - The runtime cost scales with the routed workload and applies only while MoE layers execute.
+  - Some parallelism and scheduling combinations are rejected by upstream validation.
+  quick_guide: Disable by default; enable temporarily for MoE routing diagnostics or replay.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

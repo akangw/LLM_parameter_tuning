@@ -1,0 +1,53 @@
+name: kv_transfer_config.kv_connector_extra_config.backend
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:105
+value_type: str
+default: mooncake
+valid_choices:
+- mooncake
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter selects the backend implementation for KV cache transfer between producer and consumer instances
+  in a disaggregated prefill-decode setup on Ascend NPU. It is read at line 105 of pool_worker.py during KVPoolWorker initialization:
+  `self.backend = vllm_config.kv_transfer_config.kv_connector_extra_config.get("backend", "mooncake")`. The backend value
+  determines which communication library and protocol are used for transferring KV cache blocks across nodes. Currently, only
+  "mooncake" is supported as the default and sole backend. The backend choice directly affects the latency of KV cache transfer
+  operations, which in turn impacts end-to-end request latency and overall system throughput in disaggregated serving scenarios.
+  An incorrect or unsupported backend value would cause initialization failure or fallback behavior that degrades performance.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:105
+  context: Read during KVPoolWorker.__init__ to set self.backend for KV transfer operations.
+- file: tests/ut/distributed/ascend_store/test_pool_worker.py:91
+  context: Test fixture defaulting backend to 'mooncake' for KVPoolWorker initialization tests.
+- file: tests/ut/distributed/ascend_store/test_pool_worker.py:470
+  context: Test fixture defaulting backend to 'mooncake' for KVPoolWorker integration tests.
+related_parameters:
+- name: kv_transfer_config.kv_role
+  relation: Determines whether this instance acts as kv_producer or kv_consumer; the backend is used for both roles.
+- name: kv_transfer_config.kv_connector_extra_config.load_async
+  relation: Controls asynchronous loading behavior which interacts with the backend's transfer mechanism.
+- name: kv_transfer_config.kv_connector_extra_config.consumer_is_to_put
+  relation: Controls whether the consumer initiates KV cache put operations, affecting backend usage patterns.
+constraints:
+- Only 'mooncake' is currently supported as a backend value; other values may cause initialization failure or undefined behavior.
+tuning_advice:
+  summary: Use the default 'mooncake' backend as it is the only supported option for KV cache transfer on Ascend NPU.
+  suggested_values:
+  - scenario: All disaggregated prefill-decode deployments on Ascend NPU
+    value: mooncake
+    reason: This is the only backend implementation available and tested for Ascend NPU KV cache transfer.
+  caveats:
+  - The backend parameter is read from kv_connector_extra_config dict; ensure it is properly set in the vLLM config to avoid
+    relying on the default fallback.
+  - Future vllm-ascend versions may introduce additional backends; verify compatibility before switching.
+  quick_guide: Keep backend as 'mooncake' — it is the sole supported KV transfer backend for Ascend NPU disaggregated serving.
+analysis_date: '2026-07-06'

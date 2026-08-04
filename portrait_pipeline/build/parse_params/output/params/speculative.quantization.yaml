@@ -1,0 +1,50 @@
+name: speculative.quantization
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm_ascend/platform.py:995
+- vllm_ascend/platform.py:1001
+value_type: str
+default: None
+valid_choices: '''None (any non-None value is reset to None on Ascend)'''
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'On Ascend NPU, vllm-ascend silently overrides this parameter to None regardless of user input. The platform.py
+  compatibility layer (lines 995-1001) detects any non-None quantization setting on speculative_config, logs a warning, and
+  resets it to None. This means the draft model automatically inherits the main model''s quantization method on Ascend — users
+  cannot specify a different quantization for the draft model. The performance impact is low because the parameter itself
+  has no effect on Ascend; the actual quantization behavior is determined by the main model''s quantization config. Memory
+  savings from quantization still apply, but they are controlled by the main model''s quantization parameter, not this one.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:995
+  context: 'Ascend compatibility check: detects non-None speculative quantization and resets it to None'
+- file: vllm_ascend/platform.py:1001
+  context: 'Ascend compatibility enforcement: sets speculative_config.quantization = None'
+related_parameters:
+- name: quantization (main model)
+  relation: On Ascend, the draft model automatically inherits the main model's quantization method; this speculative.quantization
+    parameter is ignored
+constraints:
+- On Ascend NPU, any non-None value for speculative.quantization is automatically reset to None — the draft model always inherits
+  the main model's quantization
+tuning_advice:
+  summary: Do not set speculative.quantization on Ascend — it is silently ignored and the draft model inherits the main model's
+    quantization automatically
+  suggested_values:
+  - scenario: All Ascend deployments with speculative decoding
+    value: None (leave unset)
+    reason: vllm-ascend automatically resets this to None and inherits main model quantization; setting it has no effect and
+      only produces a warning
+  caveats:
+  - Setting a non-None value for speculative.quantization on Ascend produces a warning log but does not cause an error — the
+    value is silently overridden
+  - If you need the draft model to use a specific quantization, configure it via the main model's quantization parameter instead
+  quick_guide: Leave speculative.quantization unset on Ascend — draft model quantization is inherited from the main model
+    automatically
+analysis_date: '2026-07-06'

@@ -1,0 +1,89 @@
+name: speculative.enforce_eager
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm_ascend/spec_decode/llm_base_proposer.py:162
+- vllm/v1/spec_decode/extract_hidden_states.py:225
+- vllm/v1/spec_decode/llm_base_proposer.py:377
+- vllm/v1/worker/gpu_model_runner.py:5655
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: '--speculative-config ''{"enforce_eager": true}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls whether the speculative decoding proposer (draft model) uses CUDA graph (ACL graph on Ascend) acceleration.
+  When enforce_eager is false (default), the proposer can use graph capture to reduce kernel launch overhead, significantly
+  improving speculative decoding throughput and latency. When enforce_eager is true, graph capture is disabled for the proposer,
+  forcing eager execution mode which increases per-step overhead and reduces performance.
+
+  On Ascend NPU specifically, this parameter is checked in vllm_ascend/spec_decode/llm_base_proposer.py:162 to determine use_cuda_graph:
+  "`self.use_cuda_graph = self.runner._use_aclgraph() and not self.speculative_config.enforce_eager`." This means even if
+  ACL graph is globally enabled, setting enforce_eager=true will disable it for the draft model proposer.
+
+  In vllm upstream (v1), the same parameter controls whether PIECEWISE cudagraphs are used for the Eagle proposer (vllm/v1/spec_decode/extract_hidden_states.py:225,
+  vllm/v1/spec_decode/llm_base_proposer.py:377) and whether cudagraphs are used during drafter dummy_run (vllm/v1/worker/gpu_model_runner.py:5655).
+
+  Additionally, vllm-ascend documentation (flash_attention.md) notes that when using FA3 (flash_attn_with_kvcache), ACL graph
+  capture is not supported, and enforce_eager=True is required. This creates a tension: FA3 requires eager mode, but eager
+  mode disables graph acceleration for the proposer.
+
+  '
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:162
+  context: 'Determines use_cuda_graph for AscendEagleProposer: `self.use_cuda_graph = self.runner._use_aclgraph() and not
+    self.speculative_config.enforce_eager`'
+- file: vllm/v1/spec_decode/extract_hidden_states.py:225
+  context: Controls whether PIECEWISE cudagraphs are used for ExtractHiddenStatesProposer initialization
+- file: vllm/v1/spec_decode/llm_base_proposer.py:377
+  context: Controls whether PIECEWISE cudagraphs are used for EagleProposer cudagraph key initialization
+- file: vllm/v1/worker/gpu_model_runner.py:5655
+  context: Controls whether cudagraphs are used during drafter dummy_run in speculative decoding
+related_parameters:
+- name: model_config.enforce_eager
+  relation: Separate from speculative.enforce_eager; model_config.enforce_eager controls the target model's eager mode, while
+    speculative.enforce_eager controls only the draft model proposer
+- name: compilation_config.cudagraph_mode
+  relation: speculative.enforce_eager=false only takes effect when cudagraph_mode is PIECEWISE or FULL; if cudagraph_mode
+    is NONE, the proposer runs eagerly regardless
+- name: VLLM_ASCEND_ENABLE_ACLGRAPH
+  relation: On Ascend, use_cuda_graph requires both ACL graph enabled AND speculative.enforce_eager=false; either being false
+    disables graph capture for the proposer
+constraints:
+- When using FA3 (flash_attn_with_kvcache) on Ascend NPU, enforce_eager must be set to true because ACL graph capture is not
+  supported for FA3's host-side tiling
+- speculative.enforce_eager only affects the draft model proposer, not the target model; use model_config.enforce_eager to
+  control the target model
+tuning_advice:
+  summary: Keep speculative.enforce_eager=false (default) for best speculative decoding performance on Ascend NPU, unless
+    using FA3 or debugging graph capture issues
+  suggested_values:
+  - scenario: Default production deployment with speculative decoding on Ascend NPU
+    value: 'false'
+    reason: Allows ACL graph capture for the draft model proposer, reducing kernel launch overhead and improving speculative
+      decoding throughput
+  - scenario: Using FA3 (flash_attn_with_kvcache) on Ascend NPU
+    value: 'true'
+    reason: FA3's host-side tiling does not support ACL graph capture; enforce_eager=true is required to avoid errors
+  - scenario: Debugging graph capture issues or encountering instability with speculative decoding
+    value: 'true'
+    reason: Falls back to eager execution for the proposer, which is more stable but slower; useful for isolating graph-related
+      bugs
+  caveats:
+  - Setting enforce_eager=true disables ACL graph capture for the draft model proposer on Ascend, which can significantly
+    reduce speculative decoding performance
+  - On Ascend, use_cuda_graph depends on BOTH ACL graph being globally enabled AND speculative.enforce_eager=false; if either
+    condition fails, the proposer runs in eager mode
+  - The vllm-ascend documentation recommends enforce_eager=True as a fallback when encountering graph mode issues, but this
+    should be temporary for debugging only
+  - This parameter is separate from model_config.enforce_eager; setting speculative.enforce_eager=true does not affect the
+    target model's execution mode
+  quick_guide: Default to false for best performance; set to true only when using FA3 or debugging graph capture issues on
+    Ascend NPU
+analysis_date: '2026-07-06'

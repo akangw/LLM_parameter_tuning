@@ -1,0 +1,79 @@
+name: VLLM_AUDIO_FETCH_TIMEOUT
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:816
+- vllm/connections.py:122
+- vllm/connections.py:168
+- docs/features/multimodal_inputs.md:1025
+value_type: int
+default: 10
+valid_choices: Integer number of seconds; use a value greater than zero for HTTP audio fetches.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: Sets the base per-attempt timeout, in seconds, when the default media connector downloads audio from an HTTP
+  or HTTPS URL, for both synchronous and asynchronous requests. It does not change model execution, NPU kernels, inference
+  throughput, or memory use. A larger value tolerates slower remote sources but delays failure for unavailable sources; a
+  smaller positive value fails slow downloads sooner. With media-fetch retries enabled, later attempts use this value multiplied
+  by four for each attempt index, so the request-visible failure delay can be much longer than this base timeout. vLLM Ascend
+  contains no definition or override, so deployments using the upstream default connector inherit this upstream behavior.
+usage_locations:
+- file: vllm/envs.py:816
+  context: Parses the environment variable as an integer and supplies the default of 10 seconds.
+- file: vllm/connections.py:122
+  context: Uses the timeout as the synchronous retry base and multiplies it by four on successive attempts.
+- file: vllm/connections.py:168
+  context: Uses the same timeout and retry expansion for asynchronous downloads.
+- file: docs/features/multimodal_inputs.md:1025
+  context: Documents the 10-second HTTP audio-fetch default and its environment-variable override.
+related_parameters:
+- name: VLLM_MEDIA_FETCH_MAX_RETRIES
+  relation: Controls the number of HTTP fetch attempts; each successive attempt uses four times this base timeout.
+- name: VLLM_MEDIA_CACHE
+  relation: A cache hit avoids the HTTP download and therefore avoids this timeout.
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: Provides the analogous base timeout for HTTP image fetching.
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: Provides the analogous base timeout for HTTP video fetching.
+constraints:
+- The environment value must be parseable by Python int().
+- Use a value greater than zero; the source does not explicitly range-check it, and HTTP clients do not provide consistent
+  useful semantics for non-positive timeouts.
+- The timeout affects HTTP and HTTPS audio downloads only, not data URLs, file URLs, cached media, or audio decoding.
+tuning_advice:
+  summary: Keep 10 seconds unless observed HTTP audio downloads routinely need more time or request failure must be detected
+    sooner.
+  suggested_values:
+  - scenario: Typical reliable HTTP audio sources
+    value: 10
+    reason: Retains the documented default without unnecessarily extending the first-attempt wait.
+  - scenario: Measured high-latency remote audio storage
+    value: 30
+    reason: Gives the initial HTTP attempt more time, but should be paired with a review of retry-driven worst-case latency.
+  - scenario: Strict fail-fast service objective
+    value: 5
+    reason: Detects slow or unavailable HTTP sources earlier when measurements show valid downloads finish within this limit.
+  caveats:
+  - Increasing the value can substantially lengthen failure latency because retry attempt timeouts grow by a factor of four.
+  - The retry setting is treated as at least one total attempt, and the default of three yields attempt timeouts of 10, 40,
+    and 160 seconds before adding retry sleeps.
+  - This setting does not accelerate audio decoding or model inference and has no direct NPU performance effect.
+  - File and data URLs bypass the HTTP timeout, so changing it does not tune local-file loading.
+  quick_guide: Measure remote audio fetch duration; keep 10 seconds by default, raise it only for proven slow sources, or
+    lower it for a deliberate fail-fast policy.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - vlm
+  optimize_target: []
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

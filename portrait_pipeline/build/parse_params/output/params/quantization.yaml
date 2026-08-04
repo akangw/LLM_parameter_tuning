@@ -1,0 +1,106 @@
+name: --quantization
+type: cli
+category: quantization
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:787
+- vllm_ascend/platform.py:118
+- vllm_ascend/platform.py:160
+value_type: str
+default: None
+valid_choices:
+- ascend
+- compressed-tensors
+- fp8
+- deepseek_v4_fp8
+- awq
+- gptq
+- squeezellm
+- marlin
+- bitsandbytes
+- tpu_int8
+- experts_int8
+- inc
+- auto
+- None
+cli_example: --quantization ascend
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: "The --quantization parameter determines the weight quantization method applied to the model. On Ascend NPU,\
+  \ vllm-ascend overrides the upstream vLLM supported_quantization list to only include \"ascend\", \"compressed-tensors\"\
+  , \"fp8\", and \"deepseek_v4_fp8\" (vllm_ascend/platform.py:118-123). The \"ascend\" quantization method is dynamically\
+  \ injected into the CLI parser choices at runtime (vllm_ascend/platform.py:160-167) so users can pass --quantization ascend.\n\
+  Performance impact is high because: 1. Weight quantization directly reduces model memory footprint, enabling larger batch\
+  \ sizes\n   and higher throughput on memory-constrained NPU devices.\n2. Quantized weights reduce memory bandwidth pressure\
+  \ during GEMM operations, which is\n   critical for decode-heavy workloads where GEMM is memory-bound.\n3. The \"ascend\"\
+  \ quantization method triggers Ascend-specific quantization paths\n   (AscendCompressedTensorsConfig, AscendFp8Config, AscendModelSlimConfig)\
+  \ that leverage\n   CANN-optimized kernels for quantized computation.\n4. For MiniMax-M2 fp8 checkpoints on NPU, vllm-ascend\
+  \ patches the quantization verification\n   to disable fp8 quantization and load dequantized bf16 weights instead\n   (vllm_ascend/patch/platform/patch_minimax_m2_config.py:17-18,\
+  \ 65-71), which affects\n   memory usage and precision.\n5. The quantization method affects KV cache quantization compatibility\
+  \ — all attention layers\n   in the same KV cache group must use the same quantization method\n   (vllm_ascend/patch/platform/patch_kv_cache_interface.py:169).\n\
+  6. FP8 quantization is not supported by the FA3 (Flash Attention 3) backend on NPU\n   (documentation: flash_attention.md:42,\
+  \ 139), so using fp8 quantization forces fallback\n   to the default FIA backend, impacting attention computation performance.\n"
+usage_locations:
+- file: vllm/engine/arg_utils.py:787
+  context: CLI argument registration for --quantization/-q
+- file: vllm/engine/arg_utils.py:724
+  context: Resolves online quantization config via resolve_online_quant_config
+- file: vllm_ascend/platform.py:118
+  context: Defines supported_quantization list for Ascend NPU platform
+- file: vllm_ascend/platform.py:160-167
+  context: Injects "ascend" into CLI parser choices at runtime
+- file: vllm_ascend/patch/platform/patch_minimax_m2_config.py:66
+  context: Checks quantization value to decide whether to disable fp8 for MiniMax-M2
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:169
+  context: Asserts all attention layers in same KV cache group use same quantization
+related_parameters:
+- name: --dtype
+  relation: When quantization is None, dtype determines the weight data type
+- name: --kv-cache-dtype
+  relation: KV cache quantization is separate from weight quantization but interacts with attention backend selection
+- name: --enforce-eager
+  relation: Required when using FA3 backend, which does not support FP8 quantization on NPU
+- name: --quantization-config
+  relation: Provides additional configuration for online quantization methods
+- name: --allow-deprecated-quantization
+  relation: Controls whether deprecated quantization methods are allowed
+constraints:
+- Only 'ascend', 'compressed-tensors', 'fp8', and 'deepseek_v4_fp8' are officially supported on Ascend NPU
+- All attention layers in the same KV cache group must use the same quantization method
+- FP8 quantization is not supported by the FA3 (Flash Attention 3) backend on NPU; using fp8 with FA3 requires enforce_eager=True
+- MiniMax-M2 fp8 checkpoints on NPU will have fp8 quantization automatically disabled and load bf16 dequantized weights instead
+tuning_advice:
+  summary: Use --quantization ascend for best Ascend NPU performance with CANN-optimized quantized kernels; avoid fp8 if using
+    FA3 attention backend
+  suggested_values:
+  - scenario: General Ascend NPU deployment with supported models
+    value: ascend
+    reason: Triggers Ascend-specific quantization paths (AscendCompressedTensorsConfig, AscendFp8Config) that leverage CANN-optimized
+      kernels for maximum throughput and memory efficiency on NPU
+  - scenario: Using FA3 (Flash Attention 3) backend for training-inference consistency
+    value: None
+    reason: FA3 does not support FP8 quantization on NPU; using no quantization or ascend quantization avoids attention backend
+      conflicts
+  - scenario: Memory-constrained deployment requiring maximum batch size
+    value: fp8
+    reason: FP8 quantization provides the largest memory savings, enabling larger batch sizes, but may require enforce_eager=True
+      if FA3 is desired
+  - scenario: MiniMax-M2 model on NPU
+    value: None
+    reason: vllm-ascend automatically disables fp8 quantization for MiniMax-M2 checkpoints and loads bf16 dequantized weights;
+      explicitly setting --quantization to None avoids confusion
+  caveats:
+  - The 'ascend' quantization method is only available after vllm-ascend plugin initialization; it is injected into CLI choices
+    at runtime
+  - FP8 quantization with FA3 backend is unsupported on NPU — using both will cause errors or force eager execution fallback
+  - Quantization method affects KV cache group compatibility — mixing quantization methods across attention layers in the
+    same group will raise an assertion error
+  - Upstream vLLM quantization methods like awq, gptq, squeezellm, marlin are not in the Ascend supported_quantization list
+    and may not work correctly on NPU
+  quick_guide: For most Ascend NPU deployments, use --quantization ascend for optimal CANN-optimized performance; avoid fp8
+    if using FA3 attention backend
+analysis_date: '2026-07-06'

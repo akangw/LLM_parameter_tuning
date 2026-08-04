@@ -1,0 +1,90 @@
+name: --mm-processor-kwargs
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/config/multimodal.py:114
+- vllm/engine/arg_utils.py:1180
+- vllm/engine/arg_utils.py:543
+- vllm/config/model.py:327
+value_type: dict
+default: 'null'
+valid_choices: model-dependent dictionary of processor overrides
+cli_example: '--mm-processor-kwargs ''{"min_pixels": 784, "max_pixels": 1003520, "fps": 1}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: "This parameter forwards keyword arguments to the HuggingFace AutoProcessor for multi-modal data (e.g., image/video\
+  \ processor). The specific keys and their effects depend entirely on the model being served. For vision-language models\
+  \ like Qwen3-VL, common overrides include `min_pixels`, `max_pixels`, and `fps`, which directly control image resolution\
+  \ and video frame sampling rate.\nPerformance mechanism: 1. **Throughput**: Higher `max_pixels` increases the number of\
+  \ vision tokens per image, which\n   increases the sequence length processed by the language model. This directly reduces\
+  \ throughput\n   (tokens/sec) because more compute is spent per image. Conversely, lower `max_pixels` reduces\n   vision\
+  \ tokens and improves throughput at the cost of visual detail.\n2. **Memory**: Larger images (higher pixel limits) produce\
+  \ more vision tokens, consuming more\n   KV cache memory. On Ascend NPU with limited HBM, this can cause OOM if `max_pixels`\
+  \ is set\n   too high relative to `max_model_len` and `gpu_memory_utilization`.\n3. **Latency**: Time-to-first-token (TTFT)\
+  \ increases with more vision tokens because the\n   vision encoder must process larger images and the language model must\
+  \ prefill more tokens.\n\nThe parameter is defined in `vllm/config/multimodal.py:114` as `mm_processor_kwargs: dict[str,\
+  \ object] | None = None` and is passed through `MultiModalConfig.merge_mm_processor_kwargs()` (line 326) which merges config-level\
+  \ kwargs with per-request inference kwargs. On Ascend, vllm-ascend does NOT override this parameter — it passes through\
+  \ unchanged. The Ascend test suite (e.g., `tests/e2e/conftest.py:1681`, `tests/e2e/pull_request/one_card/test_vlm.py:55`)\
+  \ uses typical values like `min_pixels=784`, `max_pixels=1280*28*28` (1003520), and `fps=1` for Qwen3-VL models, confirming\
+  \ these work on Ascend NPU.\n"
+usage_locations:
+- file: vllm/config/multimodal.py:326
+  context: merge_mm_processor_kwargs() merges config kwargs with per-request inference kwargs
+- file: vllm/config/model.py:327
+  context: ModelConfig accepts mm_processor_kwargs as InitVar, passed to MultiModalConfig
+- file: vllm/engine/arg_utils.py:1549
+  context: EngineArgs passes mm_processor_kwargs to ModelConfig during engine creation
+- file: vllm/entrypoints/llm.py:191
+  context: LLM class docstring documents mm_processor_kwargs parameter
+- file: vllm_ascend/patch/platform/patch_deepseek_v4_thinking.py:69
+  context: Ascend patch for DeepSeek-V4 preserves mm_processor_kwargs in ChatParams
+- file: vllm_ascend/tests/e2e/conftest.py:1681
+  context: Ascend E2E test configs define mm_processor_kwargs for Qwen-VL and Hunyuan-VL
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Controls max number of multi-modal items per prompt; together with mm_processor_kwargs determines total vision
+    tokens
+- name: --max-model-len
+  relation: Total sequence length budget; higher pixel limits increase vision tokens, consuming more of this budget
+- name: --gpu-memory-utilization
+  relation: KV cache memory allocation; larger images consume more KV cache, may require adjusting this
+- name: --media-io-kwargs
+  relation: Separate kwargs for media I/O processing (e.g., num_frames for video); complementary to mm_processor_kwargs
+constraints:
+- The available keys depend on the specific model's HuggingFace processor; invalid keys are silently ignored or may cause
+  errors depending on the processor implementation.
+- Must be a valid JSON dictionary when passed via CLI.
+- Per-request mm_processor_kwargs are not yet fully supported (see TODO in vllm/entrypoints/chat_utils.py:487).
+tuning_advice:
+  summary: Tune `min_pixels` and `max_pixels` to balance visual quality against throughput and memory on Ascend NPU; start
+    with model defaults and reduce if OOM or latency is too high.
+  suggested_values:
+  - scenario: Qwen3-VL on Ascend NPU with limited HBM (e.g., 32GB)
+    value: '{"min_pixels": 784, "max_pixels": 501760, "fps": 1}'
+    reason: Reduces max_pixels to half the default (1280*28*28 ≈ 1M) to lower vision token count by ~40%, reducing KV cache
+      pressure and improving throughput on memory-constrained Ascend devices.
+  - scenario: Qwen3-VL on Ascend NPU with ample HBM (e.g., 64GB+) and quality-sensitive tasks
+    value: '{"min_pixels": 784, "max_pixels": 1003520, "fps": 1}'
+    reason: Uses the full default resolution (1280*28*28) for maximum visual detail; acceptable when HBM is sufficient and
+      throughput is not the primary concern.
+  - scenario: Video processing with Qwen3-VL on Ascend NPU
+    value: '{"min_pixels": 784, "max_pixels": 501760, "fps": 0.5}'
+    reason: Lower fps reduces the number of sampled frames, decreasing total vision tokens for video inputs; combined with
+      moderate max_pixels to keep memory usage manageable.
+  caveats:
+  - The `fps` key only affects video inputs; for image-only workloads it has no effect.
+  - Setting `max_pixels` too low may cause the model to miss fine-grained visual details, degrading answer quality for tasks
+    like OCR or document understanding.
+  - On Ascend NPU, vision encoder execution may have different performance characteristics than GPU; test with representative
+    images to find the optimal pixel limits for your hardware.
+  - Per-request mm_processor_kwargs override is not yet implemented (vllm/entrypoints/chat_utils.py:487 TODO); all requests
+    share the same processor configuration.
+  quick_guide: For Ascend NPU, start with `min_pixels=784, max_pixels=501760` for Qwen3-VL to balance quality and memory;
+    increase max_pixels only if visual detail is insufficient.
+analysis_date: '2026-07-06'

@@ -1,0 +1,74 @@
+name: --dbo-decode-token-threshold
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/parallel.py:201
+- vllm/engine/arg_utils.py:484
+- vllm/engine/arg_utils.py:1041
+- vllm/v1/worker/ubatch_utils.py:44
+value_type: int
+default: '32'
+valid_choices: positive integer
+cli_example: --dbo-decode-token-threshold 64
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the token count threshold for Dual Batch Overlap (DBO) micro-batching in decode-only
+  batches. When the number of tokens in a decode request exceeds this threshold, the request is split into micro-batches (ubatches)
+  for overlapped execution; otherwise it runs as a single batch. The check occurs in `check_ubatch_thresholds` (vllm/v1/worker/ubatch_utils.py:44),
+  which is called during scheduling to decide whether to apply ubatching. DBO is only active when `--enable-dbo` is set. On
+  Ascend NPU, DBO can improve throughput by overlapping compute and communication, but the threshold directly affects how
+  aggressively micro-batching is applied to decode requests. A lower threshold increases micro-batching frequency, potentially
+  improving throughput at the cost of increased scheduling overhead; a higher threshold reduces micro-batching, favoring lower
+  latency for smaller decode batches.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/ubatch_utils.py:44
+  context: 'Threshold check: returns True (use ubatching) when num_tokens >= dbo_decode_token_threshold for uniform decode
+    batches'
+- file: vllm/config/parallel.py:201
+  context: Field definition with default value 32 and docstring explaining the threshold behavior
+- file: vllm/engine/arg_utils.py:484
+  context: EngineArgs attribute declaration, reads default from ParallelConfig
+- file: vllm/engine/arg_utils.py:1041
+  context: CLI argument registration in the parallel group
+related_parameters:
+- name: --enable-dbo
+  relation: Must be enabled for this threshold to take effect; DBO is the parent feature
+- name: --dbo-prefill-token-threshold
+  relation: Sibling parameter controlling the threshold for batches containing prefills; same mechanism, different batch type
+- name: --ubatch-size
+  relation: Controls the size of each micro-batch when ubatching is triggered; works together with the threshold
+constraints:
+- --enable-dbo must be set to true for this parameter to have any effect
+- Value must be a positive integer
+tuning_advice:
+  summary: 'Adjust based on decode batch size distribution: "lower values increase" micro-batching for better throughput on
+    large decode batches; higher values reduce overhead for small decode batches.
+
+    '
+  suggested_values:
+  - scenario: High-throughput serving with large decode batch sizes (many concurrent users)
+    value: '16'
+    reason: Lower threshold triggers micro-batching more aggressively, improving compute-communication overlap on Ascend NPU
+      for large decode workloads
+  - scenario: Latency-sensitive serving with small decode batch sizes
+    value: '64'
+    reason: Higher threshold avoids unnecessary micro-batching overhead for small batches, reducing scheduling latency
+  - scenario: Default balanced setting
+    value: '32'
+    reason: Upstream default provides a reasonable balance between throughput and latency for typical workloads
+  caveats:
+  - This parameter only affects decode-only batches; prefill-containing batches use --dbo-prefill-token-threshold instead
+  - On Ascend NPU, micro-batching overhead may differ from GPU due to different communication characteristics (HCCL vs NCCL);
+    test with representative workloads
+  - Setting the threshold too low may cause excessive micro-batching, increasing scheduling overhead and potentially degrading
+    latency
+  - DBO micro-batching is only available in v1 worker path; v2 worker may have different or no support
+  quick_guide: Start with default 32; lower to 16 for high-throughput decode-heavy workloads, raise to 64+ for latency-sensitive
+    scenarios
+analysis_date: '2026-07-06'

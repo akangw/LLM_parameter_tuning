@@ -1,0 +1,76 @@
+name: additional_config.profiling_chunk_config
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:54-55
+- vllm_ascend/ascend_config.py:587-621
+value_type: dict
+default: '''{"enabled": false, "smooth_factor": 1.0, "min_chunk": 4096, "need_timing": false}'''
+valid_choices: 'nested dict with keys: enabled (bool), smooth_factor (float in (0,1]), min_chunk (positive int), need_timing
+  (bool)'
+cli_example: '''--additional-config ''''{"profiling_chunk_config": {"enabled": true}}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, profiling_chunk_config activates dynamic chunk sizing for pipeline-parallel prefill on Ascend
+  NPUs. During initialization, the scheduler profiles prefill latency across different chunk sizes and fits a quadratic model
+  to predict optimal chunk sizes at runtime. This directly affects how the scheduler splits prefill requests into micro-batches
+  (chunks), which determines pipeline bubble utilization, communication- computation overlap efficiency, and overall throughput.
+  The smooth_factor controls how aggressively the model adapts to runtime measurements (lower values = smoother, less reactive).
+  The min_chunk sets a floor on chunk size to prevent excessively small chunks that would degrade NPU utilization. The need_timing
+  flag controls whether per-step device synchronization occurs for online calibration — disabling it avoids sync overhead
+  but relies solely on startup profiling. This parameter is Ascend-specific and has no vLLM upstream equivalent.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:54-73
+  context: Parsed from additional_config dict, validated against max_num_batched_tokens and pipeline_parallel_size, checked
+    for mutual exclusion with enable_balance_scheduling
+- file: vllm_ascend/ascend_config.py:587-621
+  context: ProfilingChunkConfig class definition with field defaults and validation logic
+related_parameters:
+- name: --pipeline-parallel-size
+  relation: profiling_chunk_config requires pipeline_parallel_size > 1; raises ValueError otherwise
+- name: --max-num-batched-tokens
+  relation: min_chunk is clamped to max_num_batched_tokens if it exceeds it, with a warning logged
+- name: additional_config.enable_balance_scheduling
+  relation: Mutually exclusive — cannot be enabled simultaneously with profiling_chunk_config; raises ValueError if both are
+    enabled
+- name: --enable-chunked-prefill
+  relation: Required for dynamic chunked pipeline parallel to function; documented as a prerequisite in usage examples
+constraints:
+- profiling_chunk_config requires pipeline parallelism (--pipeline-parallel-size > 1); enabling it with pp <= 1 raises a ValueError
+- profiling_chunk_config and enable_balance_scheduling cannot be enabled at the same time; enabling both raises a ValueError
+- smooth_factor must be in the range (0, 1]; values outside this range raise a ValueError
+- min_chunk must be a positive integer; values <= 0 raise a ValueError
+- min_chunk is automatically clamped to max_num_batched_tokens if it exceeds that value, with a warning logged
+tuning_advice:
+  summary: Enable profiling_chunk_config for pipeline-parallel deployments to dynamically optimize prefill chunk sizes based
+    on NPU latency profiling, improving throughput by reducing pipeline bubbles.
+  suggested_values:
+  - scenario: Pipeline-parallel deployment (pp >= 2) with chunked prefill enabled
+    value: '''{"enabled": true, "smooth_factor": 1.0, "min_chunk": 4096, "need_timing": true}'''
+    reason: Default values provide a balanced starting point; need_timing=true enables online calibration for adaptive chunk
+      sizing based on actual NPU execution times
+  - scenario: Pipeline-parallel deployment where per-step sync overhead is unacceptable
+    value: '''{"enabled": true, "smooth_factor": 1.0, "min_chunk": 4096, "need_timing": false}'''
+    reason: Disabling need_timing avoids device synchronization each step, relying solely on startup profiling; trades some
+      runtime adaptability for lower overhead
+  - scenario: High-throughput scenario with large max_num_batched_tokens
+    value: '''{"enabled": true, "smooth_factor": 0.8, "min_chunk": 8192, "need_timing": true}'''
+    reason: Larger min_chunk improves NPU compute efficiency for large batches; slightly lower smooth_factor provides more
+      stable predictions under varying load
+  caveats:
+  - This is an Ascend-specific feature with no vLLM upstream equivalent; it only works with vllm-ascend
+  - Requires --enable-chunked-prefill to be active; without it, dynamic chunk sizing has no effect
+  - Cannot be used together with enable_balance_scheduling — choose one scheduling optimization strategy
+  - The startup profiling phase adds initialization latency proportional to the number of chunk sizes tested
+  - need_timing=true introduces per-step device synchronization (torch.cuda.synchronize equivalent on NPU), which adds overhead
+    to each decode step
+  - min_chunk is silently clamped to max_num_batched_tokens if set too high; check logs for clamping warnings
+  quick_guide: 'Enable with --additional-config ''{"profiling_chunk_config": {"enabled": true}}'' when using pipeline parallelism
+    (pp >= 2) with chunked prefill; disable need_timing if per-step sync overhead is a concern.'
+analysis_date: '2026-07-06'

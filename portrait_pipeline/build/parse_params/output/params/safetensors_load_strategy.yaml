@@ -1,0 +1,128 @@
+name: --safetensors-load-strategy
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:851
+- vllm/config/load.py:63
+- vllm/model_executor/model_loader/weight_utils.py:912
+value_type: str
+default: null
+valid_choices:
+- null
+- lazy
+- eager
+- prefetch
+- torchao
+cli_example: --safetensors-load-strategy eager
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- memory
+impact_detail: 'Controls how safetensors checkpoint files are read from disk during model loading. The strategy directly affects
+  model initialization time (startup latency) and peak CPU RAM usage. On Ascend NPU, model loading is a critical phase because
+  weights must be transferred from CPU to NPU device memory via the CANN runtime. The loading strategy determines whether
+  weights are memory-mapped (lazy), fully read into CPU RAM (eager), or prefetched into the OS page cache (prefetch). For
+  network filesystems (NFS, Lustre) commonly used in Ascend cluster deployments, the default None strategy auto-detects NFS
+  and enables prefetching when the checkpoint fits within 90% of available RAM. The eager strategy avoids inefficient random
+  reads on network storage at the cost of higher CPU RAM usage. The torchao strategy is automatically set when using torchao-quantized
+  checkpoints. No vllm-ascend specific overrides were found for this parameter — it follows upstream vLLM behavior exactly.
+
+  '
+usage_locations:
+- file: vllm/model_executor/model_loader/weight_utils.py:912
+  context: 'Passed to safetensors_weights_iterator() which determines the actual file reading method. At line 925, "eager"
+    changes the loading description. At line 946-948, "prefetch" directly enables prefetching, and None triggers auto-detection
+    of NFS + RAM check.
+
+    '
+- file: vllm/model_executor/model_loader/default_loader.py:257
+  context: 'Passed from LoadConfig to safetensors_weights_iterator() during weight loading for non-multithreaded safetensors
+    loading paths.
+
+    '
+- file: vllm/model_executor/model_loader/default_loader.py:390
+  context: 'Automatically overridden to "torchao" when quantization is torchao and the checkpoint was serialized with torchao
+    (version >= 0.15.0).
+
+    '
+- file: vllm/config/load.py:63
+  context: 'Defined as a field of LoadConfig with detailed docstring explaining all strategy options.
+
+    '
+related_parameters:
+- name: --load-format
+  relation: 'Must be set to a safetensors-compatible format (default, safetensors, or auto) for this parameter to take effect.
+    Non-safetensors formats (pt, gguf, etc.) use different loading paths that ignore safetensors_load_strategy.
+
+    '
+- name: --safetensors-prefetch-num-threads
+  relation: 'When strategy is "prefetch" or auto-prefetch is triggered, controls the number of threads used for prefetching.
+
+    '
+- name: --safetensors-prefetch-block-size
+  relation: 'When strategy is "prefetch" or auto-prefetch is triggered, controls the block size for prefetch operations.
+
+    '
+- name: --quantization
+  relation: 'When set to "torchao", safetensors_load_strategy is automatically overridden to "torchao" if the checkpoint was
+    serialized with torchao.
+
+    '
+constraints:
+- Only effective when --load-format uses safetensors files (default, safetensors, or auto with safetensors checkpoints).
+- The "torchao" strategy is automatically set by the loader and should not be manually specified by users.
+tuning_advice:
+  summary: 'Choose based on storage type: "use \"eager\" for network filesystems (NFS/Lustre) to avoid" random-read overhead,
+    "lazy" for local NVMe/SSD to minimize CPU RAM, and default (None) for automatic detection with NFS prefetch optimization.
+
+    '
+  suggested_values:
+  - scenario: 'Model checkpoints stored on network filesystem (NFS, Lustre) — common in multi-node Ascend clusters with shared
+      storage.
+
+      '
+    value: eager
+    reason: 'Reads entire checkpoint files into CPU RAM upfront, avoiding inefficient random reads over the network. This
+      significantly reduces model loading time on high-latency storage, at the cost of higher peak CPU memory usage.
+
+      '
+  - scenario: 'Model checkpoints stored on local NVMe/SSD storage with limited CPU RAM — typical for single-node Ascend deployments.
+
+      '
+    value: lazy
+    reason: 'Memory-maps files without reading them fully, minimizing CPU RAM usage. Local storage handles random reads efficiently,
+      so lazy loading provides fast startup with low memory overhead.
+
+      '
+  - scenario: 'Default auto-detection for mixed or unknown storage environments.
+
+      '
+    value: null
+    reason: 'Automatically detects NFS filesystems and enables prefetching when the total checkpoint size fits within 90%
+      of available RAM. Provides a good balance without manual tuning.
+
+      '
+  - scenario: 'Very large models on network storage where checkpoint size exceeds 90% of available RAM but you still want
+      to avoid random reads.
+
+      '
+    value: prefetch
+    reason: 'Prefetches files into the OS page cache before workers load them, speeding up loading without requiring the full
+      checkpoint to fit in RAM. Useful when eager would cause OOM but network random reads are too slow.
+
+      '
+  caveats:
+  - '"eager" strategy uses more CPU RAM — ensure sufficient host memory is available, especially for large models (70B+).'
+  - '"lazy" strategy on network filesystems can cause very slow model loading due to random read patterns over high-latency
+    links.'
+  - The auto-prefetch in default (None) mode only triggers when checkpoint size <= 90% of available RAM; larger checkpoints
+    fall back to lazy loading even on NFS.
+  - On Ascend NPU, model loading time directly impacts total startup latency before inference can begin — this is especially
+    important for auto-scaling deployments.
+  - The "torchao" strategy is set automatically by the loader when using torchao quantization; manual override is not recommended.
+  quick_guide: 'Use "eager" for network storage (NFS/Lustre), "lazy" for local SSD, and default (None) for automatic detection.
+
+    '
+analysis_date: '2026-07-06'

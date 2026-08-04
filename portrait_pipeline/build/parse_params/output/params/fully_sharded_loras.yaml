@@ -1,0 +1,138 @@
+name: --fully-sharded-loras
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/lora.py:38
+- vllm/engine/arg_utils.py:1255
+- vllm/lora/layers/base_linear.py:120
+- vllm/lora/layers/column_parallel_linear.py:219
+- vllm/lora/layers/column_parallel_linear.py:357
+- vllm/lora/layers/fused_moe.py:161
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --fully-sharded-loras
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: 'Controls how LoRA adapter weights are partitioned across tensor-parallel (TP) ranks. When false (default),
+  only half of the LoRA computation is sharded: LoRA-A output is replicated (full max_lora_rank on each rank) and only LoRA-B
+  output is sharded along the TP dimension. When true, both LoRA-A and LoRA-B are fully sharded — LoRA-A output is divided
+  by tp_size on ColumnParallelLinear, and LoRA-B output is divided by tp_size on RowParallelLinear. This reduces per-rank
+  memory for LoRA weights and communication volume for the all-reduce after LoRA-B, but increases the all-reduce after LoRA-A
+  (which was previously a no-op local computation). At high sequence lengths, high max_lora_rank, or high tp_size, the memory
+  savings and reduced LoRA-B communication typically outweigh the added LoRA-A communication, yielding higher throughput.
+  On Ascend NPU, this parameter was previously broken but is now fixed and working as of vllm-ascend PR #6650. The parameter
+  is incompatible with expert parallelism (EP) in Fused MoE LoRA layers — an assertion prevents using both simultaneously.
+  It also affects whether MergedColumnParallelLinear can be replaced by the LoRA layer: "when fully_sharded_loras is true
+  and tp_size > 1," the replacement is skipped, falling back to a different code path.
+
+  '
+usage_locations:
+- file: vllm/lora/layers/base_linear.py:120
+  context: 'Determines lora_a_out_size for ColumnParallelLinear — when true, divides max_lora_rank by tp_size instead of using
+    the full rank.
+
+    '
+- file: vllm/lora/layers/base_linear.py:127-131
+  context: 'Determines lora_b_out_size for RowParallelLinear — when true, divides output_size by tp_size instead of using
+    the full output size.
+
+    '
+- file: vllm/lora/layers/column_parallel_linear.py:219-220
+  context: 'Same logic in MergedColumnParallelLinear.create_lora_weights — divides max_lora_rank by tp_size when fully sharded.
+
+    '
+- file: vllm/lora/layers/column_parallel_linear.py:357
+  context: 'In can_replace_layer, returns False when fully_sharded_loras is true and tp_size > 1, preventing LoRA replacement
+    for merged column parallel layers.
+
+    '
+- file: vllm/lora/layers/fused_moe.py:161
+  context: 'Asserts that fully_sharded_loras and expert parallelism (EP) are not both enabled — they have mutually contradictory
+    sharding assumptions.
+
+    '
+- file: vllm/config/lora.py:90
+  context: 'Included in the LoRAConfig compute_hash, meaning it affects the computation graph structure and triggers recompilation
+    when changed.
+
+    '
+related_parameters:
+- name: --tensor-parallel-size
+  relation: 'The performance benefit of fully_sharded_loras increases with higher TP size, as the per-rank memory savings
+    and communication tradeoffs scale with tp_size.
+
+    '
+- name: --max-lora-rank
+  relation: 'Higher max_lora_rank amplifies the memory savings from fully sharding, making this flag more beneficial at larger
+    ranks.
+
+    '
+- name: --enable-lora
+  relation: 'fully_sharded_loras only takes effect when enable_lora is true; otherwise the LoRAConfig is not created.
+
+    '
+- name: --enable-expert-parallel
+  relation: 'Mutually exclusive with fully_sharded_loras in Fused MoE LoRA layers. Enabling both triggers an assertion error.
+
+    '
+constraints:
+- --fully-sharded-loras cannot be used together with --enable-expert-parallel in Fused MoE LoRA models; an assertion will
+  fail if both are enabled.
+- --fully-sharded-loras only takes effect when --enable-lora is also set.
+tuning_advice:
+  summary: 'Enable fully_sharded_loras when using tensor parallelism (tp_size >= 2) with high max_lora_rank or long sequences
+    to reduce per-rank LoRA memory and improve throughput. Leave disabled for single-GPU or low-rank LoRA scenarios.
+
+    '
+  suggested_values:
+  - scenario: 'Tensor parallelism >= 2 with max_lora_rank >= 32 or long sequence lengths (>= 4096 tokens)
+
+      '
+    value: true
+    reason: 'Fully sharding reduces per-rank LoRA weight memory proportionally to tp_size and reduces LoRA-B all-reduce communication.
+      At high ranks and sequence lengths, the memory savings and communication reduction outweigh the added LoRA-A all-reduce,
+      yielding higher throughput.
+
+      '
+  - scenario: 'Single-GPU deployment (tp_size = 1) or low max_lora_rank (<= 16) with short sequences
+
+      '
+    value: false
+    reason: 'With tp_size=1 there is no sharding benefit. At low ranks, the memory savings are negligible and the added communication
+      overhead for LoRA-A may degrade performance.
+
+      '
+  - scenario: 'Fused MoE model with expert parallelism enabled
+
+      '
+    value: false
+    reason: 'fully_sharded_loras is incompatible with expert parallelism in Fused MoE LoRA layers; enabling both will cause
+      an assertion error.
+
+      '
+  caveats:
+  - 'On Ascend NPU, this flag was previously broken but is fixed in vllm-ascend PR #6650. Ensure you are using a version that
+    includes this fix.
+
+    '
+  - 'When fully_sharded_loras is true and tp_size > 1, MergedColumnParallelLinear layers cannot be replaced by the LoRA layer,
+    falling back to a potentially slower code path for certain model architectures.
+
+    '
+  - 'Enabling this flag changes the computation graph hash, which will trigger recompilation of CUDA graphs (or Ascend equivalent).
+    Expect increased startup time on first run after toggling.
+
+    '
+  quick_guide: 'Enable with TP >= 2 and high-rank LoRA for memory savings and throughput gains; keep disabled for single-GPU,
+    low-rank, or EP-enabled MoE models.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,69 @@
+name: --no-enable-prefix-caching
+type: cli
+category: kv_cache
+scope: vllm
+source_file: []
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --no-enable-prefix-caching
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: 'This flag disables Automatic Prefix Caching (APC) in vLLM. When prefix caching is enabled (the default), vLLM
+  reuses the KV cache for identical prompt prefixes across requests, avoiding redundant computation. Disabling it forces every
+  request to recompute the full prompt, which increases time-to-first-token (TTFT) latency, reduces overall throughput (tokens/sec),
+  and can alter memory usage patterns because the KV cache is not shared. On Ascend NPU, the vllm-ascend documentation explicitly
+  recommends using this flag for certain large models (DeepSeek-R1, DeepSeekOCR2, Kimi-K2.5, Qwen3-235B-A22B) to disable prefix
+  caching, suggesting that prefix caching may have stability or correctness issues on Ascend in those scenarios. The flag
+  is a boolean store_false action: specifying --no-enable-prefix-caching sets enable_prefix_caching=False.
+
+  '
+usage_locations:
+- file: tests/v1/sample/test_logprobs_e2e.py:19
+  context: Used in test server args to disable prefix caching during logprobs e2e tests.
+related_parameters:
+- name: --enable-prefix-caching
+  relation: Inverse flag; --no-enable-prefix-caching sets enable_prefix_caching to False.
+- name: --max-model-len
+  relation: Prefix caching effectiveness depends on max_model_len; longer contexts benefit more from caching.
+- name: --gpu-memory-utilization
+  relation: Disabling prefix caching may increase KV cache memory pressure, interacting with gpu_memory_utilization.
+constraints: []
+tuning_advice:
+  summary: 'Disable prefix caching on Ascend NPU for large MoE models (DeepSeek-R1, Kimi-K2.5, Qwen3-235B-A22B) as recommended
+    by vllm-ascend docs; enable it for other workloads to improve throughput and reduce TTFT.
+
+    '
+  suggested_values:
+  - scenario: Large MoE models on Ascend NPU (DeepSeek-R1, Kimi-K2.5, Qwen3-235B-A22B, DeepSeekOCR2)
+    value: true
+    reason: 'vllm-ascend documentation explicitly recommends --no-enable-prefix-caching for these models, likely due to stability
+      or correctness issues with prefix caching on Ascend.
+
+      '
+  - scenario: General LLM inference on Ascend NPU where prefix caching is stable
+    value: false
+    reason: 'Enabling prefix caching (the default) reuses KV cache for shared prefixes, reducing redundant computation, lowering
+      TTFT, and improving throughput.
+
+      '
+  caveats:
+  - 'On Ascend NPU, prefix caching may cause instability or incorrect results for certain large MoE models; vllm-ascend docs
+    consistently recommend disabling it for DeepSeek-R1, Kimi-K2.5, Qwen3-235B-A22B, and DeepSeekOCR2.
+
+    '
+  - 'Disabling prefix caching increases per-request computation and KV cache memory usage, which may require adjusting --gpu-memory-utilization
+    or --max-num-seqs to avoid OOM.
+
+    '
+  quick_guide: 'Use --no-enable-prefix-caching for large MoE models on Ascend as per vllm-ascend docs; omit it (enable caching)
+    for other models to maximize throughput.
+
+    '
+analysis_date: '2026-07-06'

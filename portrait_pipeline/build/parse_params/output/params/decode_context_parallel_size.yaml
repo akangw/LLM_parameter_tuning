@@ -1,0 +1,114 @@
+name: --decode-context-parallel-size
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/parallel.py:310
+- vllm/engine/arg_utils.py:946
+- vllm_ascend/platform.py:324
+- vllm_ascend/worker/v2/model_runner.py:68
+value_type: int
+default: 1
+valid_choices: positive integer; must divide tensor_parallel_size
+cli_example: --decode-context-parallel-size 4
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Decode Context Parallelism (DCP) shards the KV cache across multiple NPUs within a TP group during the decode
+  phase, reducing per-device KV cache memory pressure and enabling longer context lengths. On Ascend, DCP reuses the TP group''s
+  devices — it does not increase the total world size. Instead, it splits one TP group into tp_size // dcp_size DCP sub-groups.
+  Each DCP rank stores only max_model_len // dcp_size tokens locally (see vllm_ascend/patch/platform/patch_kv_cache_interface.py:189-194),
+  which directly reduces per-NPU KV cache memory consumption. This is critical for long-sequence inference on Ascend NPUs
+  where HBM capacity is limited. DCP also affects attention computation: during decode, partial attention outputs are computed
+  per DCP shard and then combined via all-gather + reduce-scatter (or all-to-all for MLA models with dcp_comm_backend="a2a").
+  The communication overhead can impact decode latency, but the memory savings often enable serving longer sequences that
+  would otherwise OOM. On Ascend v1 worker, DCP is fully supported and validated for both MLA and GQA/MQA models. On Ascend
+  v2 worker, DCP is explicitly NOT supported (raises NotImplementedError at vllm_ascend/worker/v2/model_runner.py:68-69).
+  The Mooncake Hybrid Connector also requires dcp_size * pcp_size == 1 (vllm_ascend/distributed/kv_transfer/kv_p2p/ mooncake_hybrid_connector.py:1083).
+  DCP interacts with speculative decoding: for GQA/MQA draft models, additional constraints apply on the relationship between
+  dcp_size, draft_tp_size, and num_kv_heads (vllm_ascend/platform.py:324-369).
+
+  '
+usage_locations:
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:189
+  context: Reduces max_model_len per DCP rank for KV cache memory calculation
+- file: vllm_ascend/patch/platform/patch_kv_cache_utils.py:39
+  context: Adjusts scheduler_block_size for CP with multiple KV cache groups
+- file: vllm_ascend/platform.py:324
+  context: Validates DCP constraints for speculative decoding with draft models
+- file: vllm_ascend/worker/v2/model_runner.py:68
+  context: Raises NotImplementedError — DCP not supported in v2 worker
+- file: vllm_ascend/worker/worker.py:765
+  context: Passes dcp_size to ensure_model_parallel_initialized for HCCL init
+- file: vllm_ascend/attention/utils.py:61
+  context: Checks if any context parallelism (PCP or DCP) is enabled
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1383
+  context: Uses dcp_size in Mooncake KV transfer scheduler
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1082
+  context: Asserts dcp_size * pcp_size == 1 for hybrid connector
+- file: vllm/config/parallel.py:474
+  context: Validates tp_size % dcp_size == 0
+- file: vllm/config/model.py:1161
+  context: Validates DCP constraints for GQA/MQA models (num_kv_heads, num_q_per_kv)
+- file: vllm/v1/attention/backend.py:577
+  context: Forces reorder_batch_threshold=1 when DCP is enabled without varlen support
+related_parameters:
+- name: --tensor-parallel-size
+  relation: DCP reuses TP group devices; tp_size must be divisible by dcp_size
+- name: --prefill-context-parallel-size
+  relation: PCP and DCP together determine total CP factor for KV cache sharding
+- name: --dcp-comm-backend
+  relation: Selects communication backend for DCP (ag_rs or a2a); a2a requires dcp_size > 1
+- name: --dcp-kv-cache-interleave-size
+  relation: Controls KV cache storage interleaving under DCP
+- name: --max-model-len
+  relation: Effective max_model_len per rank is reduced by dcp_size factor
+- name: --enable-return-routed-experts
+  relation: Not validated with DCP > 1 (raises ValueError)
+constraints:
+- tp_size must be divisible by dcp_size (vllm/config/parallel.py:474-478)
+- For GQA/MQA models (non-MLA), tp_size must be greater than total_num_kv_heads when dcp_size > 1 (vllm/config/model.py:1164-1168)
+- For GQA/MQA models, dcp_size must be <= tp_size // total_num_kv_heads (vllm/config/model.py:1170-1176)
+- For GQA/MQA models, num_q_per_kv must be divisible by dcp_size (vllm/config/model.py:1178-1181)
+- For GQA/MQA draft models in speculative decoding, draft_tp_size must be > total_num_kv_heads when dcp_size > 1 (vllm_ascend/platform.py:343-349)
+- For GQA/MQA draft models, dcp_size must be <= draft_tp_size // total_num_kv_heads (vllm_ascend/platform.py:351-359)
+- For GQA/MQA draft models, num_q_per_kv must be divisible by dcp_size (vllm_ascend/platform.py:362-369)
+- DCP is not supported on Ascend NPU model runner v2 (vllm_ascend/worker/v2/model_runner.py:68-69)
+- Mooncake Hybrid Connector requires dcp_size * pcp_size == 1 (vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1083)
+- --enable-return-routed-experts is not validated with dcp_size > 1 (vllm/config/vllm.py:1926-1931)
+- dcp_comm_backend='a2a' requires dcp_size > 1 (vllm/config/parallel.py:480-483)
+tuning_advice:
+  summary: Set dcp_size to reduce per-NPU KV cache memory for long-sequence decode; balance against communication overhead
+    and ensure tp_size is divisible by dcp_size.
+  suggested_values:
+  - scenario: Long-sequence inference (e.g., 128K+ context) on Ascend v1 worker with sufficient NPUs
+    value: 2 to 8
+    reason: Reduces per-NPU KV cache by factor of dcp_size, enabling longer contexts. Common values in Ascend docs are 2 (single-node)
+      and 8 (multi-node). Larger values increase communication overhead but save more memory.
+  - scenario: Standard sequence lengths (<32K) or Ascend v2 worker
+    value: 1
+    reason: DCP adds communication overhead with no memory benefit for short sequences. v2 worker does not support DCP at
+      all.
+  - scenario: MLA model (e.g., DeepSeek-V2/V3) with dcp_comm_backend='a2a'
+    value: 2 to 4
+    reason: MLA models bypass the GQA/MQA head constraints. The a2a backend reduces NCCL calls from 3 to 2 per layer, lowering
+      communication overhead for MLA.
+  - scenario: Speculative decoding with GQA/MQA draft model
+    value: <= draft_tp_size // total_num_kv_heads
+    reason: Must satisfy the draft model DCP constraint; otherwise validation raises ValueError.
+  caveats:
+  - DCP is NOT supported on Ascend v2 worker — attempting to use it raises NotImplementedError. Use v1 worker for DCP.
+  - DCP increases inter-NPU communication during decode (all-gather + reduce-scatter per attention layer), which can increase
+    decode latency. Test with your specific model and sequence length.
+  - Mooncake Hybrid Connector for KV transfer does not support DCP (requires dcp_size * pcp_size == 1).
+  - DCP is incompatible with --enable-return-routed-experts (raises ValueError).
+  - When DCP is enabled without varlen support in the attention backend, reorder_batch_threshold is forced to 1, which may
+    reduce batching efficiency.
+  - For MLA draft models in speculative decoding, DCP head-sharding rules do not apply — only GQA/MQA draft models have the
+    additional constraints.
+  quick_guide: Use --decode-context-parallel-size to shard KV cache across NPUs for long-sequence decode; start with 2 for
+    single-node or 4-8 for multi-node, ensure tp_size is divisible by dcp_size, and use v1 worker (not v2).
+analysis_date: '2026-07-06'

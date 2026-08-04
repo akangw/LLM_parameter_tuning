@@ -1,0 +1,97 @@
+name: --model-loader-extra-config
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:862
+- vllm/config/load.py:94
+- vllm_ascend/model_loader/netloader/netloader.py:64
+- vllm_ascend/model_loader/rfork/rfork_loader.py:42
+value_type: dict
+default: '{}'
+valid_choices: JSON object string; keys depend on --load-format
+cli_example: '--model-loader-extra-config ''{"model_url": "http://...", "model_deploy_strategy_name": "my_strategy"}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter is a JSON dictionary that is forwarded to the model loader selected by --load-format. Its performance\
+  \ impact depends entirely on which loader is active and which keys are provided.\nOn Ascend NPU, vllm-ascend introduces\
+  \ two custom load formats that use this parameter for performance-critical configuration:\n1. **netloader** (--load-format=netloader):\
+  \ An elastic weight-loading\n   mechanism that streams weights from remote sources. The extra config\n   controls SOURCE\
+  \ (list of remote endpoints), model_path, listen_port,\n   int8_cache, and output_prefix. These directly affect model loading\n\
+  \   latency and whether weights can be served at all. A CONFIG_FILE key\n   can point to a JSON file containing the full\
+  \ configuration.\n\n2. **rfork** (--load-format=rfork): A fast weight-transfer mechanism that\n   uses a seed service to\
+  \ copy model weights between processes. The extra\n   config must contain model_url and model_deploy_strategy_name (required\n\
+  \   for seed key generation; missing either raises RuntimeError). Optional\n   keys include rfork_scheduler_url, rfork_seed_timeout_sec\
+  \ (default 5.0),\n   and rfork_seed_key_separator (default \"$\"). These control how quickly\n   weights are transferred\
+  \ and how the seed service is located, directly\n   impacting cold-start latency and memory usage during model loading.\n\
+  \nFor upstream load formats, the parameter also affects performance: - \"default/auto: supports enable_multithread_load,\
+  \ num_threads,\"\n  enable_weights_track (controls multi-threaded weight loading speed).\n- runai_streamer: \"supports distributed,\
+  \ concurrency, memory_limit\"\n  (controls streaming parallelism and memory budget).\n- \"sharded_state: supports pattern\
+  \ (controls shard file naming).\" - \"tensorizer: keys are mapped to TensorizerConfig fields.\" - \"dummy, gguf: extra config\
+  \ is explicitly rejected (raises ValueError).\"\nThe parameter is NOT Ascend-specific in definition, but vllm-ascend's netloader\
+  \ and rfork loaders make it Ascend-critical for production deployments that use these load formats.\n"
+usage_locations:
+- file: vllm_ascend/model_loader/netloader/netloader.py:64
+  context: Reads model_loader_extra_config to get SOURCE, model_path, listen_port, int8_cache, output_prefix, or CONFIG_FILE
+    for elastic weight loading.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:42
+  context: Reads model_loader_extra_config to extract model_url, model_deploy_strategy_name, rfork_scheduler_url, rfork_seed_timeout_sec,
+    rfork_seed_key_separator for RFork seed-based weight transfer.
+- file: vllm_ascend/model_loader/rfork/seed_protocol.py:41
+  context: Validates that model_url and model_deploy_strategy_name are present in the config; raises RuntimeError if missing.
+- file: vllm/model_executor/model_loader/default_loader.py:78
+  context: Reads extra_config for enable_multithread_load, num_threads, enable_weights_track; rejects unexpected keys.
+- file: vllm/model_executor/model_loader/runai_streamer_loader.py:31
+  context: Reads distributed, concurrency, memory_limit from extra config to configure Run:ai streamer.
+- file: vllm/model_executor/model_loader/sharded_state_loader.py:45
+  context: Reads pattern key for sharded state file naming.
+- file: vllm/engine/arg_utils.py:1576
+  context: validate_tensorizer_args() maps extra config keys to TensorizerConfig fields when load_format is tensorizer.
+related_parameters:
+- name: --load-format
+  relation: Determines which model loader receives this config and which keys are valid. Different load formats support different
+    extra config keys.
+- name: --model
+  relation: For tensorizer load format, the model path is used as tensorizer_dir in the extra config.
+constraints:
+- Must be a valid JSON object string when provided.
+- When --load-format is rfork, the config must contain 'model_url' and 'model_deploy_strategy_name' keys, otherwise a RuntimeError
+  is raised.
+- When --load-format is dummy or gguf, providing any extra config raises a ValueError.
+- When --load-format is default/auto, only 'enable_multithread_load', 'num_threads', and 'enable_weights_track' keys are allowed;
+  unexpected keys raise a ValueError.
+- When --load-format is sharded_state, only the 'pattern' key is allowed; unexpected keys raise a ValueError.
+- When --load-format is netloader and a CONFIG_FILE key is present, its value must be a path to a valid JSON file.
+tuning_advice:
+  summary: Only use this parameter when --load-format requires it (netloader, rfork, runai_streamer, sharded_state, tensorizer).
+    For default loading, the multi-threading keys can accelerate weight loading on Ascend NPU.
+  suggested_values:
+  - scenario: Using netloader for elastic weight loading on Ascend NPU
+    value: '{"SOURCE": [{"url": "http://seed-node:8080"}], "model_path": "/path/to/model", "listen_port": 8081}'
+    reason: Configures the remote weight source and local serving port, enabling streaming weight transfer which reduces cold-start
+      latency compared to downloading full checkpoints.
+  - scenario: Using rfork for fast intra-cluster weight transfer on Ascend NPU
+    value: '{"model_url": "http://seed-node:8080", "model_deploy_strategy_name": "my_strategy", "rfork_seed_timeout_sec":
+      10.0}'
+    reason: Required keys enable seed-based weight transfer. Increasing seed_timeout_sec from default 5.0 helps in congested
+      network environments.
+  - scenario: Using default loader with large models on Ascend NPU
+    value: '{"enable_multithread_load": true, "num_threads": 8}'
+    reason: Enables multi-threaded weight loading which can significantly reduce model initialization time on Ascend NPU nodes
+      with many CPU cores.
+  caveats:
+  - The netloader and rfork loaders are vllm-ascend specific and only work on Ascend NPU. They are not available in upstream
+    vLLM.
+  - When netloader or rfork fall back to default loading (e.g., on failure), model_loader_extra_config is cleared and load_format
+    is reset to 'auto', so any performance tuning in the extra config is lost for the fallback path.
+  - For rfork, rfork_seed_timeout_sec values <= 0 are silently replaced with the default 5.0 seconds.
+  - Providing extra config keys that are not recognized by the active loader causes a ValueError, preventing startup. Always
+    check which keys are valid for your chosen --load-format.
+  quick_guide: 'Provide as a JSON string only when using non-default --load-format values (netloader, rfork, runai_streamer,
+    sharded_state, tensorizer); for default loading, use {"enable_multithread_load": true, "num_threads": 8} to accelerate
+    weight loading.'
+analysis_date: '2026-07-06'

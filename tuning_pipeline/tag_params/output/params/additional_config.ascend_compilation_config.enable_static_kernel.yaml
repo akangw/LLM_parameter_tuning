@@ -1,0 +1,97 @@
+name: additional_config.ascend_compilation_config.enable_static_kernel
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:484
+- vllm_ascend/compilation/compiler_interface.py:67
+- vllm_ascend/compilation/compiler_interface.py:98
+- vllm_ascend/platform.py:498
+- vllm_ascend/worker/worker.py:151
+- docs/source/user_guide/feature_guide/graph_mode.md:164
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true,"enable_static_kernel":true}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Enabling this option makes the Ascend graph compiler build static-shape operator binaries during graph capture.
+  For both the npugraph_ex configuration path and the torchair reduce-overhead path, the compiler enables static kernels and
+  restricts their symbolic shape range to applicable decode CUDA-graph capture sizes. This can reduce graph-execution overhead
+  and improve serving latency and throughput when shapes are static or change little. The tradeoff is startup: the documented
+  compile pass can add several minutes to tens of minutes depending on model complexity and operator count. The option is
+  also part of the AscendCompiler cache hash, so changing it selects a different compiled cache key. Upstream vLLM has no
+  matching setting; this behavior is specific to vllm-ascend.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:520
+  context: Rejects enable_static_kernel=true unless enable_npugraph_ex is also true.
+- file: vllm_ascend/compilation/compiler_interface.py:67
+  context: Derives the eligible static-kernel shape range from decode CUDA-graph capture sizes.
+- file: vllm_ascend/compilation/compiler_interface.py:98
+  context: Enables static_kernel_compile and supplies the symbolic shape range for npugraph_ex.
+- file: vllm_ascend/compilation/compiler_interface.py:114
+  context: Enables the corresponding static-shape-kernel options for the torchair backend.
+- file: vllm_ascend/compilation/compiler_interface.py:222
+  context: Includes the setting in the AscendCompiler cache hash.
+- file: vllm_ascend/platform.py:498
+  context: Disables npugraph_ex when graph mode is NONE or uses piecewise compilation; full graphs avoid splitting to prevent
+    repeated compilation.
+- file: vllm_ascend/worker/worker.py:151
+  context: Installs SIGTERM/SIGINT cleanup handlers when npugraph_ex static kernels are enabled.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:591
+  context: Handles the extra MoE forward pass performed for static-kernel compilation plus capture.
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: 'Hard prerequisite: it must be true whenever enable_static_kernel is true.'
+- name: compilation_config.cudagraph_mode
+  relation: Static-kernel compilation is effective on the supported full-graph path; NONE and piecewise paths disable npugraph_ex.
+- name: compilation_config.cudagraph_capture_sizes
+  relation: Eligible decode capture sizes determine the symbolic shape range passed to static-kernel compilation.
+- name: max_num_seqs
+  relation: Together with speculative-token count, bounds which CUDA-graph capture sizes enter the static-kernel shape range.
+constraints:
+- enable_npugraph_ex must be true when enable_static_kernel is true, or AscendCompilationConfig raises an assertion.
+- Use a supported full CUDA-graph mode; graph mode NONE and piecewise compilation disable npugraph_ex in the Ascend platform
+  configuration.
+tuning_advice:
+  summary: Keep the default off unless the deployment uses static or near-static shapes and the measured serving gain justifies
+    a potentially long startup compile. Enable it only with npugraph_ex and a supported full CUDA-graph configuration.
+  suggested_values:
+  - scenario: Long-running production serving with static or minimally changing decode shapes
+    value: true
+    reason: Shape-specific operator binaries can improve graph execution performance, while a long-lived service can amortize
+      the one-time graph-capture compilation cost.
+  - scenario: Development, frequent restarts, or workloads with substantial shape variation
+    value: false
+    reason: Avoids the documented startup compilation delay when static-shape specialization is unlikely to provide enough
+      reusable coverage.
+  caveats:
+  - Startup compilation can take several minutes to tens of minutes, depending on operator count and model complexity.
+  - The benefit is workload- and shape-dependent; benchmark representative request concurrency and decode shapes.
+  - Changing the setting changes the AscendCompiler cache hash and therefore does not reuse the opposite setting's cache key.
+  - Static-kernel installations are explicitly removed by worker shutdown handling on SIGTERM or SIGINT.
+  quick_guide: Leave false by default; set true only for benchmarked, long-running, near-static full-graph serving.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

@@ -1,0 +1,111 @@
+name: additional_config.eplb_config.algorithm_execution_interval
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:633
+- vllm_ascend/ascend_config.py:670
+- vllm_ascend/eplb/eplb_updator.py:70
+- vllm_ascend/eplb/eplb_updator.py:77
+- vllm_ascend/eplb/core/eplb_worker.py:340
+- docs/source/user_guide/configuration/additional_config.md:146
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:30
+- docs/source/user_guide/feature_guide/eplb_swift_balancer.md:80
+value_type: int
+default: 30
+valid_choices: integer greater than or equal to 0; values of at least 30 are recommended
+cli_example: DYNAMIC_EPLB=true vllm serve <model> --enable-expert-parallel --additional-config '{"eplb_config":{"dynamic_eplb":true,"algorithm_execution_interval":30}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: This Ascend-only field reserves a number of forward iterations between waking the dynamic-EPLB subprocess and
+  consuming its updated expert placement. The updater wakes the planner after expert_heat_collection_interval iterations,
+  then performs a blocking queue read at expert_heat_collection_interval plus algorithm_execution_interval minus one. Expert
+  weights are subsequently updated one MoE layer per iteration, and the cycle resets after the two intervals plus num_moe_layers.
+  A value that is too short can reach the blocking read before the CPU planner finishes and add request-path latency; increasing
+  it gives the planner a longer overlap window but delays load redistribution and makes cycles less frequent, which can prolong
+  rank imbalance and reduce throughput when expert demand changes. It does not alter expert or KV-cache allocation. The pinned
+  upstream vLLM repository has a different EPLBConfig with window_size and step_interval and contains no algorithm_execution_interval
+  counterpart.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:633
+  context: Defines the default of 30 and validates this field as a non-negative integer.
+- file: vllm_ascend/eplb/eplb_updator.py:70
+  context: Copies the configured interval into the per-forward EPLB update state machine.
+- file: vllm_ascend/eplb/eplb_updator.py:77
+  context: Uses the interval to time the blocking result read, layer-by-layer expert-weight updates, and cycle reset.
+- file: vllm_ascend/eplb/core/eplb_worker.py:340
+  context: The separate EPLB process runs one placement update after being woken and publishes its result to the queue consumed
+    by the updater.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:80
+  context: Recommends at least 30 iterations to avoid premature balancing during startup and shows 50 in the dynamic SwiftBalancer
+    example.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must activate dynamic EPLB for this timing value to control the live balancing state machine.
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: Runs before this wait window; together the two values determine when planner output is consumed and contribute
+    to total cycle length.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Determines the redundant placement capacity that the planner can redistribute after this interval.
+- name: additional_config.eplb_config.eplb_policy_type
+  relation: Selects the CPU balancing policy whose execution must finish within the overlap window.
+- name: DYNAMIC_EPLB
+  relation: Must be true or 1 at process startup, unless EXPERT_MAP_RECORD=true supplies the alternative gate, when dynamic_eplb
+    is enabled.
+constraints:
+- The value must be an integer; booleans also pass the current Python isinstance(value, int) validation.
+- The current validator accepts zero and rejects negative values, despite its rejection message saying the value must be greater
+  than zero.
+- The Ascend guide recommends a value of at least 30 to avoid premature balancing during startup.
+- The interval has a runtime effect only when dynamic EPLB or the expert-map recording workflow creates and drives the EPLB
+  updater.
+- Dynamic EPLB requires expert-parallel MoE execution, the required environment gate, and the supported Ascend model runner;
+  model runner v2 does not support it.
+tuning_advice:
+  summary: Keep at least 30, then choose the smallest interval that reliably lets the selected CPU policy finish without blocking
+    the forward path; verify both planner stalls and how quickly placement follows workload changes.
+  suggested_values:
+  - scenario: Default or static expert-map recording workflow
+    value: 30
+    reason: This is the code default, the documented static-recording example, and the guide's recommended lower bound.
+  - scenario: Initial dynamic SwiftBalancer policy 2 deployment
+    value: 50
+    reason: The pinned Ascend guide pairs 50 with expert_heat_collection_interval=600 in its recommended dynamic policy-2
+      example.
+  - scenario: Planner cannot consistently finish before the configured read point
+    value: increase above the measured failing value
+    reason: A longer overlap window reduces the chance that the blocking queue read stalls the serving path, but should be
+      increased only as far as measurements require.
+  caveats:
+  - Forward iterations are not wall-clock time; the same numeric value gives the CPU planner a different time budget as batch
+    shape, model latency, and serving load change.
+  - Raising the value lengthens the full cycle and delays expert redistribution, so it can preserve load imbalance longer
+    under changing traffic.
+  - Lowering the value does not make the CPU algorithm itself cheaper and can expose its execution time as blocking latency
+    if the result is not ready.
+  - Tune this value jointly with expert_heat_collection_interval and the number of MoE layers because the cycle resets after
+    their sum.
+  - The documented 30 and 50 values are starting points, not workload-independent optima; compare TTFT, TPOT, throughput,
+    and expert balance on representative requests.
+  quick_guide: Start at 30 (or the guide's policy-2 pair of 600 collection iterations and 50 execution iterations), watch
+    for blocking at the planner-result boundary, and increase only enough to remove stalls without making rebalancing too
+    slow.
+analysis_date: '2026-08-01'
+tags:
+  model:
+  - moe
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

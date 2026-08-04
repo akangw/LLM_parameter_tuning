@@ -1,0 +1,81 @@
+name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:75
+- vllm_ascend/ascend_config.py:86
+- vllm_ascend/utils.py:1010
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: true
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls whether FlashComm1 optimization is enabled during tensor-parallel execution
+  on Ascend NPUs. When enabled (set to "1"), it activates the Sequence Parallelism (SP) code path in vllm-ascend, which fuses
+  communication and computation to reduce all-reduce overhead in tensor-parallel layers. The `enable_sp()` function in vllm_ascend/utils.py
+  reads this variable (or its `additional_config` equivalent) and returns a boolean that gates SP behavior throughout the
+  model execution. FlashComm1 is particularly effective under high concurrency, where communication latency becomes a bottleneck.
+  It is also a prerequisite for DSA CP (DeepSeek Attention Context Parallelism), which requires SP to be enabled and will
+  raise a ValueError if DSA CP is requested without FlashComm1. The parameter is deprecated in favor of `additional_config.enable_flashcomm1`,
+  but the env var still takes effect through the `_get_config_value` fallback chain in `ascend_config.py`.
+
+  '
+usage_locations:
+- file: vllm_ascend/envs.py:75
+  context: Environment variable definition with default '0' and deprecation notice
+- file: vllm_ascend/ascend_config.py:83-88
+  context: Read into AscendConfig.enable_flashcomm1 via _get_config_value fallback chain
+- file: vllm_ascend/utils.py:1004-1010
+  context: enable_sp() function reads enable_flashcomm1 to determine if SP is active
+- file: vllm_ascend/utils.py:1493-1496
+  context: enable_dsa_cp() validates that SP (FlashComm1) is enabled before allowing DSA CP
+related_parameters:
+- name: additional_config.enable_flashcomm1
+  relation: Preferred replacement; takes precedence over the env var when set in additional_config
+- name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+  relation: FlashComm2 is a newer alternative with different trade-offs; FlashComm1 and FlashComm2 serve similar communication
+    optimization purposes
+- name: enable_dsa_cp
+  relation: DSA CP requires FlashComm1 to be enabled; enabling DSA CP without FlashComm1 raises a ValueError
+- name: enable_shared_expert_dp
+  relation: When enable_shared_expert_dp is True, enable_sp() is automatically set to True regardless of FlashComm1 setting
+- name: tensor_parallel_size
+  relation: FlashComm1 optimization only takes effect when tensor parallelism is enabled (tp > 1)
+constraints:
+- FlashComm1 only takes effect when tensor parallelism is enabled (--tensor-parallel-size > 1)
+- DSA CP requires FlashComm1 to be enabled; enabling DSA CP without FlashComm1 will raise a ValueError
+- 'The env var is deprecated; use --additional-config ''{"enable_flashcomm1": true}'' instead'
+tuning_advice:
+  summary: Enable FlashComm1 when using tensor parallelism with high concurrency to reduce communication overhead and improve
+    throughput
+  suggested_values:
+  - scenario: High-concurrency tensor-parallel inference (tp > 1)
+    value: '1'
+    reason: FlashComm1 fuses communication and computation, reducing all-reduce latency which becomes the bottleneck under
+      high concurrency
+  - scenario: Using DSA CP (DeepSeek V3.2/V4 context parallelism)
+    value: '1'
+    reason: DSA CP requires SP (FlashComm1) to be enabled; the code will raise a ValueError if DSA CP is enabled without FlashComm1
+  - scenario: Single-card inference or tp = 1
+    value: '0'
+    reason: FlashComm1 has no effect without tensor parallelism; keeping it disabled avoids unnecessary code paths
+  - scenario: Low-concurrency scenarios
+    value: '0'
+    reason: The communication optimization benefit is most pronounced under high concurrency; low-concurrency workloads may
+      see negligible gains
+  caveats:
+  - 'This env var is deprecated; prefer using --additional-config ''{"enable_flashcomm1": true}'' for future compatibility'
+  - FlashComm1 and FlashComm2 are different optimizations with different applicable scenarios; consult the feature guide for
+    trade-offs
+  - When enable_shared_expert_dp is True, SP is automatically enabled regardless of this setting
+  - FlashComm1 may increase memory usage slightly due to fused operation buffers
+  quick_guide: 'Set VLLM_ASCEND_ENABLE_FLASHCOMM1=1 for high-concurrency tensor-parallel deployments; use --additional-config
+    ''{"enable_flashcomm1": true}'' as the preferred non-deprecated method'
+analysis_date: '2026-07-06'

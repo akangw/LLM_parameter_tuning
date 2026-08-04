@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+*.lock
+STOP_REQUESTED*
+.pytest_cache/
+
+# Local runtime state and high-volume experiment evidence.
+tuning_pipeline/workflow/continuous/state.json
+tuning_pipeline/workflow/continuous/latest_controller_launch.txt
+tuning_pipeline/workflow/continuous/controller.lock.stale-*
+tuning_pipeline/workflow/continuous/experiments/*
+!tuning_pipeline/workflow/continuous/experiments/README.md
+tuning_pipeline/artifacts/archive/
+
+# Reproducible but bulky build queues and duplicate audit workspaces.
+portrait_pipeline/build/codex_portrait_pipeline/run/
+portrait_pipeline/build/migration_pipeline/runs/
+portrait_pipeline/build/parse_params/output/logs/
+tuning_pipeline/tag_params/output/logs/
+*.jsonl
+
+# Upstream source checkouts are fetched at pinned commits by scripts/fetch-sources.ps1.
+portrait_pipeline/sources/
+
+# Local tool metadata.
+.agents/
+.idea/
+.vscode/
+.DS_Store

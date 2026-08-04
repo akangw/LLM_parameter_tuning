@@ -1,0 +1,96 @@
+name: pooler.seq_pooling_type
+type: nested
+category: model
+scope: vllm
+source_file:
+- vllm/config/pooler.py
+- vllm/config/model.py:605
+- vllm/model_executor/layers/pooler/seqwise/poolers.py:93
+- vllm/model_executor/models/bert.py:104
+- vllm/model_executor/models/clip.py:152
+- vllm/model_executor/models/clip.py:895
+- vllm/model_executor/models/config.py:299
+- vllm/model_executor/models/config.py:335
+- vllm/model_executor/models/gritlm.py:189
+value_type: str
+default: <computed>
+valid_choices:
+- MEAN
+- CLS
+- LAST
+- STEP
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter selects the sequence-level pooling method for embedding/pooling models. It affects performance
+  indirectly through two mechanisms:
+
+  1. **Chunked prefill compatibility** (vllm/config/model.py:1734): When `seq_pooling_type` is "MEAN" or "CLS" (combined with
+  `tok_pooling_type == "STEP"`), chunked prefill is disabled for decoder-attention pooling models. Chunked prefill is a key
+  throughput optimization that interleaves prefill and decode — disabling it can reduce throughput for workloads with long
+  prompts.
+
+  2. **Pooling computation path** (vllm/model_executor/layers/pooler/seqwise/poolers.py:93): The selected pooling type determines
+  which pooling function is dispatched at runtime. Different pooling methods (MEAN, CLS, LAST, STEP) have slightly different
+  computational costs, but the difference is negligible compared to the model''s forward pass.
+
+  On Ascend NPU, the pooling operation itself is a lightweight reduction over the hidden states tensor. The primary performance
+  consideration is whether the chosen pooling type allows chunked prefill to remain enabled. No vllm-ascend specific overrides
+  or modifications were found for this parameter — it behaves identically on Ascend as on GPU.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:605
+  context: Default value assignment from model_info if not user-specified
+- file: vllm/config/model.py:1734
+  context: Checked to determine chunked prefill support for pooling models
+- file: vllm/model_executor/layers/pooler/seqwise/poolers.py:93
+  context: Dispatched to select the pooling function in pooler_for_embed
+- file: vllm/model_executor/models/bert.py:104
+  context: Used to initialize BertPooler with the selected pooling method
+- file: vllm/model_executor/models/clip.py:152
+  context: Mapped to vision feature select strategy for CLIP models
+- file: vllm/model_executor/models/clip.py:895
+  context: Used as fallback for vision feature selection in CLIP image features
+- file: vllm/model_executor/models/config.py:299
+  context: Set from HF config pooling field for LlamaBidirectional models
+- file: vllm/model_executor/models/config.py:335
+  context: Set from HF config pooling field for LlamaNemotronVL models
+- file: vllm/model_executor/models/gritlm.py:189
+  context: Checked to select GritLMMeanPool vs generic pooling for GritLM models
+related_parameters:
+- name: pooler.tok_pooling_type
+  relation: Combined with seq_pooling_type to determine chunked prefill eligibility
+- name: runner_type
+  relation: Only relevant when runner_type is 'pooling'
+- name: enable_chunked_prefill
+  relation: seq_pooling_type values MEAN/CLS can force-disable chunked prefill
+constraints:
+- Must be one of MEAN, CLS, LAST, or STEP
+- Only applicable when runner_type is 'pooling'
+tuning_advice:
+  summary: 'Use the model''s default pooling type unless you have a specific reason to change it. On Ascend NPU, prefer pooling
+    types that allow chunked prefill (avoid MEAN/CLS with STEP token pooling on decoder models) to maintain throughput.
+
+    '
+  suggested_values:
+  - scenario: Default usage with embedding/pooling models
+    value: <model default>
+    reason: The model's default pooling type is set from its HuggingFace config and matches the training setup. Changing it
+      may produce incorrect embeddings.
+  - scenario: Decoder-attention pooling model where chunked prefill throughput matters
+    value: LAST
+    reason: LAST pooling (unlike MEAN/CLS) allows chunked prefill to remain enabled on decoder models, preserving throughput
+      for long-prompt workloads.
+  caveats:
+  - Using MEAN or CLS pooling on decoder-attention models disables chunked prefill, which can significantly reduce throughput
+    on Ascend NPU for workloads with long prompts.
+  - The pooling type must match what the model was trained with — using the wrong type produces semantically incorrect embeddings.
+  - For CLIP-style models, seq_pooling_type is also used to determine vision feature selection strategy, affecting multimodal
+    correctness.
+  quick_guide: Stick to the model's default pooling type. If chunked prefill throughput is critical and your decoder model
+    supports it, use LAST pooling.
+analysis_date: '2026-07-06'

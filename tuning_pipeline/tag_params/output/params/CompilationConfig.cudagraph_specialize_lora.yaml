@@ -1,0 +1,106 @@
+name: CompilationConfig.cudagraph_specialize_lora
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:634
+- vllm/v1/cudagraph_dispatcher.py:110
+- vllm_ascend/worker/model_runner_v1.py:4489
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: vllm serve <model> --enable-lora --compilation-config '{"cudagraph_specialize_lora":true}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When LoRA is enabled and graph execution is active, true makes the dispatcher create distinct graph descriptors
+  for batches with no active adapter and for LoRA-active batches. This avoids executing LoRA operations for adapter-free requests,
+  improving their latency and throughput, but multiplies graph capture work and retains additional graph state, increasing
+  startup time and device memory. False captures only the LoRA-enabled case and uses that path for all requests, reducing
+  capture variants and memory at the cost of LoRA operation overhead when no adapter is active. If LoRA is disabled, the dispatcher
+  creates only the no-LoRA case and this setting has no effect. vllm-ascend uses the upstream dispatcher and feeds its capture
+  descriptors into the inherited GPUModelRunner capture flow under NPU wrappers, so the same descriptor-count tradeoff applies
+  to ACLGraph capture.
+usage_locations:
+- file: vllm/v1/cudagraph_dispatcher.py:110
+  context: Selects LoRA capture cases. With specialization enabled it returns the no-LoRA case plus captured active-LoRA counts;
+    when disabled it returns only a LoRA-active sentinel case.
+- file: vllm/v1/cudagraph_dispatcher.py:165
+  context: Forms graph keys from the Cartesian product of capture sizes and selected LoRA cases for PIECEWISE and eligible
+    FULL graph modes, directly determining the number of graph variants.
+- file: vllm/v1/cudagraph_dispatcher.py:234
+  context: Dispatches runtime batches by their active-LoRA state and, when active adapter-count specialization is enabled,
+    by the normalized adapter count.
+- file: vllm_ascend/worker/model_runner_v1.py:4489
+  context: Ascend reads the inherited dispatcher's capture descriptors to configure ACLGraph sizes, then delegates capture
+    to GPUModelRunner under NPU wrappers.
+related_parameters:
+- name: --enable-lora
+  relation: This parameter has no effect unless LoRAConfig exists, which is normally created by enabling LoRA.
+- name: CompilationConfig.cudagraph_mode
+  relation: Graph mode determines whether graph keys are initialized and which PIECEWISE or FULL descriptor families are captured;
+    NONE makes this setting ineffective.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Each eligible capture size is combined with every selected LoRA case, so more sizes multiply the startup and memory
+    cost of specialization.
+- name: LoRAConfig.specialize_active_lora
+  relation: When enabled together with this flag, active-LoRA cases are further split into captured adapter counts up to max_loras,
+    creating still more graph variants.
+- name: LoRAConfig.max_loras
+  relation: Bounds the active-adapter counts used for graph capture and supplies the sentinel active count used when specialization
+    is disabled.
+constraints:
+- Effective only when LoRA is enabled and cudagraph_mode resolves to a mode that captures graphs.
+- With the default active-count specialization disabled, true normally adds a no-LoRA graph case beside the LoRA-active case
+  for every eligible graph size and mode.
+- Enabling LoRAConfig.specialize_active_lora can create multiple active-LoRA cases, so startup time and graph memory grow
+  with the captured count set as well as capture sizes and graph modes.
+- The exact latency benefit depends on the share of requests with no active adapter and the cost of the model's LoRA operations.
+tuning_advice:
+  summary: Keep true for mixed base-model and adapter traffic unless graph capture startup or device memory is the measured
+    bottleneck; consider false when nearly all requests use LoRA or minimizing graph variants matters more than adapter-free
+    latency.
+  suggested_values:
+  - scenario: Mixed base-model and LoRA requests with graph execution
+    value: true
+    reason: Preserves a no-LoRA graph path and avoids unnecessary LoRA operations for requests without an active adapter.
+  - scenario: Nearly all requests use an active LoRA and graph memory or startup is constrained
+    value: false
+    reason: Captures only the LoRA-enabled case, reducing descriptor count while sacrificing the optimized no-adapter path.
+  - scenario: LoRA disabled or eager execution
+    value: true
+    reason: The setting is ineffective in this scenario, so retaining the default avoids an unnecessary configuration difference.
+  caveats:
+  - Measure engine initialization time and peak device memory as well as steady-state latency and throughput; specialization
+    intentionally trades the former for the latter.
+  - The number of additional captures depends on capture sizes, graph mode, max_loras, and whether active adapter-count specialization
+    is enabled.
+  - Ascend inherits the descriptor logic, but absolute ACLGraph memory and latency effects must be benchmarked on the target
+    NPU and workload.
+  quick_guide: Start with true. If adapter-free requests are common, retain it. If almost every request activates LoRA and
+    capture startup or memory is excessive, benchmark false and keep it only if the reduced graph footprint outweighs the
+    extra runtime LoRA work.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

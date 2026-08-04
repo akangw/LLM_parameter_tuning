@@ -1,0 +1,85 @@
+name: --cpu-offload-gb
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/offload.py:23
+- vllm/engine/arg_utils.py:1141
+- vllm_ascend/worker/model_runner_v1.py:4261
+- vllm_ascend/_310p/model_runner_310p.py:879
+value_type: float
+default: '0'
+valid_choices: '''>= 0 (float)'''
+cli_example: --cpu-offload-gb 10
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: 'This parameter controls UVA (Unified Virtual Addressing) CPU offloading of model weights. When set to a positive
+  value, up to `cpu_offload_gb` GiB of model parameters per GPU are offloaded to CPU-pinned memory and accessed via zero-copy
+  during each forward pass. This effectively increases the available GPU memory for KV cache, enabling larger models or longer
+  context lengths on memory-constrained NPUs. However, it introduces CPU-GPU data transfer overhead on every forward pass,
+  which can significantly degrade throughput and increase latency, especially on Ascend NPUs where the CPU-NPU interconnect
+  bandwidth may be a bottleneck. On Ascend, vllm-ascend enforces an additional constraint: when `cpu_offload_gb > 0`, the
+  input batch cannot be re-initialized (e.g., when block sizes differ or multiple KV cache groups are used), which may limit
+  certain advanced features.
+
+  '
+usage_locations:
+- file: vllm/config/offload.py:23
+  context: Field definition in UVAOffloadConfig with default=0, ge=0
+- file: vllm/engine/arg_utils.py:507
+  context: EngineArgs attribute mapping from UVAOffloadConfig.cpu_offload_gb
+- file: vllm/engine/arg_utils.py:2145
+  context: Passed to UVAOffloadConfig constructor during VllmConfig creation
+- file: vllm/model_executor/offloader/base.py:131
+  context: Used to select UVA offloader when cpu_offload_gb > 0 and backend is "auto"
+- file: vllm/model_executor/offloader/base.py:158
+  context: Converted to bytes (cpu_offload_gb * 1024**3) for UVAOffloader initialization
+- file: vllm_ascend/worker/model_runner_v1.py:4261
+  context: 'Assertion check: cpu_offload_gb must be 0 when re-initializing input batch'
+- file: vllm_ascend/_310p/model_runner_310p.py:879
+  context: Same assertion check in 310P model runner variant
+related_parameters:
+- name: --offload-backend
+  relation: When set to "auto" (default), cpu_offload_gb > 0 triggers UVA offloading backend selection
+- name: --cpu-offload-params
+  relation: Selectively filters which parameters are offloaded within the cpu_offload_gb budget
+- name: --offload-group-size
+  relation: Mutually exclusive with cpu_offload_gb; prefetch offloading takes priority if both are set
+- name: --gpu-memory-utilization
+  relation: cpu_offload_gb virtually increases GPU memory, affecting KV cache allocation under gpu_memory_utilization
+constraints:
+- cpu_offload_gb must be >= 0 (enforced by pydantic Field ge=0)
+- When cpu_offload_gb > 0 and the input batch needs re-initialization (e.g., heterogeneous block sizes or multiple KV cache
+  groups), vllm-ascend raises an assertion error
+- cpu_offload_gb and prefetch offloading (offload_group_size > 0) are mutually exclusive; prefetch takes priority when both
+  are set and offload_backend is "auto"
+tuning_advice:
+  summary: 'Use cpu_offload_gb only when NPU memory is insufficient to load the model or desired KV cache; expect significant
+    throughput degradation due to CPU-NPU transfer overhead on Ascend.
+
+    '
+  suggested_values:
+  - scenario: Model fits in NPU memory with desired KV cache
+    value: '0'
+    reason: No offloading avoids CPU-NPU transfer overhead, maximizing throughput and minimizing latency
+  - scenario: Model slightly exceeds NPU memory (e.g., 13B model on 24GB NPU)
+    value: 4-10
+    reason: Offload just enough to fit the model; smaller values minimize the performance penalty
+  - scenario: Large model with limited NPU memory, throughput is secondary
+    value: 10-20
+    reason: Accept higher offloading for model feasibility; expect 2-5x throughput reduction on Ascend
+  caveats:
+  - On Ascend NPUs, CPU-NPU interconnect bandwidth is typically lower than GPU CPU-GPU bandwidth, making UVA offloading more
+    costly than on CUDA GPUs
+  - When cpu_offload_gb > 0, vllm-ascend cannot re-initialize the input batch, which may prevent use of heterogeneous block
+    sizes or multiple KV cache groups
+  - Prefetch offloading (--offload-group-size) takes priority over UVA offloading when both are configured; ensure only one
+    offloading strategy is active
+  - CPU-pinned memory allocation requires sufficient system RAM; ensure host memory exceeds cpu_offload_gb * number_of_NPUs
+  quick_guide: Set to 0 unless NPU memory is insufficient; if offloading is necessary, use the smallest value that allows
+    the model to load.
+analysis_date: '2026-07-06'

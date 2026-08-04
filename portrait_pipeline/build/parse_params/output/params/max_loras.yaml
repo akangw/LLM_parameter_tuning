@@ -1,0 +1,136 @@
+name: --max-loras
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/config/lora.py:36
+- vllm/engine/arg_utils.py:571
+- vllm/engine/arg_utils.py:1243
+- vllm/engine/arg_utils.py:1995
+- vllm_ascend/patch/platform/patch_balance_schedule.py:272
+- vllm_ascend/patch/platform/patch_balance_schedule.py:327
+- vllm_ascend/core/recompute_scheduler.py:430
+- vllm_ascend/core/recompute_scheduler.py:459
+- vllm_ascend/core/scheduler_dynamic_batch.py:301
+- vllm_ascend/core/scheduler_dynamic_batch.py:337
+- vllm_ascend/core/scheduler_profiling_chunk.py:427
+- vllm_ascend/core/scheduler_profiling_chunk.py:458
+- vllm_ascend/worker/model_runner_v1.py:3297
+value_type: int
+default: '1'
+valid_choices: '>= 1'
+cli_example: --max-loras 4
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: '--max-loras controls the maximum number of distinct LoRA adapters that can be active in a single batch. This
+  parameter directly affects throughput and latency because it acts as a hard scheduling constraint: "when the number of distinct"
+  LoRA adapters in the running batch reaches max_loras, the scheduler skips all waiting requests that require a different
+  LoRA adapter, even if token budget and sequence capacity remain available. This is enforced across ALL Ascend scheduler
+  variants (balance_schedule, recompute_scheduler, dynamic_batch, profiling_chunk) via the same pattern: after recording scheduled_loras
+  from running requests, the scheduler checks `len(scheduled_loras) == self.lora_config.max_loras` and skips requests whose
+  lora_int_id is not already in the set. Additionally, max_loras affects CUDA graph capture: when cudagraph_specialize_lora
+  is enabled, separate graphs are captured for powers of 2 up to max_loras, and when specialization is disabled, graphs are
+  captured with max_loras + 1 active adapters. On Ascend NPU, the v1 worker''s model_runner_v1.py uses max_loras as the num_active_loras
+  for dummy runs (line 3297), which affects graph dispatch and memory allocation. Higher max_loras increases the number of
+  CUDA graph variants captured, consuming more NPU memory and increasing capture time, but allows more LoRA diversity per
+  batch, improving throughput in multi-tenant LoRA serving scenarios. Setting max_loras too low causes scheduler head-of-line
+  blocking where requests with different LoRA adapters starve.
+
+  '
+usage_locations:
+- file: vllm/config/lora.py:36
+  context: Field definition with default=1, ge=1 constraint
+- file: vllm/engine/arg_utils.py:571
+  context: 'Default value assignment in EngineArgs (max_loras: int = LoRAConfig.max_loras)'
+- file: vllm/engine/arg_utils.py:1995
+  context: Passed to LoRAConfig constructor when enable_lora is True
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:272
+  context: Assertion that scheduled_loras count does not exceed max_loras
+- file: vllm_ascend/patch/platform/patch_balance_schedule.py:327
+  context: Scheduler skips waiting requests when max_loras limit is reached
+- file: vllm_ascend/core/recompute_scheduler.py:430
+  context: Assertion check in recompute scheduler
+- file: vllm_ascend/core/recompute_scheduler.py:459
+  context: Waiting request skip logic in recompute scheduler
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:301
+  context: Assertion check in dynamic batch scheduler
+- file: vllm_ascend/core/scheduler_dynamic_batch.py:337
+  context: Waiting request skip logic in dynamic batch scheduler
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:427
+  context: Assertion check in profiling chunk scheduler
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:458
+  context: Waiting request skip logic in profiling chunk scheduler
+- file: vllm_ascend/worker/model_runner_v1.py:3297
+  context: Used as num_active_loras for dummy runs in v1 worker
+- file: vllm/v1/cudagraph_dispatcher.py:123
+  context: Determines LoRA capture cases for CUDA graph specialization
+- file: vllm/v1/cudagraph_dispatcher.py:294
+  context: Used for graph dispatch when LoRA specialization is disabled
+related_parameters:
+- name: --enable-lora
+  relation: Must be enabled for --max-loras to take effect; without it, LoRA config is None and max_loras is ignored
+- name: --max-cpu-loras
+  relation: Must be >= max_loras; controls how many LoRA adapters can be stored in CPU memory
+- name: --max-lora-rank
+  relation: Together with max_loras determines LoRA memory footprint per batch
+- name: --fully-sharded-loras
+  relation: Affects how LoRA computation is distributed across tensor parallel ranks; interacts with max_loras memory usage
+- name: --specialize-active-lora
+  relation: When enabled, CUDA graphs are captured for powers of 2 up to max_loras; higher max_loras means more graph variants
+constraints:
+- --max-loras must be >= 1 (enforced by Field(ge=1) in LoRAConfig)
+- --max-cpu-loras must be >= --max-loras when set
+- --max-loras only takes effect when --enable-lora is set; otherwise the entire LoRA config is None
+- The number of distinct LoRA adapters in a single batch must not exceed --max-loras (enforced by assert in all Ascend schedulers)
+tuning_advice:
+  summary: 'Set --max-loras to the expected maximum number of distinct LoRA adapters that will be active concurrently in a
+    single batch. Higher values increase NPU memory usage (more CUDA graph variants) but prevent scheduler head-of-line blocking
+    in multi-tenant LoRA serving.
+
+    '
+  suggested_values:
+  - scenario: Single LoRA adapter serving (one model variant)
+    value: '1'
+    reason: 'Minimizes CUDA graph capture overhead and NPU memory usage. No scheduler blocking since all requests use the
+      same adapter.
+
+      '
+  - scenario: Multi-tenant LoRA serving with 2-4 concurrent adapters
+    value: '4'
+    reason: 'Balances batch diversity with memory overhead. Powers of 2 align with CUDA graph specialization capture sizes
+      when --specialize-active-lora is enabled, avoiding wasted graph variants.
+
+      '
+  - scenario: High multi-tenancy with 5-8 concurrent adapters
+    value: '8'
+    reason: 'Allows up to 8 distinct LoRA adapters per batch. Expect increased NPU memory consumption for additional CUDA
+      graph variants. Monitor GPU memory and consider reducing --max-num-seqs if OOM occurs.
+
+      '
+  - scenario: Maximum LoRA diversity (many tenants)
+    value: '16'
+    reason: 'Upper bound for most practical deployments. Beyond 16, CUDA graph capture time and memory overhead become significant.
+      Consider disabling --specialize-active-lora to reduce graph variants at the cost of some performance.
+
+      '
+  caveats:
+  - On Ascend NPU, higher --max-loras increases CUDA graph capture time and NPU memory usage because separate graphs are captured
+    for different active LoRA counts (powers of 2 up to max_loras when --specialize-active-lora is enabled)
+  - 'Setting --max-loras too low causes scheduler starvation: requests with LoRA adapters not in the current batch will be
+    repeatedly skipped, increasing time-to-first-token latency'
+  - The v1 Ascend worker uses max_loras as num_active_loras for dummy runs during model execution, which may allocate more
+    memory than actually needed if the batch has fewer active LoRAs
+  - All Ascend scheduler variants (balance_schedule, recompute_scheduler, dynamic_batch, profiling_chunk) enforce the same
+    max_loras constraint — there is no Ascend-specific relaxation of this limit
+  - When --specialize-active-lora is disabled, CUDA graphs are captured with max_loras + 1 active adapters, meaning even a
+    small max_loras value results in graphs sized for max_loras + 1
+  quick_guide: 'Match --max-loras to the number of distinct LoRA adapters you expect to serve concurrently. Use powers of
+    2 (1, 2, 4, 8) for optimal CUDA graph specialization. Start with 4 for multi-tenant serving and adjust based on observed
+    NPU memory usage and scheduler statistics.
+
+    '
+analysis_date: '2026-07-06'

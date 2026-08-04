@@ -1,0 +1,89 @@
+name: SpeculativeConfig.suffix_decoding_max_tree_depth
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:166
+- docs/features/speculative_decoding/README.md:111
+- vllm_ascend/spec_decode/suffix_proposer.py:1
+- docs/source/tutorials/features/suffix_speculative_decoding.md:5
+value_type: int
+default: 24
+valid_choices: integer >= 1
+cli_example: --speculative-config '{"method":"suffix","suffix_decoding_max_tree_depth":24}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This value caps the depth of both the global and per-prompt suffix trees, where depth limits the combined prefix-match
+  and speculative-continuation lengths. Increasing it can retain longer patterns and permit longer useful proposals, reducing
+  target-model decode iterations and improving throughput or inter-token latency when repetitive continuations are accepted.
+  It can also increase CPU-side tree storage and matching work, and longer rejected proposals add verification work without
+  producing output. When num_speculative_tokens is omitted for suffix decoding, this value also becomes that parameter's default
+  maximum, so raising it can directly enlarge the verification depth. Ascend passes the complete vLLM configuration to the
+  upstream suffix proposer, so the same trade-off applies there.
+usage_locations:
+- file: vllm/config/speculative.py:166
+  context: Declares the default and documents that tree depth limits the sum of the prefix-match and speculation lengths for
+    global and prompt suffix trees.
+- file: vllm/config/speculative.py:773
+  context: Uses this tree depth as num_speculative_tokens when that overall suffix proposal ceiling is omitted.
+- file: vllm/config/speculative.py:782
+  context: Rejects values below one during suffix-decoding configuration validation.
+- file: docs/features/speculative_decoding/README.md:111
+  context: Documents the nested option, integer type, default, and combined-depth meaning.
+- file: vllm_ascend/spec_decode/suffix_proposer.py:1
+  context: Ascend subclasses the upstream suffix proposer and forwards the full vLLM configuration, preserving this nested
+    setting.
+- file: docs/source/tutorials/features/suffix_speculative_decoding.md:5
+  context: Ascend documents CPU-based prompt and generated-content pattern matching and its performance relevance on repetitive
+    workloads.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: This tree-depth limit has effect only when the speculative-decoding method is suffix.
+- name: SpeculativeConfig.num_speculative_tokens
+  relation: Provides the overall proposal ceiling; if omitted for suffix decoding, it defaults to this tree depth.
+- name: SpeculativeConfig.suffix_decoding_max_spec_factor
+  relation: Caps adaptive proposal length relative to the matched prefix, while this parameter bounds their combined length
+    in the tree.
+- name: SpeculativeConfig.suffix_decoding_max_cached_requests
+  relation: Limits how many completed requests the global tree retains, while this parameter limits how deeply each global
+    or prompt tree can represent a pattern.
+- name: SpeculativeConfig.suffix_decoding_min_token_prob
+  relation: Filters continuation tokens by estimated probability and can prevent a proposal from reaching the depth allowed
+    here.
+constraints:
+- Must be an integer greater than or equal to 1; smaller values raise ValueError.
+- Has performance effect only when SpeculativeConfig.method is suffix.
+- Suffix decoding requires Arctic Inference; configuration validation raises ImportError when it is unavailable.
+- Realized proposal length is also bounded by num_speculative_tokens and the adaptive limit derived from suffix_decoding_max_spec_factor.
+tuning_advice:
+  summary: Keep 24 as the baseline, then tune against acceptance, TPOT, throughput, and host-memory use on representative
+    repetitive traffic.
+  suggested_values:
+  - scenario: General suffix-decoding deployment
+    value: 24
+    reason: Uses the source default and allows a moderate combined match/proposal depth without assuming unusually long reusable
+      patterns.
+  - scenario: Short repetitive patterns or host-memory pressure
+    value: 12
+    reason: A lower depth bounds tree retention and proposal opportunity more tightly; adopt it only if measured performance
+      does not regress.
+  - scenario: Long repeated structures with high speculative acceptance
+    value: 48
+    reason: A larger profiled depth can expose longer reusable continuations, but may increase CPU tree cost and rejected-token
+      verification work.
+  caveats:
+  - A larger tree does not guarantee a longer accepted draft; workload repetition, token-frequency filtering, and the other
+    proposal caps may be tighter.
+  - If num_speculative_tokens is explicitly below this value, it remains the proposal ceiling even though the trees may retain
+    deeper patterns.
+  - The host-memory and matching-cost change is workload-dependent because prompt lengths, generated lengths, and shared token
+    paths vary.
+  - Benchmark upstream and Ascend separately because verification and device execution costs can differ even though Ascend
+    reuses the upstream proposer.
+  quick_guide: Start at 24. Lower it when host cost matters and useful matches are short; raise it only when long repeated
+    continuations have high acceptance and end-to-end measurements improve.
+analysis_date: '2026-07-31'

@@ -1,0 +1,6 @@
+name: VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE
+type: env
+performance_impact: none
+skip_reason: In the pinned vLLM source this environment variable is only declared and parsed in vllm/envs.py; there is no
+  code path that reads it or applies it to an Inductor configuration. The pinned vLLM Ascend repository likewise has no reference
+  to the variable. Therefore changing it has no latency, throughput, or memory effect in the pinned sources.

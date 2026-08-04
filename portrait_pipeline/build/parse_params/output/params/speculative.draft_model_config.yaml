@@ -1,0 +1,117 @@
+name: speculative.draft_model_config
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/v1/spec_decode/llm_base_proposer.py:66
+- vllm_ascend/spec_decode/llm_base_proposer.py:222
+- vllm_ascend/platform.py:319
+value_type: unknown
+default: <computed>
+valid_choices: <computed>
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+- latency
+impact_detail: 'This nested configuration object defines the draft model used in speculative decoding. It is the central configuration
+  hub that determines the draft model''s architecture, hidden size, vocabulary size, number of layers, and other critical
+  properties that directly affect speculative decoding performance on Ascend NPU.
+
+  On Ascend, the draft_model_config is accessed in multiple performance-critical paths:
+
+  1. **Draft model loading (v1-ascend)**: In `AscendSpecDecodeBaseProposer._get_model()` (vllm_ascend/spec_decode/llm_base_proposer.py:222),
+  the draft_model_config is passed to `get_model()` to instantiate the draft model. The model architecture (EAGLE, MTP, etc.)
+  determines the computational cost of draft token generation.
+
+  2. **KV transfer sizing (ascend)**: In `MooncakeConnector` (vllm_ascend/distributed/ kv_transfer/kv_p2p/mooncake_connector.py:477-483),
+  the draft model''s `num_hidden_layers` from `draft_model_config.hf_config` determines how many KV cache layers need to be
+  transferred in PD-disaggregated scenarios. For MTP models, this is hardcoded to 1 (all MTP layers share the same KV cache).
+  For other draft models, the actual layer count is used, directly affecting KV transfer bandwidth and memory.
+
+  3. **CUDA graph resource calculation (ascend)**: In `vllm_ascend/utils.py:677-681`, the draft model''s total hidden layers
+  (via `get_total_num_hidden_layers()`) are added to the CUDA graph resource count. This affects memory allocation for CUDA
+  graphs on Ascend NPU, with MTP models using `num_nextn_predict_layers` or `mtp_num_hidden_layers` instead of `num_hidden_layers`.
+
+  4. **Hidden size and embedding dimensions (v1-upstream, v1-ascend)**: The draft model''s hidden size (`get_hidden_size()`)
+  and input embeddings size (`get_inputs_embeds_size()`) determine buffer allocations and computational cost. For DeepSeek
+  V4 MTP, the hidden size is multiplied by `hc_mult` from the draft config, significantly increasing memory and compute requirements.
+
+  5. **DCP validation (ascend)**: In `vllm_ascend/platform.py:319-338`, the draft model config is checked for MLA (Multi-head
+  Latent Attention) usage. MLA draft models skip the GQA/MQA DCP head-sharding validation, affecting how decode context parallelism
+  interacts with speculative decoding.
+
+  6. **MoE detection (ascend)**: In `vllm_ascend/utils.py:1037`, the draft model''s HF config is inspected to determine if
+  it''s a Mixture-of-Experts model, which affects expert parallel loading and EPLB (Expert Parallel Load Balancing) behavior.
+
+  The draft model''s architecture and size directly determine: - "Memory footprint of the draft model on NPU" - "Latency of
+  each speculative decoding step" - "Batch size limits due to buffer allocations based on max_num_tokens" - "Compatibility
+  with parallel strategies (TP, DP, DCP)" - "Whether KV cache sharing or transfer optimizations apply"
+
+  '
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:222
+  context: Draft model loading on Ascend - passed to get_model() to instantiate the draft model
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:477
+  context: KV transfer layer count determination - uses hf_config.num_hidden_layers for non-MTP draft models
+- file: vllm_ascend/utils.py:677
+  context: CUDA graph resource calculation - adds draft model layers to resource count
+- file: vllm_ascend/utils.py:1037
+  context: MoE detection for draft model - checks if drafter is MoE for EPLB
+- file: vllm_ascend/platform.py:319
+  context: DCP validation - checks draft model for MLA to skip head-sharding validation
+- file: vllm_ascend/models/deepseek_v4_mtp.py:60
+  context: DeepSeek V4 MTP layer initialization - reads hf_config for hidden_size, rms_norm_eps, index_topk
+- file: vllm/v1/spec_decode/llm_base_proposer.py:66
+  context: Upstream base proposer - stores draft_model_config for hidden_size and inputs_embeds_size
+- file: vllm/v1/spec_decode/extract_hidden_states.py:52
+  context: Extract hidden states method - reads hf_config for eagle_aux_hidden_state_layer_ids
+- file: vllm/v1/worker/gpu_model_runner.py:596
+  context: Effective drafter max_model_len determination for scheduling
+related_parameters:
+- name: speculative_config.method
+  relation: Determines which draft model architecture is used (eagle, mtp, etc.) and how draft_model_config is interpreted
+- name: speculative_config.draft_tensor_parallel_size
+  relation: Controls tensor parallelism for the draft model; draft_model_config.hf_config determines if TP is applicable
+- name: speculative_config.num_speculative_tokens
+  relation: Number of speculative tokens interacts with draft model's computational cost per step
+- name: parallel_config.decode_context_parallel_size
+  relation: DCP validation checks draft_model_config.use_mla to determine if head-sharding rules apply
+- name: parallel_config.enable_eplb
+  relation: EPLB registration checks if draft model is MoE via draft_model_config.hf_config
+constraints:
+- For extract_hidden_states method, draft_model_config.hf_config must have eagle_aux_hidden_state_layer_ids set
+- Draft model config must not be None when speculative_config is present and method is not mtp (for KV transfer layer counting)
+- MLA draft models (use_mla=True) skip DCP head-sharding validation
+- Elastic EP is not supported with draft models that are MoE
+tuning_advice:
+  summary: 'Choose the smallest draft model architecture that maintains acceptable acceptance rates; on Ascend NPU, prefer
+    MTP over EAGLE when available to reduce KV transfer overhead and simplify CUDA graph allocation.
+
+    '
+  suggested_values:
+  - scenario: PD-disaggregated deployment with KV transfer
+    value: Use MTP method draft models
+    reason: MTP draft models use only 1 KV cache layer for transfer (all layers share the same KV cache), minimizing KV transfer
+      bandwidth compared to EAGLE-style draft models which transfer num_hidden_layers worth of KV cache
+  - scenario: Memory-constrained Ascend NPU deployment
+    value: Use draft models with smaller hidden_size and fewer layers
+    reason: Draft model hidden_size directly determines buffer allocations (hidden_states, input_ids, positions) scaled by
+      max_num_tokens; fewer layers reduce CUDA graph resource count (resources_per_graph += draft_layers + 1)
+  - scenario: High-throughput with decode context parallelism
+    value: Use MLA draft models
+    reason: MLA draft models skip the GQA/MQA DCP head-sharding validation, avoiding potential compatibility issues with decode
+      context parallelism on Ascend
+  caveats:
+  - DeepSeek V4 MTP draft models multiply hidden_size by hc_mult from draft_model_config.hf_config, significantly increasing
+    memory footprint for hidden_states buffer
+  - Draft models with MoE architecture trigger EPLB registration but disable elastic EP, which may limit flexibility in expert-parallel
+    deployments
+  - The draft model's max_model_len, if set, overrides the target model's max_model_len for drafter scheduling (effective_drafter_max_model_len)
+  - On Ascend v1 worker, draft model loading goes through AscendSpecDecodeBaseProposer which may have different model loading
+    behavior than upstream
+  quick_guide: For Ascend NPU, prefer MTP draft models to minimize KV transfer overhead; use the smallest draft model that
+    meets your acceptance rate targets to reduce memory and compute pressure.
+analysis_date: '2026-07-06'

@@ -1,0 +1,97 @@
+name: --num-gpu-blocks-override
+type: cli
+category: kv_cache
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1090
+- vllm/config/cache.py:85
+value_type: int | None
+default: None
+valid_choices: any positive integer or None
+cli_example: --num-gpu-blocks-override 1024
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: "This parameter directly overrides the profiled `num_gpu_blocks` in the KV cache configuration. When set to\
+  \ a non-None value, it replaces the automatically determined number of GPU KV cache blocks (which is calculated based on\
+  \ available GPU memory and `gpu_memory_utilization`) with a user-specified value. This affects:\n1. **Memory allocation**:\
+  \ The KV cache is the primary consumer of GPU memory during inference.\n   Setting this too high causes out-of-memory (OOM)\
+  \ errors; setting it too low wastes GPU memory\n   and reduces the maximum batch size / sequence length that can be served.\n\
+  \n2. **Throughput and latency**: The number of KV cache blocks determines how many tokens can be\n   stored simultaneously.\
+  \ Fewer blocks mean the scheduler must evict or preempt requests more\n   aggressively, reducing throughput and increasing\
+  \ latency. More blocks allow larger batches\n   and longer sequences, improving throughput but potentially increasing per-token\
+  \ latency due\n   to larger memory footprint.\n\n3. **Auto-fit behavior**: In v1, when `original_max_model_len` is -1 (auto),\
+  \ the system\n   automatically determines the maximum model length that fits in available GPU memory. The\n   override decouples\
+  \ the cache size from profiled `available_memory`, and the code at\n   `vllm/v1/core/kv_cache_utils.py:1984-2003` adjusts\
+  \ `available_memory` to reflect the\n   override so that auto-fit, admission checks, and per-worker config builders all\
+  \ plan\n   against the same effective capacity.\n\n4. **CUDA graph profiling**: During CUDA graph capture, the system temporarily\
+  \ overrides\n   `num_gpu_blocks_override` to allocate a minimal KV cache (`max_cudagraph_capture_size`\n   blocks) for profiling\
+  \ purposes, then restores the original value. This is visible at\n   `vllm/v1/worker/gpu_model_runner.py:5973-5979`.\n\n\
+  On Ascend NPU, the KV cache is allocated in NPU HBM (High Bandwidth Memory). The same override mechanism applies, but the\
+  \ practical effect depends on the available NPU memory and the memory overhead of the Ascend CANN runtime. vllm-ascend does\
+  \ not override or modify this parameter's behavior, but the effective number of blocks that can be allocated is constrained\
+  \ by NPU HBM capacity, which may differ from GPU VRAM capacity for the same model.\nThe parameter is explicitly excluded\
+  \ from the computation graph hash (`vllm/config/cache.py:194`), meaning changing it does not trigger recompilation.\n"
+usage_locations:
+- file: vllm/config/cache.py:85
+  context: Field definition in CacheConfig dataclass with default None
+- file: vllm/engine/arg_utils.py:582
+  context: EngineArgs attribute declaration, sourced from CacheConfig default
+- file: vllm/engine/arg_utils.py:1090
+  context: CLI argument registration in CacheConfig argument group
+- file: vllm/engine/arg_utils.py:1699
+  context: Passed to CacheConfig constructor during engine initialization
+- file: vllm/v1/core/kv_cache_utils.py:895-900
+  context: may_override_num_blocks() applies the override to profiled num_blocks
+- file: vllm/v1/core/kv_cache_utils.py:1984-2003
+  context: Adjusts available_memory to reflect override for auto-fit and admission checks
+- file: vllm/v1/worker/gpu_model_runner.py:5973-5979
+  context: Temporarily overridden to allocate minimal KV cache for CUDA graph profiling
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: When num_gpu_blocks_override is None, gpu_memory_utilization determines the profiled num_gpu_blocks. When override
+    is set, gpu_memory_utilization is effectively ignored for KV cache sizing.
+- name: --block-size
+  relation: The total KV cache memory equals num_gpu_blocks * block_size * bytes_per_token. Changing block_size changes the
+    memory per block, so the same num_gpu_blocks_override value results in different total KV cache memory.
+- name: --max-model-len
+  relation: When max_model_len is -1 (auto), the system determines the maximum model length based on available KV cache blocks.
+    The override affects this auto-fit calculation.
+- name: --max-num-batched-tokens
+  relation: The number of available KV cache blocks constrains how many tokens can be batched. Insufficient blocks may prevent
+    reaching the configured max_num_batched_tokens.
+constraints:
+- Must be a positive integer or None. Negative values or zero are not valid.
+- Must not exceed the number of blocks that can fit in available GPU/NPU memory. Setting this too high causes out-of-memory
+  errors at initialization.
+- On Ascend NPU, the effective maximum is limited by available HBM after model weights and CANN runtime overhead are loaded.
+tuning_advice:
+  summary: Leave as default (None) for automatic KV cache sizing based on gpu_memory_utilization. Only override for testing
+    preemption behavior or when you need deterministic cache sizes across different hardware configurations.
+  suggested_values:
+  - scenario: Normal production deployment
+    value: None
+    reason: Allows vLLM to automatically profile and allocate the optimal number of KV cache blocks based on available GPU/NPU
+      memory and gpu_memory_utilization. This is the safest and most efficient setting.
+  - scenario: Testing preemption or memory-constrained scenarios
+    value: A small integer (e.g., 32 or 64)
+    reason: Artificially limits the KV cache size to trigger preemption behavior for testing. The test files use values like
+      16 and 32 for this purpose.
+  - scenario: Reproducible benchmarking across different hardware
+    value: A fixed integer matching the target cache size
+    reason: Ensures the same number of KV cache blocks regardless of available memory, enabling apples-to-apples comparisons
+      between different GPU/NPU models or configurations.
+  caveats:
+  - Setting this too high on Ascend NPU can cause OOM because NPU HBM may be smaller than GPU VRAM for the same model. Always
+    verify available HBM before setting a large override.
+  - This parameter is intended for testing preemption. Using it in production to limit KV cache size is better achieved by
+    adjusting gpu_memory_utilization, which automatically accounts for model weight memory and runtime overhead.
+  - When this override is set, the auto-fit mechanism for max_model_len still uses the overridden block count, which may result
+    in a max_model_len that does not reflect actual memory availability.
+  - The override is applied per-worker. In multi-GPU/NPU setups with tensor parallelism, each worker gets the same number
+    of blocks, so total KV cache memory scales with the number of workers.
+  quick_guide: Keep as default (None) for production. Only set a specific value for preemption testing or cross-hardware benchmarking.
+analysis_date: '2026-07-06'

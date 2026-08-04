@@ -1,0 +1,87 @@
+name: speculative.draft_load_config.load_format
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: str
+default: auto
+valid_choices:
+- auto
+- pt
+- safetensors
+- npcache
+- dummy
+- tensorizer
+- bitsandbytes
+- mistral
+- sharded_state
+- gguf
+- hf
+- megatron
+- tplx
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- throughput
+impact_detail: "This parameter controls the serialization format used when loading the draft model weights in speculative\
+  \ decoding. On Ascend NPU, the draft model is loaded via the AscendSpecDecodeBaseProposer._get_model() method (vllm_ascend/spec_decode/llm_base_proposer.py:221),\
+  \ which passes the draft_load_config (including load_format) to vllm's get_model(). The load_format affects: 1. Model loading\
+  \ time during engine startup (not steady-state inference). 2. Memory layout of loaded weights — safetensors enables memory-mapped\
+  \ loading which can reduce\n   peak host memory during initialization.\n3. On Ascend, the weights are ultimately moved to\
+  \ NPU device memory via the CANN runtime.\n   The load_format only affects the CPU-side deserialization step before the\
+  \ NPU copy.\nSince draft models are typically small (e.g., EAGLE heads), the absolute time and memory difference between\
+  \ formats is minimal. The parameter has no effect on the actual NPU computation or the speculative decoding algorithm's\
+  \ runtime performance.\n"
+usage_locations:
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:221
+  context: 'Logs the load_format value and passes draft_load_config (which contains load_format) to get_model() for loading
+    the draft model weights.
+
+    '
+related_parameters:
+- name: speculative.draft_model_config.model
+  relation: 'The draft model identifier determines which weights are loaded; load_format specifies how those weights are deserialized.
+
+    '
+- name: speculative.draft_load_config
+  relation: 'Parent config object; load_format is a field within this nested config.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Use the default "auto" for draft model loading on Ascend NPU; the format choice has negligible impact on inference
+    performance.
+
+    '
+  suggested_values:
+  - scenario: Default / general use on Ascend NPU
+    value: auto
+    reason: '"auto" tries safetensors first (memory-efficient, fast) and falls back to pytorch bin format. This is the safest
+      choice and the performance difference between formats is negligible for small draft models.
+
+      '
+  - scenario: Draft model only available in pytorch bin format
+    value: pt
+    reason: 'If the draft model checkpoint is only available as .bin files, explicitly setting "pt" avoids the safetensors
+      probe overhead, though this overhead is trivial.
+
+      '
+  caveats:
+  - 'This parameter only affects model loading time at engine startup, not the per-token speculative decoding latency or throughput
+    during inference.
+
+    '
+  - 'On Ascend NPU, the draft model weights are loaded to CPU first, then copied to NPU device memory. The load_format does
+    not change the NPU-side memory layout or computation.
+
+    '
+  - 'Draft models (e.g., EAGLE heads) are typically very small (a few hundred MB), so the absolute time difference between
+    load formats is minimal — usually under 1 second.
+
+    '
+  quick_guide: 'Keep the default "auto" unless you have a specific reason to force a particular format.
+
+    '
+analysis_date: '2026-07-06'

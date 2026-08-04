@@ -1,0 +1,6 @@
+name: VllmConfig.shutdown_timeout
+type: nested
+performance_impact: none
+skip_reason: The pinned sources only declare this non-negative shutdown grace-period field and copy the EngineArgs value into
+  VllmConfig; neither vLLM nor vLLM Ascend reads it in a runtime execution path. It therefore has no latency, throughput,
+  or memory effect in the pinned revisions.

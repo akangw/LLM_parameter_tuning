@@ -1,0 +1,128 @@
+name: KVTransferConfig.kv_connector_extra_config.prefill
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm/config/kv_transfer.py:60
+- vllm/config/kv_transfer.py:121
+- vllm_ascend/ascend_config.py:177
+- vllm_ascend/utils.py:1438
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1566
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1644
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1374
+- vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_hybrid_connector.py:1473
+- examples/offline_disaggregated_prefill_npu.py:59
+- docs/source/tutorials/models/GLM5.md:1385
+value_type: dict
+default:
+  tp_size: 1
+valid_choices:
+  tp_size: positive integer matching the prefill instance tensor_parallel_size
+  dp_size: positive integer matching the prefill instance data_parallel_size
+  pp_size: positive integer; omitted defaults to 1
+  pp_layer_partition: optional connector-specific prefill pipeline layer partition
+cli_example: --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer", "kv_connector_extra_config":{"prefill":{"dp_size":1,"tp_size":1},
+  "decode":{"dp_size":1,"tp_size":1}}}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This nested mapping declares the prefill-side DP, TP, and optional PP topology to the Ascend Mooncake connector;
+  it does not itself repartition the vLLM engine. Mooncake requires prefill tp_size and dp_size, uses tp_size and pp_size
+  to select remote producer ranks and group KV-head pulls, and uses the optional PP partition to map layers during receive.
+  Ascend also derives prefill-to-decode TP and KV-head ratios from this mapping, enabling KV-cache regrouping when TP sizes
+  differ. Thus the real prefill topology affects device count, per-rank model and KV-cache memory, prefill compute and communication,
+  while inaccurate metadata is rejected locally or makes cross-instance transfer routing unusable.
+usage_locations:
+- file: vllm_ascend/utils.py:1438
+  context: On a KV producer, validates supplied prefill tp_size and dp_size against the instance tensor_parallel_size and
+    data_parallel_size.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1644
+  context: MooncakeConnector requires prefill tp_size and dp_size and records optional pp_size and pp_layer_partition for
+    transfer topology.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1566
+  context: Worker initialization rejects a prefill TP size smaller than decode TP; later rank selection and KV-head grouping
+    use the prefill TP value.
+- file: vllm_ascend/ascend_config.py:177
+  context: Computes prefill-to-decode TP and KV-head ratios used for unequal-TP PD KV-cache reshaping and transfer.
+- file: examples/offline_disaggregated_prefill_npu.py:59
+  context: The pinned Ascend offline PD example supplies the same single-device prefill topology in both producer and consumer
+    configurations.
+- file: docs/source/tutorials/models/GLM5.md:1385
+  context: Pinned Ascend model guidance recommends a concrete DP4/TP8 prefill layout for both its low-latency and high-throughput
+    1P1D examples.
+related_parameters:
+- name: KVTransferConfig.kv_connector_extra_config.decode
+  relation: Supplies the peer decode topology; prefill tp_size must be at least and, for non-MLA AscendConfig handling, divisible
+    by decode tp_size.
+- name: tensor_parallel_size
+  relation: The prefill mapping's tp_size must equal the actual producer tensor parallel size.
+- name: data_parallel_size
+  relation: The prefill mapping's dp_size must equal the actual producer data parallel size.
+- name: pipeline_parallel_size
+  relation: The optional prefill pp_size describes producer pipeline stages and affects remote rank and layer mapping in Mooncake.
+- name: KVTransferConfig.kv_connector
+  relation: The Ascend Mooncake connector consumes this topology; upstream KVTransferConfig only stores connector-specific
+    extra data.
+- name: KVTransferConfig.kv_role
+  relation: Producer and both roles trigger local validation of the prefill mapping, while Mooncake peers also need it to
+    describe the remote producer.
+constraints:
+- For Ascend MooncakeConnectorV1 and its hybrid implementation, both tp_size and dp_size must be present in the prefill mapping.
+- On the prefill producer, tp_size and dp_size must exactly match the effective tensor_parallel_size and data_parallel_size.
+- Prefill tp_size must be greater than or equal to decode tp_size; non-MLA Ascend configuration additionally requires prefill
+  tp_size to be divisible by decode tp_size.
+- For hybrid KV caches containing Mamba state, the Mooncake hybrid connector requires prefill and decode TP sizes to be equal.
+- Every participating process must describe the same prefill topology; pp_size defaults to one when omitted, and pp_layer_partition
+  must agree with the producer's actual pipeline layer placement when supplied.
+tuning_advice:
+  summary: 'Treat this mapping as a declaration of a benchmarked prefill topology, not as a second control plane: choose the
+    producer''s actual DP/TP/PP layout for model size, NPU memory, topology, traffic, and TTFT goals, then copy those exact
+    values into prefill on every participating Mooncake process.'
+  suggested_values:
+  - scenario: Single-device functional validation
+    value:
+      dp_size: 1
+      tp_size: 1
+    reason: Matches the pinned offline Ascend PD example and avoids unequal-TP KV regrouping while validating the deployment.
+  - scenario: GLM5 1P1D layout from pinned Ascend guidance
+    value:
+      dp_size: 4
+      tp_size: 8
+    reason: The pinned GLM5 guide recommends DP4/TP8 on prefill for both its low-latency and high-throughput configurations;
+      use it only with that actual topology and comparable model and hardware.
+  caveats:
+  - Changing this dictionary alone does not repartition the engine; a mismatch with the prefill process is a configuration
+    error.
+  - 'The task-level fallback of {tp_size: 1} is used by AscendConfig when the whole prefill entry is absent, but Mooncake
+    initialization requires an explicit prefill mapping containing both tp_size and dp_size.'
+  - A larger prefill TP than decode TP can require multiple remote pulls, KV-head regrouping, and all-to-all resharding; equal
+    TP avoids that specific path but is not automatically optimal end to end.
+  - Increasing DP can raise aggregate prefill throughput by adding replicas but duplicates model and cache memory; increasing
+    TP reduces per-rank model memory while adding collective communication.
+  - Published layouts are examples, not universal optima; benchmark TTFT, throughput, memory headroom, and transfer stability
+    on the target model, CANN version, NPU interconnect, and request distribution.
+  quick_guide: Set prefill.dp_size and prefill.tp_size to the producer's actual sizes, describe PP when used, ensure decode-TP
+    compatibility, mirror the mapping on every peer, and benchmark the complete PD deployment.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

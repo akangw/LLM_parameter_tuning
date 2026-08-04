@@ -1,0 +1,7 @@
+name: --enable-tower-connector-lora
+type: cli
+performance_impact: none
+skip_reason: The pinned vLLM source only defines and propagates this experimental flag into LoRAConfig, where it contributes
+  to the configuration hash (vllm/config/lora.py:62,92); it has no current runtime consumer that enables tower or connector
+  LoRA work. The pinned vLLM-Ascend source has no reference or override. Therefore this flag does not itself affect latency,
+  throughput, or memory in the pinned sources.

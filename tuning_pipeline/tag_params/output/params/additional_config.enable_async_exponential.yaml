@@ -1,0 +1,98 @@
+name: additional_config.enable_async_exponential
+type: nested
+category: other
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:219
+- vllm_ascend/sample/sampler.py:79
+- vllm_ascend/worker/model_runner_v1.py:2025
+- docs/source/user_guide/configuration/additional_config.md:77
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: 'vllm serve MODEL --additional-config ''{"enable_async_exponential": true}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: When true, the Ascend V1 model runner asks AscendSampler to create a float32 exponential-random tensor with
+  shape [number of sampled rows, vocabulary size] on the global NPU stream before the model forward pass. That stream waits
+  for the current stream and then computes the random values while model execution proceeds. During non-reduced stochastic
+  top-k/top-p sampling, the sampler waits for the recorded event and uses the precomputed values in the exponential-race expression
+  probs / q before argmax. This moves exponential random-number generation off the sampling critical path and overlaps it
+  with model computation, which can reduce per-step sampling latency and improve token throughput when random generation is
+  material relative to the forward pass. It does not change the greedy path. The benefit is workload-dependent, and starting
+  the full [batch, vocabulary] random tensor earlier lengthens its lifetime across the forward pass.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:224
+  context: Reads additional_config.enable_async_exponential with default False and forces the effective value to False when
+    VLLM_BATCH_INVARIANT is enabled.
+- file: vllm_ascend/worker/model_runner_v1.py:2025
+  context: Before model forward execution, launches asynchronous exponential-random generation sized by sampled rows and the
+    model vocabulary.
+- file: vllm_ascend/sample/sampler.py:79
+  context: Generates exponential random values on the global NPU stream, records an event, and passes both the values and
+    event to the top-k/top-p sampler.
+- file: vllm_ascend/sample/sampler.py:160
+  context: In the ordinary non-reduced stochastic sampling branch, waits for the event and samples with probs.div_(q).argmax
+    instead of generating q after probabilities are available.
+related_parameters:
+- name: VLLM_BATCH_INVARIANT
+  relation: When this upstream environment setting is enabled, AscendConfig forces enable_async_exponential off because the
+    Ascend sampling implementation would break batch-invariant behavior.
+- name: additional_config.enable_reduce_sample
+  relation: The reduced-sampling branch uses its own random_sample path and does not consume the precomputed asynchronous
+    exponential tensor.
+constraints:
+- VLLM_BATCH_INVARIANT=1 overrides a requested true value and disables this optimization.
+- The precomputed tensor is consumed only by stochastic top-k/top-p sampling in the non-reduced branch; greedy sampling does
+  not use it.
+- When additional_config.enable_reduce_sample is true, that sampling branch bypasses the asynchronous-exponential consumption
+  path.
+tuning_advice:
+  summary: Benchmark true for stochastic decoding on Ascend when sampling-side exponential generation is visible in step latency;
+    retain false when the workload is greedy, uses reduced sampling, or needs batch invariance.
+  suggested_values:
+  - scenario: Ascend stochastic top-k/top-p decoding with enable_reduce_sample false and measurable sampling overhead
+    value: true
+    reason: Allows exponential random-number generation to overlap the model forward pass instead of remaining entirely on
+      the sampling path.
+  - scenario: Greedy decoding, batch-invariant execution, reduced sampling, or an unbenchmarked deployment
+    value: false
+    reason: Greedy and reduced-sampling paths do not consume the asynchronous tensor, batch-invariant mode disables it, and
+      the default avoids an early full-vocabulary random allocation when no benefit is established.
+  caveats:
+  - Gains depend on batch size, vocabulary size, sampling settings, and how much of exponential generation can be hidden behind
+    the forward pass.
+  - The implementation allocates a float32 [sampled rows, vocabulary size] tensor before forward execution, so validate NPU
+    memory headroom for large batches or vocabularies.
+  - Explicitly seeded requests are handled row by row when generating the asynchronous tensor and may see a different benefit
+    profile.
+  - The sampler synchronizes on the recorded NPU event before consuming the random values; insufficient overlap leaves that
+    wait on the critical path.
+  quick_guide: Start with false. For stochastic Ascend decoding with batch invariance and reduce sampling both disabled, compare
+    steady-state inter-token latency and throughput at representative concurrency with false versus true, and keep true only
+    when the measured improvement and NPU memory headroom are sound.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

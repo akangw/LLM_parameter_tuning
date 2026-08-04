@@ -1,0 +1,132 @@
+name: SpeculativeConfig.num_speculative_tokens
+type: nested
+category: scheduling
+scope: both
+source_file:
+- vllm/config/speculative.py:79
+- vllm/engine/arg_utils.py:2013
+- vllm/v1/cudagraph_dispatcher.py:36
+- vllm_ascend/platform.py:206
+- vllm_ascend/compilation/compiler_interface.py:71
+- vllm_ascend/attention/mla_v1.py:259
+- vllm_ascend/worker/block_table.py:85
+- vllm_ascend/sample/rejection_sampler.py:331
+- docs/source/user_guide/feature_guide/speculative_decoding.md:3
+- docs/source/user_guide/feature_guide/Multi_Token_Prediction.md:97
+value_type: int
+default: <computed>
+valid_choices: Integer greater than zero; effective method- and model-specific limits also apply.
+cli_example: --speculative-config '{"method":"mtp","num_speculative_tokens":1}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This value is the speculative depth K: a verification decode processes K+1 token positions per request. A
+  larger K can reduce inter-token latency and increase useful tokens produced per target-model step when draft acceptance
+  is high, but it also increases draft/verification work and can reduce throughput when later proposals are rejected. On Ascend
+  it directly scales the uniform decode query length, the default ACLGraph capture bound, and context-parallel block-table
+  duplication; values of at least 3 select the block-verification path when draft probabilities are available. Thus its benefit
+  and memory/capture cost depend on the speculative method, acceptance rate, batch size, graph mode, and parallel layout.'
+usage_locations:
+- file: vllm/config/speculative.py:79
+  context: Declares the optional integer with a strict greater-than-zero constraint and documents model-metadata inference.
+- file: vllm/config/speculative.py:667
+  context: Warns that MTP depths above one may repeat the same MTP layer and lower acceptance rate.
+- file: vllm/config/speculative.py:721
+  context: Infers the value from draft-model n_predict metadata or validates reuse compatibility with that depth.
+- file: vllm/config/speculative.py:773
+  context: Defaults suffix decoding to its maximum tree depth and treats this parameter as the dynamic speculation ceiling.
+- file: vllm/engine/arg_utils.py:2013
+  context: Requires the scheduler token budget to cover max_num_seqs times K+1 when LoRA and speculative decoding are combined.
+- file: vllm/v1/cudagraph_dispatcher.py:36
+  context: Sets the uniform decode query length to K+1 for graph dispatch.
+- file: vllm_ascend/platform.py:206
+  context: Scales Ascend's default maximum graph-capture size by max_num_seqs times K+1, capped at 512.
+- file: vllm_ascend/compilation/compiler_interface.py:71
+  context: Filters Ascend decode graph batch sizes using K+1 as the minimum uniform decode size and max_num_seqs times K+1
+    as the maximum.
+- file: vllm_ascend/attention/mla_v1.py:259
+  context: Adds K to the decode threshold and enforces the fused TND attention limit of 16 positions per decode round.
+- file: vllm_ascend/worker/block_table.py:85
+  context: Adds K duplicate block-table rows per request when prompt- or decode-context parallelism is active.
+- file: vllm_ascend/sample/rejection_sampler.py:331
+  context: Selects block verification at K greater than or equal to 3 when draft probabilities are present.
+- file: docs/source/user_guide/feature_guide/speculative_decoding.md:84
+  context: Requires full-graph EAGLE capture sizes to be batch-size multiples of K+1 and gives concrete examples.
+- file: docs/source/user_guide/feature_guide/Multi_Token_Prediction.md:97
+  context: Documents the Ascend fused-attention maximum and warns that multi-step single-layer MTP can lack reliable accuracy
+    and performance.
+related_parameters:
+- name: SpeculativeConfig.method
+  relation: Determines whether K is fixed, inferred, a maximum dynamic depth, or repeated through a draft/MTP model.
+- name: SpeculativeConfig.model
+  relation: Draft-model metadata may supply the computed default and may constrain compatible speculative depths.
+- name: SpeculativeConfig.suffix_decoding_max_tree_depth
+  relation: Becomes the default K for suffix decoding, where K is a maximum rather than a fixed per-step proposal count.
+- name: CompilationConfig.cudagraph_capture_sizes
+  relation: Full-graph capture sizes on Ascend must accommodate and, for EAGLE or MTP full-graph operation, align with K+1.
+- name: SchedulerConfig.max_num_seqs
+  relation: Multiplies K+1 when deriving decode graph capture bounds and the simultaneous token demand.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Must be large enough for the K+1 token demand per scheduled sequence, including the explicit LoRA validation.
+constraints:
+- The value must be an integer greater than zero.
+- It is required unless compatible draft-model metadata supplies n_predict; suffix decoding instead defaults it to suffix_decoding_max_tree_depth.
+- Supplying a positive value without a supported speculative method or draft model is rejected.
+- When draft metadata exposes n_predict and K exceeds it, K must be divisible by n_predict so the MTP module can be reused.
+- The extract_hidden_states method requires K=1 because it does not perform actual speculation.
+- On the documented Ascend fused TND attention path, K+1 cannot exceed 16, so K is at most 15.
+- In Ascend full-graph EAGLE or MTP operation, each supported graph capture size must be an integer multiple of K+1.
+- With LoRA, max_num_batched_tokens must be at least max_num_seqs multiplied by K+1.
+tuning_advice:
+  summary: Start with the smallest depth supported by the chosen method, then benchmark acceptance, inter-token latency, throughput,
+    and graph-memory use together; increase K only while the extra accepted tokens repay the additional draft and verification
+    work.
+  suggested_values:
+  - scenario: Single-layer MTP on Ascend
+    value: 1
+    reason: Avoids repeatedly executing the same exposed MTP layer, which current source warns can lower acceptance for depths
+      above one.
+  - scenario: Ascend EAGLE or MTP exploration
+    value: 2
+    reason: Provides a conservative multi-token starting point used by the Ascend guide; configure graph capture sizes in
+      multiples of 3 and compare against K=1.
+  - scenario: Ascend n-gram speculation on repetitive prompts
+    value: 5
+    reason: Matches the documented Ascend example and is worth testing when inexpensive prompt matches have high acceptance.
+  - scenario: Hidden-state extraction
+    value: 1
+    reason: This method performs no actual speculation and the Ascend guide fixes the value at one.
+  caveats:
+  - Higher K is not automatically faster; rejected late draft tokens add work without increasing accepted output.
+  - Re-tune ACLGraph capture sizes and token budgets whenever K changes because decode shapes scale with K+1.
+  - Context-parallel deployments allocate additional block-table metadata proportional to K.
+  - The useful range is method- and model-specific; suffix decoding interprets K as a ceiling, while draft and MTP methods
+    may infer or constrain it from model metadata.
+  - Do not exceed 15 on the documented Ascend fused TND attention path.
+  quick_guide: Use K=1 for single-layer MTP or hidden-state extraction; otherwise test 2 first, align graph sizes to K+1,
+    and raise K only when acceptance-aware benchmarks improve end-to-end performance.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - long_output
+  - high_concurrency

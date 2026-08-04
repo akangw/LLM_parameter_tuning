@@ -1,0 +1,94 @@
+name: --max-lora-rank
+type: cli
+category: parallelism
+scope: both
+source_file:
+- vllm/config/lora.py:26
+- vllm/config/lora.py:34
+- vllm/engine/arg_utils.py:1244
+- vllm_ascend/lora/punica_npu.py:25
+- docs/features/lora.md:376
+value_type: int
+default: 16
+valid_choices:
+- 1
+- 8
+- 16
+- 32
+- 64
+- 128
+- 256
+- 320
+- 512
+cli_example: --max-lora-rank 64
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+- latency
+impact_detail: This setting is the configured maximum LoRA adapter rank. Current vLLM documentation states that it affects
+  memory allocation and performance, and recommends matching it to the largest adapter rank because over-provisioning wastes
+  memory. In vllm-ascend, PunicaWrapperNPU selects the PyTorch LoRA operations when the Ascend device is 310P or when the
+  configured rank is at least 128; otherwise it imports the vllm-ascend LoRA operations. Thus, on non-310P Ascend devices,
+  increasing the setting from 64 to 128 also changes the LoRA operator implementation. The value is included in LoRAConfig's
+  computation-graph hash, so changing it changes that configuration identity.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1994
+  context: Passes the CLI value into LoRAConfig when LoRA is enabled.
+- file: vllm/config/lora.py:88
+  context: Includes max_lora_rank in the computation-graph hash factors.
+- file: vllm_ascend/lora/punica_npu.py:25
+  context: Chooses PyTorch LoRA operations for 310P or ranks of 128 and above; otherwise chooses Ascend LoRA operations.
+- file: docs/features/lora.md:378
+  context: Documents that the maximum rank affects memory allocation and performance and advises against over-provisioning.
+related_parameters:
+- name: --enable-lora
+  relation: The LoRAConfig carrying this value is created only when LoRA is enabled.
+- name: --max-loras
+  relation: Sets the maximum number of LoRAs in a batch; together the two settings bound LoRA capacity and memory allocation.
+- name: --fully-sharded-loras
+  relation: Changes how LoRA layers are sharded under tensor parallelism.
+- name: --lora-dtype
+  relation: Selects the LoRA weight data type and therefore affects the byte cost of allocated LoRA tensors.
+constraints:
+- Must be one of 1, 8, 16, 32, 64, 128, 256, 320, or 512.
+- The configured maximum must be at least the rank of every LoRA adapter to be loaded.
+tuning_advice:
+  summary: Set this to the largest rank among the adapters you intend to serve. Avoid a larger value because current vLLM
+    documentation says it wastes memory; on non-310P Ascend devices, values below 128 retain the Ascend LoRA-op path.
+  suggested_values:
+  - scenario: Adapters whose highest rank is 16
+    value: 16
+    reason: Matches the default and avoids reserving capacity for a larger rank.
+  - scenario: Adapters whose highest rank is 64 on a non-310P Ascend device
+    value: 64
+    reason: Matches the required adapter capacity while remaining below the Ascend rank-128 operator-switch threshold.
+  - scenario: An adapter with rank 128 or higher
+    value: Match the smallest allowed value that covers the adapter rank.
+    reason: The configured maximum must cover the adapter rank; on Ascend, 128 and above select the PyTorch LoRA operations.
+  caveats:
+  - Values not in the declared MaxLoRARanks set are invalid.
+  - On Ascend 310P, PunicaWrapperNPU selects PyTorch LoRA operations regardless of this setting.
+  - On other Ascend device types, a value of 128 or above changes the imported LoRA operation implementation.
+  - Changing the value changes LoRAConfig's computation-graph hash.
+  quick_guide: Use the smallest allowed value that covers every adapter rank; use 64 rather than 128 when 64 is sufficient
+    on non-310P Ascend devices.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

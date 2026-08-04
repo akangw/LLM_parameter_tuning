@@ -1,0 +1,6 @@
+name: Q_SCALE_CONSTANT
+type: env
+performance_impact: none
+skip_reason: In the pinned upstream vLLM source this environment variable is declared and parsed but has no runtime consumer.
+  The pinned vLLM Ascend source uses it only to initialize a fixed-size scalar q_range tensor, and q_range has no downstream
+  consumer in that repository. Changing the value therefore has no demonstrated latency, throughput, or memory-footprint effect.

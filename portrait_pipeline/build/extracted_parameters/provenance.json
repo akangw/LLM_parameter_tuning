@@ -1,0 +1,52 @@
+{
+  "schema_version": "portrait-migration-provenance/v1",
+  "target_context": {
+    "schema_version": "target-context/v1",
+    "context_id": "glm52-w8a8-16xa3-online",
+    "release": {
+      "vllm_commit": "418bd6273c03bf48d5066733769e0a74bdc51694",
+      "vllm_ascend_commit": "32c8cf190f596b47f0d0b965e64aea9f2b789ad4",
+      "image_reference": "10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3",
+      "image_digest": "sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305"
+    },
+    "model": {
+      "name": "GLM-5.2",
+      "quantization": "W8A8",
+      "artifact_revision": null,
+      "config_hash": null
+    },
+    "hardware": {
+      "platform": "ascend",
+      "product": "Atlas 800T A3",
+      "accelerator_count": 16,
+      "memory_per_accelerator_gib": 64,
+      "driver": null,
+      "firmware": null,
+      "cann": null
+    },
+    "serving": {
+      "mode": "online",
+      "workload_profile": null,
+      "objective": "throughput subject to TTFT/TPOT/correctness/stability gates"
+    },
+    "fixed_parameters": {},
+    "verification_policy": {
+      "research_pass_does_not_imply_runtime_verified": true,
+      "unresolved_target_facts_must_remain_explicit": true
+    }
+  },
+  "sources": {
+    "vllm": {
+      "path": "C:\\Users\\25308\\Desktop\\vllmTKB\\portrait_pipeline\\sources\\vllm",
+      "commit": "418bd6273c03bf48d5066733769e0a74bdc51694"
+    },
+    "vllm_ascend": {
+      "path": "C:\\Users\\25308\\Desktop\\vllmTKB\\portrait_pipeline\\sources\\vllm-ascend",
+      "commit": "32c8cf190f596b47f0d0b965e64aea9f2b789ad4"
+    }
+  },
+  "parameter_count": 1540,
+  "structured_parameter_count": 1540,
+  "stage1_policy": "stage1-filter/v5",
+  "stage1_worklist_hash": "220ec7c5bc3fbcedfaf4e84d998d0da83b8a1b171185f50c2fb82f99575727bd"
+}

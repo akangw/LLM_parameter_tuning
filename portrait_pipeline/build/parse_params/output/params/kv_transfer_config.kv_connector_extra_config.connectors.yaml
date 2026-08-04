@@ -1,0 +1,88 @@
+name: kv_transfer_config.kv_connector_extra_config.connectors
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:33
+- tests/v1/kv_connector/unit/test_multi_connector.py:979
+value_type: list[dict]
+default: <computed>
+valid_choices: <list of connector configuration dictionaries>
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This parameter defines the list of child KV connector configurations when the top-level kv_connector is set
+  to "MultiConnector". On Ascend NPU, it is used by the CPU offloading metadata module (vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:33)
+  to locate a "CPUOffloadingConnector" within a MultiConnector chain. The connectors list determines which KV transfer backends
+  are active and in what order they process KV cache blocks. Each connector in the list can perform operations like CPU offloading,
+  remote transfer, or caching, directly affecting memory pressure (via offloading), latency (via transfer overhead), and throughput
+  (via pipeline efficiency). Misconfiguration can lead to KV cache misses triggering full recomputation, significantly degrading
+  performance.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/cpu_offload/metadata.py:33
+  context: 'Iterates over connectors list to find a CPUOffloadingConnector instance within a MultiConnector configuration,
+    used for Ascend CPU offload metadata management.
+
+    '
+- file: tests/v1/kv_connector/unit/test_multi_connector.py:979
+  context: 'Test fixture constructing a MultiConnector with child connector configurations passed via kv_connector_extra_config.connectors.
+
+    '
+related_parameters:
+- name: kv_transfer_config.kv_connector
+  relation: 'Must be set to "MultiConnector" for this parameter to take effect. When kv_connector is a single connector name,
+    this parameter is ignored.
+
+    '
+- name: kv_transfer_config.kv_load_failure_policy
+  relation: 'When MultiConnector is used, kv_load_failure_policy should be configured on the MultiConnector top-level rather
+    than on individual child connectors.
+
+    '
+constraints:
+- kv_connector must be set to 'MultiConnector' for this parameter to be used.
+- Each connector dictionary must contain at minimum a 'kv_connector' key with a valid connector name.
+- When using MultiConnector, kv_load_failure_policy must be configured at the top-level kv_transfer_config, not inside child
+  connector dictionaries.
+tuning_advice:
+  summary: 'Order connectors from fastest/most-local to slowest/most-remote to minimize KV cache access latency on Ascend
+    NPU.
+
+    '
+  suggested_values:
+  - scenario: CPU offloading with fallback chain on Ascend NPU
+    value:
+    - kv_connector: CPUOffloadingConnector
+      kv_role: kv_both
+    - kv_connector: RemoteConnector
+      kv_role: kv_both
+    reason: 'Places CPU offloading first for lowest latency local access, with remote connector as fallback. This minimizes
+      NPU memory pressure while keeping hot KV cache blocks accessible without network transfer.
+
+      '
+  - scenario: Prefix caching with UCM PipelineStore on Ascend
+    value:
+    - kv_connector: UcmPipelineStore
+      kv_role: kv_both
+    reason: 'UCM PipelineStore provides persistent prefix caching with configurable storage backends, reducing redundant prefill
+      computation on Ascend NPU.
+
+      '
+  caveats:
+  - 'Connector order matters: the first connector that successfully serves a KV cache request wins. Place faster connectors
+    first.'
+  - Each additional connector in the chain adds dispatch overhead. Only include connectors that serve distinct purposes.
+  - CPU offloading connectors consume host memory proportional to the KV cache size. Monitor host memory usage when enabling.
+  - Remote connectors introduce network latency. Ensure network bandwidth is sufficient for the expected KV cache transfer
+    volume.
+  quick_guide: 'List child connectors in order of access speed (local CPU offload first, remote last) and configure kv_load_failure_policy
+    at the MultiConnector top level.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,104 @@
+name: VLLM_ASCEND_ENABLE_NZ
+type: env
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:92
+- vllm_ascend/ascend_config.py:212
+- vllm_ascend/utils.py:209
+- vllm_ascend/ops/linear.py:87
+- vllm_ascend/ops/fused_moe/fused_moe.py:126
+- docs/source/user_guide/configuration/additional_config.md:97
+- docs/source/user_guide/release_notes.md:748
+value_type: int
+default: 1
+valid_choices:
+- 0
+- 1
+- 2
+cli_example: null
+deprecated: true
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: This environment variable is parsed as an integer and, unless the newer additional_config.weight_nz_mode key
+  is present, becomes AscendConfig.weight_nz_mode. Weight-loading paths for linear and MoE layers call maybe_trans_nz(), which
+  conditionally replaces a weight tensor with torch_npu.npu_format_cast(..., ACL_FORMAT_FRACTAL_NZ). On non-310P devices,
+  mode 0 avoids the cast, mode 1 casts quantized and other supported non-floating weights but leaves BF16/FP16 unchanged,
+  and mode 2 also casts BF16/FP16. Thus the setting changes the physical weight layout held in NPU memory and the layout used
+  by subsequent compute kernels, affecting model weight memory representation and workload throughput. The current release
+  notes specifically report regressions for some floating-point cases, which is why floating weights are no longer converted
+  by the default mode.
+usage_locations:
+- file: vllm_ascend/envs.py:92
+  context: Parses the environment variable as int with default 1 and documents modes 0, 1, and 2.
+- file: vllm_ascend/ascend_config.py:212
+  context: Resolves weight_nz_mode, preferring the additional-config key and otherwise using this environment value.
+- file: vllm_ascend/utils.py:209
+  context: Implements dtype-, device-, and mode-dependent eligibility for FRACTAL_NZ conversion.
+- file: vllm_ascend/utils.py:243
+  context: Applies torch_npu.npu_format_cast to eligible weights.
+- file: vllm_ascend/ops/linear.py:87
+  context: Converts eligible linear weights after loading.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:126
+  context: Converts MoE expert weights through maybe_trans_nz when fused MC2 is not enabled.
+- file: docs/source/user_guide/configuration/additional_config.md:97
+  context: Documents weight_nz_mode default 1 and deprecates this environment-variable interface.
+related_parameters:
+- name: weight_nz_mode
+  relation: The replacement additional_config key with the same integer modes; when supplied, it takes precedence over this
+    environment variable.
+- name: enable_fused_mc2
+  relation: When enabled, the fused-MoE loading path directly casts expert weights to FRACTAL_NZ instead of consulting maybe_trans_nz.
+- name: enable_kv_nz
+  relation: Independently controls NZ layout for KV cache on supported MLA models; this parameter controls model weights.
+constraints:
+- FP32 weights and meta tensors are never converted by maybe_trans_nz, regardless of the configured mode.
+- On 310P, supported non-FP32, non-meta weights are converted regardless of this setting.
+- additional_config.weight_nz_mode overrides VLLM_ASCEND_ENABLE_NZ when both are supplied.
+- The documented modes are 0, 1, and 2, but the current configuration path does not perform explicit range validation.
+- A non-integer environment value fails when envs.py evaluates int(os.getenv(...)).
+tuning_advice:
+  summary: Keep mode 1 for quantized workloads; benchmark explicitly before using mode 2 for BF16/FP16, and use mode 0 when
+    float-weight NZ conversion is undesirable or when isolating NZ behavior.
+  suggested_values:
+  - scenario: Quantized model on a non-310P device
+    value: 1
+    reason: This is the default and converts supported quantized weights while leaving BF16/FP16 weights unchanged, matching
+      the current policy after float-case regressions were observed.
+  - scenario: BF16/FP16 model with a measured benefit from FRACTAL_NZ
+    value: 2
+    reason: Mode 2 is required for BF16/FP16 conversion on non-310P devices, but the release notes advise enabling it only
+      after confirming that it works well for the specific workload.
+  - scenario: Disable conditional NZ conversion or diagnose an NZ-related regression on non-310P
+    value: 0
+    reason: Mode 0 makes maybe_trans_nz return supported weights unchanged on non-310P devices, providing a direct comparison
+      against the native weight layout.
+  caveats:
+  - Current release notes report that FRACTAL_NZ performed poorly for some floating-point cases; mode 2 is workload-dependent
+    and requires benchmarking.
+  - Mode 0 does not prevent the unconditional 310P conversion path or the direct fused-MC2 MoE format casts.
+  - This environment variable is deprecated and planned for removal; use additional_config.weight_nz_mode for new deployments.
+  - The source documents modes 0, 1, and 2 but does not reject other integers; values outside the documented set can produce
+    mode-like but unsupported behavior.
+  quick_guide: Use 1 for quantized weights, test 2 for BF16/FP16 only with evidence, and use 0 for a non-310P native-layout
+    baseline.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

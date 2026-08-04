@@ -1,0 +1,91 @@
+name: --offload-group-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/offload.py:54
+- vllm/config/offload.py:100
+- vllm/model_executor/models/utils.py:646
+- vllm_ascend/worker/model_runner_v1.py:252
+- vllm_ascend/worker/model_runner_v1.py:272
+- vllm_ascend/worker/model_runner_v1.py:4586
+value_type: int
+default: 0
+valid_choices: Integer >= 0
+cli_example: --offload-group-size 8 --offload-num-in-group 2 --offload-prefetch-step 1
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: A positive value enables the prefetch weight-offloading backend when --offload-backend is auto and partitions
+  the model's layer sequence into groups of this size. The last --offload-num-in-group layers in each group have eligible
+  parameters stored in CPU memory and copied asynchronously into reusable accelerator buffers before execution. With the count
+  held fixed, a smaller group size selects a larger fraction of layers and can save more accelerator weight memory, but it
+  also causes more host-to-accelerator traffic and can increase latency or reduce throughput when transfers are not hidden
+  by computation. The static buffer pool consumes accelerator memory according to the selected parameter shapes and --offload-prefetch-step,
+  so gross offloaded bytes are not the same as net memory savings. The Ascend runner inherits the upstream model-runner initialization
+  under a wrapper that maps CUDA stream APIs to torch.npu, so this upstream option reaches the Ascend execution path rather
+  than having an Ascend-specific implementation.
+usage_locations:
+- file: vllm/config/offload.py:54
+  context: Defines the non-negative integer, default zero, layer-group pattern, and disabled meaning.
+- file: vllm/config/offload.py:100
+  context: Activates prefetch validation for a positive group size and enforces the dependent count and lookahead constraints.
+- file: vllm/model_executor/models/utils.py:646
+  context: Routes the model's layer generator through the active offloader during model construction.
+- file: vllm_ascend/worker/model_runner_v1.py:252
+  context: Defines the target NPU runner as a subclass of the upstream GPUModelRunner.
+- file: vllm_ascend/worker/model_runner_v1.py:272
+  context: Invokes inherited model-runner initialization inside the Ascend API wrapper.
+- file: vllm_ascend/worker/model_runner_v1.py:4586
+  context: Maps the inherited torch.cuda.Stream use to torch.npu.Stream while the wrapper is active.
+related_parameters:
+- name: --offload-num-in-group
+  relation: Selects how many layers at the end of each group are offloaded and must not exceed a positive group size.
+- name: --offload-prefetch-step
+  relation: Controls transfer lookahead and the number of accelerator buffer slots; it must be at least 1 when prefetch offloading
+    is active.
+- name: --offload-params
+  relation: Restricts parameter-name segments eligible for offloading within selected layers; empty means all parameters.
+- name: --offload-backend
+  relation: Auto selects prefetch for a positive group size, while explicit uva causes this prefetch field to be ignored with
+    a warning.
+- name: --cpu-offload-gb
+  relation: Activates the alternative UVA backend under auto only when group size is zero; a positive group size takes precedence.
+constraints:
+- The value must be an integer greater than or equal to 0.
+- Zero disables group-based prefetch offloading when --offload-backend is auto.
+- When group size is positive, --offload-num-in-group must be less than or equal to it and --offload-prefetch-step must be
+  at least 1.
+- Explicit --offload-backend prefetch also applies the dependent constraints, so the default group size 0 is invalid with
+  the default offload count 1.
+- Explicit --offload-backend uva ignores a positive group size with a warning.
+tuning_advice:
+  summary: Leave the value at 0 when the model fits in accelerator memory. If weight offloading is required, choose the least
+    aggressive valid grouping that makes the target model fit, then benchmark end-to-end latency and throughput on the actual
+    host-to-accelerator topology.
+  suggested_values:
+  - scenario: Model fits in accelerator memory
+    value: 0
+    reason: Auto selects the no-op path when no other offload activation field is positive, avoiding transfer and buffer overhead.
+  - scenario: Initial correctness and performance experiment
+    value: 8
+    reason: The pinned upstream documentation and correctness test use group size 8; pair it with a valid count and lookahead,
+      then measure rather than treating it as a universal optimum.
+  - scenario: More accelerator-memory relief is required
+    value: smaller positive integer, benchmarked
+    reason: With --offload-num-in-group fixed, smaller groups select more layers, but increase transfer frequency and may
+      worsen serving performance.
+  caveats:
+  - Net accelerator-memory savings depend on layer parameter sizes, --offload-params, the number of selected layers, and the
+    static buffer pool.
+  - Increasing --offload-prefetch-step can hide more transfer latency but allocates more accelerator buffer slots.
+  - Host memory bandwidth, NUMA placement, PCIe or platform interconnect bandwidth, and overlap with model computation determine
+    the latency and throughput cost.
+  - The Ascend path relies on inherited upstream offloader code with CUDA APIs mapped to NPU APIs; validate correctness and
+    performance on the exact CANN, PyTorch, and hardware combination.
+  quick_guide: Start at 0; if the model does not fit, test 8 with a valid count and lookahead, then decrease the group size
+    only as needed for capacity while measuring latency, throughput, and peak memory.
+analysis_date: '2026-07-27'

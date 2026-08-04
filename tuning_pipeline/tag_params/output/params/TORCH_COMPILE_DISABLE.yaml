@@ -1,0 +1,131 @@
+name: TORCH_COMPILE_DISABLE
+type: env
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:949
+- vllm/config/compilation.py:38
+- vllm/model_executor/custom_op.py:218
+- docs/design/debug_vllm_compile.md:5
+- docs/design/torch_compile.md:1
+- vllm_ascend/platform.py:444
+- docs/source/user_guide/feature_guide/graph_mode.md:31
+value_type: str
+default: unset
+valid_choices:
+- '1'
+- unset
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'When its value is exactly "1", vLLM forces compilation_config.mode to CompilationMode.NONE during VllmConfig
+  initialization. This is the same compile setting as -cc.mode=none: model-level torch.compile, the custom vLLM compiler/Inductor
+  path, compilation-only optimizations, and opportunistic compilation of CustomOp native functions are disabled. Execution
+  instead uses eager operators and the default custom-op path. This can avoid compile failures and remove compilation/cache
+  warm-up from startup, but it gives up generated kernels, graph-level transformations, fusion, lowering that removes dispatch
+  overhead, and shape-specialized autotuning; steady-state latency and throughput can therefore regress substantially, with
+  effects depending on the model and shapes. Eager and compiled paths can also choose different in-place/custom-op implementations
+  and intermediate-buffer plans, so runtime memory may change in either direction; the pinned sources provide no universal
+  memory delta. The setting is shared by vLLM-Ascend because Ascend consumes the upstream VllmConfig. It does not directly
+  set cudagraph_mode: explicit full ACLGraph modes can remain separately active, while piecewise graph modes that require
+  VLLM_COMPILE are resolved to NONE.'
+usage_locations:
+- file: vllm/config/vllm.py:949
+  context: Reads the process environment during VllmConfig initialization; only the exact string "1" forces compilation_config.mode
+    to NONE.
+- file: vllm/config/vllm.py:956
+  context: Warns that optimizations active only during Inductor compilation are ignored after the mode has been disabled.
+- file: vllm/config/vllm.py:983
+  context: Applies platform defaults after the environment override, then retains the explicit NONE mode instead of selecting
+    the normal VLLM_COMPILE default.
+- file: vllm/config/vllm.py:1001
+  context: Selects the eager custom-op default rather than disabling custom ops for Inductor-generated fused kernels when
+    compilation mode is NONE.
+- file: vllm/config/vllm.py:1021
+  context: Forces a cudagraph mode that requires piecewise compilation to NONE when compilation mode is not VLLM_COMPILE;
+    this is an indirect graph-mode consequence, not an unconditional graph disable.
+- file: vllm/config/compilation.py:38
+  context: Defines CompilationMode.NONE as applying no torch.compile compilation and running the model as-is in eager PyTorch.
+- file: vllm/model_executor/custom_op.py:218
+  context: maybe_compile returns the native function unchanged when the global compilation mode is NONE.
+- file: docs/design/debug_vllm_compile.md:5
+  context: Documents mode=NONE as turning off torch.compile only, distinct from enforce_eager, which also turns off CUDAGraphs.
+- file: docs/design/torch_compile.md:1
+  context: Describes torch.compile as enabled by default and a critical V1 component that creates and caches optimized compiled
+    artifacts.
+- file: vllm_ascend/platform.py:444
+  context: Ascend accepts NONE as a supported compilation mode and independently resolves the final graph mode and NPU graph
+    features.
+- file: docs/source/user_guide/feature_guide/graph_mode.md:31
+  context: Explains that Ascend compile-time optimization and ACLGraph runtime capture are distinct stages, including full
+    graph modes with ACLGraph replay.
+related_parameters:
+- name: compilation.mode
+  relation: TORCH_COMPILE_DISABLE=1 unconditionally overwrites this field with NONE, equivalent to -cc.mode=none.
+- name: compilation.cudagraph_mode
+  relation: The variable does not directly overwrite this field, but modes requiring piecewise compilation are later changed
+    to NONE when compilation is disabled; independent full graph modes are not rejected by this check.
+- name: enforce_eager
+  relation: 'enforce_eager is broader: it forces both compilation mode and graph mode to NONE, whereas this environment variable
+    directly disables only torch.compile.'
+- name: compilation.backend
+  relation: backend=eager disables TorchInductor, while mode=NONE prevents the torch.compile path entirely.
+- name: optimization_level
+  relation: Positive optimization levels normally select VLLM_COMPILE when mode is unspecified, but the explicit NONE assigned
+    here prevents that default selection and makes compilation-only settings ineffective.
+constraints:
+- Only the exact, case-sensitive string "1" activates the vLLM override; unset, empty, "0", "true", and all other values leave
+  compilation mode unchanged by this check.
+- Set the variable before constructing the engine or starting workers. The pinned code reads it while VllmConfig is initialized,
+  so changing it does not mutate an already-created configuration.
+- This setting does not itself guarantee fully eager execution because it does not directly set cudagraph_mode to NONE; use
+  enforce_eager or configure cudagraph_mode separately when graph capture must also be disabled.
+- A user-specified compilation mode is still overwritten when the environment value is "1".
+tuning_advice:
+  summary: Leave the variable unset for production performance. Set it to 1 as a compatibility or diagnostic isolation switch
+    when torch.compile prevents startup or correct execution, then benchmark before retaining it.
+  suggested_values:
+  - scenario: Normal production inference on vLLM or vLLM-Ascend
+    value: unset
+    reason: Preserves the configured/default compiler path, optimized kernels, compile-time fusion and lowering, and compatible
+      graph modes.
+  - scenario: Isolating a torch.compile, Dynamo, Inductor, or vLLM compiler failure
+    value: '1'
+    reason: Forces mode NONE through an environment-only change while leaving independently compatible graph capture available.
+  - scenario: Fully eager diagnosis including graph-capture failures
+    value: unset
+    reason: Use enforce_eager instead; TORCH_COMPILE_DISABLE=1 alone is narrower and does not unconditionally disable CUDAGraphs
+      or Ascend ACLGraph.
+  caveats:
+  - Disabling compilation can improve startup time on a cold or uncached launch, but that is a different objective from steady-state
+    token latency and throughput.
+  - 'The performance loss is workload-dependent: it depends on model support, shapes, compilation cache state, enabled fusion
+    passes, and whether device-specific eager custom ops outperform generated kernels.'
+  - Memory is not guaranteed to increase when compilation is disabled. Eager mode can use memory-efficient in-place operations,
+    while compiled execution can use different intermediates and graph buffers; measure peak device memory on the target workload.
+  - On Ascend, inspect the final cudagraph_mode as well as compilation mode; ACLGraph capture/replay is a separate runtime
+    stage and may remain active for a compatible explicitly selected full graph mode.
+  quick_guide: Keep it unset; set TORCH_COMPILE_DISABLE=1 only to bypass a compiler issue, restart the engine, verify the
+    final graph mode, and compare startup, latency, throughput, memory, and correctness before deployment.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

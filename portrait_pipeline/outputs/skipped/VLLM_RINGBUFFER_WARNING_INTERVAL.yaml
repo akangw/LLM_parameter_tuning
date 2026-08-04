@@ -1,0 +1,7 @@
+name: VLLM_RINGBUFFER_WARNING_INTERVAL
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares and parses this integer environment variable, documents it as a warning-log
+  interval, and excludes it from the environment-derived configuration hash; no pinned vLLM runtime code consumes the value,
+  and the pinned vLLM-Ascend repository has no reference to it. It therefore does not change latency, throughput, or memory
+  behavior in the pinned sources.

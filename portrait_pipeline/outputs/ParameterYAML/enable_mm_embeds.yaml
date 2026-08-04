@@ -1,0 +1,54 @@
+name: --enable-mm-embeds
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:97
+- vllm/engine/arg_utils.py:1174
+- vllm/config/model.py:650
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-mm-embeds
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'This flag permits precomputed multimodal embeddings as input. Its current upstream configuration documents
+  a conditional memory effect: when it is enabled and --limit-mm-per-prompt is zero for a modality, that modality''s encoder
+  modules need not be loaded while embedding inputs remain allowed. Enabling the flag alone does not change generation latency
+  or throughput, and the pinned vllm-ascend tree has no implementation override for enable_mm_embeds.'
+usage_locations:
+- file: vllm/config/multimodal.py:97
+  context: Defines the false default and documents embedding input support and the conditional encoder-memory saving.
+- file: vllm/engine/arg_utils.py:1174
+  context: Registers --enable-mm-embeds in the multimodal CLI argument group.
+- file: vllm/config/model.py:650
+  context: Passes the CLI-derived value into MultiModalConfig construction.
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Set a modality limit to 0 with this flag enabled to permit embeddings without loading that modality's encoder.
+- name: --language-model-only
+  relation: Disables all multimodal inputs by setting all modality limits to 0; it is not suitable when precomputed embeddings
+    must still be accepted.
+constraints:
+- Only useful for multimodal models and callers that provide correctly shaped precomputed embeddings.
+- Incorrect embedding shapes can crash the vLLM engine; enable it only for trusted clients.
+tuning_advice:
+  summary: Leave disabled for normal raw-media inference. Enable it only for a multimodal deployment that supplies precomputed
+    embeddings, and pair it with a zero modality limit when encoder-memory reduction is required.
+  suggested_values:
+  - scenario: Raw image, video, or audio inputs processed by vLLM
+    value: false
+    reason: The corresponding encoder must remain available, so this embedding-input path provides no encoder-memory benefit.
+  - scenario: Trusted deployment serving precomputed embeddings without a raw-media encoder for a modality
+    value: true
+    reason: Together with a zero --limit-mm-per-prompt value for that modality, the documented configuration keeps embeddings
+      enabled without loading its encoder modules.
+  caveats:
+  - The memory saving is conditional on setting the relevant modality limit to 0; the flag alone does not save memory.
+  - This setting changes accepted input formats, not the language-model generation kernel.
+  quick_guide: Use only with precomputed embeddings; set the relevant modality limit to 0 to avoid loading its encoder.
+analysis_date: '2026-07-27'

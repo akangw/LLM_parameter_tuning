@@ -1,0 +1,93 @@
+name: --max-long-partial-prefills
+type: cli
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/scheduler.py:74
+- vllm/engine/arg_utils.py:517
+- vllm/engine/arg_utils.py:1337
+value_type: int
+default: '1'
+valid_choices: integer >= 1
+cli_example: --max-long-partial-prefills 2
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls the maximum number of long prompts (those exceeding --long-prefill-token-threshold
+  tokens) that can be partially prefilled concurrently during chunked prefill. When set lower than --max-num-partial-prefills,
+  the scheduler reserves some concurrent prefill slots exclusively for short prompts, allowing them to bypass long prompts
+  in the queue. This directly affects time-to-first-token (TTFT) latency for short requests under mixed-length workloads.
+  On Ascend NPU, where chunked prefill is the default mode, this parameter shapes the prefill scheduling policy and thus impacts
+  both latency fairness and overall throughput. The parameter is only active when --enable-chunked-prefill is True (default)
+  and --max-num-partial-prefills > 1. No vllm-ascend specific override was found; the upstream vLLM behavior applies directly
+  on Ascend.
+
+  '
+usage_locations:
+- file: vllm/config/scheduler.py:74
+  context: Field definition with default=1, ge=1; docstring describes the parameter's role in chunked prefill scheduling.
+- file: vllm/config/scheduler.py:250
+  context: Logged when max_num_partial_prefills > 1 to indicate concurrent partial prefill configuration.
+- file: vllm/engine/arg_utils.py:517
+  context: EngineArgs attribute declaration, default sourced from SchedulerConfig.max_long_partial_prefills.
+- file: vllm/engine/arg_utils.py:1337
+  context: CLI argument registration under the SchedulerConfig group.
+related_parameters:
+- name: --max-num-partial-prefills
+  relation: 'Upper bound: --max-long-partial-prefills must be <= --max-num-partial-prefills. When --max-num-partial-prefills=1,
+    this parameter has no effect.'
+- name: --long-prefill-token-threshold
+  relation: Defines what constitutes a 'long' prompt. Prompts with token count above this threshold are subject to the --max-long-partial-prefills
+    limit.
+- name: --enable-chunked-prefill
+  relation: Must be True (default) for this parameter to take effect. Without chunked prefill, partial prefill scheduling
+    is not used.
+constraints:
+- --max-long-partial-prefills must be an integer greater than or equal to 1.
+- --max-long-partial-prefills must not exceed --max-num-partial-prefills.
+- This parameter has no effect when --max-num-partial-prefills is 1.
+- This parameter has no effect when --enable-chunked-prefill is False.
+tuning_advice:
+  summary: 'Set --max-long-partial-prefills lower than --max-num-partial-prefills to prioritize short prompt latency under
+    mixed-length workloads; set equal to maximize throughput when all prompts are similarly long.
+
+    '
+  suggested_values:
+  - scenario: 'Mixed-length workloads where short prompt TTFT is critical (e.g., interactive chat with occasional long document
+      processing).
+
+      '
+    value: '1'
+    reason: 'Reserves all but one concurrent prefill slot for short prompts, preventing long prompts from monopolizing prefill
+      capacity and minimizing short-prompt queuing delay.
+
+      '
+  - scenario: 'Homogeneous workloads where most prompts are long (e.g., batch summarization, document Q&A).
+
+      '
+    value: equal to --max-num-partial-prefills
+    reason: 'Maximizes long-prompt prefill concurrency and throughput since there are few short prompts to prioritize.
+
+      '
+  - scenario: 'Balanced workloads with moderate mix of short and long prompts.
+
+      '
+    value: floor(--max-num-partial-prefills / 2)
+    reason: 'Provides a middle ground: allows some long-prompt concurrency while still reserving slots for short prompts to
+      avoid starvation.
+
+      '
+  caveats:
+  - On Ascend NPU, chunked prefill is enabled by default. Ensure --max-num-partial-prefills > 1, otherwise this parameter
+    is ignored and all prompts are scheduled without long/short distinction.
+  - Setting --max-long-partial-prefills too low can reduce overall throughput if the workload is dominated by long prompts,
+    as fewer long prompts can be prefilled concurrently.
+  - The --long-prefill-token-threshold defaults to 4% of max_model_len when --max-num-partial-prefills > 1. Tune this threshold
+    together with --max-long-partial-prefills for optimal results.
+  quick_guide: 'For latency-sensitive mixed workloads, set --max-long-partial-prefills to 1; for throughput-oriented homogeneous
+    workloads, set it equal to --max-num-partial-prefills.
+
+    '
+analysis_date: '2026-07-06'

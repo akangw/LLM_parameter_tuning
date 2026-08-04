@@ -1,0 +1,5 @@
+name: --ubatch-size
+type: cli
+performance_impact: none
+skip_reason: Ascend platform code explicitly ignores any nonzero ubatch_size, warns the user, and resets ParallelConfig.ubatch_size
+  to 0 before execution; it therefore has no latency, throughput, or memory effect on Ascend.

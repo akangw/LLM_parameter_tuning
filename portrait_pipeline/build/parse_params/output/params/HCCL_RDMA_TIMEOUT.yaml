@@ -1,0 +1,67 @@
+name: HCCL_RDMA_TIMEOUT
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/utils/utils.py:55
+value_type: int
+default: '20'
+valid_choices: positive integer (typically 0-31, as it's used as an exponent in 2^timeout)
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'HCCL_RDMA_TIMEOUT controls the minimum retransmission timeout for RDMA communication on Ascend NPUs. In vllm-ascend,
+  it is read in `get_transfer_timeout_value()` to compute the overall KV cache transfer timeout via the formula: `(4.096 *
+  (2^HCCL_RDMA_TIMEOUT)) * HCCL_RDMA_RETRY_CNT // 1000 + 3000` milliseconds. This timeout governs how long the system waits
+  for KV cache data to be transferred between NPUs during distributed inference (e.g., disaggregated prefill-decode). If the
+  timeout is too short, transfers may fail prematurely, causing retries or connection drops that degrade throughput and increase
+  latency. If too long, failed transfers take longer to detect, delaying recovery. The documentation also notes that HCCL_RDMA_TIMEOUT
+  affects collective communication behavior (e.g., all-reduce, all-gather), so it has broader impact beyond just KV transfer.
+  The parameter must satisfy: "`ASCEND_TRANSFER_TIMEOUT > RDMA_TIMEOUT * 7` where RDMA_TIMEOUT =" `4.096 * 2^HCCL_RDMA_TIMEOUT`
+  μs.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/utils/utils.py:55
+  context: Read in get_transfer_timeout_value() to compute KV transfer timeout; used as exponent in 2^timeout for RDMA retransmission
+    timeout calculation.
+related_parameters:
+- name: HCCL_RDMA_RETRY_CNT
+  relation: Multiplied together with HCCL_RDMA_TIMEOUT to compute total KV transfer timeout.
+- name: ASCEND_TRANSFER_TIMEOUT
+  relation: Overrides the computed timeout if set; must be greater than RDMA_TIMEOUT * HCCL_RDMA_RETRY_CNT.
+- name: ASCEND_CONNECT_TIMEOUT
+  relation: 'Separate timeout for one-sided communication connection establishment; recommended formula: connection_time_per_card
+    × total_decode_cards.'
+constraints:
+- ASCEND_TRANSFER_TIMEOUT must be greater than (4.096 * 2^HCCL_RDMA_TIMEOUT) * HCCL_RDMA_RETRY_CNT microseconds.
+- HCCL_RDMA_TIMEOUT must be a valid integer; non-integer values will cause a ValueError at runtime.
+tuning_advice:
+  summary: Set HCCL_RDMA_TIMEOUT based on cluster scale and network conditions; larger clusters or slower networks need higher
+    values to avoid premature transfer timeouts.
+  suggested_values:
+  - scenario: Default/small-scale deployment (few NPUs, low network latency)
+    value: '17'
+    reason: Documentation recommends 17 as a starting point; provides ~268ms RDMA timeout (4.096μs * 2^17 ≈ 537ms, times 7
+      retries ≈ 3.76s total).
+  - scenario: Large-scale disaggregated prefill-decode with many NPUs
+    value: '20'
+    reason: Default value of 20 gives ~4.19s RDMA timeout per attempt; safer for large clusters where network congestion may
+      cause delays.
+  - scenario: High-performance RoCE network with low latency
+    value: '15'
+    reason: Lower value (~134ms per attempt) reduces detection time for genuine failures while still accommodating normal
+      RDMA operations on fast networks.
+  caveats:
+  - HCCL_RDMA_TIMEOUT affects ALL collective communication (all-reduce, all-gather, etc.), not just KV transfer — changing
+    it may impact training or other distributed operations.
+  - 'The timeout grows exponentially with the value (2^timeout), so small changes have large effects: increasing from 17 to
+    20 multiplies the RDMA timeout by 8x.'
+  - If ASCEND_TRANSFER_TIMEOUT is set, it takes precedence over the computed value from HCCL_RDMA_TIMEOUT and HCCL_RDMA_RETRY_CNT.
+  - Setting the timeout too low causes spurious transfer failures and retries, degrading throughput; setting it too high delays
+    failure detection.
+  quick_guide: Start with 17 for most deployments; increase to 20 for large clusters or if seeing RDMA timeout errors in logs.
+analysis_date: '2026-07-06'

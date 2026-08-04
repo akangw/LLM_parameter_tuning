@@ -1,0 +1,76 @@
+name: --limit-mm-per-prompt
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:535
+- vllm/config/multimodal.py:80
+- docs/source/tutorials/models/Qwen3-VL-30B-A3B-Instruct.md:96
+value_type: dict
+default: {}
+valid_choices: 'A mapping from modality to either an integer count or an options mapping. Supported built-in modality options
+  are image: count, width, height; video: count, num_frames, width, height; and audio: count, length. Unspecified modalities
+  default to a count of 999.'
+cli_example: '--limit-mm-per-prompt ''{"image": 5, "video": 0}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: This option bounds multimodal items per prompt and supplies optional size hints used when vLLM profiles and
+  reserves multimodal activation memory. Lower per-modality counts or size hints reduce the profiled reservation and cap the
+  encoder work admitted for each prompt, which can relieve memory pressure and improve throughput for workloads that do not
+  need the larger inputs. A zero limit disables a modality; model tower components are skipped when all of their modalities
+  are zero. The target Ascend documentation specifically recommends video=0 for image-only serving, because enabled video
+  reserves memory for long video embeddings.
+usage_locations:
+- file: vllm/engine/arg_utils.py:535
+  context: Exposes the EngineArgs limit_mm_per_prompt field from MultiModalConfig.limit_per_prompt.
+- file: vllm/engine/arg_utils.py:1171
+  context: Registers the --limit-mm-per-prompt CLI argument.
+- file: vllm/config/model.py:649
+  context: Passes the EngineArgs value into MultiModalConfig as limit_per_prompt.
+- file: vllm/config/multimodal.py:80
+  context: Defines per-modality input limits, defaulting each unspecified modality to 999.
+- file: vllm/config/multimodal.py:201
+  context: Converts integer shorthand and modality-specific option mappings to validated dummy options.
+- file: vllm/model_executor/models/interfaces.py:260
+  context: Skips multimodal tower components when limits are zero for all of their modalities.
+- file: docs/source/tutorials/models/Qwen3-VL-30B-A3B-Instruct.md:96
+  context: Ascend guidance recommends video=0 for image-only serving to avoid long-video embedding memory reservation.
+related_parameters:
+- name: --language-model-only
+  relation: Forces every multimodal modality limit to zero, disabling multimodal inputs.
+- name: --max-num-batched-tokens
+  relation: Sets the token batching budget that interacts with admitted multimodal encoder work.
+- name: --max-model-len
+  relation: Together with multimodal input sizes, affects the memory budget needed by a request.
+- name: --enable-mm-embeds
+  relation: Allows precomputed embeddings; a zero modality limit then skips count validation and encoder-module loading for
+    that modality.
+constraints:
+- Use modality names and option keys supported by the loaded model and multimodal configuration.
+- Integer values are count shorthand; an options mapping must include count.
+- A zero count disables that modality; requests needing that modality must not be sent unless the embedding-specific behavior
+  is intentionally configured.
+- Size hints affect profiling and reserved memory, not how actual inputs are processed at inference time.
+tuning_advice:
+  summary: Set counts and optional size hints to the actual largest expected media inputs; disable modalities the service
+    never receives.
+  suggested_values:
+  - scenario: Image-only Ascend serving
+    value: '{"image": 5, "video": 0}'
+    reason: The image limit should match the service contract, while video=0 follows target Ascend guidance to avoid long-video
+      embedding reservation.
+  - scenario: Known bounded image and video sizes
+    value: '{"image": {"count": 5, "width": 512, "height": 512}, "video": {"count": 1, "num_frames": 32, "width": 640, "height":
+      640}}'
+    reason: Explicit count and size hints profile the reservation around the expected maximum media instead of model-wide
+      maxima.
+  caveats:
+  - Too-small counts reject otherwise valid multimodal requests.
+  - Size hints do not resize or otherwise constrain media at inference time; they only shape profiling and memory reservation.
+  - Leaving a video modality enabled for an image-only Ascend workload can reserve memory for long video embeddings.
+  quick_guide: For image-only Ascend workloads, set video to 0 and set the image count and optional dimensions to the actual
+    service maximum.
+analysis_date: '2026-07-27'

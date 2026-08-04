@@ -1,0 +1,125 @@
+name: additional_config.enable_flashcomm2_parallel_size
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:158
+- vllm_ascend/utils.py:1304
+- vllm_ascend/utils.py:1316
+- vllm_ascend/distributed/parallel_state.py:152
+- vllm_ascend/ops/linear_op.py:271
+- docs/source/user_guide/configuration/additional_config.md:22
+value_type: int
+default: 0
+valid_choices: 0 disables FLASHCOMM2; a positive integer enables it and must be smaller than tensor_parallel_size and evenly
+  divide tensor_parallel_size
+cli_example: vllm serve <model> --tensor-parallel-size 8 --additional-config='{"enable_flashcomm2_parallel_size":1,"enable_flashcomm1":true}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: A positive value enables the Ascend-only FLASHCOMM2 output-projection path and selects the tensor-parallel
+  subgroup size used to shard o_proj/out_proj computation. The custom row-parallel operator reorganizes token chunks, performs
+  all-to-all communication across the complementary output-data- parallel group, applies the projection, and reduce-scatters
+  when the selected subgroup size is greater than one. If FLASHCOMM1 is disabled, it then all-gathers across the global TP
+  group. This communication/computation layout can reduce latency and improve throughput when the original TP communication
+  is a bottleneck, particularly in prefill-oriented deployments, but the best subgroup size depends on topology, TP width,
+  model, quantization, and token load. FLASHCOMM2 normally requires each rank to hold the full output- projection matrix when
+  the subgroup size is 1; optional o_proj layer sharding reduces that weight-memory pressure by broadcasting sharded weights
+  ahead of use. The pinned upstream vLLM tree has no counterpart.
+usage_locations:
+- file: vllm_ascend/ascend_config.py:158
+  context: Reads the additional-config integer first, with the deprecated environment variable as fallback, and defaults to
+    0.
+- file: vllm_ascend/utils.py:1304
+  context: Treats values greater than zero as enabling FLASHCOMM2.
+- file: vllm_ascend/utils.py:1316
+  context: Validates the selected subgroup size, layer-sharding combination, fine-grained o_proj TP exclusion, and deployment
+    role.
+- file: vllm_ascend/distributed/parallel_state.py:152
+  context: Builds FLASHCOMM2 output-TP and output-data-parallel process groups from the configured size and global TP size.
+- file: vllm_ascend/ops/linear_op.py:271
+  context: Implements the o_proj/out_proj all-to-all, projection, reduce-scatter, and conditional global all-gather path.
+- file: vllm_ascend/ascend_forward_context.py:137
+  context: Activates FLASHCOMM2 forward behavior only with TP greater than one and known token count, and pads token count
+    to a TP multiple when active.
+- file: vllm_ascend/ops/flashcomm2_oshard_manager.py:34
+  context: Combines FLASHCOMM2 with layer_sharding containing o_proj to register and prefetch broadcast-sharded output-projection
+    weights.
+- file: docs/source/user_guide/configuration/additional_config.md:22
+  context: Documents migration from VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE and confirms that the new config key preserves the
+    integer type.
+related_parameters:
+- name: tensor_parallel_size
+  relation: An enabled value must be a proper divisor of global tensor_parallel_size; it determines the FLASHCOMM2 output-projection
+    TP subgroup width.
+- name: additional_config.enable_flashcomm1
+  relation: Recommended alongside FLASHCOMM2 for optimal performance; without it the FLASHCOMM2 operator performs a global-TP
+    all-gather after projection.
+- name: additional_config.finegrained_tp_config.oproj_tensor_parallel_size
+  relation: Cannot be positive at the same time as FLASHCOMM2.
+- name: additional_config.layer_sharding
+  relation: If supplied with FLASHCOMM2, its only supported value is [o_proj]; this reduces full-o_proj weight residency through
+    sharding and prefetch.
+- name: VLLM_ASCEND_FLASHCOMM2_PARALLEL_SIZE
+  relation: Deprecated environment-variable fallback; additional_config takes precedence when both are set.
+constraints:
+- Use 0 to disable; positive values enable FLASHCOMM2. Negative values also follow the disabled branch but are not a supported
+  tuning choice.
+- An enabled value must be strictly smaller than tensor_parallel_size.
+- tensor_parallel_size must be evenly divisible by the enabled value.
+- Cannot be enabled together with a positive additional_config.finegrained_tp_config.oproj_tensor_parallel_size.
+- If layer_sharding is non-empty, exactly [o_proj] is supported; other layer-sharding selections raise ValueError.
+- FLASHCOMM2 is rejected on a KV-transfer consumer (decode/D) node; source guidance primarily targets producer/prefill deployments
+  and warns that hybrid deployment can degrade decode performance.
+- Effective forward execution requires tensor parallel world size greater than one and a known token count.
+tuning_advice:
+  summary: Keep 0 as the compatibility baseline. In a TP prefill deployment, benchmark positive proper divisors of tensor_parallel_size,
+    preferably with enable_flashcomm1 enabled, and choose by end-to-end latency, throughput, and peak NPU memory rather than
+    assuming a larger subgroup is better.
+  suggested_values:
+  - scenario: Disabled baseline, TP size one, or decode/KV-consumer deployment
+    value: 0
+    reason: This avoids the FLASHCOMM2 communication path and is the only valid choice for TP size one or a KV-transfer consumer
+      node.
+  - scenario: First FLASHCOMM2 trial with tensor_parallel_size greater than one
+    value: 1
+    reason: This is the simplest valid enabling value for any TP width above one, but it replicates the full output-projection
+      weight unless o_proj layer sharding is also configured.
+  - scenario: Wider TP prefill deployment where tensor_parallel_size is even
+    value: 2
+    reason: This shards output projection across two-rank subgroups and may reduce per-rank projection weight/compute relative
+      to 1, while changing the all-to-all and reduce-scatter balance; validate on the target topology.
+  caveats:
+  - The option name begins with enable but its source-verified type is integer, not boolean.
+  - Performance gains are workload- and topology-dependent; the added all-to-all, reduce-scatter, padding, and possible all-gather
+    can regress a poorly matched workload.
+  - Enabling additional_config.enable_flashcomm1 is recommended by the runtime and avoids the fallback global-TP all-gather,
+    but it introduces its own applicability and tuning considerations.
+  - Value 1 can increase model-weight memory because FLASHCOMM2 uses the full output-projection matrix per layer; combine
+    with layer_sharding [o_proj] when that memory is material and verify broadcast overlap.
+  - The deprecated environment variable remains a fallback during migration, but new deployments should use this additional-config
+    key.
+  quick_guide: For TP greater than one on a prefill-oriented node, start with 1 plus enable_flashcomm1=true; then test other
+    proper divisors such as 2, monitoring TTFT/latency, throughput, and peak NPU memory. Use 0 for decode consumers.
+analysis_date: '2026-08-02'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

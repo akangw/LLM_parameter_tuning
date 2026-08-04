@@ -1,0 +1,82 @@
+name: VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:1698
+- vllm/envs.py:249
+- vllm/model_executor/layers/deepseek_v4_attention.py:411
+value_type: int
+default: '1024'
+valid_choices: non-negative integer; 0 disables multi-stream path
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls a token-count threshold for enabling multi-stream overlap of the attention
+  input GEMM with auxiliary GEMMs in DeepSeek-V4 models. When the number of tokens in the batch is at or below this threshold,
+  the FP8 main GEMM has idle SMs that can be shared with bf16 auxiliary GEMMs (e.g., indexer weights and kv-score projections),
+  providing a 5-45% latency improvement. Above the threshold, the FP8 GEMM saturates the device and cross-stream synchronization
+  becomes pure overhead. The parameter is read at vllm/envs.py:1698 and used at vllm/model_executor/layers/ deepseek_v4_attention.py:411
+  to gate the `execute_in_parallel` call. On Ascend NPU, this parameter is not overridden by vllm-ascend and follows upstream
+  behavior, but its effectiveness depends on whether the Da Vinci architecture exhibits similar SM saturation characteristics
+  as CUDA GPUs. The impact is limited to DeepSeek-V4 model architectures only.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/deepseek_v4_attention.py:411
+  context: 'Used as the `enable` condition for `execute_in_parallel` — when `hidden_states.shape[0] <= VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD`,
+    the fused_wqa_wkv GEMM is overlapped with auxiliary GEMMs on separate streams.
+
+    '
+related_parameters:
+- name: VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD
+  relation: 'Similar threshold-based mechanism for shared experts stream overlap; both control when multi-stream execution
+    is beneficial based on token count.
+
+    '
+- name: VLLM_DISABLE_SHARED_EXPERTS_STREAM
+  relation: 'Disables parallel execution of shared experts via separate stream; analogous disable mechanism, though VLLM_MULTI_STREAM_GEMM_TOKEN_THRESHOLD
+    uses a threshold value of 0 to achieve the same effect.
+
+    '
+constraints:
+- Must be a non-negative integer.
+- Setting to 0 disables the multi-stream GEMM overlap path entirely.
+- Only effective for DeepSeek-V4 model architecture; has no effect on other models.
+tuning_advice:
+  summary: 'For DeepSeek-V4 models on Ascend NPU, start with the default of 1024 and profile to determine if Ascend-specific
+    SM saturation characteristics warrant a different threshold.
+
+    '
+  suggested_values:
+  - scenario: Default / general DeepSeek-V4 usage
+    value: '1024'
+    reason: 'Upstream default empirically determined (PR #41526) to provide 5-45% latency improvement for small-to-medium
+      batch sizes while avoiding overhead at large batch sizes.
+
+      '
+  - scenario: Disable multi-stream overlap (debugging or consistently large batches)
+    value: '0'
+    reason: 'Disables the multi-stream path entirely, avoiding cross-stream synchronization overhead when batches are consistently
+      large and the FP8 GEMM saturates the device.
+
+      '
+  - scenario: Ascend NPU with different saturation characteristics
+    value: profile-dependent
+    reason: 'The Da Vinci architecture may have different SM count and utilization patterns compared to CUDA GPUs. Profile
+      with representative batch sizes to find the optimal threshold for Ascend hardware.
+
+      '
+  caveats:
+  - Only applies to DeepSeek-V4 model architecture; ignored for all other models.
+  - On Ascend NPU, the effectiveness of multi-stream overlap depends on CANN's stream scheduling and the NPU's compute unit
+    saturation behavior, which may differ from CUDA.
+  - The 5-45% improvement range was measured on CUDA GPUs; Ascend NPU results may vary.
+  quick_guide: 'Use default 1024 for DeepSeek-V4; set to 0 to disable if batches are consistently large or if profiling shows
+    overhead on Ascend NPU.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,88 @@
+name: additional_config.enable_hamming_sparse
+type: nested
+category: kv_cache
+scope: vllm-ascend
+source_file:
+- vllm_ascend/attention/kvcomp_attn/attention_utils.py:145
+- vllm_ascend/attention/attention_v1.py:398
+- vllm_ascend/ascend_config.py:262
+- vllm_ascend/worker/model_runner_v1.py:541
+- vllm_ascend/worker/kvcomp_utils.py:516
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: --additional-config '{"enable_hamming_sparse":true,"hamming_sparse":{"enabled":true,"sparse_json_location":"/path/to/kvcomp.json"}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This Ascend-only gate is read by is_enable_hamming_sparse() at vllm_ascend/attention/kvcomp_attn/attention_utils.py:145
+  and cached on each attention implementation at vllm_ascend/attention/attention_v1.py:398. When true, prefill/non-decode
+  execution hashes and caches keys, while decode execution computes query/key hashes, runs npu_hamming_dist_top_k, and substitutes
+  a reduced block table and corresponding sequence lengths before fused attention (attention_v1.py:691-695 and attention_utils.py:92-142).
+  The selected KV blocks can reduce long-context decode attention work and improve latency/throughput, but hashing and top-k
+  selection add overhead, so the net effect depends on sequence length and the KVComp JSON settings. This boolean does not
+  itself allocate the auxiliary hash caches: current source separately gates metadata and cache initialization on additional_config.hamming_sparse.enabled
+  in ascend_config.py:262-265 and model_runner_v1.py:541-547. Therefore it must be enabled together with that configuration.
+  Upstream vLLM has no Hamming-sparse implementation; it only transports platform-specific additional_config values.'
+usage_locations:
+- file: vllm_ascend/attention/kvcomp_attn/attention_utils.py:145
+  context: Reads additional_config.enable_hamming_sparse with a false default and forces it false when speculative_config
+    is present.
+- file: vllm_ascend/attention/attention_v1.py:398
+  context: Caches the gate on the attention implementation during initialization.
+- file: vllm_ascend/attention/attention_v1.py:691
+  context: Hashes and caches keys for non-decode states, or replaces decode block tables and sequence lengths with Hamming-selected
+    values.
+- file: vllm_ascend/attention/kvcomp_attn/attention_utils.py:92
+  context: Computes hashes and calls npu_hamming_dist_top_k to select the decode KV blocks used by attention.
+- file: vllm_ascend/ascend_config.py:262
+  context: Separately parses hamming_sparse.enabled and sparse_json_location; this is the initialization-side gate that must
+    accompany this parameter.
+- file: vllm_ascend/worker/model_runner_v1.py:541
+  context: Initializes KVComp metadata only from AscendConfig.enable_hamming_sparse and disables that initialization with
+    speculative decoding.
+- file: vllm_ascend/worker/kvcomp_utils.py:516
+  context: Loads the KVComp JSON and allocates Hamming metadata; hash-key caches are subsequently allocated and bound per
+    attention layer.
+related_parameters:
+- name: additional_config.hamming_sparse
+  relation: Its enabled field and sparse_json_location independently control KVComp metadata/hash-cache initialization; both
+    it and this boolean must be configured consistently for the current implementation.
+- name: speculative_config
+  relation: Any configured speculative decoding makes is_enable_hamming_sparse() return false.
+constraints:
+- Do not set enable_hamming_sparse=true by itself. Also set additional_config.hamming_sparse.enabled=true and provide a valid
+  hamming_sparse.sparse_json_location; otherwise the attention path can be enabled without the KVComp metadata it asserts
+  is present.
+- The sparse JSON path must name an existing file or AscendConfig raises ValueError at startup.
+- Speculative decoding disables this gate regardless of the requested true value.
+- The KVComp JSON must match the model and kernel assumptions, including layer counts, head dimensions, hash widths, chunk
+  sizing, and layer skip/rollback lists; incompatible values can fail validation or tensor operations.
+- This path requires the vLLM Ascend Hamming/KVComp implementation and NPU custom operators; upstream vLLM has no equivalent
+  consumer.
+tuning_advice:
+  summary: Keep false unless deploying a validated Ascend Hamming-sparse setup. Enable only as one half of the current two-gate
+    configuration, with a model-matched KVComp JSON, and benchmark representative long-context decode traffic.
+  suggested_values:
+  - scenario: Default, speculative decoding, or no validated KVComp configuration
+    value: false
+    reason: Uses the normal dense attention block table and avoids sparse hashing/top-k overhead and split-gate failures.
+  - scenario: Validated long-context Ascend workload where Hamming block selection reduces attention work
+    value: true
+    reason: Activates Hamming-selected decode block tables, but only when hamming_sparse.enabled is also true and its JSON
+      path is valid.
+  caveats:
+  - A true value is silently made false whenever speculative_config is present.
+  - Current source uses different keys for the attention gate and initialization gate; configure both enable_hamming_sparse
+    and hamming_sparse.enabled rather than assuming either one aliases the other.
+  - Sparse selection changes which KV blocks participate in attention; validate model quality as well as performance.
+  - Short sequences or conservative top-k settings may not repay hash generation and Hamming top-k overhead.
+  - Auxiliary metadata and per-layer uint8 hash-key caches are allocated by the paired hamming_sparse configuration, not by
+    this boolean alone.
+  quick_guide: Start with false. For a supported model, set both gates plus a valid KVComp JSON, confirm speculative decoding
+    is off, then compare end-to-end latency, throughput, and output quality on the target context-length distribution.
+analysis_date: '2026-08-01'

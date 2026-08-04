@@ -1,0 +1,60 @@
+name: VLLM_ENABLE_CUDAGRAPH_GC
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:1523
+- vllm/envs.py:211
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls whether Python garbage collection (GC) is allowed to run during CUDA graph
+  capture. When set to 0 (default, false), vLLM freezes the Python GC via gc.freeze() before CUDA graph capture and unfreezes
+  it afterward via gc.unfreeze(), which speeds up the capture process by preventing GC pauses. When set to 1 (true), GC is
+  allowed to run normally during capture. The effect is limited to the CUDA graph capture phase during model initialization
+  — it does not affect steady-state inference performance. On Ascend NPU, CUDA graphs are not used (NPU uses its own graph
+  mechanism via CANN), so this parameter has minimal to no effect on Ascend hardware. The parameter is defined only in upstream
+  vllm and is not overridden or referenced by vllm-ascend.
+
+  '
+usage_locations:
+- file: vllm/v1/worker/gpu_model_runner.py:5990
+  context: 'The _freeze_gc() context manager reads VLLM_ENABLE_CUDAGRAPH_GC to decide whether to call gc.freeze()/gc.unfreeze()
+    around CUDA graph capture. When the env var is false (default), GC is frozen; when true, GC runs normally.
+
+    '
+related_parameters: []
+constraints: []
+tuning_advice:
+  summary: 'Leave at default (0/false) on Ascend NPU — this parameter affects CUDA graph capture which is not used on Ascend
+    hardware, so changing it has no meaningful performance impact.
+
+    '
+  suggested_values:
+  - scenario: All Ascend NPU deployments
+    value: false
+    reason: 'CUDA graphs are a GPU-specific mechanism not used on Ascend NPU. The GC freeze optimization during graph capture
+      is irrelevant, and enabling GC during capture provides no benefit.
+
+      '
+  caveats:
+  - 'This parameter only affects the CUDA graph capture phase during model initialization, not steady-state inference. On
+    Ascend NPU, CUDA graph capture is not performed, so this parameter has essentially no effect regardless of its value.
+
+    '
+  - 'Even on GPU platforms, the performance impact is limited to initialization time (graph capture speed), not inference
+    throughput or latency.
+
+    '
+  quick_guide: 'Keep the default value (0/false) — this parameter is GPU-specific and has no effect on Ascend NPU inference
+    performance.
+
+    '
+analysis_date: '2026-07-06'

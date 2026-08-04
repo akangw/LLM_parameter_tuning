@@ -1,0 +1,69 @@
+name: compilation.local_cache_dir
+type: nested
+category: compilation
+scope: vllm
+source_file:
+- vllm/compilation/backends.py:1074
+- vllm/compilation/decorators.py:551
+- vllm/compilation/wrapper.py:331
+value_type: str
+default: <computed>
+valid_choices: <computed>
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter is an internal, runtime-computed field (not user-configurable via CLI or env var) that stores
+  the per-rank local cache directory path for torch.compile artifacts. It is derived from the user-configurable `compilation_config.cache_dir`
+  (or an auto-generated hash-based path) by appending `rank_{rank}_{dp_rank}` and a compile prefix. The value is used to set
+  `TORCHINDUCTOR_CACHE_DIR` and to load/save compiled FX graphs and AOT-compiled functions. On Ascend NPU, torch.compile caching
+  reduces cold-start latency by avoiding recompilation of identical graphs across restarts. However, this parameter itself
+  is a derived path string; the actual performance lever is the parent `cache_dir` and whether compile caching is enabled
+  (controlled by `VLLM_DISABLE_COMPILE_CACHE` and `CompilationMode`). The local_cache_dir merely reflects the computed location
+  and has no independent tuning effect.
+
+  '
+usage_locations:
+- file: vllm/compilation/backends.py:1074
+  context: Assigned as `cache_dir/rank_{rank}_{dp_rank}/{prefix}` during VllmBackend initialization; used as the local cache
+    root for this rank's compiled artifacts.
+- file: vllm/compilation/decorators.py:551
+  context: Set to the hash-level cache directory during AOT compile setup; later appended with rank info to form the per-rank
+    AOT compilation path.
+- file: vllm/compilation/wrapper.py:331
+  context: Reset to empty string when reinitializing compilation config (e.g., after data_parallel_size changes) to force
+    cache path recomputation.
+related_parameters:
+- name: compilation_config.cache_dir
+  relation: Parent parameter; local_cache_dir is derived from cache_dir by appending rank-specific subdirectories.
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: When set, compile caching is disabled entirely, making local_cache_dir unused.
+- name: compilation_config.mode
+  relation: CompilationMode.NONE disables torch.compile and thus compile caching, rendering local_cache_dir irrelevant.
+constraints: []
+tuning_advice:
+  summary: 'This is a derived internal path, not a user-facing tuning knob. To control compile caching behavior on Ascend
+    NPU, configure `compilation_config.cache_dir` (or let vLLM auto-generate it) and ensure `VLLM_DISABLE_COMPILE_CACHE` is
+    not set.
+
+    '
+  suggested_values:
+  - scenario: Default (auto-generated cache path)
+    value: <computed>
+    reason: The auto-generated hash-based path ensures cache isolation across different model/config/compiler combinations.
+      No manual intervention needed.
+  - scenario: Custom cache directory for shared cluster filesystem
+    value: '--compilation-config ''{"cache_dir": "/shared/cache/vllm_compile"}'''
+    reason: Setting a shared cache_dir allows all ranks on a node to reuse compiled artifacts, reducing redundant compilation.
+      The local_cache_dir will be automatically derived as `/shared/cache/vllm_compile/rank_{rank}_{dp_rank}/{prefix}`.
+  caveats:
+  - On Ascend NPU, torch.compile support is limited compared to CUDA. Some models may not benefit from compilation caching,
+    and certain speculative decoding methods (e.g., ngram GPU kernel) force cache disabling.
+  - The local_cache_dir is per-rank; ensure the filesystem supports concurrent writes from multiple ranks if using a shared
+    cache_dir.
+  - Cache invalidation is hash-based — changes to model code, vLLM version, or compilation config will generate a new cache
+    key, leaving old caches orphaned on disk.
+  quick_guide: Leave local_cache_dir at its auto-computed default; control compile caching via `cache_dir` and `VLLM_DISABLE_COMPILE_CACHE`.
+analysis_date: '2026-07-06'

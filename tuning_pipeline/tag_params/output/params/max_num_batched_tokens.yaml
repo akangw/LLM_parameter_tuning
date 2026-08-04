@@ -1,0 +1,115 @@
+name: --max-num-batched-tokens
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1319
+- vllm/config/scheduler.py:49
+- vllm_ascend/ascend_config.py:57
+- vllm_ascend/worker/model_runner_v1.py:258
+- vllm_ascend/worker/block_table.py:92
+value_type: int
+default: null
+valid_choices: integer >= 1
+cli_example: --max-num-batched-tokens 4096
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This is the scheduler's maximum total tokens processed in one iteration. Upstream SchedulerConfig requires
+  an integer of at least one; chunked prefill uses the remaining budget to split prefills, and the setting is part of the
+  scheduler configuration hash because it changes LoRA static buffers and can change Inductor indexing. Increasing it can
+  process more prefill/decode work per iteration and reduce scheduling overhead, but it also raises the size of token-dependent
+  runtime work and buffers. On Ascend, NPUInputBatch and BlockTable receive this value; BlockTable allocates its slot-mapping
+  buffer as max_num_batched_tokens plus context-parallel padding. The Ascend V1 model runner temporarily adds 2 * prefill_context_parallel_size
+  * max_num_seqs before parent initialization to provision padded buffers, then restores the scheduler limit. With FLASHCOMM1
+  and prefill context parallelism, Ascend rounds a non-divisible value up to a multiple of tensor_parallel_size * prefill_context_parallel_size,
+  which can increase the effective memory budget. Ascend also passes the value to recycling-aware KV-cache admission and clamps
+  profiling min_chunk down to it when necessary.
+usage_locations:
+- file: vllm/config/scheduler.py:49
+  context: Defines the per-iteration token budget with a minimum value of one.
+- file: vllm/config/scheduler.py:84
+  context: Chunked prefill consumes the remaining max_num_batched_tokens budget.
+- file: vllm/config/scheduler.py:204
+  context: Includes the value in the scheduler hash because it affects LoRA buffers and Inductor indexing.
+- file: vllm/engine/arg_utils.py:2385
+  context: Resolves an unset CLI value from usage-context and hardware-specific defaults.
+- file: vllm_ascend/ascend_config.py:57
+  context: Clamps profiling_chunk_config.min_chunk to this value when it is smaller.
+- file: vllm_ascend/ascend_config.py:121
+  context: Rounds the value up for FLASHCOMM1 prefill context parallelism divisibility.
+- file: vllm_ascend/worker/model_runner_v1.py:258
+  context: Temporarily pads the configuration for context-parallel buffer initialization.
+- file: vllm_ascend/worker/block_table.py:92
+  context: Sizes the Ascend slot-mapping buffer from this token budget plus context-parallel padding.
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:92
+  context: Supplies the budget to Ascend's KV-cache coordinator and per-spec cache manager.
+related_parameters:
+- name: --max-num-seqs
+  relation: The iteration is bounded by both request count and total token budget; the token budget must be at least max_num_seqs.
+- name: --enable-chunked-prefill
+  relation: When enabled, prefill work is split according to remaining max_num_batched_tokens budget.
+- name: --max-model-len
+  relation: With chunked prefill disabled, the token budget must be at least max_model_len to admit sequences of that length.
+- name: --tensor-parallel-size
+  relation: With FLASHCOMM1 context parallelism, it contributes to the divisor used to round the token budget up.
+- name: --prefill-context-parallel-size
+  relation: It adds Ascend buffer padding and, with FLASHCOMM1, contributes to the required divisibility.
+- name: --performance-mode
+  relation: Throughput mode doubles an unset default token budget; explicitly supplied values are not doubled.
+constraints:
+- Must be an integer greater than or equal to 1.
+- Must be greater than or equal to --max-num-seqs.
+- When chunked prefill is disabled, it must be at least --max-model-len or longer sequences are rejected.
+- With Ascend FLASHCOMM1 and prefill context parallelism greater than one, Ascend rounds a non-divisible value up to a multiple
+  of tensor_parallel_size times prefill_context_parallel_size.
+tuning_advice:
+  summary: Start from the resolved default or a moderate explicit budget, then raise it only while profiling shows that the
+    larger batch improves throughput without exhausting device memory or harming latency.
+  suggested_values:
+  - scenario: General Ascend serving with chunked prefill
+    value: 4096
+    reason: A moderate explicit budget can reduce prefill fragmentation and scheduling overhead while keeping token-dependent
+      buffers smaller than a much larger batch.
+  - scenario: FLASHCOMM1 with tensor parallel size 8 and prefill context parallel size 2
+    value: 8192
+    reason: This is divisible by 16, avoiding Ascend's upward adjustment; the final choice still needs device-memory profiling.
+  - scenario: Memory-constrained deployment or OOM during warmup
+    value: 2048
+    reason: A smaller budget reduces work and buffer capacity provisioned per iteration, at the cost of more chunked-prefill
+      iterations.
+  caveats:
+  - Larger values can increase token-dependent runtime memory and Ascend static buffer allocation, so benchmark under the
+    intended concurrency and context length.
+  - A value below max_num_seqs is invalid, and disabling chunked prefill requires a value at least as large as max_model_len.
+  - FLASHCOMM1 context-parallel configurations can silently increase a non-divisible requested value, changing the expected
+    memory footprint.
+  - The CLI default is unset; current upstream code resolves it from hardware and usage context, so do not treat SchedulerConfig's
+    2048 test convenience default as the universal runtime default.
+  quick_guide: Use an explicit value when reproducibility matters, keep it compatible with max_num_seqs and max_model_len,
+    and choose a FLASHCOMM1-compatible multiple before measuring throughput and memory.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

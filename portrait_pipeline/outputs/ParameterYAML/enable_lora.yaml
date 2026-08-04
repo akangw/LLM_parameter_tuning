@@ -1,0 +1,79 @@
+name: --enable-lora
+type: cli
+category: model
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:570
+- vllm/engine/arg_utils.py:1238
+- vllm/engine/arg_utils.py:2006
+- vllm/config/lora.py:30
+- vllm/config/compilation.py:634
+- tests/e2e/pull_request/one_card/lora/test_qwen3_multi_loras.py:52
+- tests/e2e/pull_request/one_card/lora/test_lora_with_spec_decode.py:83
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: --enable-lora
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: Enabling this flag creates a LoRAConfig instead of leaving lora_config as null, enabling adapter loading and
+  LoRA-aware execution. The configuration reserves capacity for the configured LoRA rank and concurrent adapters, while adapter-enabled
+  requests add LoRA operations to the model path; both can increase memory use and affect latency and throughput. The current
+  Ascend repository exercises this path for multi-LoRA serving and for speculative decoding, so it is supported by the target
+  stack rather than being a CUDA-only setting.
+usage_locations:
+- file: vllm/engine/arg_utils.py:2006
+  context: Creates LoRAConfig only when enable_lora is true; otherwise the engine receives no LoRA configuration.
+- file: vllm/config/lora.py:30
+  context: Defines LoRA capacity and execution settings, including rank, concurrent adapters, CPU cache capacity, dtype, and
+    sharding.
+- file: vllm/config/compilation.py:634
+  context: LoRA graph specialization only matters when LoRA is enabled; separate active and inactive graphs trade startup
+    time and memory for avoiding inactive-adapter LoRA operations.
+- file: tests/e2e/pull_request/one_card/lora/test_qwen3_multi_loras.py:52
+  context: Ascend end-to-end test enables LoRA with two concurrent adapters and explicit rank and CPU capacity.
+- file: tests/e2e/pull_request/one_card/lora/test_lora_with_spec_decode.py:83
+  context: Ascend end-to-end test enables LoRA together with speculative decoding.
+related_parameters:
+- name: --max-loras
+  relation: Sets the maximum number of LoRA adapters in a batch after LoRA is enabled.
+- name: --max-lora-rank
+  relation: Sets the maximum supported adapter rank and therefore affects LoRA capacity and computation.
+- name: --max-cpu-loras
+  relation: Sets CPU-resident adapter capacity and must not be lower than max_loras.
+- name: --fully-sharded-loras
+  relation: Changes how LoRA computation is sharded with tensor parallelism when LoRA is enabled.
+- name: --lora-dtype
+  relation: Sets the dtype used by LoRA weights and computations.
+- name: compilation_config.cudagraph_specialize_lora
+  relation: Controls separate graph handling for active and inactive LoRA adapters, and has no effect when LoRA is disabled.
+constraints:
+- LoRAConfig validates that max_cpu_loras is at least max_loras.
+- With LoRA and speculative decoding enabled, max_num_batched_tokens must be at least max_num_seqs times (num_speculative_tokens
+  plus one), or configuration fails.
+- LoRA support depends on the selected model supporting the relevant LoRA modules.
+tuning_advice:
+  summary: Leave LoRA disabled for base-model-only serving. Enable it only when requests need adapters, then size adapter
+    capacity for the workload and benchmark on the target Ascend system.
+  suggested_values:
+  - scenario: Base-model inference with no adapter requests
+    value: false
+    reason: Avoids constructing LoRAConfig and the adapter-aware execution path.
+  - scenario: Serving one or more LoRA adapters on Ascend
+    value: true
+    reason: Required to activate LoRA handling; choose max_loras, max_lora_rank, and max_cpu_loras to match needed concurrency.
+  - scenario: LoRA with speculative decoding
+    value: true
+    reason: The target Ascend tests exercise this combination; satisfy the batch-token constraint before deployment.
+  caveats:
+  - The memory and runtime cost depends on adapter rank, adapter concurrency, dtype, model architecture, and request mix.
+  - Enabling LoRA alone does not select an adapter; adapter requests or configured LoRA modules are still required.
+  - Graph specialization can raise startup time and memory use while avoiding inactive-adapter LoRA operations.
+  quick_guide: Use --enable-lora only for adapter-serving workloads; otherwise keep the default false.
+analysis_date: '2026-07-27'

@@ -1,0 +1,82 @@
+name: VLLM_DP_RANK
+type: env
+category: parallelism
+scope: both
+source_file:
+- vllm/envs.py:142
+- vllm/envs.py:1153
+- vllm/config/parallel.py:814
+value_type: int
+default: '0'
+valid_choices: integer in range [0, VLLM_DP_SIZE)
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'VLLM_DP_RANK assigns a unique identifier to each process in a data-parallel (DP) group. In vllm-ascend, this
+  is used for offline data-parallel inference (SPMD mode) where multiple independent engine processes each load a full model
+  replica and process disjoint shards of the input data. The rank determines which data shard each process handles, directly
+  controlling total system throughput: with DP_SIZE=N, aggregate throughput scales roughly N× (assuming sufficient NPU resources
+  and no communication bottlenecks). Memory impact is also significant because each DP rank loads a complete model copy onto
+  its assigned NPU(s), so total device memory consumption scales linearly with the number of DP ranks. The parameter is read
+  in vllm/config/parallel.py:814 when the data_parallel_size is not set via CLI (offline SPMD path), and is validated to be
+  in [0, data_parallel_size). vllm-ascend examples (examples/offline_data_parallel.py:120) and tests (tests/e2e/conftest.py:857,
+  tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:79) set this env var explicitly before engine initialization,
+  confirming it is the primary mechanism for DP rank assignment on Ascend. The parameter only takes effect when VLLM_DP_SIZE
+  > 1 and the model is an MoE (vllm/config/parallel.py:819-823 raises ValueError for dense models in offline DP mode).
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:814
+  context: Reads VLLM_DP_RANK to set data_parallel_rank in offline SPMD mode
+- file: vllm/envs.py:142
+  context: Declares VLLM_DP_RANK as an environment variable with default 0
+- file: vllm/envs.py:1153
+  context: Lazy evaluation lambda that reads VLLM_DP_RANK from os.environ
+- file: vllm-ascend/examples/offline_data_parallel.py:120
+  context: Sets VLLM_DP_RANK before engine init in Ascend DP example
+- file: vllm-ascend/tests/e2e/conftest.py:857
+  context: Sets VLLM_DP_RANK in DP worker process for e2e tests
+- file: vllm-ascend/tests/e2e/pull_request/two_card/aclgraph/test_aclgraph_capture_replay.py:79
+  context: Sets VLLM_DP_RANK in ACL graph capture/replay DP test
+related_parameters:
+- name: VLLM_DP_SIZE
+  relation: Defines the total number of DP ranks; VLLM_DP_RANK must be in [0, VLLM_DP_SIZE)
+- name: VLLM_DP_RANK_LOCAL
+  relation: Local rank within a node; defaults to VLLM_DP_RANK if not set
+- name: VLLM_DP_MASTER_IP
+  relation: IP address of the DP master node for coordination
+- name: VLLM_DP_MASTER_PORT
+  relation: Port of the DP master node for coordination
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Must be set to 'spawn' when using DP with multiprocessing (as in vllm-ascend tests)
+constraints:
+- VLLM_DP_RANK must be an integer in the range [0, VLLM_DP_SIZE)
+- Offline data parallel mode (using VLLM_DP_RANK) is only supported for MoE models, not dense models
+- VLLM_DP_RANK must be set before initializing the vLLM engine (LLM class or AsyncLLM)
+tuning_advice:
+  summary: 'Assign a unique integer rank to each DP process, starting from 0 up to VLLM_DP_SIZE-1, to enable linear throughput
+    scaling via data parallelism on Ascend NPUs.
+
+    '
+  suggested_values:
+  - scenario: Single DP rank (no data parallelism)
+    value: '0'
+    reason: Default value; only one process loads the model, no data sharding occurs
+  - scenario: N-way data parallelism on Ascend NPUs
+    value: 0, 1, 2, ..., N-1
+    reason: Each process gets a unique rank; aggregate throughput scales ~N× with N model replicas
+  caveats:
+  - Each DP rank loads a full model replica, so total NPU memory consumption scales linearly with the number of ranks. Ensure
+    sufficient total HBM across all assigned NPUs.
+  - Offline DP mode (setting VLLM_DP_RANK directly) is only valid for MoE models on Ascend; dense models will raise a ValueError.
+  - When using multiprocessing for DP workers, VLLM_WORKER_MULTIPROC_METHOD must be set to 'spawn' to avoid CUDA/HCCL initialization
+    conflicts.
+  - Each DP rank should process a disjoint shard of the input data to achieve throughput scaling; overlapping data will waste
+    compute.
+  - vllm-ascend only supports DP on the V1 engine (as noted in examples/offline_data_parallel.py:119).
+  quick_guide: Set VLLM_DP_RANK=0,1,...,N-1 for N-way data parallelism on Ascend MoE models; ensure VLLM_DP_SIZE=N and each
+    rank processes distinct data.
+analysis_date: '2026-07-06'

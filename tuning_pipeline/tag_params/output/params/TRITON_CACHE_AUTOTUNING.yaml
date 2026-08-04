@@ -1,0 +1,74 @@
+name: TRITON_CACHE_AUTOTUNING
+type: env
+category: memory
+scope: vllm
+source_file:
+- vllm/env_override.py:113
+value_type: str
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+impact_detail: vLLM sets TRITON_CACHE_AUTOTUNING to "1" during package import unless the environment already contains a value.
+  This enables Triton's on-disk cache for autotuning results. With caching enabled, a later process can reuse results in TRITON_CACHE_DIR
+  instead of repeating autotuning after every restart, avoiding the significant first-inference latency identified in the
+  source comment. Setting the variable to "0" before importing vLLM disables that reuse and makes Triton repeat autotuning
+  after each restart. This setting changes cold-start and first-request latency rather than the selected kernel's steady-state
+  execution speed. No vllm-ascend-specific declaration or override exists in the pinned Ascend repository.
+usage_locations:
+- file: vllm/env_override.py:113
+  context: Uses os.environ.setdefault to enable Triton autotuning-result caching by default while preserving a value supplied
+    by the user.
+- file: vllm/__init__.py:14
+  context: Imports env_override before other vLLM modules so the environment default is established early in package initialization.
+related_parameters:
+- name: TRITON_CACHE_DIR
+  relation: Triton writes the cached autotuning results controlled by this setting to TRITON_CACHE_DIR.
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: Disabling vLLM compile caching changes whether vLLM redirects TRITON_CACHE_DIR into its torch compile cache tree;
+    Triton otherwise uses its own cache location.
+constraints:
+- Set TRITON_CACHE_AUTOTUNING before the first import of vllm; env_override is imported during vllm package initialization
+  and only supplies a default for an unset variable.
+tuning_advice:
+  summary: Keep the default value "1" for repeated serving starts so Triton can reuse autotuning results and avoid recurring
+    first-request latency.
+  suggested_values:
+  - scenario: Production serving or repeated process restarts
+    value: '1'
+    reason: Persists Triton autotuning results in the cache so subsequent processes do not repeat the tuning work on their
+      first inference.
+  - scenario: Diagnosing stale or suspect Triton autotuning cache results
+    value: '0'
+    reason: Forces autotuning to run again after restart, trading higher first-request latency for a fresh tuning result.
+  caveats:
+  - Enabling the cache writes autotuning data to TRITON_CACHE_DIR, so that location must be writable and should have adequate
+    storage.
+  - A cold cache still requires autotuning; the latency benefit appears when compatible cached results are available on a
+    later process start.
+  - The pinned vllm-ascend source has no separate handling for this variable; behavior comes from the pinned upstream vLLM
+    package.
+  quick_guide: Use TRITON_CACHE_AUTOTUNING=1 normally; use 0 only when intentionally bypassing reuse of Triton autotuning
+    results.
+analysis_date: '2026-08-03'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

@@ -1,0 +1,80 @@
+name: speculative.draft_tensor_parallel_size
+type: nested
+category: speculation
+scope: both
+source_file:
+- vllm/config/speculative.py:851
+- vllm_ascend/platform.py:335
+- vllm_ascend/spec_decode/llm_base_proposer.py:150
+value_type: int
+default: <computed>
+valid_choices: 1 or equal to target model's tensor_parallel_size
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: "This parameter controls the tensor parallelism degree for the draft model in speculative decoding. On Ascend\
+  \ NPU, it has a critical performance impact because:\n1. **EAGLE draft models MUST use TP=1 on Ascend** (vllm-ascend docs\
+  \ and code comment at\n   vllm_ascend/spec_decode/llm_base_proposer.py:142-149 explicitly state that\n   `draft_tensor_parallel_size`\
+  \ does not take effect for Eagle — the draft model always\n   uses the same TP size as the target model in practice, and\
+  \ a patch is applied to set\n   draft TP=1 separately). When draft_tensor_parallel_size differs from the target model's\n\
+  \   TP size, a separate TP group is initialized (llm_base_proposer.py:150-158), which adds\n   communication overhead.\n\
+  \n2. **Decode Context Parallel (DCP) constraint** (vllm_ascend/platform.py:335-353): When\n   DCP is enabled (decode_context_parallel_size\
+  \ > 1) and the draft model uses GQA/MQA\n   (non-MLA), draft_tensor_parallel_size must be greater than total_num_kv_heads,\
+  \ and\n   decode_context_parallel_size must not exceed draft_tensor_parallel_size // total_num_kv_heads.\n   Violating this\
+  \ raises a ValueError.\n\n3. **Upstream validation** (vllm/config/speculative.py:849-881): The value can only be 1\n   or\
+  \ equal to the target model's tensor_parallel_size. For mlp_speculator draft models,\n   it defaults to 1 with a warning\
+  \ if target TP > 1. For other draft models, it defaults\n   to the target model's TP size.\n\nSetting draft_tensor_parallel_size=1\
+  \ when the target model uses TP>1 reduces draft model memory usage and avoids inter-device communication during drafting,\
+  \ but may increase draft latency. Setting it equal to target TP enables faster drafting but consumes more NPU memory.\n"
+usage_locations:
+- file: vllm/config/speculative.py:849
+  context: _verify_and_get_draft_tp validates and computes the effective draft TP size
+- file: vllm_ascend/platform.py:335
+  context: Validates draft TP against DCP constraints for GQA/MQA draft models
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:150
+  context: Checks if draft TP differs from target TP to decide whether to create a separate TP group
+related_parameters:
+- name: tensor_parallel_size
+  relation: Draft TP must be either 1 or equal to the target model's tensor_parallel_size
+- name: speculative_config.method
+  relation: EAGLE-based methods require draft_tensor_parallel_size=1 on Ascend
+- name: parallel_config.decode_context_parallel_size
+  relation: When DCP > 1, draft TP must satisfy additional constraints for GQA/MQA draft models
+- name: speculative_config.draft_model_config.use_mla
+  relation: MLA draft models bypass the DCP head-sharding constraint check
+constraints:
+- draft_tensor_parallel_size must be either 1 or equal to the target model's tensor_parallel_size
+- EAGLE-based draft models on Ascend NPU must use draft_tensor_parallel_size=1
+- When decode_context_parallel_size > 1 and the draft model uses GQA/MQA (non-MLA), draft_tensor_parallel_size must be greater
+  than the draft model's total_num_kv_heads
+- When decode_context_parallel_size > 1 and the draft model uses GQA/MQA, decode_context_parallel_size must not exceed draft_tensor_parallel_size
+  // total_num_kv_heads
+tuning_advice:
+  summary: On Ascend NPU, always set draft_tensor_parallel_size=1 for EAGLE-based speculative decoding; for other methods,
+    match the target model's TP size unless memory is constrained.
+  suggested_values:
+  - scenario: EAGLE/EAGLE-3 speculative decoding on Ascend NPU
+    value: 1
+    reason: vllm-ascend requires EAGLE draft models to run without tensor parallelism; setting any other value may cause errors
+      or undefined behavior.
+  - scenario: Non-EAGLE speculative decoding with sufficient NPU memory
+    value: <same as target tensor_parallel_size>
+    reason: Matching the target TP size avoids creating a separate TP group and minimizes communication overhead during drafting.
+  - scenario: Non-EAGLE speculative decoding with memory constraints
+    value: 1
+    reason: Running the draft model with TP=1 reduces NPU memory usage at the cost of potentially slower draft generation.
+  caveats:
+  - On Ascend NPU, EAGLE draft models ignore draft_tensor_parallel_size and always use TP=1 in practice; the parameter is
+    patched internally.
+  - When draft_tensor_parallel_size differs from the target model's TP size, a separate TP group is created, adding initialization
+    and communication overhead.
+  - mlp_speculator draft models cannot run with TP>1; the system automatically forces draft_tensor_parallel_size=1 with a
+    warning.
+  - Decode Context Parallel (DCP) imposes additional constraints on draft TP for GQA/MQA models — ensure draft_tensor_parallel_size
+    is large enough to satisfy the head-sharding requirements.
+  quick_guide: For EAGLE speculative decoding on Ascend, set draft_tensor_parallel_size=1; for other methods, use the same
+    value as the target model's tensor_parallel_size unless memory is tight.
+analysis_date: '2026-07-06'

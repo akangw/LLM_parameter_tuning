@@ -1,0 +1,97 @@
+name: speculative.draft_parallel_config
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/config/speculative.py
+value_type: dict
+default: <computed>
+valid_choices: <computed>
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: "This nested configuration controls the tensor parallelism (TP) and other parallel settings for the draft model\
+  \ in speculative decoding. On Ascend NPU, it directly affects:\n1. **Draft model TP size**: When `draft_parallel_config.tensor_parallel_size`\
+  \ is set, it\n   overrides `draft_tensor_parallel_size` and the target model's TP size for the draft model\n   (vllm_ascend/platform.py:332-338).\
+  \ This determines how many NPUs the draft model uses.\n\n2. **Decode Context Parallel (DCP) validation**: When DCP is enabled\n\
+  \   (`decode_context_parallel_size > 1`), the draft TP size must be greater than the draft\n   model's total KV heads for\
+  \ GQA/MQA models (vllm_ascend/platform.py:343-349). Violating\n   this raises a ValueError.\n\n3. **Memory allocation**:\
+  \ The draft model runs on a subset of NPUs determined by its TP\n   configuration. A smaller draft TP size reduces memory\
+  \ pressure on the draft model's\n   devices but may create load imbalance if the target model uses more devices.\n\n4. **Throughput\
+  \ impact**: Draft model TP size affects draft token generation speed. Too\n   small a TP size may bottleneck the draft phase;\
+  \ too large wastes resources that could\n   serve the target model.\n\nThe parameter is a `ParallelConfig`-like nested dict\
+  \ that vllm-ascend reads to determine draft model parallelism independently from the target model's parallel configuration.\n"
+usage_locations:
+- file: vllm_ascend/platform.py:332
+  context: 'Reads draft_parallel_config.tensor_parallel_size to determine draft model TP size for DCP head-sharding validation.
+    Falls back to draft_tensor_parallel_size then target model TP size if not set.
+
+    '
+- file: tests/ut/spec_decode/a2/test_eagle_proposer.py:285
+  context: 'Test sets draft_parallel_config.tensor_parallel_size = 1 for draft_model method with parallel_drafting disabled.
+    Comment notes target_tp != draft_tp is not yet supported on Ascend.
+
+    '
+- file: tests/ut/spec_decode/a2/test_eagle_proposer.py:2786
+  context: 'Integration test sets draft_parallel_config.tensor_parallel_size = 1 alongside target_parallel_config.tensor_parallel_size
+    = 1 for AscendDraftModelProposer.
+
+    '
+- file: tests/v1/e2e/spec_decode/test_spec_decode.py:1017
+  context: 'Upstream test uses draft_parallel_config to construct the draft model''s VllmConfig with independent TP size (1
+    vs target''s 2), verifying quantization isolation.
+
+    '
+related_parameters:
+- name: speculative.draft_tensor_parallel_size
+  relation: 'Fallback: "if draft_parallel_config.tensor_parallel_size is not set, vllm-ascend" checks draft_tensor_parallel_size
+    next (vllm_ascend/platform.py:335-336).
+
+    '
+- name: parallel_config.decode_context_parallel_size
+  relation: 'When DCP is enabled (>1), draft_parallel_config.tensor_parallel_size must satisfy additional constraints relative
+    to the draft model''s KV head count.
+
+    '
+- name: speculative.target_parallel_config
+  relation: 'Defines the target model''s parallel configuration. On Ascend, target_tp != draft_tp is noted as not yet supported
+    in test comments (test_eagle_proposer.py:284).
+
+    '
+constraints:
+- When decode_context_parallel_size > 1 and the draft model uses GQA/MQA (not MLA), draft_parallel_config.tensor_parallel_size
+  must be greater than the draft model's total_num_kv_heads.
+- On Ascend NPU, target model TP size and draft model TP size should currently be equal (target_tp != draft_tp is not yet
+  supported per test comments).
+tuning_advice:
+  summary: 'Set draft_parallel_config.tensor_parallel_size equal to the target model''s TP size on Ascend NPU to avoid unsupported
+    configurations and ensure balanced resource usage.
+
+    '
+  suggested_values:
+  - scenario: Standard speculative decoding on Ascend NPU (v1 worker)
+    value: Same as target model tensor_parallel_size
+    reason: 'Ascend test comments indicate target_tp != draft_tp is not yet supported. Matching TP sizes avoids validation
+      errors and ensures consistent device utilization across target and draft model execution.
+
+      '
+  - scenario: DCP enabled with GQA/MQA draft model
+    value: Must be > total_num_kv_heads of draft model
+    reason: 'vllm-ascend enforces this constraint at platform.py:343-349. The DCP head-sharding rule requires TP size to exceed
+      KV head count for correct sharding. Choose the smallest value satisfying both this constraint and the target TP match
+      requirement.
+
+      '
+  caveats:
+  - On Ascend NPU, setting draft TP different from target TP is noted as unsupported in vllm-ascend test code. Attempting
+    this may cause runtime errors or incorrect results.
+  - MLA draft models skip the DCP head-sharding validation (vllm_ascend/platform.py:329-330), so the KV-head constraint does
+    not apply to them.
+  - The draft model runs on a subset of devices determined by its TP configuration. Ensure sufficient NPU memory on those
+    devices for both draft and target model components.
+  quick_guide: Match draft_parallel_config.tensor_parallel_size to target model TP size on Ascend NPU; ensure it exceeds draft
+    KV head count when using DCP with GQA/MQA models.
+analysis_date: '2026-07-06'

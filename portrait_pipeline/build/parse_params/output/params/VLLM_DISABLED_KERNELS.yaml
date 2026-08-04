@@ -1,0 +1,59 @@
+name: VLLM_DISABLED_KERNELS
+type: env
+category: quantization
+scope: vllm
+source_file:
+- vllm/envs.py:979
+- vllm/envs.py:107
+- vllm/model_executor/kernels/linear/__init__.py:288
+- vllm/model_executor/kernels/linear/__init__.py:508
+value_type: list[str]
+default: '[]'
+valid_choices: 'Comma-separated list of kernel class names: MacheteLinearKernel, MarlinLinearKernel, ExllamaLinearKernel,
+  FlashInferFP8ScaledMMLinearKernel'
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This environment variable controls which quantization linear kernels are excluded from the MPLinearKernel
+  selection process. When a kernel name is listed, it is skipped during kernel selection in `choose_mp_linear_kernel` (vllm/model_executor/kernels/linear/__init__.py:508)
+  and `is_supported_and_can_implement_kernel` (line 288). The selection falls back to the next available kernel. On Ascend
+  NPU, the affected kernels (MacheteLinearKernel, MarlinLinearKernel, ExllamaLinearKernel) are CUDA-specific and are already
+  not supported on Ascend hardware due to compute capability checks. Therefore, disabling them has no practical effect on
+  Ascend — the Ascend platform uses its own kernel implementations (e.g., via torch_npu or CANN ops). The parameter is primarily
+  useful for GPU testing and performance comparisons, not for Ascend NPU tuning.
+
+  '
+usage_locations:
+- file: vllm/model_executor/kernels/linear/__init__.py:288
+  context: Checked in is_supported_and_can_implement_kernel to skip disabled kernels
+- file: vllm/model_executor/kernels/linear/__init__.py:508
+  context: Checked in choose_mp_linear_kernel to skip disabled kernels during selection loop
+- file: tests/compile/correctness_e2e/test_async_tp.py:49
+  context: Used in tests to disable FlashInferFP8ScaledMMLinearKernel for async TP compatibility
+- file: tests/quantization/test_cutlass_w4a16.py:111
+  context: Used in tests to verify kernel fallback when MacheteLinearKernel is disabled
+related_parameters:
+- name: VLLM_USE_TRITON_AWQ
+  relation: Both affect quantization kernel selection; VLLM_USE_TRITON_AWQ enables Triton AWQ kernels while VLLM_DISABLED_KERNELS
+    disables specific kernels
+constraints:
+- Only affects MPLinearKernel selection; has no effect on other kernel types
+- Kernel names must match the exact class name (e.g., MacheteLinearKernel, MarlinLinearKernel, ExllamaLinearKernel)
+tuning_advice:
+  summary: This parameter has negligible performance impact on Ascend NPU and should generally be left at its default (empty
+    list).
+  suggested_values:
+  - scenario: Default / all scenarios on Ascend NPU
+    value: '[]'
+    reason: The affected kernels (Machete, Marlin, Exllama) are CUDA-specific and already unsupported on Ascend due to compute
+      capability checks. Disabling them has no effect on Ascend kernel selection.
+  caveats:
+  - On Ascend NPU, this parameter is effectively a no-op because the listed kernels are CUDA-specific and fail the compute
+    capability check before the disabled-kernel check is reached.
+  - Setting this variable incorrectly (e.g., with a typo in the kernel name) will have no effect and will not produce an error.
+  quick_guide: Leave at default (empty) on Ascend NPU — the affected kernels are CUDA-only and already excluded by hardware
+    capability checks.
+analysis_date: '2026-07-06'

@@ -1,0 +1,7 @@
+name: VLLM_DISABLE_SHARED_EXPERTS_STREAM
+type: env
+performance_impact: none
+skip_reason: In the pinned sources, vLLM only declares and parses this environment variable in vllm/envs.py; there is no execution-path
+  consumer of the parsed value, and the legacy shared_experts.py usage is absent. vLLM-Ascend writes the value "1" during
+  platform import, but no pinned code uses it to select a stream or otherwise alter latency, throughput, or memory, so this
+  is a stale compatibility setting rather than a current performance parameter.

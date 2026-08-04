@@ -1,0 +1,108 @@
+name: compilation.max_cudagraph_capture_size
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm_ascend/platform.py:182
+- vllm_ascend/utils.py:598
+- vllm/config/vllm.py:1527
+- vllm/engine/arg_utils.py:1388
+value_type: int
+default: <computed>
+valid_choices: positive integer, typically 1-512 on Ascend
+cli_example: '--compilation-config ''{"max_cudagraph_capture_size": 256}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter sets the upper bound on the number of tokens for which CUDA graph (or Ascend ACL graph) capture\
+  \ is performed. On Ascend NPU, vllm-ascend overrides the upstream default calculation in `_get_default_max_cudagraph_capture_size()`\
+  \ (platform.py:182): instead of `max_num_seqs * decode_query_len * 2` (upstream), Ascend uses `min(max_num_seqs * decode_query_len,\
+  \ 512)` — removing the `* 2` multiplier and capping at 512. This default is injected via `apply_config_platform_defaults()`\
+  \ (platform.py:231) when neither `max_cudagraph_capture_size` nor `cudagraph_capture_sizes` is explicitly set.\nThe value\
+  \ directly controls: 1. The maximum batch size for full-graph capture in attention backends (flash_attn.py:355,\n   flashinfer.py:591,\
+  \ gdn_attn.py:109, mamba_attn.py:104, flashattn_mla.py:133).\n2. The token capacity for MoE dispatch/combine operations\
+  \ (token_dispatcher.py:131,\n   ascend_forward_context.py:203) — a larger value increases the global batch size\n   for\
+  \ expert parallelism, directly affecting memory allocation and communication\n   buffer sizes.\n3. The cudagraph capture\
+  \ size list generation: the default list includes multiples\n   of 8 up to 255, then multiples of 16 up to this max value\
+  \ (ACL_Graph.md:39).\n\nSetting this too high wastes NPU memory on graph capture buffers; setting it too low causes more\
+  \ requests to fall back to eager execution (no graph acceleration), hurting throughput. On Ascend, the 512 cap is intentionally\
+  \ conservative to balance memory usage against graph coverage.\n"
+usage_locations:
+- file: vllm_ascend/platform.py:182
+  context: 'Ascend-specific default calculation: `min(max_num_seqs * decode_query_len, 512)`'
+- file: vllm_ascend/platform.py:231
+  context: Injects Ascend default into `compilation_config.max_cudagraph_capture_size`
+- file: vllm_ascend/utils.py:598
+  context: Consistency check with `cudagraph_capture_sizes`; truncation warning if mismatch
+- file: vllm_ascend/ascend_forward_context.py:203
+  context: Sets `_mc2_tokens_capacity` for MoE dispatch when `cudagraph_capture_sizes` is set
+- file: vllm_ascend/ops/fused_moe/token_dispatcher.py:131
+  context: Determines `max_num_tokens` for MoE dispatch/combine global batch size
+- file: vllm/config/vllm.py:1138
+  context: Set to 0 when `enforce_eager` is True (disables cudagraph)
+- file: vllm/config/vllm.py:1527
+  context: 'Upstream default calculation: `min(max_num_seqs * decode_query_len * 2, 512)`'
+- file: vllm/v1/attention/backends/flash_attn.py:355
+  context: Caps `max_cudagraph_size` for FA3 scheduler_metadata buffer allocation
+- file: vllm/v1/attention/backends/flashinfer.py:591
+  context: Caps `_decode_cudagraph_max_bs` for FlashInfer decode wrappers
+- file: vllm/v1/attention/backends/gdn_attn.py:109
+  context: Caps `decode_cudagraph_max_bs` for GDN attention state indices
+- file: vllm/v1/attention/backends/mamba_attn.py:104
+  context: Caps `decode_cudagraph_max_bs` for Mamba state indices
+- file: vllm/v1/attention/backends/mla/flashattn_mla.py:133
+  context: Caps `max_cudagraph_size` for MLA FA3 scheduler_metadata buffer
+related_parameters:
+- name: compilation.cudagraph_capture_sizes
+  relation: If `cudagraph_capture_sizes` is set, `max_cudagraph_capture_size` must equal its maximum value; otherwise a ValueError
+    is raised or a truncation warning is issued.
+- name: compilation.cudagraph_mode
+  relation: When `cudagraph_mode` is NONE or `enforce_eager` is True, `max_cudagraph_capture_size` is set to 0, disabling
+    all graph capture.
+- name: scheduler_config.max_num_seqs
+  relation: The Ascend default is computed as `min(max_num_seqs * decode_query_len, 512)`, so increasing `max_num_seqs` may
+    increase the default capture size up to the 512 cap.
+- name: speculative_config.num_speculative_tokens
+  relation: '`decode_query_len = 1 + num_speculative_tokens`; more speculative tokens increase the default capture size. For
+    MTP with large EP, explicitly set this to `max_concurrency * (1 + num_speculative_tokens)` to avoid graph capture buffer
+    overflow.'
+constraints:
+- If both `max_cudagraph_capture_size` and `cudagraph_capture_sizes` are explicitly set, `max_cudagraph_capture_size` must
+  equal the maximum value in `cudagraph_capture_sizes`; otherwise a ValueError is raised.
+- When `enforce_eager` is True, `max_cudagraph_capture_size` is forced to 0 and graph capture is disabled.
+- The value must be a positive integer when graph capture is enabled; upstream asserts `max_cudagraph_capture_size >= 1`.
+tuning_advice:
+  summary: On Ascend, the default is `min(max_num_seqs * decode_query_len, 512)` — capped at 512. For most deployments this
+    is sufficient; increase only if you observe frequent eager fallback for large batches, and decrease if NPU memory is tight.
+  suggested_values:
+  - scenario: Default (most deployments)
+    value: <computed>
+    reason: The Ascend-computed default (`min(max_num_seqs * decode_query_len, 512)`) balances graph coverage with memory.
+      No explicit setting needed.
+  - scenario: High-concurrency MTP with large EP
+    value: max_concurrency * (1 + num_speculative_tokens)
+    reason: Per vllm-ascend release notes (release_notes.md:574), MTP with large EP may cause graph capture buffer overflow.
+      Explicitly setting this value avoids the bug.
+  - scenario: Memory-constrained NPU (e.g., large model on A2)
+    value: '128'
+    reason: Reducing the capture size lowers NPU memory usage for graph buffers. 128 covers most common batch sizes while
+      saving memory.
+  - scenario: High-throughput with large batches
+    value: '512'
+    reason: The Ascend cap of 512 is the maximum; setting it explicitly ensures full graph coverage for batches up to 512
+      tokens.
+  caveats:
+  - On Ascend, the default calculation removes the upstream `* 2` multiplier — the capture upper bound is `max_num_seqs *
+    decode_query_len` (not doubled), capped at 512. This is more memory-efficient but may cause eager fallback for very large
+    batches sooner than on GPU.
+  - When `cudagraph_capture_sizes` is also set, `max_cudagraph_capture_size` is overridden to match the max of that list.
+    A warning is logged if they differ.
+  - Larger values increase MoE dispatch/combine buffer sizes (`_mc2_tokens_capacity` and `global_bs`), which can significantly
+    increase NPU memory usage in expert-parallel deployments.
+  - Setting this too low causes more requests to bypass graph acceleration, increasing per-step latency.
+  quick_guide: Leave at default unless you hit MTP buffer overflow (set to `max_concurrency * (1 + num_speculative_tokens)`)
+    or need to save NPU memory (reduce to 128-256).
+analysis_date: '2026-07-06'

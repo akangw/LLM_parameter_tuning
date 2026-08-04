@@ -1,0 +1,97 @@
+name: HCCL_OP_EXPANSION_MODE
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/utils.py:692
+- vllm_ascend/patch/platform/patch_minimax_m2_config.py:118
+- docs/source/developer_guide/Design_Documents/ACL_Graph.md:63
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:178
+value_type: str
+default: null
+valid_choices: AIV selects the optimized branch used by vLLM Ascend; any unset or non-AIV value follows the more restrictive
+  default branch.
+cli_example: export HCCL_OP_EXPANSION_MODE="AIV"
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: This environment variable selects the HCCL communication expansion mode and also changes vLLM Ascend's ACL-graph
+  stream-budget calculation. With the exact value AIV, update_aclgraph_sizes computes a parallel factor from active DP/TP
+  communication groups, expert parallelism, and shared-expert overlap. For an unset or other value, it reserves additional
+  streams and uses a more restrictive formula; if the requested graph sizes exceed that result, the implementation samples
+  a smaller capture-size set. The design guide confirms that AIV can increase supported capture sizes, while the tuning guide
+  says AIV schedules communication directly on AI vector cores with RoCE rather than on the AI CPU. Broader graph-shape coverage
+  and a faster communication path can materially affect request latency and throughput.
+usage_locations:
+- file: vllm_ascend/utils.py:692
+  context: Selects the AIV-specific ACL-graph stream-budget formula.
+- file: vllm_ascend/utils.py:732
+  context: Uses the more restrictive capture-size formula when the value is unset or not AIV.
+- file: vllm_ascend/utils.py:744
+  context: Trims the configured ACL-graph capture-size set when the calculated maximum is smaller.
+- file: vllm_ascend/patch/platform/patch_minimax_m2_config.py:118
+  context: For MiniMax-M2 on NPU with graph execution enabled, sets AIV when absent and warns about other values.
+- file: docs/source/developer_guide/Design_Documents/ACL_Graph.md:63
+  context: Documents that AIV can increase supported capture sizes relative to the default unfolding path.
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:178
+  context: Recommends AIV as an HCCL optimization and describes AI-vector-core scheduling with RoCE.
+related_parameters:
+- name: compilation_config.cudagraph_capture_sizes
+  relation: The stream-budget calculation may reduce this requested ACL-graph capture-size set.
+- name: compilation_config.cudagraph_mode
+  relation: The graph mode determines whether ACL graph capture is used and can further reduce the stream budget.
+- name: tensor_parallel_size
+  relation: TP greater than one adds a communication group to the AIV and non-AIV budget formulas.
+- name: data_parallel_size
+  relation: DP greater than one adds a communication group and can add another AIV factor for MoE models.
+- name: enable_expert_parallel
+  relation: Expert parallelism increases the AIV branch's parallel factor.
+constraints:
+- The vLLM Ascend branch check is case-sensitive and recognizes only the exact string AIV.
+- Set the environment variable before engine configuration and ACL-graph capture so HCCL and capture-size budgeting observe
+  it.
+- MiniMax-M2 on NPU with graph execution enabled is special-cased to set AIV automatically only when the variable is absent.
+- When ACL graph capture is not used, the capture-size coverage benefit does not apply, although the HCCL execution mode may
+  still affect communication.
+tuning_advice:
+  summary: Use AIV as the Ascend performance baseline, especially for graph-enabled distributed deployments, and verify it
+    with the target CANN/HCCL stack and workload.
+  suggested_values:
+  - scenario: Ascend deployment using ACL graph capture
+    value: AIV
+    reason: The current source gives AIV a less restrictive stream-budget path and explicitly recommends it to increase supported
+      runtime shapes.
+  - scenario: MiniMax-M2 on NPU with graph execution enabled
+    value: AIV
+    reason: The platform patch automatically selects AIV when unset and warns that another value may reduce graph-shape coverage.
+  caveats:
+  - The exact number of retained capture sizes also depends on model depth, graph mode, requested sizes, and DP, TP, EP, PCP,
+    and DCP configuration.
+  - vLLM Ascend treats every non-AIV string like the default branch for its budget calculation; it does not validate other
+    HCCL-supported modes.
+  - MiniMax-M2 auto-selection does not override an explicitly supplied non-AIV value.
+  - Benchmark end-to-end latency and throughput on the deployed hardware and communication topology.
+  quick_guide: Export HCCL_OP_EXPANSION_MODE="AIV" before launch, then confirm the logged maximum supported ACL-graph batch
+    sizes and benchmark the workload.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

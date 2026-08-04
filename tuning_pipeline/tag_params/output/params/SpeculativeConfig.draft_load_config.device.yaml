@@ -1,0 +1,94 @@
+name: SpeculativeConfig.draft_load_config.device
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:97
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:217
+- vllm_ascend/model_loader/rfork/rfork_loader.py:124
+value_type: str
+default: null
+valid_choices: Any device string accepted by torch.device; operationally, null or the worker's NPU device is expected on Ascend.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+impact_detail: This field affects model-loading placement rather than normal token execution. For Ascend speculative decoding,
+  the proposer passes draft_load_config into the model loader. The Ascend rfork loader resolves null to device_config.device;
+  an explicit string instead becomes the torch device used while initializing the draft model and while post-processing its
+  transferred weights. It can therefore change which device holds draft weights and can affect initialization latency, accelerator
+  memory placement, or whether loading succeeds. The pinned upstream vLLM source defines the field but has no direct consumer
+  of LoadConfig.device, and its documentation classifies draft_load_config as internally populated and not user-settable.
+  No source evidence indicates a steady-state throughput benefit from overriding it.
+usage_locations:
+- file: vllm/config/load.py:97
+  context: Defines the nullable load-device string and documents that null inherits device_config.device.
+- file: vllm/config/speculative.py:186
+  context: Nests the LoadConfig under SpeculativeConfig for draft-model loading; the entire field is an internally populated
+    speculative-decoding configuration.
+- file: docs/features/speculative_decoding/README.md:138
+  context: States that draft_load_config is an internal field populated by vLLM and is not intended to be supplied by users.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:217
+  context: Builds the draft vLLM configuration and passes speculative_config.draft_load_config to get_model.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:124
+  context: For load_format=rfork, resolves null to device_config.device, enters that device context for draft-model initialization,
+    and uses the same target device for post-load weight processing.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config
+  relation: This parent object is internal; if absent, speculative loading is documented to use the target model's load configuration.
+- name: SpeculativeConfig.draft_load_config.load_format
+  relation: The pinned direct consumer of device is the Ascend rfork loader, selected when this sibling field is rfork.
+- name: DeviceConfig.device
+  relation: Supplies the effective load device whenever this field is null.
+- name: SpeculativeConfig.draft_model_config
+  relation: Identifies the draft model whose parameters are initialized and loaded on the resolved device.
+constraints:
+- draft_load_config and its nested device field are internal fields, not supported user-facing keys for --speculative-config
+  according to the pinned vLLM documentation.
+- The pinned direct runtime use is limited to the vllm-ascend rfork model loader; other pinned upstream loaders do not read
+  LoadConfig.device.
+- A non-null value is passed to torch.device without field-specific validation and must name a device available to the worker.
+- On Ascend, an override must remain compatible with the worker's NPU execution device; choosing CPU, another NPU rank, or
+  an unavailable backend can cause misplaced weights, cross-device failures, or load failure rather than a useful tradeoff.
+- If rfork transfer fails, the loader changes load_format to auto and falls back to the default loader, where this field is
+  not consumed by the pinned source.
+tuning_advice:
+  summary: Leave this internal field null so each Ascend worker loads its draft model on device_config.device; it is not a
+    steady-state performance knob.
+  suggested_values:
+  - scenario: Normal Ascend speculative decoding, including rfork draft loading
+    value: <unset>
+    reason: The rfork loader inherits the worker's configured NPU device, keeping draft weights aligned with execution and
+      rank-local memory placement.
+  - scenario: Framework or plugin developer constructing an internal configuration
+    value: <unset>
+    reason: Preserve device inheritance unless a specialized loader has an explicitly tested requirement for a concrete device
+      string.
+  caveats:
+  - The only evidenced performance effects are startup latency and placement of model-weight memory; changing this field does
+    not reduce the draft model's parameter footprint.
+  - An explicit device can make initialization fail or place weights where the Ascend runtime cannot execute them.
+  - Because the field is internal, command-line examples that inject it into --speculative-config are intentionally omitted.
+  quick_guide: Keep device null. Diagnose rfork startup with its load-format and transfer settings; do not redirect draft
+    weights to CPU or a different NPU as a performance experiment.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

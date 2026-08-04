@@ -1,0 +1,91 @@
+name: CompilationConfig.pass_config.rope_kvcache_fusion_max_token_num
+type: nested
+category: memory
+scope: vllm
+source_file:
+- vllm/config/compilation.py:150
+- vllm/config/vllm.py:1714
+- docs/design/fusions.md:175
+value_type: int
+default: 256
+valid_choices: A positive integer token-count threshold. The model accepts any integer without an explicit field validator,
+  but nonpositive values can create invalid or empty compile ranges and should not be used.
+cli_example: --compilation-config '{"pass_config":{"rope_kvcache_fusion_max_token_num":256}}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: When the upstream ROCm/AITER RoPE+KV-cache fusion is enabled, this value sets the largest token-count compile
+  range eligible for the fused kernel. The default 256-token endpoint keeps decode-like and other small batches on a single
+  kernel that avoids separate rotary-embedding and KV-cache-update launches and avoids separate key/value reads and writes,
+  while larger prefill-like batches use unfused kernels because the pinned documentation reports AITER fused-kernel performance
+  issues at larger token counts. If the scheduler's max_num_batched_tokens is at or below the threshold, no extra endpoint
+  is added and all compiled token ranges are eligible. The fusion guide reports an indicative 2-4% end-to-end benefit for
+  the overall fusion, so changing this boundary can alter latency, throughput, and memory traffic, but does not change KV-cache
+  capacity. The pinned vllm-ascend repository has no reference to this field, and upstream disables the related fusion on
+  non-ROCm platforms, so this threshold has no established Ascend effect.
+usage_locations:
+- file: vllm/config/compilation.py:150
+  context: Declares the integer default of 256 and documents the threshold as targeting small-batch decode while routing larger
+    prefill batches to unfused kernels.
+- file: vllm/config/vllm.py:1714
+  context: When fuse_rope_kvcache is active, _set_compile_ranges inserts this value as an endpoint if it is below max_num_batched_tokens;
+    otherwise all configured token counts remain within the fused range.
+- file: docs/design/fusions.md:175
+  context: Documents the ROCm/AITER-only fused operation, the default num_tokens <= 256 boundary, the reason for limiting
+    larger batches, and the indicative 2-4% end-to-end speedup.
+related_parameters:
+- name: CompilationConfig.pass_config.fuse_rope_kvcache
+  relation: This threshold is consumed only when that fusion pass is enabled; its effective default is controlled by optimization
+    level and ROCm/AITER capability checks.
+- name: SchedulerConfig.max_num_batched_tokens
+  relation: Provides the upper bound of compiled token ranges. An endpoint is added only when this threshold is below that
+    scheduler limit.
+- name: CompilationConfig.compile_ranges_endpoints
+  relation: This threshold contributes an automatically computed endpoint alongside any user-provided endpoints, separating
+    fused small-token shapes from unfused larger shapes.
+- name: CompilationConfig.use_inductor_graph_partition
+  relation: Along with splitting_ops, determines whether the RoPE and KV-cache update remain visible in one compiled graph
+    so the related fusion can operate.
+constraints:
+- Effective only when fuse_rope_kvcache remains enabled on a supported upstream ROCm/AITER attention backend; it has no tuning
+  effect when the fusion is disabled.
+- The related fusion requires the rotary_embedding custom op and a graph that keeps unified KV-cache update visible through
+  Inductor graph partitioning or an appropriate splitting_ops configuration.
+- Use a positive integer. The field itself has no positivity validator, but zero or negative endpoints do not represent the
+  documented [1, threshold] token range and can yield empty or invalid compile ranges.
+- Values at or above max_num_batched_tokens do not add a separate boundary, making every compiled token range eligible for
+  fusion rather than creating a distinct small-token range.
+- The pinned vllm-ascend repository contains no consumer or override for this field, and the associated upstream pass is forcibly
+  disabled outside ROCm.
+tuning_advice:
+  summary: Keep 256 for normal supported ROCm/AITER serving. Change it only after measuring the fused-versus-unfused crossover
+    across the deployment's actual decode and prefill token-count distribution.
+  suggested_values:
+  - scenario: General ROCm/AITER serving with the fusion enabled
+    value: 256
+    reason: This is the pinned default chosen to cover small-batch decode while avoiding the documented AITER fused-kernel
+      regressions at larger token counts.
+  - scenario: Profiled device where fusion regresses before 256 tokens
+    value: benchmark-derived positive integer below 256
+    reason: Lowering the endpoint restricts fusion to token ranges where it remains faster, at the cost of routing more small
+      batches through unfused kernels.
+  - scenario: Profiled device and workload where fusion remains faster above 256 tokens
+    value: benchmark-derived positive integer above 256
+    reason: Raising the boundary can extend launch and memory-traffic savings to larger batches, but is justified only if
+      end-to-end measurements show that the AITER crossover is higher on the target system.
+  caveats:
+  - 'Raising the threshold is not inherently better: the source deliberately excludes larger prefill-like batches because
+    fused-kernel performance can become worse there.'
+  - Lowering the threshold can forfeit the documented fusion benefit for decode or small continuous-batching steps that fall
+    above the new cutoff.
+  - Changing the boundary can add or move an Inductor compile range, affecting startup compilation work and the set of compiled
+    graphs as well as steady- state execution.
+  - The 2-4% figure describes the fusion in the pinned guide and is not a guaranteed gain from threshold tuning; validate
+    warmed end-to-end latency and throughput on the actual backend, cache dtype, model, and token mix.
+  - Do not tune this field for Ascend, CUDA, CPU, or any configuration where fuse_rope_kvcache resolves to false.
+  quick_guide: On supported ROCm/AITER, start at 256, sweep token counts around the observed fused/unfused latency crossover,
+    and set the largest positive cutoff that preserves an end-to-end benefit; leave it alone when the fusion is inactive.
+analysis_date: '2026-07-30'

@@ -1,0 +1,105 @@
+name: --quantization
+type: cli
+category: quantization
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:787
+- vllm/config/model.py:204
+- vllm/config/model.py:949
+- vllm_ascend/platform.py:118
+- vllm_ascend/platform.py:155
+- vllm_ascend/quantization/modelslim_config.py:401
+- vllm_ascend/quantization/compressed_tensors_config.py:52
+- vllm_ascend/quantization/fp8_config.py:56
+- docs/source/user_guide/feature_guide/quantization.md:107
+value_type: str
+default: null
+valid_choices:
+- ascend
+- compressed-tensors
+- fp8
+- deepseek_v4_fp8
+cli_example: --quantization ascend
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: Selects the implementation used to load and execute quantized model weights. If unset, upstream derives the
+  method from the checkpoint's quantization_config when present; an explicit value must agree with that detected method. Quantization
+  changes weight representation, device-memory demand, and the linear/MoE kernels used during inference, so it can change
+  model capacity, batch-size headroom, latency, and throughput. On Ascend the platform restricts executable methods to ascend,
+  compressed-tensors, fp8, and deepseek_v4_fp8, registers Ascend-specific ModelSlim, compressed-tensors, and FP8 implementations,
+  and maps deepseek_v4_fp8 to the Ascend FP8 implementation.
+usage_locations:
+- file: vllm/engine/arg_utils.py:787
+  context: Registers --quantization and its -q alias from ModelConfig argument metadata.
+- file: vllm/config/model.py:949
+  context: Detects checkpoint quantization, reconciles it with an explicit argument, validates the method, and invokes platform
+    verification.
+- file: vllm_ascend/platform.py:118
+  context: Defines the four quantization methods supported by the Ascend platform.
+- file: vllm_ascend/platform.py:155
+  context: Adds ascend to the CLI choices and imports the Ascend quantization implementations during plugin setup.
+- file: vllm_ascend/quantization/modelslim_config.py:401
+  context: Registers the ascend method and supplies ModelSlim-specific quantization configuration and layer methods.
+- file: vllm_ascend/quantization/compressed_tensors_config.py:52
+  context: Replaces the upstream compressed-tensors registration with the Ascend implementation.
+- file: vllm_ascend/quantization/fp8_config.py:56
+  context: Registers the Ascend FP8 implementation; deepseek_v4_fp8 is registered to the same configuration class.
+- file: docs/source/user_guide/feature_guide/quantization.md:107
+  context: Documents that ModelSlim checkpoints use quantization=ascend, while LLM-Compressor checkpoints are detected without
+    this option.
+related_parameters:
+- name: --dtype
+  relation: When no quantization method is detected or selected, dtype determines the model weight and activation dtype; quantization
+    implementations also validate supported activation dtypes.
+- name: --quantization-config
+  relation: Supplies online quantization configuration that EngineArgs resolves together with this method.
+- name: --allow-deprecated-quantization
+  relation: Permits an upstream method marked deprecated, but does not expand the Ascend platform's supported-method list.
+- name: --kv-cache-dtype
+  relation: Controls KV-cache storage separately from weight quantization and should be included in total memory and compatibility
+    testing.
+- name: --enforce-eager
+  relation: FA3 on Ascend requires eager execution and does not support FP8-quantized attention, so attention-backend compatibility
+    must be checked separately.
+constraints:
+- On Ascend, the selected method must be one of ascend, compressed-tensors, fp8, or deepseek_v4_fp8.
+- An explicit method must match the quantization method detected from the checkpoint configuration; otherwise ModelConfig
+  raises an error.
+- Use ascend for ModelSlim-generated checkpoints; the Ascend documentation states that LLM-Compressor checkpoints do not require
+  the option because compressed-tensors metadata is detected.
+- Ascend FA3 does not support FP8-quantized attention and requires enforce_eager=True; do not assume an FP8 checkpoint is
+  compatible with that backend.
+- The chosen method and checkpoint format must be supported by the target model, device generation, and vllm-ascend quantization
+  scheme.
+tuning_advice:
+  summary: Match the method to the checkpoint producer and format. Use ascend for supported ModelSlim checkpoints, let compressed-tensors
+    metadata select the Ascend LLM-Compressor path, and benchmark memory, latency, throughput, and accuracy on the exact model
+    and NPU.
+  suggested_values:
+  - scenario: Supported model quantized by ModelSlim
+    value: ascend
+    reason: Selects the AscendModelSlimConfig path documented and registered for ModelSlim quantization on Ascend.
+  - scenario: Model quantized by LLM-Compressor with compressed-tensors metadata
+    value: omit
+    reason: The Ascend guide says the flag is unnecessary; upstream detects the checkpoint method and the plugin replaces
+      it with the Ascend compressed-tensors implementation.
+  - scenario: Supported native FP8 or DeepSeek-V4 FP8 checkpoint
+    value: fp8
+    reason: Selects the Ascend FP8 configuration and kernels; use deepseek_v4_fp8 when that is the method declared by the
+      checkpoint.
+  - scenario: Unquantized checkpoint
+    value: omit
+    reason: Avoids forcing a quantization implementation and leaves model precision to dtype.
+  caveats:
+  - Lower-bit weights can reduce weight memory, but end-to-end gains depend on model coverage, kernel support, batch shape,
+    and workload; benchmark rather than assuming a speedup.
+  - Explicitly forcing a method that differs from checkpoint metadata is rejected.
+  - Upstream vLLM exposes additional methods, but the pinned Ascend platform advertises only four supported methods.
+  - FP8 is incompatible with Ascend FA3 quantized attention, and FA3 itself may perform worse than the default FIA backend.
+  quick_guide: Use ascend for ModelSlim, omit the flag for detectable compressed-tensors models, leave it unset for unquantized
+    models, and validate FP8 backend compatibility before deployment.
+analysis_date: '2026-07-27'

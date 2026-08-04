@@ -1,0 +1,95 @@
+name: --mamba-block-size
+type: cli
+category: memory
+scope: both
+source_file:
+- vllm/config/cache.py:120
+- vllm/config/vllm.py:2007
+- vllm/model_executor/models/config.py:394
+- vllm/v1/kv_cache_interface.py:563
+- vllm_ascend/patch/platform/patch_mamba_config.py:107
+- vllm_ascend/patch/platform/patch_mamba_config_310.py:28
+- vllm_ascend/platform.py:277
+value_type: int
+default: null
+valid_choices: Positive integer; must be a multiple of 8 for the causal_conv1d kernel.
+cli_example: --mamba-block-size 128
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- throughput
+impact_detail: 'This sets the token granularity of the Mamba cache block. Upstream uses the effective block size in Mamba
+  cache memory accounting: in `all` mode the number of pages is ceil(max_model_len / block_size), while `align` and `none`
+  use a fixed small number of pages. It also drives the prefix-cache granularity selected for hybrid Mamba models. On Ascend,
+  platform patches take precedence: `align` with prefix caching forces mamba_block_size to block_size, the generic patch otherwise
+  sets it to max_model_len, and the 310P `all` path recomputes it from the supplied value or model chunk size using an LCM
+  with the 128-token kernel alignment. Thus changing the CLI value can change cache layout and memory allocation, but it is
+  often overridden or normalized on Ascend.'
+usage_locations:
+- file: vllm/config/cache.py:120
+  context: Defines the optional positive integer and documents the multiple-of-8 causal_conv1d alignment requirement.
+- file: vllm/config/vllm.py:2007
+  context: Rejects an explicitly set value unless prefix caching is enabled.
+- file: vllm/model_executor/models/config.py:394
+  context: Defaults an unset value to block_size with prefix caching, or max_model_len without it.
+- file: vllm/v1/kv_cache_interface.py:563
+  context: Uses the effective Mamba block size to calculate `all`-mode maximum cache memory.
+- file: vllm_ascend/patch/platform/patch_mamba_config.py:107
+  context: Forces alignment mode to use block_size and otherwise sets the Mamba block size to max_model_len.
+- file: vllm_ascend/patch/platform/patch_mamba_config_310.py:69
+  context: On 310P all-mode, derives an effective block size using the supplied value or model chunk size and 128-token alignment.
+- file: vllm_ascend/platform.py:277
+  context: For hybrid KV transfer without prefix caching in align mode, defaults to block_size or requires an explicit value
+    to be a multiple of block_size.
+related_parameters:
+- name: --block-size
+  relation: Ascend align mode forces mamba_block_size to this value; hybrid KV transfer requires an explicit Mamba size to
+    be divisible by it.
+- name: --enable-prefix-caching
+  relation: An explicit Mamba block size is valid only when prefix caching is enabled.
+- name: --mamba-cache-mode
+  relation: 'Selects the memory-accounting and Ascend override path: all uses page-count scaling, while align is forced to
+    block_size on Ascend.'
+- name: --max-model-len
+  relation: Used as the default/effective Mamba block size when prefix caching is disabled or in the generic Ascend non-align
+    path.
+constraints:
+- The value must be a positive integer and a multiple of 8 for causal_conv1d alignment.
+- An explicitly set value requires --enable-prefix-caching.
+- For Ascend hybrid KV transfer without prefix caching in align mode, an explicit value must be a multiple of --block-size.
+- 'Ascend patches can replace the requested value: align uses --block-size, while the 310P all-mode path normalizes it to
+  a 128-aligned LCM.'
+tuning_advice:
+  summary: On Ascend, treat this as a cache-layout input rather than an independent throughput knob. Prefer the platform-selected
+    value, tune --block-size and --mamba-cache-mode together, and verify the resulting effective settings for the target hybrid
+    model.
+  suggested_values:
+  - scenario: Ascend hybrid Mamba model using prefix caching with mamba-cache-mode=align
+    value: '<auto: equals --block-size>'
+    reason: The Ascend patch sets the effective Mamba block size to block_size to align the cache layouts.
+  - scenario: Ascend 310P using mamba-cache-mode=all
+    value: '<auto: 128-aligned LCM>'
+    reason: The 310P patch derives the effective size from the requested/model chunk size and its 128-token alignment.
+  caveats:
+  - A requested value is frequently not the runtime value on Ascend because platform patches overwrite or normalize it.
+  - Larger sizes change Mamba cache page granularity and can change allocation; benchmark the effective configuration rather
+    than assuming a manual value improves throughput.
+  - Prefix caching support for Mamba layers is marked experimental upstream.
+  quick_guide: Leave this unset for the Ascend-selected default; if you set it, use a positive multiple of 8 with prefix caching
+    and inspect the effective block sizes.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input

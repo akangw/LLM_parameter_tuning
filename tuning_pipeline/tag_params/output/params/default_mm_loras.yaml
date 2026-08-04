@@ -1,0 +1,76 @@
+name: --default-mm-loras
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1260
+- vllm/config/lora.py:52
+value_type: dict
+default: null
+valid_choices: dict[str, str] | None
+cli_example: '--default-mm-loras ''{"image": "/path/to/image_lora"}'''
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option maps an input modality to a LoRA model path. vLLM passes the mapping into LoRAConfig only when
+  LoRA support is enabled; the mapping can therefore cause a modality-bearing request to run with a LoRA that would otherwise
+  not be selected. The selection flag itself has negligible cost, but the selected adapter adds the normal LoRA inference
+  work and adapter residency, which can modestly increase latency and memory use and reduce throughput. The pinned vLLM Ascend
+  plugin has no default_mm_loras-specific code, so it does not add an Ascend-specific behavior.
+usage_locations:
+- file: vllm/engine/arg_utils.py:573
+  context: EngineArgs declares default_mm_loras using the LoRAConfig default.
+- file: vllm/engine/arg_utils.py:1260
+  context: The CLI registers --default-mm-loras from the LoRAConfig field metadata.
+- file: vllm/engine/arg_utils.py:1986
+  context: vLLM rejects a non-empty mapping when the selected model is not multimodal.
+- file: vllm/engine/arg_utils.py:1996
+  context: Engine construction passes the mapping to LoRAConfig when enable_lora is set.
+- file: vllm/config/lora.py:52
+  context: LoRAConfig defines the modality-to-LoRA-path mapping and its single-adapter behavior.
+related_parameters:
+- name: --enable-lora
+  relation: LoRAConfig, including this mapping, is constructed only when LoRA support is enabled.
+- name: --max-loras
+  relation: Limits the number of LoRA adapters that can be active in a batch.
+- name: --max-cpu-loras
+  relation: Controls how many LoRA adapters can be retained in CPU memory.
+constraints:
+- A non-empty mapping is valid only for multimodal models; otherwise engine initialization raises ValueError.
+- vLLM applies no default multimodal LoRA when a request contains multiple mapped modalities, because it supports one LoRA
+  adapter per prompt.
+- The mapping only takes effect when --enable-lora is enabled.
+tuning_advice:
+  summary: Set this only when a multimodal model consistently needs the same LoRA for a modality. It is a routing convenience,
+    not a direct kernel-performance knob.
+  suggested_values:
+  - scenario: Image requests always require one known adapter
+    value: '{"image": "/path/to/image_lora"}'
+    reason: Automatically selects the adapter for image-bearing requests.
+  - scenario: No modality-specific adapter is required
+    value: 'null'
+    reason: Avoids selecting a LoRA and its associated adapter compute and memory use.
+  caveats:
+  - The option has no adapter-compute cost by itself; any performance change comes from the LoRA that it selects.
+  - Do not map multiple modalities expected in the same prompt when each needs a different adapter, because vLLM does not
+    apply a default adapter in that case.
+  - The pinned Ascend plugin contains no parameter-specific override, so use normal vLLM LoRA performance measurements on
+    the target model and NPU.
+  quick_guide: Leave unset unless a modality always needs one LoRA; then map that modality to the adapter path.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

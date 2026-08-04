@@ -1,0 +1,71 @@
+name: --tokenizer
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:419
+- vllm/engine/arg_utils.py:767
+value_type: str
+default: 'null'
+valid_choices: any valid Hugging Face tokenizer name or local path
+cli_example: --tokenizer Qwen/Qwen2.5-7B-Instruct
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- memory
+impact_detail: 'The --tokenizer parameter specifies the tokenizer to use for text encoding/decoding. It does not directly
+  affect NPU computation, but it can indirectly influence performance in two ways: "(1) Tokenizer choice affects tokenization
+  speed during request preprocessing" and output detokenization, which can become a CPU bottleneck at high throughput. (2)
+  Different tokenizers may produce different token counts for the same input text, which changes the number of tokens processed
+  by the model — more tokens means more NPU compute and KV cache memory consumption. On Ascend NPU, the tokenizer runs on
+  the host CPU and is not accelerated by the NPU, so a slow tokenizer can limit maximum throughput. When --tokenizer is not
+  specified, vLLM uses the model name/path to load the tokenizer. In HF_HUB_OFFLINE mode, the tokenizer path is resolved to
+  a local path via get_model_path(). vllm-ascend does not override or modify this parameter''s behavior.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:419
+  context: EngineArgs.tokenizer field definition, defaulting to ModelConfig.tokenizer (None)
+- file: vllm/engine/arg_utils.py:742-751
+  context: 'HF_HUB_OFFLINE path resolution: replaces tokenizer ID with local model path'
+- file: vllm/engine/arg_utils.py:767
+  context: CLI argument registration in ModelConfig group
+related_parameters:
+- name: --tokenizer-mode
+  relation: Controls how the tokenizer is loaded (auto, slow, mistral, etc.); works together with --tokenizer to determine
+    the final tokenizer instance
+- name: --tokenizer-revision
+  relation: Specifies the revision of the tokenizer to load from Hugging Face Hub
+- name: --skip-tokenizer-init
+  relation: When set, skips tokenizer initialization entirely, making --tokenizer irrelevant
+- name: --trust-remote-code
+  relation: Required when the tokenizer uses custom code from the model repository
+constraints:
+- If --skip-tokenizer-init is set, --tokenizer has no effect.
+- When HF_HUB_OFFLINE is enabled, the tokenizer path must exist locally or loading will fail.
+tuning_advice:
+  summary: Use the default tokenizer (matching the model) unless you have a specific reason to override it; a mismatched tokenizer
+    can cause incorrect token counts and degraded output quality.
+  suggested_values:
+  - scenario: Standard deployment with a single model
+    value: null (omit the flag)
+    reason: vLLM automatically uses the tokenizer bundled with the model, ensuring vocabulary compatibility and correct token
+      counts.
+  - scenario: Using a quantized model where the tokenizer is in a separate repository
+    value: the tokenizer repository path (e.g., vllm-ascend/Qwen3-235B-A22B-w8a8)
+    reason: Quantized model repositories may not include the tokenizer files; explicitly pointing to the tokenizer ensures
+      correct text processing.
+  - scenario: Benchmarking with vllm bench serve
+    value: the tokenizer path matching the model
+    reason: Ensures accurate token counting for benchmark metrics; mismatched tokenizers produce misleading throughput numbers.
+  caveats:
+  - A tokenizer that is slower than the model's native tokenizer can become a CPU bottleneck, limiting overall throughput
+    on Ascend NPU systems where the NPU processes tokens faster than the CPU can tokenize/detokenize.
+  - Using a tokenizer with a different vocabulary than the model will produce garbled output and incorrect token counts, but
+    will not cause an error at startup.
+  - Tokenizer loading happens on the CPU and does not consume NPU memory, but a very large tokenizer file may increase host
+    memory usage.
+  quick_guide: Omit --tokenizer to use the model's default tokenizer; only set it when the tokenizer is in a separate location
+    from the model weights.
+analysis_date: '2026-07-06'

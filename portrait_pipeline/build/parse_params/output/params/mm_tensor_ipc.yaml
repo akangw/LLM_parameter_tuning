@@ -1,0 +1,90 @@
+name: --mm-tensor-ipc
+type: cli
+category: communication
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:195
+- vllm/engine/arg_utils.py:1229
+- vllm/config/vllm.py:919
+value_type: str
+default: direct_rpc
+valid_choices:
+- direct_rpc
+- torch_shm
+cli_example: --mm-tensor-ipc torch_shm
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: "Controls the inter-process communication mechanism for transferring multimodal tensor data (e.g., image/video\
+  \ embeddings) between the API server process and the engine core worker processes. The two modes have distinct performance\
+  \ characteristics:\n- \"\\\"direct_rpc\\\" (default): Uses msgspec serialization over RPC. Tensors are\"\n  serialized to\
+  \ bytes, transmitted, then deserialized. This incurs CPU\n  serialization overhead and memory copies, which can become a\
+  \ bottleneck\n  for large multimodal inputs (high-resolution images, long videos).\n\n- \"\\\"torch_shm\\\": Uses torch.multiprocessing\
+  \ shared memory for zero-copy IPC.\"\n  Tensors are placed in shared memory and the receiver reads them directly,\n  eliminating\
+  \ serialization overhead. This is particularly beneficial for\n  Ascend NPU deployments where multimodal models process\
+  \ large visual\n  feature tensors — avoiding CPU serialization reduces both latency and\n  CPU utilization, allowing the\
+  \ NPU to stay fed with data.\n\nOn Ascend NPU, the performance gain from \"torch_shm\" can be significant because: \"(1)\
+  \ multimodal encoder outputs can be large tensors that are\" expensive to serialize; (2) NPU inference is fast enough that\
+  \ CPU-side serialization becomes the bottleneck; (3) shared memory avoids extra CPU↔NPU data movement that serialization\
+  \ would require.\nThe parameter is read in vllm/v1/engine/core_client.py:551 and vllm/v1/engine/utils.py:1020 to decide\
+  \ whether to create a tensor_queue for shared memory IPC. When \"torch_shm\" is selected, a multiprocessing Queue is created\
+  \ and passed to TensorIpcSender for zero-copy transfers.\n"
+usage_locations:
+- file: vllm/config/multimodal.py:195
+  context: Field definition with default "direct_rpc" and docstring describing the two IPC methods
+- file: vllm/config/vllm.py:919
+  context: Validation that "torch_shm" requires VLLM_WORKER_MULTIPROC_METHOD=spawn
+- file: vllm/v1/engine/core_client.py:551
+  context: Creates TensorIpcSender when mm_tensor_ipc is "torch_shm" and tensor_queue is available
+- file: vllm/v1/engine/utils.py:1020
+  context: Creates multiprocessing Queue for shared memory IPC when mm_tensor_ipc is "torch_shm"
+related_parameters:
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: torch_shm mode requires VLLM_WORKER_MULTIPROC_METHOD to be set to 'spawn'
+- name: --mm-processor-cache-gb
+  relation: Both affect multimodal data handling pipeline; cache size determines how much preprocessed data is retained
+- name: --mm-shm-cache-max-object-size-mb
+  relation: Controls shared memory cache object size limits, complementary to the IPC transport mechanism
+constraints:
+- When mm_tensor_ipc is set to 'torch_shm', the environment variable VLLM_WORKER_MULTIPROC_METHOD must be set to 'spawn',
+  otherwise vLLM raises a ValueError at startup
+tuning_advice:
+  summary: 'Use "torch_shm" for zero-copy multimodal tensor IPC to reduce latency and CPU overhead on Ascend NPU, but ensure
+    VLLM_WORKER_MULTIPROC_METHOD=spawn.
+
+    '
+  suggested_values:
+  - scenario: 'Serving multimodal models (e.g., vision-language models) on Ascend NPU with high-resolution images or video
+      inputs where tensor sizes are large
+
+      '
+    value: torch_shm
+    reason: 'Eliminates msgspec serialization overhead for large multimodal tensors, reducing end-to-end latency and CPU utilization.
+      On Ascend NPU where inference is fast, CPU-side serialization can become the bottleneck; shared memory zero-copy keeps
+      the NPU fed with minimal CPU intervention.
+
+      '
+  - scenario: 'Development or debugging environments where simplicity is preferred, or when VLLM_WORKER_MULTIPROC_METHOD cannot
+      be set to spawn
+
+      '
+    value: direct_rpc
+    reason: 'The default mode works without additional environment configuration and is sufficient for low-throughput scenarios
+      or small tensor sizes where serialization overhead is negligible.
+
+      '
+  caveats:
+  - torch_shm requires VLLM_WORKER_MULTIPROC_METHOD=spawn; using fork will cause a ValueError at startup
+  - torch_shm uses additional shared memory resources; monitor system shared memory limits (/dev/shm) when processing many
+    concurrent multimodal requests
+  - The performance benefit of torch_shm is most pronounced with large multimodal tensors; for text-only workloads this parameter
+    has no effect
+  - On Ascend NPU, ensure the shared memory region is accessible from all worker processes — containerized deployments may
+    need --shm-size configured appropriately
+  quick_guide: 'For multimodal models on Ascend NPU, set --mm-tensor-ipc torch_shm and VLLM_WORKER_MULTIPROC_METHOD=spawn
+    for best performance.
+
+    '
+analysis_date: '2026-07-06'

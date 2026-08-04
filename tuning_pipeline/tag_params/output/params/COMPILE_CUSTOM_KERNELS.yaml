@@ -1,0 +1,110 @@
+name: COMPILE_CUSTOM_KERNELS
+type: env
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/envs.py:43
+- setup.py:366
+- vllm_ascend/worker/worker.py:93
+- CMakeLists.txt:74
+- docs/source/user_guide/release_notes.md:990
+value_type: bool
+default: '1'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: The pinned vLLM-Ascend implementation parses this environment variable as bool(int(value)) and defaults it
+  to enabled. During packaging, a false value makes build_extensions return before configuring or building any CMake extension,
+  prevents the ACLNN custom-op build command from running, and leaves the extension-module list empty. Thus the installed
+  package lacks the custom operator artifacts selected by CMake for the target SoC. At runtime NPUWorker explicitly warns
+  that vLLM-Ascend will not function correctly in most scenarios without those kernels. The pinned release notes also characterize
+  custom ops as performance improvements and, for v0.12.0rc1, as mandatory. Disabling this setting for inference can therefore
+  prevent useful service or remove required optimized operator paths, materially harming request latency and throughput. Upstream
+  vLLM has no occurrence of this Ascend-specific variable.
+usage_locations:
+- file: vllm_ascend/envs.py:43
+  context: Parses the numeric environment string to bool and supplies the enabled-by-default value "1"; comments restrict
+    disabling to NPU-less unit tests.
+- file: setup.py:366
+  context: Returns from build_extensions immediately when disabled, skipping CMake configuration, compilation, and installation
+    of custom extension libraries.
+- file: setup.py:437
+  context: Runs the ACLNN custom-operator build command only when the setting is enabled.
+- file: setup.py:460
+  context: Adds the vllm_ascend.vllm_ascend_C extension module only when custom-kernel compilation is enabled.
+- file: CMakeLists.txt:74
+  context: Selects which custom kernel library is compiled for the target SOC_VERSION; some SoCs skip the AscendC library
+    but still build the C extension.
+- file: vllm_ascend/worker/worker.py:93
+  context: Warns during NPUWorker initialization that the system will not function correctly in most scenarios if custom kernels
+    were not compiled.
+- file: docs/source/user_guide/release_notes.md:990
+  context: States that v0.12.0rc1 requires custom ops and removes the ability to disable their compilation in that release,
+    while the pinned executable source still exposes the variable.
+related_parameters:
+- name: MAX_JOBS
+  relation: Controls the number of parallel CMake build jobs when custom-kernel compilation is enabled.
+- name: CMAKE_BUILD_TYPE
+  relation: Selects Debug, Release, or RelWithDebugInfo for the enabled CMake extension build; invalid or unset values become
+    Release.
+- name: SOC_VERSION
+  relation: Selects the target Ascend hardware and determines which custom kernel libraries and compile definitions CMake
+    builds.
+- name: CXX_COMPILER
+  relation: Optionally selects the C++ compiler used by the enabled CMake extension build.
+- name: C_COMPILER
+  relation: Optionally selects the C compiler used by the enabled CMake extension build.
+constraints:
+- The value must be a base-10 integer string accepted by Python int(); ordinary supported control values are "1" and "0".
+- Value "0" is restricted by the source comments to unit-test scenarios without an NPU and must not be used for other scenarios.
+- Enabling compilation requires a working CMake executable and the build's required Ascend/CANN toolchain and headers.
+- This is an installation-time selection; changing the environment after a package has already been built does not create
+  missing custom libraries.
+- Although the pinned code still implements the variable, the pinned v0.12.0rc1 release note says that release removes it
+  and requires custom ops, so availability is version-dependent.
+tuning_advice:
+  summary: Keep the default value "1" for every Ascend inference build; use "0" only to install or test in the explicitly
+    documented NPU-less unit-test scenario.
+  suggested_values:
+  - scenario: Production, development, or validation on an Ascend NPU
+    value: '1'
+    reason: Builds the CMake and ACLNN custom operator artifacts that NPUWorker expects for correct operation and that the
+      release notes identify as performance-improving or mandatory.
+  - scenario: Unit tests in an environment without an NPU
+    value: '0'
+    reason: Uses the sole disabling scenario authorized by the source comments and skips the hardware-dependent custom-kernel
+      build.
+  caveats:
+  - A package built with value "0" should not be reused for inference; NPUWorker warns that it will not function correctly
+    in most scenarios.
+  - Value "1" adds installation-time compilation work and requires the native build toolchain; MAX_JOBS controls its parallelism.
+  - Do not assume a runtime fallback with equivalent behavior or performance; the pinned sources only establish that artifacts
+    are omitted and warn of incorrect operation.
+  - On versions where the variable has been removed, custom ops are mandatory and setting "0" is no longer a supported escape
+    hatch.
+  quick_guide: Build Ascend inference packages with COMPILE_CUSTOM_KERNELS=1; reserve 0 for NPU-less unit-test builds only.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

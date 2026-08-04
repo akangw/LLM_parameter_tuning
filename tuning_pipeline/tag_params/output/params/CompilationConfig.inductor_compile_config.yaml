@@ -1,0 +1,120 @@
+name: CompilationConfig.inductor_compile_config
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/compilation.py:569
+- vllm/config/compilation.py:755
+- vllm/config/compilation.py:894
+- docs/design/debug_vllm_compile.md:254
+- vllm_ascend/platform.py:498
+- vllm_ascend/compilation/compiler_interface.py:47
+value_type: dict
+default: <computed>
+valid_choices: A mapping of supported TorchInductor configuration keys to values; accepted keys and value types depend on
+  the installed PyTorch version
+cli_example: 'vllm serve <model> -cc.inductor_compile_config=''{"size_asserts": false, "alignment_asserts": false, "scalar_asserts":
+  false}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Upstream vLLM copies this mapping into the configuration patches used for TorchInductor compilation, so individual
+  entries can change generated kernels, autotuning, fusion, compilation/cache behavior, runtime checks, and consequently latency,
+  throughput, and compiler or kernel memory. The effective default is computed rather than simply empty: vLLM disables auto-functionalization
+  v2, suppresses size, alignment, and scalar runtime assertions on PyTorch older than 2.12 unless debug logging is active,
+  and on non-CPU PyTorch 2.9 or newer enables combo kernels and their benchmarking when the user did not override those keys.
+  The source documents about 2 ms of per-forward overhead from the three assertions on a large model before PyTorch''s 2.12
+  assert-once fix. The mapping also participates in CompilationConfig.compute_hash, so changes invalidate the compiled-graph
+  cache. On Ascend, platform configuration sets use_inductor to false and selects AscendCompiler. Its fusion path reads only
+  the internally installed pass-manager key from this mapping, while its npugraph_ex path does not apply arbitrary TorchInductor
+  patches; user-supplied Inductor tuning keys therefore have no source-backed performance effect on the normal Ascend backend.'
+usage_locations:
+- file: vllm/config/compilation.py:894
+  context: Computes effective defaults for auto-functionalization, pre-2.12 runtime assertions, registered Inductor passes,
+    and PyTorch 2.9+ combo kernels while preserving explicit user overrides through key checks and setdefault.
+- file: vllm/config/compilation.py:755
+  context: Includes the nested mapping in the compilation configuration hash, so changing a patch produces a different compiled-graph
+    cache identity.
+- file: docs/design/debug_vllm_compile.md:254
+  context: Documents the runtime-assertion latency cost, the version-dependent defaults, and an explicit command-line override
+    for debugging TorchInductor.
+- file: vllm_ascend/platform.py:498
+  context: Selects the out-of-tree Ascend compiler and disables Inductor, preventing ordinary TorchInductor configuration
+    keys from controlling the normal Ascend compilation path.
+- file: vllm_ascend/compilation/compiler_interface.py:47
+  context: The Ascend fusion compiler consumes the compiler mapping only to retrieve its internally registered COMPILATION_PASS_KEY
+    pass manager.
+related_parameters:
+- name: CompilationConfig.backend
+  relation: These patches affect generated code only when an Inductor-backed compilation path is selected; Ascend selects
+    its own compiler and disables Inductor.
+- name: CompilationConfig.mode
+  relation: Compilation must be enabled for the mapping to affect graph compilation or steady-state execution.
+- name: CompilationConfig.inductor_passes
+  relation: Qualified pass entries are resolved and inserted into this mapping before compilation.
+- name: VLLM_LOGGING_LEVEL
+  relation: On PyTorch older than 2.12, DEBUG makes the three runtime-assertion defaults true unless the user explicitly supplies
+    them.
+constraints:
+- Keys and value types must be valid for the installed PyTorch TorchInductor configuration; this field has no independent
+  whitelist or compatibility shim.
+- Explicit entries override vLLM's computed defaults for the same key, including assertion and combo-kernel settings.
+- The three runtime-assertion defaults are modified only on PyTorch older than 2.12; PyTorch 2.12 and newer retain their native
+  assert-once behavior.
+- Automatic combo-kernel enabling requires PyTorch 2.9 or newer and a non-CPU platform, and is skipped if either combo_kernels
+  or benchmark_combo_kernel is supplied explicitly.
+- Normal vllm-ascend execution disables Inductor, so arbitrary user-supplied TorchInductor keys should not be treated as Ascend
+  tuning controls.
+tuning_advice:
+  summary: Keep the computed defaults for production. Change individual keys only to diagnose Inductor or after benchmarking
+    the exact PyTorch version, model, shapes, warm-up, steady-state latency, throughput, and memory.
+  suggested_values:
+  - scenario: General production serving
+    value: {}
+    reason: An empty user mapping lets vLLM install its version- and platform-aware assertion, pass, and combo-kernel defaults.
+  - scenario: Debugging shape, stride, or alignment correctness on PyTorch older than 2.12
+    value:
+      size_asserts: true
+      alignment_asserts: true
+      scalar_asserts: true
+    reason: These checks improve diagnostic coverage and match the documented explicit override, at the cost of measurable
+      per-forward overhead on large models.
+  - scenario: Standard Ascend deployment
+    value: {}
+    reason: Ascend disables Inductor and manages its required fusion pass internally, so user TorchInductor patches are not
+      a supported optimization surface.
+  caveats:
+  - This is an expert escape hatch over a large, PyTorch-version-dependent option space; a setting beneficial for one graph
+    or release can regress or fail on another.
+  - Options that enable autotuning or benchmarking can increase startup compilation time even when they improve steady-state
+    execution.
+  - Options that alter fusion or generated kernels can change accelerator workspace, compilation cache size, and peak memory
+    as well as latency and throughput.
+  - Changing the mapping changes the compilation hash and can force recompilation, so compare cold-start and warm-cache behavior
+    separately.
+  quick_guide: Start with {}. Use the assertion override only for debugging on pre-2.12 PyTorch. For any other key, consult
+    the matching PyTorch release and retain it only after representative end-to-end benchmarks; leave the mapping empty on
+    Ascend.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

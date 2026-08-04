@@ -1,0 +1,69 @@
+name: VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:775
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this environment variable activates GPU communication overlap (an experimental feature) within
+  Ray''s Compiled Graph. In the vLLM v1 executor (vllm/v1/executor/ray_executor.py:636), the value is passed as `_overlap_gpu_communication`
+  to `forward_dag.experimental_compile()`. This instructs Ray to overlap inter-worker communication with computation during
+  compiled graph execution. On Ascend NPU, the effect depends on whether the underlying HCCL backend supports communication-computation
+  overlap in the Ray compiled graph context. The parameter is logged at executor initialization (ray_executor.py:566) but
+  has no vllm-ascend-specific override or handling. Performance impact is low because: "(1) it only applies when using the
+  Ray" compiled graph executor backend (not the default RayExecutorV2), (2) the feature is marked experimental, and (3) on
+  Ascend NPU, HCCL overlap behavior may differ from GPU NCCL and is not explicitly tuned.
+
+  '
+usage_locations:
+- file: vllm/v1/executor/ray_executor.py:636
+  context: Passed as `_overlap_gpu_communication` to `forward_dag.experimental_compile()` to enable GPU communication overlap
+    in Ray Compiled Graph.
+- file: vllm/v1/executor/ray_executor.py:566
+  context: Logged at executor initialization for debugging purposes.
+related_parameters:
+- name: VLLM_USE_RAY_COMPILED_DAG_CHANNEL_TYPE
+  relation: Both control Ray Compiled Graph behavior; channel type selects the communication backend (auto/nccl/shm) while
+    overlap_comm enables communication-computation overlap.
+- name: VLLM_USE_RAY_V2_EXECUTOR_BACKEND
+  relation: When VLLM_USE_RAY_V2_EXECUTOR_BACKEND is true (default), the MQ-based RayExecutorV2 is used instead of the compiled-graph
+    backend, making this parameter irrelevant.
+- name: VLLM_USE_RAY_WRAPPED_PP_COMM
+  relation: Controls whether Ray uses vLLM's wrapped PP communicator or Ray's native NCCL communicator for compiled graph;
+    overlap behavior may interact with the chosen communicator.
+constraints:
+- This parameter only takes effect when using the Ray compiled graph executor backend (distributed_executor_backend="ray"
+  and VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0).
+- The feature is experimental and may cause instability or unexpected behavior.
+tuning_advice:
+  summary: 'Leave disabled (default) on Ascend NPU unless explicitly testing Ray Compiled Graph communication overlap with
+    HCCL, as the feature is experimental and the default RayExecutorV2 backend does not use it.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment on Ascend NPU
+    value: false
+    reason: The default RayExecutorV2 backend (VLLM_USE_RAY_V2_EXECUTOR_BACKEND=1) does not use Ray Compiled Graph, so this
+      parameter has no effect. Keeping it disabled avoids experimental code paths.
+  - scenario: Experimental testing of Ray Compiled Graph with HCCL overlap on Ascend NPU
+    value: true
+    reason: May reduce communication overhead by overlapping HCCL operations with computation, but stability and performance
+      on Ascend are not guaranteed.
+  caveats:
+  - This parameter only applies to the Ray Compiled Graph executor backend, which is not the default in recent vLLM versions
+    (RayExecutorV2 is default).
+  - On Ascend NPU, HCCL communication overlap behavior may differ from GPU NCCL; no Ascend-specific tuning has been done for
+    this feature.
+  - The feature is marked experimental in the vLLM source code and may be removed or changed in future releases.
+  quick_guide: Keep disabled (default) on Ascend NPU; only enable for experimental Ray Compiled Graph testing with HCCL overlap.
+analysis_date: '2026-07-06'

@@ -1,0 +1,55 @@
+name: VLLM_NIXL_SIDE_CHANNEL_PORT
+type: env
+category: communication
+scope: vllm
+source_file:
+- vllm/envs.py:1370
+value_type: int
+default: '5600'
+valid_choices: any valid TCP port number (1-65535)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable sets the base TCP port for the NIXL side channel handshake between remote KV transfer
+  agents. It is only relevant when using the NIXL KV connector for disaggregated prefill-decode deployments. The actual port
+  used is VLLM_NIXL_SIDE_CHANNEL_PORT + data_parallel_index (see vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:64-66).
+  The port itself does not affect inference throughput or memory usage — it only affects the initial connection setup handshake.
+  A port conflict would prevent the handshake from completing, causing the deployment to fail, but once connected, the port
+  has no ongoing performance impact. On Ascend NPU, NIXL is not supported by vllm-ascend (no NIXL-related code exists in the
+  vllm-ascend repo), so this parameter has no effect on Ascend deployments.
+
+  '
+usage_locations:
+- file: vllm/distributed/kv_transfer/kv_connector/v1/nixl/scheduler.py:64
+  context: 'Read to compute the actual side channel port: envs.VLLM_NIXL_SIDE_CHANNEL_PORT + data_parallel_index'
+- file: vllm/envs.py:190
+  context: 'Type declaration: VLLM_NIXL_SIDE_CHANNEL_PORT: int = 5600'
+related_parameters:
+- name: VLLM_NIXL_SIDE_CHANNEL_HOST
+  relation: Specifies the IP address for the same NIXL side channel handshake
+- name: VLLM_MOONCAKE_BOOTSTRAP_PORT
+  relation: Analogous port parameter for the Mooncake KV transfer backend
+constraints:
+- Must be a valid TCP port number between 1 and 65535.
+- The computed port (base + data_parallel_index) must not conflict with other services on the host.
+tuning_advice:
+  summary: 'Only change the default if port 5600 (and subsequent ports for each data parallel rank) conflicts with another
+    service. Has no effect on Ascend NPU deployments since NIXL is not supported by vllm-ascend.
+
+    '
+  suggested_values:
+  - scenario: Default deployment with no port conflicts
+    value: '5600'
+    reason: The default is sufficient and avoids unnecessary configuration.
+  - scenario: Port 5600 is already in use on the host
+    value: any unused port above 1024
+    reason: Choose a free port to allow the NIXL handshake to bind successfully.
+  caveats:
+  - NIXL KV transfer is not supported on Ascend NPU — vllm-ascend has no NIXL integration. This parameter is effectively a
+    no-op on Ascend hardware.
+  - The actual port used is base_port + data_parallel_index, so ensure a contiguous range of ports is available if using data
+    parallelism.
+  quick_guide: Leave at default (5600) unless there is a port conflict. Irrelevant for Ascend NPU.
+analysis_date: '2026-07-06'

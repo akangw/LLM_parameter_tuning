@@ -1,0 +1,95 @@
+name: CompilationConfig.encoder_cudagraph_max_frames_per_batch
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/config/compilation.py:538
+- docs/design/cuda_graphs_multimodal.md:95
+- vllm/model_executor/models/qwen2_5_vl.py:776
+- vllm/model_executor/models/qwen3_vl.py:696
+value_type: int
+default: null
+valid_choices: null
+cli_example: vllm serve Qwen/Qwen3-VL-32B --compilation-config '{"cudagraph_mm_encoder":true,"encoder_cudagraph_max_frames_per_batch":64}'
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+- latency
+- throughput
+impact_detail: When multimodal encoder CUDA graphs are enabled for a supported video model, this value sets the fixed total-frame
+  capacity shared by every captured token budget. The capture and replay implementations use it to size and pad cu_seqlens
+  metadata, which has one attention sequence per video frame, and to construct capture inputs with enough frames per item.
+  A larger value therefore increases fixed metadata capacity and can increase graph-capture memory, while an undersized value
+  can make a valid video replay exceed the captured buffer instead of providing a safe performance optimization. None auto-infers
+  the capacity as the captured vision-item batch size times the model-specific maximum frames per video. This field matters
+  only on the encoder CUDA-graph path; it does not change eager encoder execution.
+usage_locations:
+- file: vllm/config/compilation.py:992
+  context: Validates non-negative explicit values when encoder CUDA graphs are enabled; None requests automatic inference.
+- file: vllm/model_executor/models/qwen2_5_vl.py:776
+  context: Uses the frame capacity as the cu_seqlens padding target for video capture and replay so one sequence entry is
+    available per frame.
+- file: vllm/model_executor/models/qwen3_vl.py:696
+  context: Uses the same frame-based padding rule for Qwen3-VL encoder attention metadata and passes the capacity through
+    its capture and replay methods.
+- file: docs/design/cuda_graphs_multimodal.md:95
+  context: Documents automatic inference, the explicit video example, and the image-only result when the per-prompt video
+    limit is zero.
+related_parameters:
+- name: CompilationConfig.cudagraph_mm_encoder
+  relation: Enables the encoder CUDA-graph capture and replay path on which this frame-capacity setting has an effect.
+- name: CompilationConfig.encoder_cudagraph_max_vision_items_per_batch
+  relation: Sets the captured item batch size and is multiplied by the model-specific maximum frames per video when this parameter
+    is None.
+- name: CompilationConfig.encoder_cudagraph_token_budgets
+  relation: Selects the token-budget graphs; the same maximum frame capacity applies to each captured budget.
+- name: limit_mm_per_prompt.video
+  relation: A zero video limit forces the inferred runtime frame capacity to zero, leaving the encoder graph manager in image-only
+    mode.
+constraints:
+- The setting is effective only when cudagraph_mm_encoder is true and the model implements encoder CUDA-graph support for
+  video inputs.
+- Explicit values must be non-negative. None is the automatic mode; zero is accepted by validation but is normally produced
+  for image-only operation when video input is disabled.
+- An explicit positive value must cover the largest total number of video frames that can enter one graph replay batch; the
+  runtime packing logic is bounded by token count and item count, not by this frame count.
+- The pinned vllm-ascend repository has no reference to this field or an Ascend-specific encoder capture implementation, so
+  no Ascend performance effect is established.
+tuning_advice:
+  summary: Keep None unless a supported video workload has a known, tighter frame ceiling and graph-buffer memory needs to
+    be constrained.
+  suggested_values:
+  - scenario: General supported image-and-video serving
+    value: auto
+    reason: Leave the YAML/JSON value as null so vLLM derives a model-safe capacity from the captured item batch size and
+      model processing limits.
+  - scenario: Workload with a rigorously enforced video-frame ceiling
+    value: workload_max_total_frames_per_replay_batch
+    reason: An explicit ceiling can avoid reserving metadata for frames that the service will never admit, provided it covers
+      the worst packed batch.
+  caveats:
+  - The automatic value can be conservative because it assumes every captured item reaches the model-specific maximum frames
+    per video.
+  - Choosing a value below the actual total frames can produce shape or buffer copy failures during CUDA-graph replay; it
+    is not a graceful eager-fallback threshold.
+  - Increasing this value does not increase the token or item batching limits, so it should not be used as a throughput knob
+    by itself.
+  - CUDA-graph compatibility and performance remain model-, modality-, and backend-dependent; measure startup memory and steady-state
+    behavior on the target GPU.
+  quick_guide: Start with null, observe the admitted maximum total frames in a packed video batch, and set an explicit value
+    only if that maximum is enforced and lower than the automatic capacity.
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario:
+  - high_concurrency

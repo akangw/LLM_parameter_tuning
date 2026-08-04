@@ -1,0 +1,77 @@
+name: VLLM_DEBUG_MFU_METRICS
+type: env
+category: observability
+scope: vllm
+source_file:
+- vllm/envs.py:1721
+- vllm/v1/metrics/perf.py:1105
+- vllm/v1/metrics/perf.py:1203
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'When enabled, VLLM_DEBUG_MFU_METRICS causes the engine to collect and log detailed per-iteration breakdowns
+  of FLOPs, read bytes, and write bytes for MFU (Model FLOPs Utilization) computation. In vllm/v1/metrics/perf.py:1105, setting
+  this env var to true populates a DebugPerfStats object containing timing, request counts, and per-operation FLOP/byte breakdowns.
+  In vllm/v1/metrics/perf.py:1203, it initializes a PerfMetricsDebugLogging instance that accumulates and logs these debug
+  statistics. The overhead comes from additional computation (breakdown aggregation) and logging I/O on every metrics collection
+  interval. This is purely a debugging/observability feature and does not alter model execution, scheduling, or memory allocation.
+  On Ascend NPU, the overhead is identical to upstream — extra CPU-side computation and log writes, with no NPU-specific code
+  paths affected.
+
+  '
+usage_locations:
+- file: vllm/v1/metrics/perf.py:1105
+  context: 'Conditionally populates DebugPerfStats (timing, request counts, FLOP/byte breakdowns) into PerfStats when VLLM_DEBUG_MFU_METRICS
+    is true.
+
+    '
+- file: vllm/v1/metrics/perf.py:1203
+  context: 'Initializes PerfMetricsDebugLogging instance for accumulating and logging detailed MFU debug statistics when VLLM_DEBUG_MFU_METRICS
+    is true.
+
+    '
+related_parameters:
+- name: --enable-mfu-metrics
+  relation: 'VLLM_DEBUG_MFU_METRICS provides debug-level logging for the MFU metrics feature enabled by --enable-mfu-metrics.
+    It has no effect if MFU metrics are not enabled.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Keep disabled (default) in production. Enable only for short-term MFU debugging sessions, as the per-iteration
+    breakdown collection and logging adds measurable CPU overhead.
+
+    '
+  suggested_values:
+  - scenario: Production serving on Ascend NPU
+    value: false
+    reason: 'Avoids per-iteration debug stat collection and logging overhead. MFU metrics themselves (--enable-mfu-metrics)
+      already provide aggregate utilization data without this debug-level detail.
+
+      '
+  - scenario: Debugging MFU calculation accuracy or per-operation breakdown
+    value: true
+    reason: 'Enables detailed per-iteration FLOP/byte breakdowns and timing information needed to validate MFU computation
+      or identify which operations dominate utilization.
+
+      '
+  caveats:
+  - 'This flag only takes effect when --enable-mfu-metrics is also active. Without MFU metrics enabled, setting VLLM_DEBUG_MFU_METRICS
+    has no effect.
+
+    '
+  - 'The debug logging writes additional output on every metrics collection interval, which can significantly increase log
+    volume under high throughput.
+
+    '
+  quick_guide: 'Leave at default (false) unless actively debugging MFU metric calculations.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,99 @@
+name: ASCEND_ENABLE_USE_FABRIC_MEM
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:69
+- docs/source/user_guide/feature_guide/kv_pool.md:109
+value_type: bool
+default: '0'
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Setting this variable to the exact string "1" selects Mooncake's unified-memory-address direct-transfer setup
+  for the Ascend KV Pool backend. The fabric-memory branch identifies the local segment by hostname alone, passes local_buffer_size=0,
+  omits the separately acquired transfer engine from MooncakeDistributedStore.setup(), and makes the backend's explicit KV-buffer
+  registration a no-op. The default "0" path instead creates or obtains the Ascend transfer engine, advertises a hostname:RPC-port
+  segment, passes the configured local buffer size and engine to setup(), and registers KV buffers. This changes transfer
+  setup and buffer allocation/registration, so it can materially affect KV-transfer latency, throughput, and memory use. The
+  Ascend guide recommends the direct-transfer path only for supported 800 I/T A3 systems; the pinned upstream vLLM repository
+  contains no implementation or override for this variable.
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:69
+  context: Reads the environment variable once during MooncakeBackend construction; only the exact string "1" enables fabric
+    memory.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:70
+  context: Permits lazy Mooncake-store initialization only when both the caller requests lazy initialization and fabric memory
+    is enabled.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:117
+  context: Selects between the transfer-engine/RPC-port setup and the fabric-memory setup with hostname-only identity and
+    local_buffer_size=0.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:165
+  context: Skips global transfer-engine initialization and explicit buffer registration in fabric-memory mode.
+- file: docs/source/user_guide/feature_guide/kv_pool.md:109
+  context: Documents and recommends value 1 for the unified-memory-address direct-transfer scheme on supported 800 I/T A3
+    systems.
+related_parameters:
+- name: backend
+  relation: The variable is consumed only by AscendStore's Mooncake backend; backend is selected in kv_connector_extra_config
+    and defaults to mooncake.
+- name: MOONCAKE_CONFIG_PATH
+  relation: Selects the Mooncake configuration whose protocol, metadata server, segment sizes, and device settings are loaded
+    by this backend.
+- name: ASCEND_BUFFER_POOL
+  relation: The deployment guide lists this buffer configuration for 800 I/T A3 systems in the HDK 25.5.0-to-26.0.0 range.
+- name: HCCL_INTRA_ROCE_ENABLE
+  relation: The deployment guide uses this instead for the direct-transfer scheme on 800 I/T A2 systems.
+constraints:
+- Only the exact environment string "1" enables the feature; unset or any other value follows the default non-fabric path.
+- The implementation states that fabric memory can be used only on 800 I/T A3 series hardware.
+- The deployment guide requires HDK >= 25.5, CANN >= 9.0.0, and LingQu Computing Network >= 1.5 for the documented A3 configuration.
+- This setting affects only AscendStore configured with the Mooncake backend, and MooncakeBackend rejects configurations whose
+  protocol is not "ascend".
+tuning_advice:
+  summary: Enable value 1 for the documented Mooncake KV Pool direct-transfer configuration on a supported 800 I/T A3 stack;
+    otherwise retain the default 0 path.
+  suggested_values:
+  - scenario: Mooncake-backed Ascend KV Pool on 800 I/T A3 with the documented supported software and network stack
+    value: '1'
+    reason: Uses the guide's recommended unified-memory-address direct-transfer path and avoids the separate transfer-engine
+      buffer-registration path.
+  - scenario: 800 I/T A2, unsupported software versions, or a non-Mooncake KV Pool backend
+    value: '0'
+    reason: Fabric memory is documented as A3-only and this variable is not consumed by the other AscendStore backends.
+  caveats:
+  - Fabric mode forces Mooncake local_buffer_size to zero and bypasses explicit buffer registration, so it must not be enabled
+    on a stack that expects the default transfer-engine setup.
+  - Lazy initialization is not enabled by this variable alone; it occurs only when the backend caller also requests lazy initialization,
+    currently for the compressed-model path.
+  - With lazy initialization active, exists reports keys missing and get returns before the first put initializes the store,
+    while the first put bears initialization work.
+  - The source and guide recommend the supported mode but provide no benchmark numbers; measure end-to-end prefill/decode
+    transfer latency, throughput, and memory on the target topology.
+  quick_guide: Use 1 only for supported A3 Mooncake direct transfer; use 0 everywhere else.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a3
+  deploy_scenario: []

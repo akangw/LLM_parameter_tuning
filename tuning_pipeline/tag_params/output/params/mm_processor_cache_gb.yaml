@@ -1,0 +1,83 @@
+name: --mm-processor-cache-gb
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:123
+- vllm/config/model.py:632
+- vllm/config/model.py:675
+- vllm/engine/arg_utils.py:1183
+- docs/configuration/optimization.md:366
+- docs/source/user_guide/feature_guide/epd_disaggregation.md:71
+value_type: float
+default: '4'
+valid_choices: float >= 0
+cli_example: --mm-processor-cache-gb 8
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+- latency
+impact_detail: 'This sets the GiB capacity of the multimodal processor cache, which avoids re-processing earlier multimodal
+  inputs. The default is 4 GiB and zero disables processor and IPC caching. Capacity determines the cache memory budget: larger
+  values can retain more reusable processed inputs and reduce repeated-input processing latency, while increasing cache memory.
+  The upstream configuration documents per-process cache placement; model initialization also rejects a positive cache size
+  with more than one renderer worker because the cache is not thread-safe. Encoder-decoder models force this setting to zero.'
+usage_locations:
+- file: vllm/config/multimodal.py:123
+  context: Declares the non-negative float field with default 4 GiB and documents that zero disables the cache.
+- file: vllm/config/model.py:632
+  context: Forces the cache size to zero for encoder-decoder models.
+- file: vllm/config/model.py:675
+  context: Rejects positive cache capacity when renderer_num_workers is greater than one because the cache is not thread-safe.
+- file: docs/configuration/optimization.md:366
+  context: Describes cache-size configuration, zero-disabling behavior, and cache placement by process/cache type.
+- file: docs/source/user_guide/feature_guide/epd_disaggregation.md:71
+  context: Ascend EPD-disaggregation limitation says cross-process caching requires not disabling the cache with this zero
+    setting.
+related_parameters:
+- name: --mm-processor-cache-type
+  relation: Selects the LRU or shared-memory cache arrangement whose process placement is documented with this capacity.
+- name: --renderer-num-workers
+  relation: A positive processor-cache size is invalid when this is greater than one.
+constraints:
+- Must be a non-negative float.
+- A value of 0 disables multimodal processor and IPC caching.
+- Encoder-decoder models override this setting to 0.
+- With a positive value, --renderer-num-workers must be 1.
+- For Ascend EPD disaggregation cross-process caching, do not disable this cache by setting it to 0.
+tuning_advice:
+  summary: Start with the 4 GiB default when repeated multimodal inputs are expected. Raise the capacity only when cache reuse
+    is valuable and host memory has sufficient headroom; set it to zero when the cache offers little reuse or must be disabled
+    for the selected deployment.
+  suggested_values:
+  - scenario: Repeated multimodal requests with available memory
+    value: '8'
+    reason: A larger cache can retain more processed multimodal inputs, reducing re-processing on cache hits.
+  - scenario: Inputs are seldom reused or cache memory must be eliminated
+    value: '0'
+    reason: Zero disables processor and IPC caching, removing this cache's memory budget.
+  - scenario: Baseline multimodal deployment
+    value: '4'
+    reason: This is the current documented default capacity.
+  caveats:
+  - Cache capacity increases memory reserved for multimodal cached data and does not guarantee hits for unique inputs.
+  - A positive cache size cannot be combined with more than one renderer worker.
+  - Encoder-decoder models force the setting to zero.
+  - Ascend EPD disaggregation cross-process caching requires that the cache not be disabled with a zero value.
+  quick_guide: Use 4 GiB initially, increase only for demonstrated repeated-input reuse, and use 0 when cache memory or deployment
+    constraints require it.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - vlm
+  optimize_target:
+  - ttft
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario: []

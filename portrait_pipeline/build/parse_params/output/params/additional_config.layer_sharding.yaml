@@ -1,0 +1,73 @@
+name: additional_config.layer_sharding
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:97
+- vllm_ascend/platform.py:302
+value_type: list[str]
+default: '[]'
+valid_choices: list of linear layer names to shard, e.g. ['q_b_proj', 'o_proj']
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: 'Layer sharding distributes linear layer weights across devices in a PD-disaggregated prefill (P) node. During
+  forward execution, the next layer''s weight is asynchronously broadcast (pre-fetched) while the current layer computes,
+  achieving zero-overhead weight loading. This reduces per-device memory pressure by sharding weights and improves throughput
+  via compute-communication overlap. The feature works optimally with FLASHCOMM2 and DSA-CP enabled; without them, significant
+  performance degradation may occur (as warned in ascend_config.py:100-103). Validation in platform.py:302-308 enforces that
+  layer_sharding can only be used in PD-disaggregated P nodes (kv_role == "kv_producer").
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:97
+  context: Reads layer_sharding from additional_config dict and stores it as self.layer_sharding
+- file: vllm_ascend/platform.py:302
+  context: Validates that layer_sharding is only enabled in PD-disaggregated P node (kv_producer)
+- file: tests/e2e/pull_request/two_card/test_flashcomm_distributed.py:54
+  context: E2E test using layer_sharding=["o_proj"] with kv_role="kv_producer"
+related_parameters:
+- name: kv_transfer_config.kv_role
+  relation: Must be 'kv_producer'; layer_sharding is only valid in PD-disaggregated P node
+- name: additional_config.enable_flashcomm1
+  relation: FLASHCOMM2 (via enable_flashcomm1) is recommended for optimal performance with layer_sharding
+- name: additional_config.enable_dsa_cp
+  relation: DSA-CP is recommended for optimal performance with layer_sharding
+constraints:
+- layer_sharding can only be enabled in PD-disaggregated's P node (kv_role must be 'kv_producer')
+- kv_transfer_config must be set and its kv_role must be 'kv_producer', otherwise a ValueError is raised
+tuning_advice:
+  summary: 'Enable layer_sharding only in PD-disaggregated prefill nodes with FLASHCOMM2 and DSA-CP active to reduce memory
+    and improve throughput via compute-communication overlap.
+
+    '
+  suggested_values:
+  - scenario: PD-disaggregated prefill node with FLASHCOMM2 and DSA-CP
+    value: '[''q_b_proj'', ''o_proj'']'
+    reason: 'Sharding query-bias and output projection layers distributes weight memory across devices while FLASHCOMM2 and
+      DSA-CP provide efficient communication for the asynchronous weight broadcast.
+
+      '
+  - scenario: PD-disaggregated prefill node without FLASHCOMM2/DSA-CP
+    value: '[]'
+    reason: 'Using layer_sharding without FLASHCOMM2 and DSA-CP may cause significant performance degradation as warned by
+      the code.
+
+      '
+  - scenario: Non-PD-disaggregated or decode-only deployment
+    value: '[]'
+    reason: 'layer_sharding is only valid in PD-disaggregated P nodes; enabling it elsewhere raises a ValueError.
+
+      '
+  caveats:
+  - Using layer_sharding without FLASHCOMM2 and DSA-CP may result in significant performance degradation
+  - layer_sharding is only compatible with PD-disaggregated prefill nodes, not decode nodes or mixed mode
+  - The specific layer names (e.g., 'q_b_proj', 'o_proj') depend on the model architecture
+  quick_guide: 'Set layer_sharding to a list of linear layer names only in PD-disaggregated P nodes with FLASHCOMM2 and DSA-CP
+    enabled; leave empty otherwise.
+
+    '
+analysis_date: '2026-07-06'

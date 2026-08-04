@@ -1,0 +1,85 @@
+name: VLLM_ENABLE_PREGRAD_PASSES
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:627
+- vllm/compilation/compiler_interface.py:335
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: 'This environment variable controls whether PyTorch Inductor''s pre-grad passes are executed during torch.compile.
+  When enabled (default), pre-grad passes run even on cache hits, adding approximately O(1s) to cold compile times. When disabled,
+  the `_recursive_pre_grad_passes` function is patched to a no-op (identity function), skipping these passes entirely. The
+  code comments explicitly state that "Inductor''s pre-grad passes don''t do anything for vLLM," so disabling them reduces
+  compilation overhead without affecting model correctness. This affects startup/warmup latency (cold compile time) but has
+  no impact on steady-state inference throughput or memory usage. On Ascend NPU, the effect is identical to upstream since
+  this is a PyTorch-level compilation optimization that applies regardless of backend hardware. The parameter is automatically
+  bypassed (pre-grad passes enabled) when PyTorch >= 2.12.0.dev because the upstream fix (pytorch#174502) resolves the cache-hit
+  overhead issue.
+
+  '
+usage_locations:
+- file: vllm/compilation/compiler_interface.py:335
+  context: 'Checks if PyTorch >= 2.12.0.dev or VLLM_ENABLE_PREGRAD_PASSES is true; if so, uses nullcontext (passes run normally);
+    otherwise patches _recursive_pre_grad_passes to a no-op to skip pre-grad passes.
+
+    '
+related_parameters:
+- name: VLLM_USE_STANDALONE_COMPILE
+  relation: 'Both affect Inductor compilation behavior; standalone compile is the broader feature flag, while VLLM_ENABLE_PREGRAD_PASSES
+    specifically controls pre-grad pass execution within that compilation path.
+
+    '
+- name: VLLM_DISABLE_COMPILE_CACHE
+  relation: 'When compile cache is disabled, every compilation is a cold compile, making the pre-grad pass overhead more impactful
+    since it is incurred on every run rather than just the first.
+
+    '
+constraints: []
+tuning_advice:
+  summary: 'Set to "0" (false) to reduce cold compile time by ~1s when using torch.compile with PyTorch < 2.12; has no effect
+    on PyTorch >= 2.12.
+
+    '
+  suggested_values:
+  - scenario: 'Using torch.compile with PyTorch < 2.12 and want faster cold startup/warmup
+
+      '
+    value: '0'
+    reason: 'Pre-grad passes are a no-op for vLLM models but still incur ~1s overhead per compilation even on cache hits;
+      disabling them reduces cold compile latency without affecting model correctness.
+
+      '
+  - scenario: 'Using PyTorch >= 2.12.0.dev or not using torch.compile at all
+
+      '
+    value: '1'
+    reason: 'PyTorch >= 2.12 has the upstream fix (pytorch#174502) that eliminates the cache-hit overhead, so the flag has
+      no performance impact. When torch.compile is not used, this flag is irrelevant.
+
+      '
+  caveats:
+  - 'This flag only affects cold compile time (startup/warmup), not steady-state inference throughput or latency.
+
+    '
+  - 'On PyTorch >= 2.12.0.dev, the flag is effectively ignored because the code unconditionally uses nullcontext (pre-grad
+    passes run normally) regardless of the flag value.
+
+    '
+  - 'The code comment mentions a TODO about `maybe_inplace` requiring pre-grad passes; if future vLLM versions add custom
+    pre-grad passes, disabling this flag could affect correctness.
+
+    '
+  quick_guide: 'Set VLLM_ENABLE_PREGRAD_PASSES=0 to shave ~1s off cold compile time with PyTorch < 2.12; unnecessary on PyTorch
+    >= 2.12.
+
+    '
+analysis_date: '2026-07-06'

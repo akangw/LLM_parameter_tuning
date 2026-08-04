@@ -1,0 +1,78 @@
+name: compilation.compile_ranges_endpoints
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:1744
+- vllm_ascend/ascend_config.py:373
+value_type: list[int]
+default: '[]'
+valid_choices: list of positive integers
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter defines the split points for Inductor compilation ranges, which control how many separate compiled
+  graphs (CUDA Graphs on GPU, NPUGraphs on Ascend) are generated for different batch sizes. Each endpoint creates a boundary
+  between compile ranges: [1, endpoints[0]], [endpoints[0]+1, endpoints[1]], ..., [endpoints[-1]+1, max_num_batched_tokens].
+  On Ascend NPU, vllm-ascend''s `update_compile_ranges_split_points()` (ascend_config.py:379) automatically appends `ALLREDUCE_NORM_FUSE_THRESHOLD`
+  to this list when both `enable_npugraph_ex` and `fuse_allreduce_rms` are enabled, ensuring a compile range boundary at the
+  fusion threshold for matmul+allreduce fusion optimization. More split points mean more compiled graphs, which increases
+  compilation time and memory but allows better specialization for each batch size range, potentially improving throughput.
+  Fewer split points reduce compilation overhead but may result in less optimized execution for certain batch sizes. The upstream
+  vllm code (vllm/config/vllm.py:1744-1752) validates that all endpoints are positive integers and merges them with automatically
+  computed endpoints from fusion passes (rope+kvcache fusion, MiniMax QK norm fusion).
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:373
+  context: _get_compile_ranges() reads compile_ranges_endpoints to retrieve user-specified split points
+- file: vllm_ascend/ascend_config.py:379-392
+  context: update_compile_ranges_split_points() appends ALLREDUCE_NORM_FUSE_THRESHOLD when npugraph_ex and fuse_allreduce_rms
+    are both enabled
+- file: vllm/config/vllm.py:1744-1752
+  context: Validates endpoints are positive ints, merges with auto-computed endpoints from fusion passes, sorts final list
+- file: tests/compile/test_config.py:584
+  context: Test verifies that 511 appears in compile_ranges_endpoints when sequence parallelism is enabled
+related_parameters:
+- name: compilation.compile_sizes
+  relation: Complementary parameter; compile_sizes defines single-element ranges while compile_ranges_endpoints defines range
+    boundaries
+- name: ascend_compilation_config.enable_npugraph_ex
+  relation: When enabled with fuse_allreduce_rms, vllm-ascend automatically appends ALLREDUCE_NORM_FUSE_THRESHOLD to compile_ranges_endpoints
+- name: ascend_compilation_config.fuse_allreduce_rms
+  relation: When enabled with enable_npugraph_ex, triggers automatic addition of fusion threshold to compile_ranges_endpoints
+- name: scheduler_config.max_num_batched_tokens
+  relation: The final compile range extends from the last endpoint+1 to max_num_batched_tokens
+constraints:
+- All values in compile_ranges_endpoints must be positive integers (x > 0)
+- Endpoints less than or equal to 1 are ignored during merge with auto-computed endpoints
+- Endpoints less than the auto-computed compile_range_end (from fusion passes) are filtered out
+tuning_advice:
+  summary: 'On Ascend NPU, let vllm-ascend manage compile range endpoints automatically via enable_npugraph_ex and fuse_allreduce_rms;
+    only manually set this parameter if you need additional split points for specific batch size optimizations.
+
+    '
+  suggested_values:
+  - scenario: Default usage with NPUGraph EX and allreduce-RMS fusion enabled
+    value: '[] (empty, let vllm-ascend auto-populate)'
+    reason: vllm-ascend automatically appends ALLREDUCE_NORM_FUSE_THRESHOLD when both enable_npugraph_ex and fuse_allreduce_rms
+      are enabled, providing optimal split points for Ascend fusion passes without manual configuration
+  - scenario: Custom batch size specialization for specific throughput targets
+    value: '[256, 512, 1024]'
+    reason: Adding split points at common batch size boundaries allows Inductor to generate specialized compiled graphs for
+      each range, potentially improving throughput for those specific batch sizes at the cost of increased compilation time
+      and memory
+  caveats:
+  - Each additional endpoint creates more compiled graphs, increasing compilation time and NPU memory usage — balance specialization
+    against resource costs
+  - vllm-ascend automatically appends ALLREDUCE_NORM_FUSE_THRESHOLD when npugraph_ex and fuse_allreduce_rms are both enabled;
+    manually specified endpoints are merged with this auto-added value
+  - Endpoints that are less than or equal to 1, or less than auto-computed fusion thresholds, are silently filtered out during
+    config initialization
+  - This parameter is only effective when Inductor compilation is enabled (compilation_config.use_inductor=True)
+  quick_guide: Leave empty on Ascend NPU and rely on vllm-ascend's automatic split point injection via enable_npugraph_ex
+    and fuse_allreduce_rms
+analysis_date: '2026-07-06'

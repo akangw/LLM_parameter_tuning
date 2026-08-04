@@ -1,0 +1,65 @@
+name: --trust-remote-code
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:770
+- vllm/config/model.py:145
+value_type: bool
+default: 'False'
+valid_choices: bool
+cli_example: --trust-remote-code
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether vLLM trusts and executes custom modeling code (e.g., modeling_*.py) from the
+  HuggingFace model repository when loading the model and tokenizer. It is passed to HuggingFace''s `AutoConfig.from_pretrained`
+  and `AutoTokenizer.from_pretrained` via `get_config()` in `vllm/config/model.py:512`. On Ascend NPU, the parameter itself
+  does not directly affect runtime performance — it only gates whether custom code is allowed to run during model initialization.
+  However, many Ascend-compatible models (e.g., DeepSeek-V2, Qwen3-MoE) require `--trust-remote-code` to load their custom
+  architectures. Without it, the model fails to load entirely, preventing any inference. The performance impact is therefore
+  indirect: it enables loading models that may have Ascend-optimized implementations, but the flag itself does not alter compute,
+  memory, or communication behavior. vllm-ascend does not override or modify this parameter''s behavior.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:512
+  context: Passed to get_config() when loading HuggingFace model configuration
+- file: vllm/config/speculative.py:629
+  context: Propagated to draft model config for speculative decoding
+- file: vllm/engine/arg_utils.py:1519
+  context: Passed to ModelConfig constructor during engine initialization
+- file: vllm/benchmarks/datasets/create_txt_slices_dataset.py:66
+  context: Used when loading tokenizer for benchmark dataset creation
+- file: vllm/benchmarks/datasets/datasets.py:1981
+  context: Passed to dataset classes for HuggingFace dataset loading
+related_parameters:
+- name: --model
+  relation: The model specified by --model determines whether --trust-remote-code is required
+- name: --tokenizer
+  relation: Custom tokenizers may also require --trust-remote-code to load
+- name: --revision
+  relation: Model revision to use when downloading; custom code trust applies to the specified revision
+constraints:
+- Must be set to True for models that require custom HuggingFace modeling code (e.g., DeepSeek-V2, Qwen3-MoE, Mixtral)
+- Setting to True executes arbitrary code from the model repository; only use with trusted model sources
+tuning_advice:
+  summary: Set to True when loading models with custom architectures on Ascend NPU; otherwise leave as False for security
+  suggested_values:
+  - scenario: Loading models with custom code (DeepSeek-V2, Qwen3-MoE, Mixtral, etc.)
+    value: 'True'
+    reason: These models require custom modeling code that is not in the HuggingFace transformers library; without this flag,
+      model loading fails with an error
+  - scenario: Loading standard HuggingFace models (Llama, Qwen2, etc.)
+    value: 'False'
+    reason: Standard models do not need custom code; keeping this False follows security best practices
+  caveats:
+  - This flag does not affect runtime throughput or latency on Ascend NPU — it only controls model loading
+  - Many Ascend example scripts (offline_inference_npu_tp2.py, offline_inference_npu_long_seq.py) set this to True because
+    they use models requiring custom code
+  - Setting this flag to True executes arbitrary Python code from the model repository; ensure the model source is trusted
+  quick_guide: Enable --trust-remote-code only for models that require custom HuggingFace code (e.g., DeepSeek, Qwen3-MoE);
+    disable for standard models
+analysis_date: '2026-07-06'

@@ -1,0 +1,73 @@
+name: VLLM_MEDIA_CACHE_TTL_HOURS
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:829
+- vllm/envs.py:73
+- vllm/multimodal/media/connector.py:142
+value_type: float
+default: '24'
+valid_choices: any positive float (hours)
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+impact_detail: "This parameter controls the Time-To-Live (TTL) for cached media files (images, video, audio) fetched from\
+  \ URLs during multimodal inference. It is only active when VLLM_MEDIA_CACHE is set to a writable directory path. When a\
+  \ cached entry's age exceeds VLLM_MEDIA_CACHE_TTL_HOURS, the entry is evicted and must be re-fetched from the source URL\
+  \ on the next request.\nPerformance impact is indirect and limited to multimodal serving workloads: - \"If TTL is too short,\
+  \ media files expire frequently, causing repeated HTTP fetches that add\"\n  network latency to request processing (VLLM_IMAGE_FETCH_TIMEOUT\
+  \ defaults to 5s,\n  VLLM_VIDEO_FETCH_TIMEOUT to 30s, VLLM_AUDIO_FETCH_TIMEOUT to 10s).\n- \"If TTL is very long, the cache\
+  \ may retain stale or unused files, consuming disk space up to\"\n  VLLM_MEDIA_CACHE_MAX_SIZE_MB (default 5120 MB). This\
+  \ does not directly affect NPU memory\n  or compute throughput, but disk I/O for cache maintenance could marginally impact\n\
+  \  co-located storage.\n\nOn Ascend NPU, this parameter has no hardware-specific behavior — it operates entirely at the\
+  \ Python HTTP/media layer in vllm/multimodal/media/connector.py. vllm-ascend does not override or modify this parameter.\
+  \ The TTL check happens at line 142 where hours are converted to seconds (self._media_cache_ttl_secs = envs.VLLM_MEDIA_CACHE_TTL_HOURS\
+  \ * 3600) and used in _get_cached_bytes() to determine cache validity.\nFor pure text workloads or when VLLM_MEDIA_CACHE\
+  \ is unset (empty string), this parameter has zero effect.\n"
+usage_locations:
+- file: vllm/envs.py:73
+  context: Default value declaration in EnvironmentVariables class (24 hours)
+- file: vllm/envs.py:829-831
+  context: Environment variable reader with float conversion and default 24
+- file: vllm/multimodal/media/connector.py:142
+  context: Converted to seconds (×3600) and stored as self._media_cache_ttl_secs for cache eviction checks
+- file: vllm/envs.py:1915
+  context: Listed in environment_variables_to_log for observability
+related_parameters:
+- name: VLLM_MEDIA_CACHE
+  relation: Must be set to a writable directory path for VLLM_MEDIA_CACHE_TTL_HOURS to have any effect
+- name: VLLM_MEDIA_CACHE_MAX_SIZE_MB
+  relation: Works alongside TTL for cache eviction; entries are evicted when either TTL expires or max size is exceeded
+- name: VLLM_IMAGE_FETCH_TIMEOUT
+  relation: When cached media expires due to TTL, re-fetch latency is bounded by this timeout
+- name: VLLM_VIDEO_FETCH_TIMEOUT
+  relation: When cached media expires due to TTL, re-fetch latency is bounded by this timeout
+- name: VLLM_AUDIO_FETCH_TIMEOUT
+  relation: When cached media expires due to TTL, re-fetch latency is bounded by this timeout
+constraints:
+- VLLM_MEDIA_CACHE must be set to a writable directory path; otherwise VLLM_MEDIA_CACHE_TTL_HOURS is ignored
+- Value must be a positive number (float); negative or zero values would cause immediate cache expiration on every access
+tuning_advice:
+  summary: Adjust TTL based on how frequently your multimodal media content changes; longer TTL reduces fetch latency for
+    repeated requests.
+  suggested_values:
+  - scenario: Production serving with static or rarely-changing media assets
+    value: '168'
+    reason: One week TTL minimizes re-fetch overhead while preventing unbounded cache growth when combined with VLLM_MEDIA_CACHE_MAX_SIZE_MB
+  - scenario: Development or testing with frequently updated media
+    value: '1'
+    reason: Short TTL ensures fresh media is fetched without manual cache clearing; acceptable latency tradeoff in non-production
+      environments
+  - scenario: High-throughput multimodal serving with limited disk space
+    value: '24'
+    reason: Default value balances cache hit rate and disk usage; pairs well with the default 5 GB max cache size
+  caveats:
+  - This parameter only affects multimodal workloads (images, video, audio); pure text inference sees no impact
+  - Cache eviction is checked per-access, not by a background thread — expired entries are only removed when requested
+  - On Ascend NPU, disk I/O for cache operations may contend with model weight loading if using the same storage device
+  quick_guide: Set VLLM_MEDIA_CACHE_TTL_HOURS to match your media update frequency; use 168 (1 week) for stable production
+    assets, 1-24 for development.
+analysis_date: '2026-07-06'

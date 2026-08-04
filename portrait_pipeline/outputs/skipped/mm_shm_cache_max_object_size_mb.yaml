@@ -1,0 +1,7 @@
+name: --mm-shm-cache-max-object-size-mb
+type: cli
+performance_impact: none
+skip_reason: In the pinned vLLM source, this value is defined in MultiModalConfig, validated for use only with mm_processor_cache_type=shm,
+  and forwarded into ModelConfig, but there is no current consumer that constructs or configures a shared-memory multimodal
+  cache from it. The pinned vLLM-Ascend repository has no parameter-specific override. Therefore the current pinned sources
+  show no latency, throughput, or memory effect.

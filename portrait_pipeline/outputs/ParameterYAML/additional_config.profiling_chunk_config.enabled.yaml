@@ -1,0 +1,109 @@
+name: additional_config.profiling_chunk_config.enabled
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:54
+- vllm_ascend/ascend_config.py:587
+- vllm_ascend/platform.py:608
+- vllm_ascend/core/scheduler_profiling_chunk.py:80
+- vllm_ascend/patch/platform/patch_profiling_chunk.py:184
+- vllm_ascend/worker/model_runner_v1.py:1730
+- docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:1
+- docs/source/user_guide/configuration/additional_config.md:150
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: '--pipeline-parallel-size 2 --enable-chunked-prefill --additional-config ''{"profiling_chunk_config": {"enabled":
+  true}}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Enabling this Ascend-only switch replaces the configured scheduler with ProfilingChunkScheduler and activates
+  EngineCore timing patches. At engine initialization it performs one warm-up plus up to 64 real prefill forward passes at
+  descending chunk sizes, fits a quadratic latency model, and then dynamically sizes chunks for running and waiting prefills.
+  This can reduce pipeline idle time, TTFT, and improve input throughput for long or variable-length prefill workloads: the
+  pinned guide reports lower TTFT for 128K and 256K inputs and higher per-card input throughput in one variable-length benchmark.
+  The tradeoffs are tens of seconds of startup profiling, a different scheduling policy, and transient device synchronization
+  on model steps while online calibration is active. After calibration completes, the patch disables per-step timing. With
+  the default false, the profiling scheduler, startup passes, and timing hooks are not selected. The pinned upstream vLLM
+  repository has no corresponding setting.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:54
+  context: Reads profiling_chunk_config from vllm_config.additional_config, constructs ProfilingChunkConfig, clamps min_chunk
+    to max_num_batched_tokens when necessary, and validates PP and balance scheduling constraints.
+- file: vllm_ascend/ascend_config.py:605
+  context: Reads enabled with default false and defaults need_timing to the enabled value, so online timing begins automatically
+    when the feature is enabled.
+- file: vllm_ascend/platform.py:608
+  context: Selects ProfilingChunkScheduler and imports the EngineCore profiling patch when enabled.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:106
+  context: Runs startup profiling with a warm-up and 64 measured prefill forwards, then fits the latency predictor used for
+    dynamic chunk sizing.
+- file: vllm_ascend/core/scheduler_profiling_chunk.py:238
+  context: Overrides scheduling and applies profiling-based chunk sizing to continuing and newly admitted prefill requests.
+- file: vllm_ascend/patch/platform/patch_profiling_chunk.py:184
+  context: Patches EngineCore initialization to run startup profiling and install execution-timing feedback hooks in both
+    in-process and spawned-process paths.
+- file: vllm_ascend/worker/model_runner_v1.py:1730
+  context: Synchronizes the NPU before and after model execution while online timing is needed and returns execution_time_ms
+    for predictor refinement.
+- file: docs/source/user_guide/feature_guide/dynamic_chunk_pipeline_parallel.md:115
+  context: Documents measured long-prefill TTFT and variable-length input-throughput improvements together with the startup
+    profiling overhead.
+related_parameters:
+- name: --pipeline-parallel-size
+  relation: Must be greater than one; initialization raises ValueError otherwise. More stages create the pipeline whose idle
+    time dynamic chunking targets.
+- name: --enable-chunked-prefill
+  relation: Dynamic CPP operates on chunked prefills. The Ascend platform sets scheduler_config.enable_chunked_prefill to
+    true when configuring this scheduler, and the documented invocation enables it explicitly.
+- name: --max-num-batched-tokens
+  relation: Becomes the base chunk size and startup profiling upper bound. If it is below min_chunk, Ascend clamps min_chunk
+    down to this value; the guide states TTFT is sensitive to this setting.
+- name: additional_config.profiling_chunk_config.smooth_factor
+  relation: Controls how strongly predicted chunk sizes replace the base chunk size.
+- name: additional_config.profiling_chunk_config.min_chunk
+  relation: Sets the lower bound for dynamically predicted chunks and defaults to 4096 before any clamp to max_num_batched_tokens.
+- name: additional_config.profiling_chunk_config.need_timing
+  relation: Defaults to enabled when this switch is true; setting it false skips online timing and its per-step NPU synchronization
+    while retaining the startup profiling model.
+- name: additional_config.enable_balance_scheduling
+  relation: Mutually exclusive; Ascend initialization raises ValueError if both scheduling modes are enabled.
+constraints:
+- Requires pipeline_parallel_size greater than 1; enabling with PP=1 causes startup to fail.
+- Cannot be enabled together with additional_config.enable_balance_scheduling; initialization raises ValueError.
+- This is implemented only in vLLM Ascend; the pinned upstream vLLM tree has no profiling_chunk_config consumer.
+- Startup profiling attempts 64 measured forward passes after a warm-up and requires at least eight successful samples to
+  fit the predictor; failures leave the dynamic predictor unready.
+- The feature targets prefill in pipeline-parallel deployments and is best suited to long or variable-length sequences; it
+  is not a general decode optimization.
+tuning_advice:
+  summary: Keep false unless serving long or variable-length prefills with pipeline parallelism. Benchmark true with production-like
+    lengths and concurrency, including cold-start time, TTFT, and input throughput.
+  suggested_values:
+  - scenario: Long or variable-length prefill workload with pipeline_parallel_size greater than one where TTFT or input throughput
+      is the priority
+    value: true
+    reason: Enables measured, dynamic chunk sizing that can reduce pipeline idle time; the pinned Ascend guide shows TTFT
+      and throughput gains in such workloads.
+  - scenario: PP=1, short-prefill, decode-dominated, cold-start-sensitive, or unbenchmarked deployment
+    value: false
+    reason: Avoids an unsupported PP=1 configuration, scheduler replacement, startup profiling, and online synchronization
+      when the targeted long-prefill pipeline benefit is absent or unverified.
+  caveats:
+  - Startup profiling adds about 64 forward passes and is documented as taking tens of seconds.
+  - Online calibration synchronizes the NPU around model execution until sufficient timing history is fitted; set need_timing=false
+    only when the startup-only model is preferable to that transient overhead.
+  - 'TTFT is sensitive to max_num_batched_tokens: overly large chunks can create pipeline bubbles, while overly small chunks
+    can reduce operator efficiency.'
+  - Published results are model, hardware, sequence-length, and concurrency specific; they do not guarantee a gain for another
+    workload.
+  - Do not combine this feature with balance scheduling.
+  quick_guide: Start with false. For PP>1 long-prefill serving, enable it and tune max_num_batched_tokens using representative
+    sequence lengths. Retain true only if steady-state TTFT or input-throughput gains justify startup and calibration overhead.
+analysis_date: '2026-08-02'

@@ -1,0 +1,66 @@
+name: LCCL_DETERMINISTIC
+type: env
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/batch_invariant.py:84
+value_type: str
+default: null
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'LCCL_DETERMINISTIC is a Huawei Ascend communication library environment variable that controls whether LCCL
+  (Lightweight Collective Communication Library) operations produce deterministic results. When set to "1", LCCL enforces
+  deterministic execution of collective operations (allreduce, allgather, etc.) at the cost of potential performance degradation.
+  In vllm-ascend, this variable is automatically set to "1" by the override_envs_for_invariance() function in batch_invariant.py
+  when batch invariance mode is enabled. This function is part of the batch invariance feature that ensures identical outputs
+  regardless of batch composition by overriding operator implementations and communication settings. The performance impact
+  is medium because deterministic communication typically disables algorithmic optimizations in LCCL that would otherwise
+  improve throughput and reduce latency, but this only applies when batch invariance mode is explicitly activated.
+
+  '
+usage_locations:
+- file: vllm_ascend/batch_invariant.py:84
+  context: Set to '1' inside override_envs_for_invariance() to enforce deterministic LCCL communication
+- file: tests/ut/test_batch_invariant.py:39
+  context: Test assertion verifying LCCL_DETERMINISTIC is set to '1' when batch invariance is enabled
+related_parameters:
+- name: HCCL_DETERMINISTIC
+  relation: Set simultaneously in override_envs_for_invariance(); HCCL_DETERMINISTIC controls HCCL-level determinism while
+    LCCL_DETERMINISTIC controls LCCL-level determinism
+- name: ATB_MATMUL_SHUFFLE_K_ENABLE
+  relation: Also set in batch invariance mode per documentation; disables matmul shuffle optimization for deterministic results
+- name: ATB_LLM_LCOC_ENABLE
+  relation: Also set in batch invariance mode per documentation; disables LCOC optimization for deterministic results
+constraints:
+- LCCL_DETERMINISTIC is only set automatically by vllm-ascend when batch invariance mode is enabled; it is not a user-facing
+  configuration parameter
+- Setting LCCL_DETERMINISTIC=1 may conflict with other LCCL performance optimizations and should only be used when deterministic
+  inference results are required
+tuning_advice:
+  summary: Only enable LCCL_DETERMINISTIC=1 when batch invariance is required; leave unset for production deployments to maximize
+    communication throughput
+  suggested_values:
+  - scenario: Production inference where deterministic outputs across varying batch sizes are not required
+    value: unset (default)
+    reason: Avoids performance penalty from deterministic LCCL operations; allows LCCL to use optimized communication algorithms
+  - scenario: Debugging or testing where batch invariance (identical outputs regardless of batch composition) is required
+    value: '1'
+    reason: Ensures LCCL collective operations produce identical results across runs, which is necessary for batch invariance
+      guarantees
+  caveats:
+  - This environment variable is set automatically by vllm-ascend's batch_invariant module; manual setting is typically unnecessary
+  - Deterministic communication in LCCL may disable algorithmic optimizations such as tree-based reduction or pipelining,
+    increasing communication latency
+  - The performance penalty depends on model size, tensor parallelism degree, and communication pattern frequency
+  - Batch invariance mode also sets HCCL_DETERMINISTIC, ATB_MATMUL_SHUFFLE_K_ENABLE, and ATB_LLM_LCOC_ENABLE — the combined
+    effect of all these settings can significantly reduce throughput
+  quick_guide: Leave LCCL_DETERMINISTIC unset for production; it is automatically set to 1 only when batch invariance mode
+    is enabled for debugging
+analysis_date: '2026-07-06'

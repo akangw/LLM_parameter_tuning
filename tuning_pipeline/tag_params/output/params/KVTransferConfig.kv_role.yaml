@@ -1,0 +1,131 @@
+name: KVTransferConfig.kv_role
+type: nested
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/kv_transfer.py:41
+- vllm/config/kv_transfer.py:97
+- vllm_ascend/platform.py:307
+- vllm_ascend/platform.py:577
+- vllm_ascend/worker/model_runner_v1.py:452
+value_type: str
+default: null
+valid_choices:
+- null
+- kv_producer
+- kv_consumer
+- kv_both
+cli_example: vllm serve <model> --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer"}'
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'This role classifies a configured KV-transfer instance as a producer, a consumer, or both. Upstream validates
+  the three strings and combines the role with a non-null kv_connector when computing is_kv_producer and is_kv_consumer; therefore
+  setting a role without a connector does not enable transfer. With a connector, kv_producer activates cache-production paths,
+  kv_consumer activates cache-loading paths, and kv_both activates both. This is an architectural choice rather than a scalar
+  tuning knob: it determines whether an engine pays to compute and export KV, import and reuse KV, or support both operations,
+  so its latency, throughput, and memory effects depend on deployment topology and connector behavior. Ascend consumes these
+  flags in its model runner and attention/connector implementations and adds role-specific feature gates. In particular, layer
+  sharding is restricted to kv_producer, balance scheduling is restricted to kv_both or an absent transfer config, and the
+  recompute scheduler is restricted to disaggregated producer/consumer configurations. The declared default is null; upstream
+  changes it to kv_both only when automatic KV offloading configures a connector.'
+usage_locations:
+- file: vllm/config/kv_transfer.py:97
+  context: Validates any non-null role against kv_producer, kv_consumer, and kv_both, and requires a role whenever kv_connector
+    is non-null.
+- file: vllm/config/kv_transfer.py:109
+  context: Combines kv_connector with kv_role to classify transfer instances; kv_both belongs to both the producer and consumer
+    role sets.
+- file: vllm/config/vllm.py:714
+  context: Automatically sets kv_both when cache-level KV offloading selects and configures an offloading connector.
+- file: vllm_ascend/worker/model_runner_v1.py:452
+  context: Copies the role-derived producer and consumer flags into the Ascend model runner, where request and attention preparation
+    follow role-specific paths.
+- file: vllm_ascend/platform.py:307
+  context: Rejects Ascend layer sharding unless this is a kv_producer instance.
+- file: vllm_ascend/platform.py:577
+  context: Rejects balance scheduling for producer-only or consumer-only disaggregated roles.
+- file: vllm_ascend/platform.py:589
+  context: Rejects the Ascend recompute scheduler when the transfer config is absent or the role is kv_both.
+- file: vllm_ascend/distributed/kv_transfer/kv_p2p/mooncake_connector.py:1846
+  context: Selects producer-side Mooncake initialization; nearby branches select send or receive threads and consumer cleanup
+    from kv_role.
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/pool_worker.py:402
+  context: Enables AscendStore producer and kv_both paths to populate transfer metadata and perform store-side work.
+related_parameters:
+- name: KVTransferConfig.kv_connector
+  relation: Must be non-null for the role-derived transfer, producer, and consumer properties to become true; a non-null connector
+    also requires kv_role.
+- name: KVTransferConfig.kv_connector_extra_config
+  relation: Supplies connector- and topology-specific settings that determine the cost and benefit of the selected role.
+- name: CacheConfig.kv_offloading_size
+  relation: When enabled, automatic KV-offload setup selects a connector and overwrites kv_role with kv_both.
+- name: additional_config.layer_sharding
+  relation: Ascend permits this feature only on a kv_producer instance.
+- name: additional_config.enable_balance_scheduling
+  relation: Ascend permits this only in mixed mode, represented by kv_both or no KVTransferConfig.
+- name: additional_config.recompute_scheduler_enable
+  relation: Ascend permits this only in disaggregated kv_producer or kv_consumer mode.
+constraints:
+- A non-null kv_role must be kv_producer, kv_consumer, or kv_both; any other value raises ValueError during KVTransferConfig
+  initialization.
+- A non-null kv_connector requires kv_role to be specified, but kv_role by itself does not enable transfer because all role
+  properties also require a non-null connector.
+- Participating producer and consumer instances must use compatible connectors, topology, ranks, ports, and connector-specific
+  extra configuration.
+- On Ascend, layer_sharding requires kv_producer; enable_balance_scheduling rejects producer-only and consumer-only roles;
+  recompute_scheduler_enable rejects kv_both or an absent transfer config.
+tuning_advice:
+  summary: Choose the role from the engine's actual responsibility in the KV architecture; do not use it as an independent
+    performance knob.
+  suggested_values:
+  - scenario: Prefill engine in a disaggregated prefill/decode deployment
+    value: kv_producer
+    reason: Marks the engine for producer-side KV creation and export and satisfies Ascend features that explicitly require
+      the P-side role.
+  - scenario: Decode engine receiving reusable KV from a prefill engine
+    value: kv_consumer
+    reason: Marks the engine for consumer-side load and receive behavior so it can reuse transferred prefix KV instead of
+      recomputing that prefill.
+  - scenario: One engine must both store/send and load/reuse KV
+    value: kv_both
+    reason: Makes both role predicates true and is the role installed automatically for connector-backed KV offloading; it
+      is also the Ascend mixed-mode choice compatible with balance scheduling.
+  - scenario: Conventional serving with no KV connector
+    value: unset
+    reason: Retains the null default and avoids implying a transfer role when the deployment does not use connector-backed
+      KV sharing or offloading.
+  caveats:
+  - 'A correct role does not guarantee a speedup: connector transfer, synchronization, and metadata overhead can exceed saved
+    prefill work on a slow link or at a low reuse rate.'
+  - kv_both means both producer and consumer predicates are true; it does not mean that connector traffic is disabled.
+  - Changing the role can require coordinated changes to the connector, proxy routing, ranks, ports, extra configuration,
+    and Ascend-only scheduler or layer-sharding settings.
+  - Role semantics can be connector-specific; benchmark end-to-end time to first token, inter-token latency, throughput, and
+    device/host memory on the real topology.
+  quick_guide: Use kv_producer on prefill/send engines, kv_consumer on decode/receive engines, kv_both when one configured
+    engine performs both sides, and leave it unset when there is no KV connector.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

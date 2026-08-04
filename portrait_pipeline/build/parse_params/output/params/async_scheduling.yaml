@@ -1,0 +1,104 @@
+name: --async-scheduling
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1371
+- vllm/config/scheduler.py:146
+- vllm/config/vllm.py:818
+- vllm_ascend/core/recompute_scheduler.py:88
+- vllm_ascend/worker/model_runner_v1.py:404
+- vllm_ascend/worker/model_runner_v1.py:651
+- vllm_ascend/worker/pcp_utils.py:59
+- vllm_ascend/worker/pcp_utils.py:896
+- vllm_ascend/spec_decode/llm_base_proposer.py:120
+value_type: bool
+default: 'null'
+valid_choices: true, false
+cli_example: --async-scheduling
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, async scheduling decouples the CPU scheduler from GPU execution, allowing the scheduler to prepare
+  the next batch while the current batch is still running on the NPU. This overlaps scheduling overhead with computation,
+  reducing GPU idle gaps and improving both latency and throughput. On Ascend, vllm-ascend integrates async scheduling deeply:
+  "it selects a custom" AsyncRecomputeScheduler (vllm_ascend/core/recompute_scheduler.py:88-89), propagates the flag to PCPManager
+  for pipeline context parallelism (vllm_ascend/worker/pcp_utils.py:59, vllm_ascend/worker/model_runner_v1.py:404), and uses
+  it to control draft token handling in speculative decoding (vllm_ascend/spec_decode/llm_base_proposer.py:120, vllm_ascend/worker/model_runner_v1.py:651).
+  The upstream default is None (auto-detect), which enables async scheduling unless incompatible features are detected (pooling
+  models, unsupported speculative methods). Disabling it forces synchronous step-by-step execution, which can significantly
+  reduce throughput under high load.
+
+  '
+usage_locations:
+- file: vllm/config/scheduler.py:146
+  context: Field definition with default=None; docstring explains async scheduling avoids GPU utilization gaps
+- file: vllm/config/scheduler.py:170
+  context: get_scheduler_cls() selects AsyncScheduler vs Scheduler based on this flag
+- file: vllm/config/vllm.py:818-866
+  context: 'Auto-enable logic: checks executor support, speculative method compatibility, pooling model exclusion'
+- file: vllm_ascend/core/recompute_scheduler.py:88
+  context: 'vllm-ascend override: selects AsyncRecomputeScheduler when async_scheduling=True'
+- file: vllm_ascend/worker/model_runner_v1.py:404
+  context: Passed to PCPManager constructor for pipeline context parallelism
+- file: vllm_ascend/worker/model_runner_v1.py:651
+  context: Controls draft token state reset logic in _update_states for speculative decoding
+- file: vllm_ascend/worker/pcp_utils.py:59
+  context: Stored in PCPManager for conditional draft token ID updates
+- file: vllm_ascend/worker/pcp_utils.py:896
+  context: Guards _update_input_ids_pcp_full_ids call for async draft token handling
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:120
+  context: Read by AscendSpecDecodeBaseProposer to configure async speculative decoding behavior
+- file: vllm/v1/engine/core.py:216
+  context: Stored in EngineCore for post_step draft token ID update logic
+- file: vllm/v1/engine/core.py:441
+  context: Controls whether draft token IDs are updated in post_step or in worker process
+- file: vllm/v1/core/sched/scheduler.py:1024
+  context: In PP+async scheduling, token IDs are broadcast via GPU instead of CPU payload
+related_parameters:
+- name: --speculative-config
+  relation: Async scheduling is only compatible with EAGLE/MTP/Draft Model/NGram GPU speculative methods; incompatible methods
+    force async_scheduling=False
+- name: --scheduler-cls
+  relation: When async_scheduling=True, vllm-ascend overrides scheduler_cls to AsyncRecomputeScheduler
+- name: disable_padded_drafter_batch
+  relation: Setting disable_padded_drafter_batch=True with async_scheduling=True raises ValueError
+constraints:
+- Async scheduling is only supported with EAGLE, MTP, Draft Model, or NGram GPU speculative decoding methods
+- Async scheduling is not compatible with disable_padded_drafter_batch=True
+- The executor backend must support async scheduling (checked via executor_class.supports_async_scheduling())
+- Pooling models automatically disable async scheduling by default due to negative performance impact
+tuning_advice:
+  summary: Enable async scheduling (--async-scheduling) for most Ascend deployments to overlap CPU scheduling with NPU execution,
+    improving throughput and reducing latency gaps; disable only if using incompatible speculative decoding methods or pooling
+    models.
+  suggested_values:
+  - scenario: General LLM inference on Ascend NPU (v1 worker)
+    value: 'true'
+    reason: Async scheduling overlaps scheduler work with NPU computation, reducing idle time and improving throughput. vllm-ascend
+      has full integration with AsyncRecomputeScheduler and PCPManager.
+  - scenario: Using EAGLE speculative decoding on Ascend (v1 worker)
+    value: 'true'
+    reason: vllm-ascend explicitly adapted async scheduling for EAGLE speculative decoding; the AscendSpecDecodeBaseProposer
+      reads this flag to coordinate draft token handling.
+  - scenario: Pooling models (e.g., embedding models)
+    value: 'false'
+    reason: Upstream auto-disables async scheduling for pooling models because it negatively impacts performance; explicitly
+      setting false avoids the overhead.
+  - scenario: Using unsupported speculative decoding method (e.g., Medusa on v2 worker)
+    value: 'false'
+    reason: Async scheduling raises ValueError for unsupported speculative methods; must be disabled.
+  caveats:
+  - On Ascend v1 worker, async_scheduling=True triggers vllm-ascend's AsyncRecomputeScheduler, which has different behavior
+    from the upstream AsyncScheduler — ensure compatibility with your workload.
+  - When async scheduling is enabled with pipeline parallelism (PP), token IDs are broadcast via GPU instead of CPU payload,
+    which changes communication patterns.
+  - The vllm-ascend documentation (v0.12.0rc1) notes async scheduler is 'more stable and ready to be enabled' but suggests
+    disabling it as a workaround if issues occur.
+  - Async scheduling interacts with PCP (pipeline context parallelism) — the flag is passed to PCPManager and affects draft
+    token ID update logic in pcp_utils.py.
+  quick_guide: Enable --async-scheduling for most Ascend deployments to improve throughput; disable only for pooling models
+    or incompatible speculative decoding methods.
+analysis_date: '2026-07-06'

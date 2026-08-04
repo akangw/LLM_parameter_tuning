@@ -1,0 +1,82 @@
+name: --video-pruning-rate
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/multimodal.py:190
+- vllm/engine/arg_utils.py:1226
+- vllm/model_executor/models/qwen2_5_vl.py:1079
+- vllm/model_executor/models/qwen2_5_vl.py:1435
+- vllm/model_executor/models/qwen2_5_vl.py:1574
+- vllm_ascend/worker/pcp_utils.py:361
+value_type: float
+default: null
+valid_choices: A float in [0.0, 1.0); null or 0.0 disables pruning.
+cli_example: --video-pruning-rate 0.3
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option supplies the pruning fraction q for Efficient Video Sampling (EVS). On supported video-language
+  models, a positive value reduces the number of video embeddings and matching prompt placeholders passed to the language
+  model. The shorter multimodal prompt can reduce language-model prefill work, KV-cache occupancy, and end-to-end latency,
+  and can improve throughput. The current implementations first produce the vision embeddings and then apply the retention
+  mask, so this setting should not be credited with reducing vision-encoder compute. It can also disable encoder CUDA-graph
+  use on supported upstream model paths. The pinned Ascend integration has no parameter override; its worker explicitly recomputes
+  MRoPE positions when multimodal pruning is enabled.
+usage_locations:
+- file: vllm/config/multimodal.py:190
+  context: Defines the nullable float with inclusive lower and exclusive upper bounds and describes it as the fraction of
+    media tokens pruned.
+- file: vllm/config/multimodal.py:338
+  context: Treats only a non-null value greater than zero as enabling multimodal pruning.
+- file: vllm/engine/arg_utils.py:1567
+  context: Passes the CLI value into ModelConfig and its multimodal configuration.
+- file: vllm/model_executor/models/qwen2_5_vl.py:1079
+  context: Reduces the number of video prompt replacement tokens using the configured rate.
+- file: vllm/model_executor/models/qwen2_5_vl.py:1435
+  context: Computes a retention mask over already-produced video embeddings and uses the configured rate as q.
+- file: vllm/model_executor/models/qwen2_5_vl.py:1574
+  context: Disables encoder CUDA-graph modalities while multimodal pruning is enabled.
+- file: vllm_ascend/worker/pcp_utils.py:361
+  context: Recomputes MRoPE positions in the Ascend worker when pruning is enabled and the model uses MRoPE.
+related_parameters:
+- name: --limit-mm-per-prompt
+  relation: Limits how many video items a request may contain, whereas this option reduces tokens within each supported video
+    item.
+- name: --mm-processor-kwargs
+  relation: Controls model-specific preprocessing inputs such as video sampling and therefore affects the token population
+    available for EVS.
+constraints:
+- The value must be greater than or equal to 0.0 and strictly less than 1.0.
+- Null and 0.0 disable pruning; only a value greater than 0.0 enables it.
+- Performance and quality effects require a model implementation that supports EVS; some multimodal models explicitly do not
+  support pruning.
+- Qwen2.5-VL video inputs require second_per_grid_ts when pruning is enabled, including the video_embeds path.
+tuning_advice:
+  summary: Leave the option unset for the quality baseline, then benchmark small positive rates with representative videos;
+    increase it only when the language-model token and KV-cache savings justify any accuracy loss and graph-path changes.
+  suggested_values:
+  - scenario: Quality baseline or an EVS-unsupported model
+    value: <unset>
+    reason: Preserves all video embeddings and avoids enabling the model-specific pruning path.
+  - scenario: Initial performance-quality experiment on a supported model
+    value: 0.1
+    reason: Applies modest pruning and provides a conservative starting point for workload-specific measurement.
+  - scenario: Memory- or prefill-constrained supported video workload
+    value: 0.3
+    reason: Removes a larger fraction of video tokens, but should be adopted only after measuring task quality and end-to-end
+      performance.
+  caveats:
+  - Higher rates can discard temporally or spatially important video information and reduce answer quality.
+  - Savings vary with video shape, frame count, model implementation, and the share of end-to-end time spent in the language
+    model.
+  - EVS prunes post-encoder embeddings in the inspected implementation, so vision-encoder computation is not reduced.
+  - Enabling pruning may disable encoder CUDA graphs, offsetting some gains for workloads that benefited from graph capture.
+  - Ascend preserves MRoPE consistency for pruned inputs, but the pinned repository provides no Ascend-specific recommended
+    rate.
+  quick_guide: Start unset; on a supported model test 0.1, then 0.3, and select a rate only from measured quality, latency,
+    throughput, and memory results.
+analysis_date: '2026-07-28'

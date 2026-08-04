@@ -1,0 +1,83 @@
+name: additional_config.eplb_config.eplb_policy_type
+type: nested
+category: scheduling
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:636
+- vllm_ascend/eplb/core/policy/policy_factory.py:12
+value_type: int
+default: 1
+valid_choices:
+- 0
+- 1
+- 2
+- 3
+cli_example: --additional-config '{"eplb_config":{"dynamic_eplb":true,"eplb_policy_type":2}}'
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'Selects the Ascend dynamic Expert Parallel Load Balancing algorithm: 0 uses RandomLoadBalance, 1 uses DefaultEplb,
+  2 uses SwiftBalanceEplb, and 3 uses FlashLB. The selected algorithm recomputes expert placement from observed MoE load,
+  so its placement quality and planning or weight-migration work can affect accelerator utilization, token throughput, and
+  latency for skewed MoE workloads. Policy 3 also records per-iteration load history in a two-dimensional int32 NPU tensor
+  instead of the ordinary one-dimensional int64 accumulator and performs FlashLB warm-up, adding memory and setup work. The
+  selector is consumed only by the dynamic EPLB path; it does not affect a static expert map by itself.'
+usage_locations:
+- file: vllm_ascend/ascend_config.py:675
+  context: Validates that the configured integer is one of 0, 1, 2, or 3.
+- file: vllm_ascend/worker/model_runner_v1.py:470
+  context: Reads the selector inside the dynamic EPLB branch and passes it to the background EplbProcess.
+- file: vllm_ascend/eplb/core/policy/policy_factory.py:12
+  context: Maps values 0 through 3 to RandomLoadBalance, DefaultEplb, SwiftBalanceEplb, and FlashLB respectively.
+- file: vllm_ascend/eplb/core/eplb_worker.py:37
+  context: Enables multi-stage load handling for policy 3; the subprocess also warms up FlashLB before processing updates.
+- file: vllm_ascend/eplb/eplb_updator.py:34
+  context: Uses policy 3 to preserve and permute multi-stage MoE load data before sharing it with the balancing worker.
+- file: vllm_ascend/ops/fused_moe/fused_moe.py:435
+  context: For policy 3, allocates per-iteration int32 load history and updates it by iteration rather than using the standard
+    one-dimensional accumulator.
+- file: docs/source/user_guide/feature_guide/eplb_swift_balancer.md:30
+  context: Recommends Swift Balancer policy 2 for the documented dynamic EPLB configuration.
+related_parameters:
+- name: additional_config.eplb_config.dynamic_eplb
+  relation: Must be true for the model runner and fused MoE layers to consume this policy selector.
+- name: additional_config.eplb_config.expert_heat_collection_interval
+  relation: For policy 3, determines the first dimension of each fused MoE layer's load-history tensor.
+- name: additional_config.eplb_config.algorithm_execution_interval
+  relation: Controls how often the selected policy is awakened to calculate an expert remapping.
+- name: additional_config.eplb_config.num_redundant_experts
+  relation: Changes the placement problem handled by the selected policy and the expert weights available for redistribution.
+constraints:
+- The value must be one of 0, 1, 2, or 3; any other value raises ValueError during Ascend configuration validation.
+- Dynamic EPLB also requires the DYNAMIC_EPLB environment variable to be true or 1, unless EXPERT_MAP_RECORD is true.
+- Policy 3 load-history memory grows with expert_heat_collection_interval and the number of local experts in every dynamic
+  fused MoE layer.
+tuning_advice:
+  summary: Use policy 2 for the current documented Ascend dynamic-EPLB setup, and benchmark against the default policy 1 on
+    the target MoE workload; reserve policy 3 for cases where FlashLB's multi-stage load history justifies its extra memory
+    and warm-up work.
+  suggested_values:
+  - scenario: Current documented Ascend dynamic EPLB deployment
+    value: 2
+    reason: The pinned Ascend user guide explicitly recommends Swift Balancer policy 2 and provides it in the serving example.
+  - scenario: Conservative baseline or compatibility with the configuration default
+    value: 1
+    reason: Selects DefaultEplb without policy 3's multi-stage load buffer, making it a useful baseline for workload benchmarks.
+  - scenario: Workload selected for FlashLB evaluation with sufficient NPU memory
+    value: 3
+    reason: Selects FlashLB and supplies it per-iteration load history, but incurs a larger load tensor and warm-up work.
+  caveats:
+  - No single policy is guaranteed to improve performance; gains depend on expert-load skew, model topology, and the cost
+    of remapping expert weights.
+  - Policy 3 allocates an int32 tensor of shape expert_heat_collection_interval by local_num_experts in each applicable fused
+    MoE layer, plus a device counter.
+  - With dynamic_eplb false, changing this value has no runtime performance effect, including configurations that only load
+    a static expert map.
+  - Policy 0 is RandomLoadBalance and is primarily useful as an explicit experimental or diagnostic choice rather than a general
+    tuning recommendation.
+  quick_guide: Start with the documented value 2, compare it with 1 under representative load, and test 3 only with measured
+    imbalance and memory headroom.
+analysis_date: '2026-08-01'

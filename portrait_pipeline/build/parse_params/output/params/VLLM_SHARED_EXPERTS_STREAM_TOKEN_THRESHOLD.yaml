@@ -1,0 +1,78 @@
+name: VLLM_SHARED_EXPERTS_STREAM_TOKEN_THRESHOLD
+type: env
+category: scheduling
+scope: vllm
+source_file:
+- vllm/envs.py:1687
+value_type: int
+default: '256'
+valid_choices: integer >= 0
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'Controls whether shared experts in MoE models (e.g., DeepSeek-V2/V3) execute in a separate CUDA stream overlapping
+  with the main computation. When the number of tokens in the batch is at or below this threshold, shared experts run in an
+  auxiliary stream (MULTI_STREAM_OVERLAPPED mode), allowing overlap with the main expert computation. Above the threshold,
+  the overhead of input cloning and cross-stream synchronization outweighs the overlap benefit, so shared experts run sequentially
+  (NO_OVERLAP mode). On Ascend NPU, the effectiveness depends on whether the CANN runtime and HCCL communication patterns
+  benefit from stream-level parallelism. The code path is in `_determine_shared_experts_order()` at vllm/model_executor/layers/fused_moe/runner/shared_experts.py:106,
+  which checks `current_platform.is_cuda()` — this means the multi-stream path is only active on CUDA-like platforms. Ascend
+  NPU may or may not satisfy this check depending on how vllm-ascend registers its platform. If the platform check fails,
+  this parameter has no effect on Ascend. If it passes, tuning this threshold can reduce latency for small-to-medium batch
+  sizes by overlapping shared expert computation with other operations.
+
+  '
+usage_locations:
+- file: vllm/model_executor/layers/fused_moe/runner/shared_experts.py:106
+  context: 'Compared against hidden_states.shape[0] (token count) to decide whether to use MULTI_STREAM_OVERLAPPED or NO_OVERLAP
+    execution order for shared experts. Only active when current_platform.is_cuda() is True and an auxiliary stream exists.
+
+    '
+related_parameters:
+- name: VLLM_DISABLE_SHARED_EXPERTS_STREAM
+  relation: 'If VLLM_DISABLE_SHARED_EXPERTS_STREAM is set to 1, the multi-stream overlap is completely disabled regardless
+    of this threshold.
+
+    '
+constraints:
+- Must be a non-negative integer.
+- Has no effect if VLLM_DISABLE_SHARED_EXPERTS_STREAM is enabled.
+- Has no effect if the platform is not CUDA-like (Ascend NPU may not trigger the multi-stream path).
+tuning_advice:
+  summary: 'Lower values favor sequential execution (safer, less overhead); higher values allow more overlap but risk cross-stream
+    sync overhead on large batches. On Ascend NPU, verify that the platform check passes before tuning.
+
+    '
+  suggested_values:
+  - scenario: Small batch sizes (<=256 tokens) on GPU-like platforms
+    value: '256'
+    reason: 'Default value. Empirically found to be the sweet spot where overlap benefits outweigh input clone overhead for
+      typical MoE workloads.
+
+      '
+  - scenario: Medium batch sizes (256-512 tokens) where overlap may still help
+    value: '512'
+    reason: 'Extends the overlap window to slightly larger batches. Test with your specific model and hardware to confirm
+      benefit.
+
+      '
+  - scenario: Large batch sizes or Ascend NPU where stream overlap is unproven
+    value: '0'
+    reason: 'Setting to 0 effectively disables the multi-stream path, avoiding any potential cross-stream synchronization
+      overhead. Safer for Ascend NPU if the platform check is uncertain.
+
+      '
+  caveats:
+  - On Ascend NPU, the multi-stream path requires current_platform.is_cuda() to return True. If vllm-ascend does not register
+    as a CUDA-like platform, this parameter has no effect.
+  - Multi-stream overlap requires disable_inplace to be True in the MoE config; otherwise the code path is not taken.
+  - The input clone operation for the auxiliary stream adds memory and compute overhead that can negate overlap benefits at
+    high token counts.
+  quick_guide: 'Start with the default 256. If using Ascend NPU, verify platform support first; if uncertain, set to 0 to
+    disable multi-stream overlap.
+
+    '
+analysis_date: '2026-07-06'

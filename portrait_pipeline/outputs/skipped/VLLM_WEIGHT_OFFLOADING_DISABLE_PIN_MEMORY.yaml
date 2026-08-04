@@ -1,0 +1,7 @@
+name: VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY
+type: env
+performance_impact: none
+skip_reason: In both pinned repositories this environment variable is only declared and parsed in upstream vllm/envs.py; there
+  is no runtime consumer in either vLLM or vllm-ascend. The legacy offloader usage locations no longer exist in the pinned
+  vLLM tree, and current weight-offloading configuration is implemented through vllm/config/offload.py without consulting
+  this variable. Changing it therefore has no latency, throughput, or memory effect in the pinned runtime.

@@ -1,0 +1,67 @@
+name: --disable-sliding-window
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:800
+- vllm/config/model.py:235
+value_type: bool
+default: false
+valid_choices:
+- false
+- true
+cli_example: --disable-sliding-window
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: This flag is passed from EngineArgs to ModelConfig. For a model with a non-null sliding_window, ModelConfig
+  first calls _get_and_verify_max_len with the flag. When the flag is true and the configured window is smaller than the model's
+  derived maximum length, that function uses sliding_window as the derived maximum length (vllm/config/model.py:2064). ModelConfig
+  then sets hf_text_config.sliding_window to None (vllm/config/model.py:696). Thus the flag trades native sliding-window attention
+  for a maximum supported context no larger than the window. The lower maximum context can reduce the KV-cache capacity needed
+  for a deployment configured to the derived maximum and can reduce long-context attention work, but it prevents serving prompts
+  beyond that window. On Ascend, the parameter has no direct override; Ascend's KV cache interface consumes the resulting
+  sliding-window specification.
+usage_locations:
+- file: vllm/engine/arg_utils.py:504
+  context: EngineArgs obtains the default from ModelConfig.
+- file: vllm/engine/arg_utils.py:800
+  context: Registers the --disable-sliding-window CLI option.
+- file: vllm/engine/arg_utils.py:1537
+  context: Passes the parsed value into ModelConfig.
+- file: vllm/config/model.py:625
+  context: A checkpoint value of sliding_window=0 sets the flag and converts the window to None.
+- file: vllm/config/model.py:696
+  context: When enabled, clears the HF text configuration sliding_window after maximum-length verification.
+- file: vllm/config/model.py:2064
+  context: Caps the derived maximum length to sliding_window when the flag is enabled.
+- file: vllm_ascend/patch/platform/patch_kv_cache_interface.py:240
+  context: Ascend merges the resulting sliding-window value into its KV-cache specification.
+related_parameters:
+- name: --max-model-len
+  relation: The flag can cap the derived maximum model length to the model's sliding_window value.
+- name: --gpu-memory-utilization
+  relation: A lower derived maximum context can change the KV-cache capacity required within the configured memory budget.
+constraints:
+- It has no additional effect for a model whose HF text configuration has no sliding_window.
+- A checkpoint with sliding_window=0 is already converted to no sliding window during ModelConfig initialization.
+- When enabled for a model with a smaller sliding window, requests cannot use context longer than that window-derived maximum.
+tuning_advice:
+  summary: Leave the flag disabled unless a model or backend requires sliding-window attention to be removed. Enabling it
+    is primarily a compatibility choice and reduces the usable context limit to the configured window.
+  suggested_values:
+  - scenario: Normal serving of a model with supported sliding-window attention
+    value: false
+    reason: Preserves the model configuration and avoids artificially capping the derived maximum context length.
+  - scenario: A compatibility workflow that requires non-sliding-window attention
+    value: true
+    reason: Removes the sliding-window setting, with the explicit trade-off that maximum context is capped to the window size.
+  caveats:
+  - The flag does not extend context; it can reduce the derived maximum length.
+  - Memory and throughput effects depend on the model's window size, layer layout, and the configured workload.
+  - Ascend does not define a separate CLI behavior for this setting; it receives the resolved cache specification.
+  quick_guide: Keep the default false; set true only when the reduced context limit is acceptable and sliding-window attention
+    must be disabled.
+analysis_date: '2026-07-27'

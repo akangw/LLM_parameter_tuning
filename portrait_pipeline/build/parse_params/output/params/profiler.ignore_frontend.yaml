@@ -1,0 +1,65 @@
+name: profiler.ignore_frontend
+type: nested
+category: observability
+scope: vllm
+source_file:
+- vllm/config/profiler.py:128
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When `profiler.ignore_frontend` is `False` (default) and the ''torch'' profiler is active, vLLM wraps the
+  AsyncLLM frontend event loop in a `torch.profiler.profile()` context (see vllm/v1/engine/async_llm.py:180-198). This captures
+  CPU-side traces of request scheduling and output handling. The overhead is normally negligible, but when combined with `delay_iterations`
+  or `max_iterations` (which skip early profiler steps), the frontend profiler does not track iteration boundaries and may
+  capture an unbounded time range, causing significant CPU overhead that slows down request processing. Setting `ignore_frontend`
+  to `True` disables this frontend profiling, eliminating that overhead. On Ascend NPU, this parameter has the same effect
+  as on GPU — it controls CPU-side profiling overhead, not NPU execution. The impact is low because it only matters when using
+  the ''torch'' profiler with delay/limit options, which is a debugging scenario, not a production serving configuration.
+
+  '
+usage_locations:
+- file: vllm/v1/engine/async_llm.py:180
+  context: Conditionally enables torch.profiler.profile() on the AsyncLLM frontend event loop
+- file: vllm/config/profiler.py:128
+  context: 'Validation: warns if ignore_frontend is False while using torch profiler with delay/limit'
+related_parameters:
+- name: profiler.profiler
+  relation: Must be set to 'torch' for ignore_frontend to have any effect
+- name: profiler.delay_iterations
+  relation: When > 0 with torch profiler, ignore_frontend should be True to avoid high overhead
+- name: profiler.max_iterations
+  relation: When > 0 with torch profiler, ignore_frontend should be True to avoid high overhead
+- name: profiler.torch_profiler_dir
+  relation: Required when profiler is 'torch'; frontend traces are written here if ignore_frontend is False
+constraints:
+- profiler.ignore_frontend only has effect when profiler.profiler is set to 'torch'
+tuning_advice:
+  summary: 'Set to `True` only when using the ''torch'' profiler with `delay_iterations` or `max_iterations` to avoid excessive
+    CPU profiling overhead. Otherwise leave as default (`False`).
+
+    '
+  suggested_values:
+  - scenario: Using 'torch' profiler with delay_iterations > 0 or max_iterations > 0
+    value: true
+    reason: Prevents unbounded frontend profiling range that causes high CPU overhead and distorts performance measurements
+  - scenario: Using 'torch' profiler without delay/limit options for full-system tracing
+    value: false
+    reason: Allows capturing AsyncLLM frontend CPU traces alongside NPU traces for comprehensive profiling
+  - scenario: Production serving (profiler not set to 'torch')
+    value: false
+    reason: Parameter has no effect when not using the torch profiler; default value is fine
+  caveats:
+  - This parameter only affects CPU-side profiling overhead, not NPU execution performance
+  - On Ascend NPU, the torch profiler captures CPU activities only; NPU operator tracing requires CANN profiling tools (msprof)
+  - Setting ignore_frontend to True means AsyncLLM frontend traces will not be collected, which may hide request scheduling
+    bottlenecks
+  quick_guide: Set to True only when torch profiler delay/limit options cause high overhead; otherwise keep default False
+analysis_date: '2026-07-06'

@@ -1,0 +1,138 @@
+name: CompilationConfig.pass_config.fuse_allreduce_rms
+type: nested
+category: communication
+scope: both
+source_file:
+- vllm/config/compilation.py:135
+- vllm/config/vllm.py:119
+- vllm/config/vllm.py:1661
+- docs/design/fusions.md:106
+- vllm_ascend/ascend_config.py:379
+- vllm_ascend/ascend_config.py:487
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+- vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:32
+- docs/source/user_guide/configuration/additional_config.md:136
+value_type: bool
+default: null
+valid_choices:
+- true
+- false
+- null
+cli_example: -cc.pass_config.fuse_allreduce_rms=True
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'In upstream vLLM, true enables a compilation rewrite that fuses tensor-parallel all-reduce with the following
+  residual add and RMSNorm, and optionally quantization, into a communication kernel. This removes separate launches and intermediate
+  global-memory traffic; the pinned fusion guide reports an indicative 5-20% end-to-end speedup, strongly dependent on the
+  model, token count, hardware, and topology. The fusion is profitable only below a hardware-dependent tensor-size boundary,
+  so configuration adds a token-derived compile-range endpoint and applies the fused path only to the eligible range. The
+  declared null value is delayed: O0 and O1 resolve it to false, while O2 and O3 enable it automatically for TP greater than
+  one on Hopper/Blackwell CUDA with FlashInfer, or on ROCm with AITER custom all-reduce. Ascend does not use this PassConfig
+  field to select its NPU implementation. It has an independent additional_config.ascend_compilation_config.fuse_allreduce_rms
+  switch, default false in AscendCompilationConfig, which replaces Matmul+AllReduce+AddRMSNorm with an NPU fused operator
+  for compile ranges starting above 512 tokens.'
+usage_locations:
+- file: vllm/config/compilation.py:135
+  context: Declares the delayed-default PassConfig boolean and includes it in the compilation-affecting configuration hash.
+- file: vllm/config/vllm.py:119
+  context: Computes the upstream O2/O3 automatic value from TP size, platform, Hopper/Blackwell capability and FlashInfer
+    availability, or ROCm AITER custom-all-reduce availability.
+- file: vllm/config/vllm.py:1661
+  context: When enabled, derives a maximum eligible token count from the fused all-reduce byte limit, hidden size, and dtype,
+    then adds that boundary to the compile ranges.
+- file: docs/design/fusions.md:106
+  context: Documents fused operations, hardware and topology restrictions, the small-token profitability condition, and the
+    indicative 5-20% end-to-end speedup.
+- file: vllm_ascend/ascend_config.py:487
+  context: Defines Ascend's independent same-leaf-name control under additional_config.ascend_compilation_config with a false
+    default.
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:64
+  context: Registers the independent Ascend MatmulAllReduceAddRMSNormPass when its additional-config switch is enabled.
+- file: vllm_ascend/compilation/passes/allreduce_rmsnorm_fusion_pass.py:32
+  context: Matches Matmul, tensor-parallel AllReduce, residual handling, and AddRMSNorm and replaces them with the Ascend
+    fused operator; applicability is limited to ranges starting above 512 tokens.
+related_parameters:
+- name: VllmConfig.optimization_level
+  relation: O0 and O1 resolve an unset upstream flag to false; O2 and O3 apply the platform- and topology-aware enablement
+    predicate.
+- name: ParallelConfig.tensor_parallel_size
+  relation: Upstream automatic enablement requires TP greater than one, and TP size participates in selecting the FlashInfer
+    tensor-size threshold.
+- name: CompilationConfig.pass_config.fi_allreduce_fusion_max_size_mb
+  relation: Sets the upstream FlashInfer tensor-size cutoff used to derive the token-count compile-range boundary.
+- name: CompilationConfig.pass_config.eliminate_noops
+  relation: Disabling no-op elimination triggers a warning that the upstream AllReduce+RMSNorm, especially its optional quantization
+    form, might not match.
+- name: additional_config.ascend_compilation_config.fuse_allreduce_rms
+  relation: This separate switch controls the analogous Ascend NPU pass; changing the upstream PassConfig field is not a substitute
+    for changing it.
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: Selects the Ascend graph backend path whose typed configuration and compile-range setup consume the independent
+    Ascend fusion switch.
+constraints:
+- Upstream automatic CUDA enablement requires tensor parallelism greater than one, NVIDIA Hopper SM90 or Blackwell SM100,
+  and FlashInfer; the pinned support matrix lists no CUDA support for Ampere or Ada.
+- Upstream ROCm automatic enablement requires AITER custom all-reduce and TP greater than one; setting true cannot create
+  a useful fusion when the required implementation or graph pattern is absent.
+- The upstream documentation warns that TP+DP and TP+PP combinations are currently broken for this fused path.
+- Upstream fusion is limited to small tensor/token ranges and requires a matching AllReduce followed by RMSNorm/residual-add
+  pattern; true does not guarantee that a graph rewrite occurs.
+- On Ascend, configure the independent additional_config.ascend_compilation_config.fuse_allreduce_rms field. Its documented
+  default is false because the pass conflicts with sequence parallelism.
+- The Ascend pass matches unquantized Matmul+AllReduce+AddRMSNorm and runs only for compile ranges whose start is greater
+  than the fixed 512-token threshold.
+tuning_advice:
+  summary: Leave the upstream field unset so O2/O3 make a conservative hardware-aware choice. Use an explicit value for controlled
+    A/B testing or troubleshooting. On Ascend, leave this upstream field alone and tune the separate additional-config switch,
+    keeping it false when sequence parallelism is active.
+  suggested_values:
+  - scenario: Supported CUDA or ROCm deployment using the normal O2/O3 defaults
+    value: leave unset
+    reason: vLLM enables the fusion only when TP and the required FlashInfer or AITER implementation satisfy the pinned automatic
+      predicate.
+  - scenario: Supported upstream TP workload with a measured small-token gain
+    value: true
+    reason: A matching graph can combine communication, normalization, residual work, and optional quantization, reducing
+      launches and intermediate traffic.
+  - scenario: Upstream correctness isolation, unsupported hardware, or TP+DP/TP+PP
+    value: false
+    reason: Disables a path that is inapplicable or explicitly documented as broken for those combined parallel topologies.
+  - scenario: Ascend NPU without sequence parallelism after an A/B benchmark
+    value: additional_config.ascend_compilation_config.fuse_allreduce_rms=true
+    reason: This is the actual Ascend control and can activate the NPU Matmul+AllReduce+AddRMSNorm rewrite above its 512-token
+      threshold.
+  caveats:
+  - The documented 5-20% upstream speedup is indicative, not guaranteed; benchmark production token distributions because
+    the fused path is intended only for the lower compiled range.
+  - An explicit true overrides optimization-level defaults but not hardware, operator-availability, graph-pattern, or compile-range
+    realities, so it may produce no match or regress performance.
+  - Fusion reduces intermediate traffic and tensor lifetime, but fused communication implementations may reserve workspace;
+    do not interpret the memory scope as a guaranteed increase in model or KV-cache capacity.
+  - The Ascend graph-fusion manager uses a true fallback when the raw ascend_compilation_config dictionary lacks the key,
+    while the typed AscendCompilationConfig and pinned user documentation specify false. Supply an explicit Ascend value when
+    backend-path behavior must be unambiguous.
+  quick_guide: 'Upstream: keep null at O2/O3, test true versus false on supported TP hardware, and retain true only with repeatable
+    end-to-end gains. Ascend: use the separate additional-config key, avoid it with sequence parallelism, and benchmark token
+    ranges above 512.'
+analysis_date: '2026-07-30'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

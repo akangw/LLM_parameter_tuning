@@ -1,0 +1,109 @@
+name: WeightTransferConfig.backend
+type: nested
+category: communication
+scope: vllm
+source_file:
+- vllm/config/weight_transfer.py:12
+- vllm/config/vllm.py:353
+- vllm/engine/arg_utils.py:1446
+- docs/training/weight_transfer/README.md:18
+- docs/training/weight_transfer/nccl.md:3
+- docs/training/weight_transfer/ipc.md:3
+value_type: str
+default: nccl
+valid_choices:
+- nccl
+- ipc
+cli_example: '--weight-transfer-config ''{"backend": "ipc"}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Selects the data plane used to synchronize updated model weights in online RL workflows. The nccl backend broadcasts
+  weight tensors to inference workers and supports separate GPUs, multiple GPUs, and multiple nodes; its optional packed mode
+  reduces collective-call overhead and overlaps packing, communication, and unpacking with multiple CUDA buffers. The ipc
+  backend instead reconstructs CUDA tensors from IPC handles on the same physical GPU, avoiding the weight-data copy and process-group
+  initialization. The choice can therefore change weight-update latency, temporary transfer memory, and rollout/training throughput
+  when synchronization is on the critical path. It does not alter ordinary inference latency or throughput between weight-update
+  events. The pinned vllm-ascend repository has no corresponding weight-transfer implementation, so no Ascend performance
+  effect is claimed.
+usage_locations:
+- file: vllm/config/weight_transfer.py:12
+  context: Declares the backend selector as Literal["nccl", "ipc"] with nccl as the default.
+- file: vllm/engine/arg_utils.py:715
+  context: Converts a structured weight-transfer configuration dictionary into WeightTransferConfig.
+- file: vllm/engine/arg_utils.py:1446
+  context: Exposes the parent structured configuration through --weight-transfer-config.
+- file: vllm/engine/protocol.py:241
+  context: Defines the engine-side weight-transfer initialization and update protocol used by RL training.
+- file: docs/training/weight_transfer/README.md:18
+  context: Contrasts NCCL broadcast for separate training/inference GPUs with CUDA IPC for colocated use on the same GPU.
+- file: docs/training/weight_transfer/nccl.md:14
+  context: Documents incremental NCCL broadcast to all workers and optional packed, overlapped transfer for higher throughput.
+- file: docs/training/weight_transfer/ipc.md:3
+  context: Documents direct same-node, same-GPU memory sharing without copying and its colocated-training use case.
+related_parameters:
+- name: VLLM_ALLOW_INSECURE_SERIALIZATION
+  relation: IPC over HTTP requires this environment variable on both client and server because IPC handles are pickled and
+    base64 encoded.
+- name: ParallelConfig.tensor_parallel_size
+  relation: NCCL initialization includes every inference worker, including tensor-parallel ranks, in the transfer process
+    group.
+- name: ParallelConfig.pipeline_parallel_size
+  relation: NCCL worker rank and world-size calculation includes pipeline-parallel ranks in the transfer process group.
+- name: ParallelConfig.data_parallel_size
+  relation: NCCL assigns distinct transfer ranks across data-parallel groups as well as tensor- and pipeline-parallel workers.
+constraints:
+- The built-in value must be nccl or ipc.
+- ipc requires the trainer and inference worker to be on the same node and the same physical CUDA GPU; it is not a cross-GPU
+  or cross-node transport.
+- IPC source tensors must remain alive while receivers use their handles, and every receiver must find a handle for its physical
+  GPU UUID.
+- IPC over HTTP requires VLLM_ALLOW_INSECURE_SERIALIZATION=1 on both server and client and accepts the security risk of deserializing
+  pickled handles.
+- nccl requires trainer and inference workers to join a correctly sized process group with unique ranks and matching master
+  address and port.
+- NCCL packed transfers require matching packed_buffer_size_bytes and packed_num_buffers on the producer and consumer.
+- The setting has no runtime performance effect unless weight transfer is configured and weight-update operations are invoked.
+- The pinned vllm-ascend repository provides no implementation of these CUDA/NCCL weight-transfer backends.
+tuning_advice:
+  summary: Use nccl when training and inference occupy separate GPUs or multiple workers; use ipc only for same-GPU colocation
+    where eliminating weight copies outweighs its topology and serialization constraints.
+  suggested_values:
+  - scenario: Training and inference run on separate GPUs, across multiple inference workers, or across nodes.
+    value: nccl
+    reason: NCCL is the supported broadcast transport for these topologies and can update all workers incrementally.
+  - scenario: Trainer and inference worker are colocated on the same physical CUDA GPU and synchronization time is material.
+    value: ipc
+    reason: CUDA IPC shares the trainer's tensor storage directly and avoids copying weight data into a transport buffer.
+  caveats:
+  - Backend selection affects the weight-update phase, so gains depend on update frequency, model size, topology, and whether
+    synchronization blocks rollout generation.
+  - For NCCL, packed versus one-at-a-time broadcasting is selected by backend-specific update arguments rather than by this
+    field; benchmark that setting separately.
+  - IPC is not a general replacement for NCCL because its handles are local to the same physical GPU and require source tensor
+    lifetime management.
+  - HTTP IPC additionally requires explicitly enabling insecure pickle deserialization; prefer a trusted control plane and
+    environment.
+  - Do not infer Ascend support from the upstream configuration field; the pinned vllm-ascend source has no matching weight-transfer
+    engine.
+  quick_guide: Keep nccl for distributed or disjoint-GPU RL. Choose ipc only for trusted, same-node and same-GPU colocation,
+    then measure end-to-end update stalls and RL iteration throughput rather than ordinary token latency alone.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware: []
+  deploy_scenario: []

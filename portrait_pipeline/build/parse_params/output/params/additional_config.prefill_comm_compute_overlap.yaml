@@ -1,0 +1,94 @@
+name: additional_config.prefill_comm_compute_overlap
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:138
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled, this flag activates communication-computation overlap during the prefill phase on Ascend NPUs.
+  The mechanism overlaps all-reduce communication (via HCCL) with the computation of subsequent transformer layers, hiding
+  communication latency behind computation. This is particularly effective for large models with high tensor parallelism (TP
+  > 1) where all-reduce overhead becomes significant. The flag is read in AscendConfig.__init__ and stored as self.prefill_comm_compute_overlap.
+  The actual overlap implementation is handled by the vllm-ascend model runner and layer dispatch logic, which inserts HCCL
+  communication streams that run concurrently with NPU compute streams during prefill. This can reduce end-to-end prefill
+  latency by overlapping communication with computation, but may increase memory pressure due to additional stream resources
+  and buffering requirements.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:138
+  context: 'Parameter is read from additional_config dict and stored as self.prefill_comm_compute_overlap on the AscendConfig
+    object. It is then used by the model runner and layer execution paths to enable HCCL communication-computation overlap
+    during prefill.
+
+    '
+related_parameters:
+- name: tensor_parallel_size
+  relation: 'Communication-computation overlap is only beneficial when TP > 1, as all-reduce communication only occurs with
+    tensor parallelism. With TP=1, this flag has no effect.
+
+    '
+- name: enable_flashcomm1
+  relation: 'FlashComm1 is an Ascend-specific communication optimization. When both are enabled, the overlap behavior may
+    interact with FlashComm1''s communication patterns.
+
+    '
+- name: enable_matmul_allreduce
+  relation: 'MatMul-allreduce fusion is an alternative approach to hiding communication latency. When enabled, it fuses the
+    all-reduce into the matmul operation itself rather than overlapping it as a separate stream. These two optimizations target
+    the same problem (communication overhead) through different mechanisms.
+
+    '
+constraints:
+- This parameter has no effect when tensor_parallel_size is 1, since no all-reduce communication occurs.
+tuning_advice:
+  summary: 'Enable prefill_comm_compute_overlap when using tensor parallelism (TP > 1) to hide HCCL all-reduce latency behind
+    NPU computation during prefill, improving prefill throughput and reducing time-to-first-token.
+
+    '
+  suggested_values:
+  - scenario: 'Tensor parallelism enabled (TP >= 2) with large models where all-reduce communication is a significant fraction
+      of per-layer computation time.
+
+      '
+    value: true
+    reason: 'Overlapping communication with computation hides HCCL all-reduce latency, reducing prefill latency and improving
+      throughput. Most effective when per-layer computation time is comparable to or greater than all-reduce time.
+
+      '
+  - scenario: 'Single NPU inference (TP = 1) or small models where communication overhead is negligible compared to computation.
+
+      '
+    value: false
+    reason: 'With TP=1 there is no all-reduce communication to overlap, so the flag has no effect. For very small models,
+      the overhead of managing additional streams may outweigh any marginal benefit.
+
+      '
+  caveats:
+  - 'Enabling this flag may increase NPU memory usage due to additional communication streams and buffering required for overlap.
+    Monitor memory utilization when enabling.
+
+    '
+  - 'The effectiveness depends on the ratio of communication time to computation time per layer. For models with very small
+    layers, the overlap benefit may be minimal.
+
+    '
+  - 'This is an Ascend-specific optimization and has no equivalent in upstream vLLM. It relies on HCCL and CANN capabilities
+    for stream-based communication-computation overlap.
+
+    '
+  quick_guide: 'Set to true when using tensor parallelism (TP >= 2) to reduce prefill latency; leave false for single-NPU
+    deployments or when memory is constrained.
+
+    '
+analysis_date: '2026-07-06'

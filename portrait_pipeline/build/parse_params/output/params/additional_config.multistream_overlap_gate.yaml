@@ -1,0 +1,58 @@
+name: additional_config.multistream_overlap_gate
+type: nested
+category: communication
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:132
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'When enabled, this flag activates multi-stream overlap for the gate projection in MoE (Mixture of Experts)
+  models. The gate projection determines which experts each token is routed to. By overlapping the gate computation with other
+  operations on a separate Ascend NPU stream, the gate latency can be partially or fully hidden behind concurrent work, reducing
+  the critical path length of each MoE layer. This is an Ascend-specific optimization that leverages the Da Vinci architecture''s
+  multi-stream capability. The documentation explicitly states this option only takes effect on MoE models with shared experts.
+  On non-MoE models or MoE models without shared experts, enabling this flag has no effect. The performance gain depends on
+  the model architecture and the degree of overlap achievable between the gate computation and other concurrent operations
+  on the NPU.
+
+  '
+usage_locations:
+- file: vllm_ascend/ascend_config.py:132
+  context: Read from additional_config dict with default False, stored as self.multistream_overlap_gate
+related_parameters:
+- name: additional_config.multistream_overlap_shared_expert
+  relation: Sibling parameter that enables multi-stream overlap for shared expert computation; both target MoE models with
+    shared experts
+- name: additional_config.enable_shared_expert_dp
+  relation: Enables shared expert data parallelism; multistream_overlap_gate only takes effect on MoE models with shared experts,
+    which is the same model class targeted by enable_shared_expert_dp
+constraints:
+- This option only takes effect on MoE models with shared experts; on other models it is silently ignored.
+tuning_advice:
+  summary: Enable for MoE models with shared experts to overlap gate projection with other NPU operations, reducing per-layer
+    latency.
+  suggested_values:
+  - scenario: MoE model with shared experts (e.g., DeepSeek-V2/V3, Mixtral with shared expert)
+    value: true
+    reason: Overlaps gate computation with concurrent NPU operations, hiding gate latency and improving throughput on Ascend
+      NPU.
+  - scenario: Non-MoE model or MoE model without shared experts
+    value: false
+    reason: The flag has no effect on these models; keeping it disabled avoids unnecessary configuration complexity.
+  caveats:
+  - This is an Ascend-specific optimization and has no effect on non-Ascend hardware.
+  - The actual performance gain depends on the model architecture and the degree of overlap achievable; benchmark with your
+    specific model to confirm benefit.
+  - Enabling too many multi-stream overlaps simultaneously may increase stream synchronization overhead; test in combination
+    with multistream_overlap_shared_expert.
+  quick_guide: Set to true for MoE models with shared experts on Ascend NPU to overlap gate projection; leave false otherwise.
+analysis_date: '2026-07-06'

@@ -1,0 +1,63 @@
+name: speculative.synthetic_acceptance_length
+type: nested
+category: speculation
+scope: vllm
+source_file: []
+value_type: int
+default: <computed>
+valid_choices: integer in [1, num_speculative_tokens + 1]
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls the target mean acceptance length for synthetic rejection sampling in speculative
+  decoding. It is resolved internally to a set of synthetic_acceptance_rates that determine the probability of accepting each
+  speculative token position. The parameter only takes effect when rejection_sample_method is set to ''synthetic''. By adjusting
+  the acceptance length distribution, it indirectly affects the effective acceptance rate of speculative tokens, which in
+  turn influences throughput (tokens per iteration) and latency (overhead of rejected tokens). However, since no definition
+  or usage was found in the provided vllm or vllm-ascend source code context, the actual runtime impact on Ascend NPU cannot
+  be confirmed from the available code evidence. The parameter appears to be defined in vllm''s configuration schema but its
+  implementation details are not present in the extracted context.
+
+  '
+usage_locations: []
+related_parameters:
+- name: speculative.rejection_sample_method
+  relation: Must be set to 'synthetic' for this parameter to take effect
+- name: speculative.synthetic_acceptance_rates
+  relation: Mutually exclusive; directly specifies acceptance rates instead of deriving them from a target mean length
+- name: speculative.num_speculative_tokens
+  relation: Defines the upper bound for the acceptance length range
+constraints:
+- rejection_sample_method must be 'synthetic' for this parameter to be valid
+- Value must be an integer in the range [1, num_speculative_tokens + 1]
+- Cannot be used together with synthetic_acceptance_rates
+tuning_advice:
+  summary: 'Set this parameter to control the aggressiveness of synthetic speculative decoding; higher values increase potential
+    throughput gains but may waste computation on rejected tokens.
+
+    '
+  suggested_values:
+  - scenario: Conservative speculative decoding to minimize wasted computation
+    value: 2
+    reason: A low target acceptance length reduces the number of speculative tokens generated, minimizing overhead from rejected
+      tokens while still providing some speedup
+  - scenario: Aggressive speculative decoding for maximum throughput on high-confidence predictions
+    value: num_speculative_tokens
+    reason: Setting the target length equal to num_speculative_tokens maximizes potential tokens per iteration, suitable when
+      the draft model has high agreement with the target model
+  - scenario: Balanced approach for typical workloads
+    value: num_speculative_tokens // 2 + 1
+    reason: A midpoint value provides a reasonable trade-off between throughput gains and wasted computation
+  caveats:
+  - This parameter is only valid when rejection_sample_method is 'synthetic'; it has no effect with other rejection sampling
+    methods
+  - The actual acceptance rates are derived internally from this target mean length; the derivation algorithm may not produce
+    exactly the specified mean
+  - On Ascend NPU, speculative decoding support may vary between v1 and v2 worker paths; verify compatibility with your vllm-ascend
+    version
+  quick_guide: Use with rejection_sample_method='synthetic'; start with num_speculative_tokens//2+1 and adjust based on observed
+    acceptance rates
+analysis_date: '2026-07-06'

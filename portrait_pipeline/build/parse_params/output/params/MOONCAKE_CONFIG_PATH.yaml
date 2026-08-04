@@ -1,0 +1,90 @@
+name: MOONCAKE_CONFIG_PATH
+type: env
+category: kv_cache
+scope: both
+source_file:
+- vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:291
+- vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:85
+value_type: str
+default: <computed>
+valid_choices: A valid filesystem path to a JSON configuration file
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'MOONCAKE_CONFIG_PATH is the entry point for configuring Mooncake-based KV cache transfer between Prefill and
+  Decode instances in a disaggregated serving setup. The JSON file it points to controls critical performance parameters including:
+  global_segment_size (total KV cache pool size), local_buffer_size (per-instance buffer), protocol (Ascend-specific "ascend"
+  vs upstream "rdma"), device_name, master_server_address, and SSD offload settings. On Ascend NPU, the vllm-ascend plugin
+  overrides the default protocol from "rdma" to "ascend" and adds Ascend-specific fields (preferred_segment, prefer_alloc_in_same_node,
+  enable_ssd_offload, ssd_offload_path). If this env var is not set, the MooncakeStoreConfig.load_from_env() method raises
+  a ValueError, preventing the KV transfer backend from initializing — this makes disaggregated serving impossible. The global_segment_size
+  directly determines how much KV cache can be shared across instances, affecting memory utilization and cache hit rates.
+  The protocol choice ("ascend" vs "rdma") determines the communication stack used for KV transfer, which has direct latency
+  and throughput implications on Ascend hardware.
+
+  '
+usage_locations:
+- file: vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/mooncake_backend.py:291
+  context: load_from_env() reads MOONCAKE_CONFIG_PATH to locate the mooncake.json config file
+- file: vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:85
+  context: Upstream load_from_env() reads MOONCAKE_CONFIG_PATH for MooncakeStoreConfig initialization
+- file: vllm_ascend/tests/e2e/weekly/single_node/models/test_qwen3_30b_acc.py:90
+  context: E2E test sets MOONCAKE_CONFIG_PATH to 'mooncake.json' for AscendStoreConnector
+- file: vllm_ascend/tests/ut/distributed/ascend_store/test_backend.py:178
+  context: Unit test verifies ValueError is raised when MOONCAKE_CONFIG_PATH is not set
+related_parameters:
+- name: MOONCAKE_MASTER
+  relation: Overrides master_server_address from the JSON config file
+- name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+  relation: Overrides global_segment_size from the JSON config file
+- name: ASCEND_BUFFER_POOL
+  relation: Controls NPU buffer pool size for KV transfer; used alongside Mooncake config
+- name: ASCEND_CONNECT_TIMEOUT
+  relation: Controls connection timeout for Mooncake one-sided communication on Ascend
+- name: ASCEND_TRANSFER_TIMEOUT
+  relation: Controls transfer timeout for Mooncake one-sided communication on Ascend
+- name: HCCL_RDMA_TIMEOUT
+  relation: RDMA timeout must satisfy ASCEND_TRANSFER_TIMEOUT > HCCL_RDMA_TIMEOUT * 7
+constraints:
+- MOONCAKE_CONFIG_PATH must be set to a valid filesystem path; otherwise MooncakeStoreConfig.load_from_env() raises ValueError
+- The JSON file at MOONCAKE_CONFIG_PATH must contain valid JSON; malformed files will cause a parse error
+- If enable_ssd_offload is true in the config, ssd_offload_path must be a non-empty absolute path
+- MOONCAKE_CONFIG_PATH is only meaningful when using Mooncake-based KV transfer (AscendStoreConnector with MooncakeBackend)
+tuning_advice:
+  summary: 'Point MOONCAKE_CONFIG_PATH to a properly configured mooncake.json file to enable disaggregated KV cache transfer;
+    tune global_segment_size and local_buffer_size based on model size and expected concurrency.
+
+    '
+  suggested_values:
+  - scenario: Disaggregated Prefill-Decode serving on Ascend NPU
+    value: /path/to/mooncake.json
+    reason: 'Required for MooncakeBackend initialization. The JSON file should specify protocol as "ascend" for Ascend NPU,
+      set global_segment_size large enough to hold KV cache for all concurrent sequences, and configure master_server_address
+      to the Mooncake metadata server.
+
+      '
+  - scenario: Single-node testing with AscendStoreConnector
+    value: ./mooncake.json
+    reason: 'For local testing, a relative path works. Set master_server_address to 127.0.0.1:<port> and use a modest global_segment_size
+      (e.g., 4GB) to avoid excessive memory reservation.
+
+      '
+  caveats:
+  - The vllm-ascend plugin changes the default protocol from 'rdma' to 'ascend' — ensure your mooncake.json does not override
+    this unless you have a specific reason
+  - global_segment_size is parsed with unit suffixes (e.g., '4GB', '512MB'); using plain integers may cause unexpected behavior
+  - MOONCAKE_MASTER and MOONCAKE_GLOBAL_SEGMENT_SIZE env vars take precedence over the JSON file values — check both when
+    debugging configuration issues
+  - SSD offload (enable_ssd_offload) requires the Mooncake backend to support it; verify with _mooncake_setup_supports_ssd_offload
+    before enabling
+  - On Ascend, ASCEND_CONNECT_TIMEOUT and ASCEND_TRANSFER_TIMEOUT should be tuned alongside Mooncake config to avoid connection
+    failures in large-scale deployments
+  quick_guide: 'Set MOONCAKE_CONFIG_PATH to a mooncake.json with protocol="ascend", global_segment_size sized for your workload,
+    and master_server_address pointing to your Mooncake metadata server.
+
+    '
+analysis_date: '2026-07-06'

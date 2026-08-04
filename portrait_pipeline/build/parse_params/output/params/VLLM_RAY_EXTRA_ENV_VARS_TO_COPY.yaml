@@ -1,0 +1,81 @@
+name: VLLM_RAY_EXTRA_ENV_VARS_TO_COPY
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:1193
+- vllm/ray/ray_env.py:34
+value_type: str
+default: '''""'''
+valid_choices: comma-separated list of environment variable names
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This environment variable controls which additional environment variables are propagated from the driver process
+  to Ray worker actors. On Ascend NPU, many performance-critical settings are controlled via environment variables (e.g.,
+  HCCL_*, ASCEND_*, CANN_*, VLLM_ASCEND_*). If a required Ascend-specific env var is not propagated to workers, the workers
+  may fall back to suboptimal defaults (e.g., wrong HCCL algorithm, missing CANN tuning knobs), which can degrade throughput
+  or increase latency. However, the built-in DEFAULT_ENV_VAR_PREFIXES already includes "VLLM_" which covers most vllm-ascend
+  variables, and vllm-ascend may register its own env vars in environment_variables (which are always copied). The performance
+  impact is therefore low — this parameter only matters if you have custom Ascend-related env vars with non-standard prefixes
+  that need to reach Ray workers.
+
+  '
+usage_locations:
+- file: vllm/ray/ray_env.py:92
+  context: 'Parsed via _parse_csv() and merged into the set of individual env var names to copy from driver to Ray actors.
+    Additive with DEFAULT_EXTRA_ENV_VARS (which includes PYTHONHASHSEED).
+
+    '
+- file: vllm/envs.py:152
+  context: 'Declared as a typed environment variable (str) with default empty string in the vLLM environment_variables registry.
+
+    '
+related_parameters:
+- name: VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY
+  relation: 'Companion parameter that adds env var prefixes to copy. Both are additive and merged with built-in defaults.
+    Use prefixes for groups of related vars, and VLLM_RAY_EXTRA_ENV_VARS_TO_COPY for individual specific vars.
+
+    '
+constraints:
+- Must be a comma-separated string of environment variable names (e.g., 'MY_VAR,OTHER_VAR').
+- Only has effect when using Ray as the distributed backend.
+tuning_advice:
+  summary: 'Only set this if you have custom Ascend-specific environment variables (outside the VLLM_ prefix) that must reach
+    Ray workers for performance.
+
+    '
+  suggested_values:
+  - scenario: 'Using custom HCCL or CANN tuning env vars (e.g., HCCL_ALGO, ASCEND_LAUNCH_BLOCKING) that are not prefixed with
+      VLLM_.
+
+      '
+    value: '''"HCCL_ALGO,ASCEND_LAUNCH_BLOCKING"'''
+    reason: 'Ensures these performance-critical Ascend environment variables are propagated to all Ray worker actors, preventing
+      workers from using suboptimal defaults.
+
+      '
+  - scenario: 'Default vllm-ascend deployment with no custom non-VLLM_ env vars.
+
+      '
+    value: '''""'''
+    reason: 'The built-in "VLLM_" prefix already covers all vllm-ascend variables. Adding extra vars unnecessarily increases
+      the env var payload per actor.
+
+      '
+  caveats:
+  - 'Verify that the env vars you list here are actually set in the driver process''s environment. The propagation only copies
+    vars that exist in os.environ at the time get_env_vars_to_copy() is called.
+
+    '
+  - 'Some Ascend env vars (e.g., ASCEND_HOME_PATH, LD_LIBRARY_PATH) are system-level and should be set before starting the
+    Ray cluster, not propagated per-actor.
+
+    '
+  quick_guide: 'Leave empty unless you have custom Ascend env vars without the VLLM_ prefix that must reach Ray workers.
+
+    '
+analysis_date: '2026-07-06'

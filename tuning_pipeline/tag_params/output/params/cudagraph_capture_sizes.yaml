@@ -1,0 +1,115 @@
+name: --cudagraph-capture-sizes
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1384
+- vllm/config/compilation.py:622
+- vllm/config/vllm.py:1476
+- vllm/v1/cudagraph_dispatcher.py:71
+- vllm_ascend/platform.py:177
+- vllm_ascend/compilation/compiler_interface.py:71
+- vllm_ascend/ascend_forward_context.py:198
+value_type: list[int]
+default: null
+valid_choices: A non-empty list of integer capture sizes, or null to let vLLM derive the list from the effective configuration.
+cli_example: --cudagraph-capture-sizes 1 2 4 8 16 32
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This option selects the static batch/token sizes for CUDA-graph capture. vLLM maps a runtime batch to the smallest
+  configured capture size that can contain it; unmatched sizes are padded, while batches above the largest configured size
+  do not use a graph. Therefore the list trades graph coverage and padding work against the number and maximum size of captured
+  graph allocations. On Ascend, the platform preserves an explicitly supplied list rather than injecting its default maximum,
+  filters usable decode sizes to the speculative decode-query-length through max-token range for static kernels, and uses
+  the resolved maximum capture size when calculating MC2 token capacity.
+usage_locations:
+- file: vllm/engine/arg_utils.py:2123
+  context: Applies the CLI list to CompilationConfig and rejects supplying the same setting through both the CLI option and
+    compilation_config.
+- file: vllm/config/vllm.py:1476
+  context: Deduplicates and sorts explicit sizes, drops sizes above the valid token limit, and writes the resulting list and
+    maximum back to the compilation configuration.
+- file: vllm/v1/cudagraph_dispatcher.py:71
+  context: Builds the batch-size-to-padded-graph-size mapping used to select graph captures at runtime.
+- file: vllm_ascend/platform.py:177
+  context: Does not inject an Ascend default maximum when the user supplied capture sizes, then recomputes the effective list
+    after platform compatibility changes.
+- file: vllm_ascend/compilation/compiler_interface.py:71
+  context: Restricts Ascend static-kernel decode graph sizes to the uniform decode-query-length through the scheduler maximum.
+- file: vllm_ascend/ascend_forward_context.py:198
+  context: Uses max_cudagraph_capture_size for MC2 token capacity when capture sizes are present.
+related_parameters:
+- name: --max-cudagraph-capture-size
+  relation: If both settings are supplied, the maximum must equal the final largest capture size; otherwise vLLM derives the
+    maximum from this list.
+- name: --compilation-config
+  relation: The CLI list and compilation_config.cudagraph_capture_sizes are mutually exclusive inputs for the same setting.
+- name: --enforce-eager
+  relation: Eager mode disables cudagraph execution and replaces the capture-size list with an empty list.
+- name: --max-num-seqs
+  relation: Together with speculative decode-query length, it bounds valid capture sizes and Ascend static-kernel decode sizes.
+- name: speculative_config.num_speculative_tokens
+  relation: It sets uniform decode-query length; vLLM rounds graph sizes to compatible multiples during cudagraph initialization.
+constraints:
+- When cudagraphs are enabled, an explicitly supplied list must contain at least one size.
+- Explicit values are deduplicated, sorted, and sizes above the valid maximum token count are discarded.
+- If --max-cudagraph-capture-size is also explicitly set, it must match the largest final capture size.
+- Do not also set compilation_config.cudagraph_capture_sizes when using this CLI option.
+- Under --enforce-eager, cudagraphs are disabled and this setting has no graph-capture effect.
+tuning_advice:
+  summary: Leave the value unset for the generated, workload-independent baseline. For a stable serving workload, choose capture
+    sizes that cover common decode batch sizes closely enough to limit padding, and keep the largest size within available
+    device memory and scheduler demand.
+  suggested_values:
+  - scenario: General serving without a measured batch-size distribution
+    value: <unset>
+    reason: vLLM generates and normalizes capture sizes from the effective scheduler and graph configuration; Ascend supplies
+      its platform default maximum only when neither a maximum nor an explicit list was provided.
+  - scenario: Decode workload concentrated around a few known batch sizes
+    value:
+    - 1
+    - 2
+    - 4
+    - 8
+    - 16
+    - 32
+    - 64
+    reason: A compact ascending list gives graph coverage at common sizes while avoiding capture levels that the workload
+      does not reach; benchmark it against observed padding and memory headroom.
+  - scenario: Speculative decoding
+    value: Sizes compatible with the uniform decode-query length (num_speculative_tokens + 1)
+    reason: Ascend's static-kernel path only retains sizes from that minimum through max_num_seqs times that length, and vLLM
+      normalizes graph sizes for the speculative multiple.
+  caveats:
+  - Increasing the list or its largest value can increase graph allocation and capture work; the best tradeoff is workload-
+    and device-dependent.
+  - A size above the valid max-token bound can be removed during configuration normalization, so verify the effective list
+    in logs or runtime configuration.
+  - For Ascend sequence parallelism, the platform requires retained capture sizes compatible with tensor-parallel-size filtering.
+  quick_guide: Start unset. After measuring decode concurrency, provide a small ascending list that includes the frequent
+    batch sizes, then confirm the resolved list and benchmark padding, graph memory, latency, and throughput.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_output
+  - high_concurrency

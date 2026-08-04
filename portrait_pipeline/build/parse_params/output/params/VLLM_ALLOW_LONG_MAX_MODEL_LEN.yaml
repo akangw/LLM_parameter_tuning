@@ -1,0 +1,126 @@
+name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+type: env
+category: model
+scope: both
+source_file:
+- vllm/envs.py:914
+- vllm/envs.py:93
+- vllm/config/model.py:2187
+value_type: bool
+default: 'false'
+valid_choices:
+- 'true'
+- 'false'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'This environment variable controls whether vLLM allows the user to set --max-model-len to a value exceeding
+  the maximum sequence length derived from the model''s config.json (e.g., max_position_embeddings). When set to true, the
+  ValueError that normally blocks such overrides is downgraded to a warning, and the user-specified max_model_len is accepted.
+  On Ascend NPU, this directly affects KV cache allocation size (larger max_model_len consumes more HBM), the number of tokens
+  that can be batched, and whether long-context inference scenarios (e.g., 128K+ tokens) are even possible. The vllm-ascend
+  test suite (conftest.py, long_sequence tests) explicitly sets VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 to enable max_model_len values
+  far beyond the model''s default, which is essential for testing chunked prefill with context parallelism on Ascend hardware.
+  Without this flag, attempting to serve long sequences on Ascend would fail at startup with a ValueError.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:2194
+  context: 'During model config initialization, checks if user-specified max_model_len exceeds derived_max_model_len. If VLLM_ALLOW_LONG_MAX_MODEL_LEN
+    is true, logs a warning instead of raising ValueError, allowing the override.
+
+    '
+- file: vllm-ascend/tests/e2e/conftest.py:496
+  context: 'RemotePDServer test fixture unconditionally sets VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 for all Ascend E2E tests.
+
+    '
+- file: vllm-ascend/tests/e2e/conftest.py:635
+  context: 'RemoteEPDServer test fixture unconditionally sets VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 for all Ascend expert-parallel
+    E2E tests.
+
+    '
+- file: vllm-ascend/tests/e2e/pull_request/four_card/long_sequence/test_chunked_prefill_cp.py:68
+  context: 'Long sequence chunked prefill test with context parallelism sets VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 alongside HCCL_BUFFSIZE
+    and VLLM_ASCEND_ENABLE_FLASHCOMM1.
+
+    '
+- file: vllm-ascend/tests/e2e/pull_request/four_card/test_profiling_chunk_performance.py:40
+  context: 'Profiling chunk performance test sets VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 to enable max_model_len=70000 for Qwen3-30B-A3B.
+
+    '
+related_parameters:
+- name: --max-model-len
+  relation: 'VLLM_ALLOW_LONG_MAX_MODEL_LEN gates whether --max-model-len can exceed the model''s derived maximum. The actual
+    sequence length limit is controlled by --max-model-len.
+
+    '
+- name: --max-num-batched-tokens
+  relation: 'When max_model_len is increased via this env var, --max-num-batched-tokens should typically be adjusted proportionally
+    to maintain efficient batching.
+
+    '
+- name: --gpu-memory-utilization
+  relation: 'Larger max_model_len increases KV cache memory demand. On Ascend NPU, --gpu-memory-utilization may need to be
+    lowered to avoid OOM when using very long max_model_len values.
+
+    '
+constraints:
+- VLLM_ALLOW_LONG_MAX_MODEL_LEN must be used with extreme caution; for RoPE-based models, positions exceeding derived_max_model_len
+  can produce NaN outputs.
+- For models using absolute position encoding, positions exceeding derived_max_model_len will cause out-of-bounds errors.
+- The env var only bypasses the startup check; it does not guarantee the model can actually handle the extended sequence length
+  correctly.
+tuning_advice:
+  summary: 'Set VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 only when you need to serve sequences longer than the model''s default max_position_embeddings,
+    and ensure the model supports the extended length (e.g., via RoPE scaling like YaRN).
+
+    '
+  suggested_values:
+  - scenario: 'Standard inference within model''s default max_position_embeddings
+
+      '
+    value: '0'
+    reason: 'No need to bypass the safety check; the default behavior prevents accidental misconfiguration that could produce
+      NaN outputs or crashes.
+
+      '
+  - scenario: 'Long-context inference on Ascend NPU with RoPE-scaled models (e.g., Qwen3 with YaRN, models with extended context
+      via rope_theta/factor)
+
+      '
+    value: '1'
+    reason: 'Required to set --max-model-len beyond the config.json limit. The vllm-ascend test suite uses this for all long-sequence
+      tests (128K+ tokens) with chunked prefill and context parallelism on Ascend.
+
+      '
+  - scenario: 'Testing or benchmarking long sequences on Ascend NPU
+
+      '
+    value: '1'
+    reason: 'The vllm-ascend E2E test infrastructure unconditionally sets this to enable flexible max_model_len configuration
+      during testing.
+
+      '
+  caveats:
+  - 'On Ascend NPU, setting an excessively large max_model_len without corresponding RoPE scaling parameters (rope_theta,
+    rope_type, factor) will produce NaN outputs for positions beyond the original training length.
+
+    '
+  - 'Increasing max_model_len significantly increases KV cache memory consumption. On Ascend NPU with limited HBM, you may
+    need to reduce --gpu-memory-utilization or increase --tensor-parallel-size to distribute the KV cache across multiple
+    NPUs.
+
+    '
+  - 'The vllm-ascend plugin does not override or modify this env var''s behavior; it inherits the upstream vLLM logic directly.
+    The flag is used extensively in vllm-ascend tests but has no Ascend-specific code path.
+
+    '
+  quick_guide: 'Set VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 only for long-context models with proper RoPE scaling; otherwise leave
+    it disabled (default) to catch misconfiguration early.
+
+    '
+analysis_date: '2026-07-06'

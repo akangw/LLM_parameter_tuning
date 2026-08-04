@@ -1,0 +1,120 @@
+name: --max-num-batched-tokens
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1320
+- vllm/config/scheduler.py:49
+- vllm_ascend/ascend_config.py:57
+- vllm_ascend/ascend_config.py:121
+- vllm_ascend/worker/model_runner_v1.py:261
+- vllm_ascend/worker/model_runner_v1.py:293
+- vllm_ascend/worker/block_table.py:18
+- vllm_ascend/worker/block_table.py:92
+- vllm_ascend/worker/npu_input_batch.py:38
+- vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:56
+- vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:92
+value_type: int
+default: '2048'
+valid_choices: integer >= 1
+cli_example: --max-num-batched-tokens 4096
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "This parameter controls the maximum number of tokens (prefill + decode) that the scheduler can batch into\
+  \ a single model forward pass. It directly governs the compute intensity of each iteration and the peak activation memory\
+  \ footprint.\nOn Ascend NPU, vllm-ascend applies several critical overrides and constraints beyond upstream vLLM:\n1. **v1\
+  \ worker padding (vllm_ascend/worker/model_runner_v1.py:261-293):** In the v1 worker,\n   max_num_batched_tokens is temporarily\
+  \ increased by `pcp_size * 2 * max_num_seqs` during\n   parent class initialization to allocate larger internal buffers\
+  \ for context-parallel padding,\n   then restored afterward. This means the actual scheduling limit is unchanged, but internal\n\
+  \   buffer allocation accounts for PCP overhead.\n\n2. **FLASHCOMM1 divisibility constraint (vllm_ascend/ascend_config.py:121-130):**\
+  \ When\n   FLASHCOMM1 is enabled and prefill_context_parallel_size > 1, max_num_batched_tokens is\n   silently rounded up\
+  \ to be divisible by `tp_size * pcp_size`. Non-divisible values are\n   adjusted with a warning. This is required for correct\
+  \ communication pattern alignment.\n\n3. **Profiling chunk interaction (vllm_ascend/ascend_config.py:57-67):** When\n  \
+  \ profiling_chunk_config is enabled, if max_num_batched_tokens is smaller than the configured\n   min_chunk, min_chunk is\
+  \ clamped down to max_num_batched_tokens to avoid silent ignoring.\n\n4. **KV cache coordinator (vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:56-68):**\n\
+  \   max_num_batched_tokens is passed to the KV cache coordinator and used as a recycling-aware\n   admission cap. When unset\
+  \ (None), it falls back to max_model_len.\n\n5. **Block table allocation (vllm_ascend/worker/block_table.py:92):** The slot_mapping\
+  \ buffer\n   size is `max_num_batched_tokens + 2 * pcp_world_size * max_num_reqs`, directly coupling\n   this parameter\
+  \ to device memory allocation.\n\n6. **GPU memory profiling (documented in docs):** During warm-up profiling, vLLM records\
+  \ peak\n   GPU memory usage with an input size of max_num_batched_tokens. The available KV cache is\n   computed as `gpu_memory_utilization\
+  \ * HBM - peak_memory`. Larger values increase peak\n   activation memory, reducing KV cache capacity and potentially causing\
+  \ OOM.\n\nLarger values reduce scheduling overhead and improve throughput by batching more tokens per iteration, but increase\
+  \ activation memory pressure and may cause OOM. Smaller values reduce memory usage but increase the number of iterations\
+  \ needed for long prefill sequences (due to chunked prefill splitting).\n"
+usage_locations:
+- file: vllm/config/scheduler.py:49
+  context: Field definition with default 2048, constraint ge=1
+- file: vllm/config/scheduler.py:86
+  context: Chunked prefill splits prompts based on remaining max_num_batched_tokens
+- file: vllm/config/compilation.py:559
+  context: Inductor compile ranges use max_num_batched_tokens as upper bound
+- file: vllm_ascend/worker/model_runner_v1.py:261
+  context: v1 worker temporarily pads max_num_batched_tokens for PCP buffer allocation
+- file: vllm_ascend/worker/model_runner_v1.py:293
+  context: v1 worker restores max_num_batched_tokens after parent init, sets self.max_num_tokens
+- file: vllm_ascend/ascend_config.py:121
+  context: 'FLASHCOMM1: rounds up to be divisible by tp_size * pcp_size'
+- file: vllm_ascend/ascend_config.py:57
+  context: 'Profiling chunk: clamps min_chunk if max_num_batched_tokens is smaller'
+- file: vllm_ascend/worker/block_table.py:92
+  context: slot_mapping buffer sized by max_num_batched_tokens + PCP padding
+- file: vllm_ascend/worker/npu_input_batch.py:38
+  context: NPUInputBatch stores max_num_batched_tokens for batch dimensioning
+- file: vllm_ascend/patch/platform/patch_kv_cache_coordinator.py:56
+  context: KV cache coordinator uses max_num_batched_tokens as admission cap
+related_parameters:
+- name: --max-num-seqs
+  relation: Together define the scheduling budget per iteration; max_num_batched_tokens limits tokens, max_num_seqs limits
+    request count
+- name: --enable-chunked-prefill
+  relation: When enabled, prompts longer than max_num_batched_tokens are split into chunks of this size
+- name: --gpu-memory-utilization
+  relation: KV cache size = gpu_memory_utilization * HBM - peak_memory; peak_memory is profiled using max_num_batched_tokens
+- name: --max-model-len
+  relation: Used as fallback for max_num_batched_tokens in KV cache coordinator when unset
+- name: --tensor-parallel-size / --prefill-context-parallel-size
+  relation: When FLASHCOMM1 is enabled, max_num_batched_tokens must be divisible by tp_size * pcp_size
+- name: VLLM_ASCEND_ENABLE_FLASHCOMM1
+  relation: When enabled with PCP, triggers the divisibility constraint on max_num_batched_tokens
+constraints:
+- max_num_batched_tokens must be >= 1
+- When FLASHCOMM1 is enabled and prefill_context_parallel_size > 1, max_num_batched_tokens must be divisible by tp_size *
+  pcp_size (vllm-ascend auto-adjusts with a warning)
+- When profiling_chunk_config is enabled, max_num_batched_tokens acts as an upper bound for min_chunk (vllm-ascend auto-clamps)
+tuning_advice:
+  summary: Set max_num_batched_tokens as large as memory allows to maximize throughput; reduce if encountering OOM or when
+    using FLASHCOMM1 with context parallelism.
+  suggested_values:
+  - scenario: General throughput optimization on Ascend NPU with sufficient HBM
+    value: 8192 or 16384
+    reason: Larger values batch more tokens per iteration, reducing scheduling overhead and improving throughput. The default
+      2048 is conservative; Ascend NPUs with 64GB HBM can typically support 8192-16384 for most models.
+  - scenario: Long-context inference (e.g., 128K) with limited HBM
+    value: '4096'
+    reason: Long prompts consume more activation memory per token. A moderate value balances chunked prefill efficiency with
+      memory safety, avoiding OOM during warm-up profiling.
+  - scenario: FLASHCOMM1 enabled with tp_size=8, pcp_size=2
+    value: '8192'
+    reason: Must be divisible by 16 (tp_size * pcp_size). 8192 is a common choice that satisfies the constraint while providing
+      good throughput. The value will be auto-adjusted if not divisible.
+  - scenario: High-concurrency serving with many concurrent requests
+    value: 2048 to 4096
+    reason: When max_num_seqs is high, a smaller max_num_batched_tokens prevents excessive activation memory per iteration
+      while still allowing many requests to make progress via chunked prefill.
+  caveats:
+  - Larger values increase peak activation memory during warm-up profiling, which reduces available KV cache (KV cache = gpu_memory_utilization
+    * HBM - peak_memory). This can cause OOM during inference even if warm-up succeeds.
+  - On Ascend NPU with FLASHCOMM1 and context parallelism, the value is silently rounded up to be divisible by tp_size * pcp_size.
+    The adjusted value may be larger than intended, increasing memory pressure.
+  - In v1 worker, internal buffers are allocated with extra PCP padding (pcp_size * 2 * max_num_seqs additional tokens), so
+    actual device memory usage is higher than max_num_batched_tokens alone suggests.
+  - Setting this too low with chunked prefill causes long prompts to be split into many small chunks, increasing scheduling
+    overhead and latency.
+  - The default value (2048) is a testing convenience and is suboptimal for production deployments on Ascend NPU.
+  quick_guide: Start with 4096-8192 for most Ascend deployments; increase if HBM permits, decrease if OOM occurs; ensure divisibility
+    by tp_size * pcp_size when using FLASHCOMM1.
+analysis_date: '2026-07-06'

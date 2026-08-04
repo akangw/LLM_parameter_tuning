@@ -1,0 +1,103 @@
+name: speculative.max_model_len
+type: nested
+category: speculation
+scope: vllm
+source_file:
+- vllm/config/speculative.py:805
+value_type: int | null
+default: null
+valid_choices: positive integer or null
+cli_example: '--speculative-config ''{"method": "eagle", "model": "path/to/draft", "max_model_len": 4096}'''
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'This parameter overrides the draft model''s effective maximum sequence length during speculative decoding.
+  In `_maybe_override_draft_max_model_len` (vllm/config/speculative.py:805), if `speculative.max_model_len` is set, it replaces
+  the draft model''s own `max_model_len` as the upper bound for generated sequences. A smaller value reduces the KV cache
+  memory allocated for the draft model and can prevent OOM on memory-constrained NPUs. A larger value (up to the draft model''s
+  native limit) allows longer speculative sequences, potentially improving throughput by increasing the chance of successful
+  speculations. On Ascend NPUs, where KV cache memory is limited by on-chip HBM, setting this parameter appropriately is critical
+  to avoid OOM while maximizing speculation benefits.
+
+  '
+usage_locations:
+- file: vllm/config/speculative.py:805
+  context: '`_maybe_override_draft_max_model_len` uses this value to determine the draft model''s max sequence length, overriding
+    the draft model''s own `max_model_len` if this is set and smaller.
+
+    '
+- file: vllm/v1/spec_decode/suffix_decoding.py:83
+  context: 'In suffix decoding, `self.max_model_len` (which may be derived from this parameter) is used to cap the number
+    of speculative tokens via `min(self.num_speculative_tokens, self.max_model_len - num_tokens - 1)`.
+
+    '
+related_parameters:
+- name: draft_model_config.max_model_len
+  relation: 'This parameter overrides the draft model''s own max_model_len when set. If not set, the draft model''s native
+    max_model_len is used.
+
+    '
+- name: target_model_config.max_model_len
+  relation: 'The effective draft max_model_len is also capped by the target model''s max_model_len to prevent sequences from
+    exceeding target capacity.
+
+    '
+- name: num_speculative_tokens
+  relation: 'The number of speculative tokens proposed per step is bounded by the effective max_model_len minus the current
+    sequence length.
+
+    '
+constraints:
+- speculative.max_model_len must not exceed the draft model's native max_model_len.
+- speculative.max_model_len must be a positive integer if set.
+tuning_advice:
+  summary: 'Set `speculative.max_model_len` to balance draft model KV cache memory usage against speculative decoding throughput
+    on Ascend NPUs.
+
+    '
+  suggested_values:
+  - scenario: 'Memory-constrained NPU (e.g., Atlas 300I DUO 310P) with a draft model that has a large native max_model_len.
+
+      '
+    value: 16384
+    reason: 'Limits the draft model''s KV cache allocation to prevent OOM. The 310P attention path allocates a full causal
+      mask of shape `[max_model_len, max_model_len]` in float16, which can exceed NPU memory at large context lengths.
+
+      '
+  - scenario: 'High-throughput serving on NPUs with ample HBM (e.g., Atlas 800T A2) where the draft model''s native max_model_len
+      is very large.
+
+      '
+    value: 32768
+    reason: 'Allows longer speculative sequences to improve speculation success rate and throughput, while staying within
+      typical NPU memory budgets.
+
+      '
+  - scenario: 'Testing or debugging speculative decoding where you want to force sequences to skip speculation after a certain
+      length.
+
+      '
+    value: <target_model_max_model_len>
+    reason: 'Setting this to the target model''s max_model_len ensures speculation is never skipped due to this parameter,
+      which is useful for isolating other speculative decoding behaviors.
+
+      '
+  caveats:
+  - 'On Ascend 310P, the attention mask allocation is `O(max_model_len^2)`, so setting this too high can cause OOM even if
+    the KV cache itself fits.
+
+    '
+  - 'This parameter only affects the draft model''s effective max length; the target model''s max_model_len is controlled
+    separately.
+
+    '
+  - 'If not set, the draft model''s native max_model_len is used, which may be too large for NPU memory and cause OOM.
+
+    '
+  quick_guide: 'Set `speculative.max_model_len` to the maximum sequence length you expect the draft model to handle, typically
+    16384–32768 for Ascend NPUs, to prevent OOM while maintaining speculation throughput.
+
+    '
+analysis_date: '2026-07-06'

@@ -1,0 +1,76 @@
+name: VLLM_MSGPACK_ZERO_COPY_THRESHOLD
+type: env
+category: other
+scope: vllm
+source_file:
+- vllm/envs.py:186
+- vllm/envs.py:1351
+- vllm/v1/serial_utils.py:155
+- vllm/v1/serial_utils.py:243
+- vllm/v1/serial_utils.py:262
+value_type: int
+default: 256
+valid_choices: Any integer accepted by Python int(); use a nonnegative byte threshold for meaningful size-based behavior.
+cli_example: VLLM_MSGPACK_ZERO_COPY_THRESHOLD=256 vllm serve <model>
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: This per-tensor/per-array byte threshold selects MessagePack framing behavior. CPU tensors and non-scalar NumPy
+  arrays smaller than the threshold are encoded inline in the main MessagePack buffer; values at or above it are appended
+  as auxiliary buffers, while non-CPU tensors do not take the small-inline branch. Auxiliary tensor buffers can be reconstructed
+  without the clone used for inline tensor data when the decoder shares memory, reducing receiver-side copy cost for sufficiently
+  large payloads. Lower values can therefore reduce copy latency and transient copy memory for smaller payloads, but create
+  more auxiliary message parts; higher values reduce multipart framing overhead but copy more tensor data during decode. Zero-copy
+  views can retain their received backing buffer, so the memory trade-off also depends on object lifetime. The pinned vllm-ascend
+  tree has no definition, override, or direct consumer for this variable.
+usage_locations:
+- file: vllm/envs.py:1351
+  context: Parses the environment variable as an integer with a default threshold of 256 bytes.
+- file: vllm/v1/serial_utils.py:155
+  context: Uses the environment value as MsgpackEncoder's default per-object size threshold.
+- file: vllm/v1/serial_utils.py:243
+  context: Inlines non-scalar NumPy arrays smaller than the threshold and places larger arrays in auxiliary buffers.
+- file: vllm/v1/serial_utils.py:262
+  context: Inlines CPU tensors smaller than the threshold; other tensors use out-of-band handling or auxiliary buffers.
+- file: vllm/v1/serial_utils.py:408
+  context: Decodes auxiliary tensor buffers through shared memory, while inline tensor data is cloned into PyTorch-owned memory.
+related_parameters:
+- name: VLLM_ALLOW_INSECURE_SERIALIZATION
+  relation: Controls pickle fallback in the same MessagePack encoder but does not alter the size threshold.
+constraints:
+- The environment value must be accepted by Python int(), or environment loading raises ValueError.
+- 'The comparison is strict: payloads with nbytes equal to the threshold use the auxiliary-buffer path.'
+- Scalars and empty-shape NumPy arrays remain inline regardless of the threshold.
+- Only CPU tensors can use the small-inline branch; non-CPU tensors use an out-of-band consumer when available or an auxiliary
+  buffer.
+- The pinned source imposes no range validation, but negative thresholds effectively route every non-scalar array and every
+  tensor away from the small-inline branch.
+tuning_advice:
+  summary: Keep the 256-byte default unless profiling MessagePack IPC shows either excessive small multipart messages or meaningful
+    receiver-side copy overhead; tune against end-to-end IPC latency, throughput, and retained host memory.
+  suggested_values:
+  - scenario: General deployment or no serialization-specific measurements
+    value: 256
+    reason: This is the source default and balances inline handling of tiny payloads against auxiliary-buffer decoding for
+      larger ones.
+  - scenario: Receiver-side copies dominate for many payloads near the default size
+    value: 0
+    reason: A zero threshold sends all non-scalar arrays and tensors through auxiliary or out-of-band handling, maximizing
+      eligibility for shared-buffer decoding at the cost of more message parts.
+  - scenario: Multipart-message overhead dominates for many small CPU payloads
+    value: A measured value above 256
+    reason: Raising the byte boundary inlines more small CPU tensors and arrays, reducing auxiliary parts but increasing tensor
+      decode copies.
+  caveats:
+  - The best threshold depends on the payload-size distribution, transport behavior, decoder share_mem setting, and lifetime
+    of decoded views.
+  - Lowering the threshold can increase per-message part count and transport bookkeeping even when it avoids receiver-side
+    copies.
+  - Raising the threshold can increase receiver-side tensor copies and transient memory use.
+  - Shared-buffer decoded objects may keep an entire received message buffer alive longer than expected.
+  - The pinned vllm-ascend repository provides no Ascend-specific tuning guidance for this variable.
+  quick_guide: Start at 256; lower only for measured copy-bound IPC, or raise only for measured small-message framing overhead.
+analysis_date: '2026-07-29'

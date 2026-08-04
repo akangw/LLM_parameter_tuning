@@ -1,0 +1,94 @@
+name: additional_config.xlite_graph_config.full_mode
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:549
+- vllm_ascend/platform.py:427
+- vllm_ascend/xlite/xlite.py:207
+- vllm_ascend/xlite/xlite.py:656
+value_type: bool
+default: false
+valid_choices:
+- true
+- false
+cli_example: '''--additional-config ''''{"xlite_graph_config": {"enabled": true, "full_mode": true}}'''''''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: "When `full_mode` is true, Xlite graph mode covers both prefill and decode stages (instead of decode-only).\
+  \ This triggers three major runtime changes on Ascend NPU:\n1. **Disables all CUDA graph / ACLGraph compilation** — in `platform.py:427-431`,\n\
+  \   full_mode forces `enforce_eager=True`, sets `cudagraph_mode=CUDAGraphMode.NONE`,\n   and disables ACLGraph. The model\
+  \ runs entirely in eager execution, which\n   eliminates graph-capture overhead but loses the throughput benefits of\n \
+  \  graph replay.\n\n2. **Changes max_m sizing** — in `xlite.py:205-209`, full_mode sets\n   `xlite_config.max_m = max_num_batched_tokens`\
+  \ (total tokens per batch),\n   whereas decode-only mode uses `max_num_seqs` (number of sequences).\n   This directly affects\
+  \ Xlite runtime tensor pool allocation and the\n   maximum batch dimension the compiled graph can handle.\n\n3. **Incompatible\
+  \ with speculative decoding and pipeline parallelism** —\n   `ascend_config.py:551-558` raises RuntimeError if either is\
+  \ enabled\n   alongside xlite full_mode.\n\nThe net effect: \"full_mode trades graph-compilation throughput for\" comprehensive\
+  \ Xlite acceleration across both prefill and decode, with different memory sizing behavior.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:549
+  context: Parsed from additional_config dict, default False
+- file: vllm_ascend/platform.py:427-434
+  context: Controls whether to disable ACLGraph/CUDAGraph and force eager mode
+- file: vllm_ascend/xlite/xlite.py:207-209
+  context: Determines max_m sizing (max_num_batched_tokens vs max_num_seqs)
+- file: vllm_ascend/xlite/xlite.py:656
+  context: Stored as self.full_mode in XliteWrapper for dispatch logic
+related_parameters:
+- name: additional_config.xlite_graph_config.enabled
+  relation: Must be true for full_mode to take effect; full_mode is ignored if enabled is false
+- name: compilation_config.cudagraph_mode
+  relation: Forced to NONE when full_mode is true
+- name: model_config.enforce_eager
+  relation: Forced to true when full_mode is true
+- name: scheduler_config.max_num_batched_tokens
+  relation: Used as max_m when full_mode is true
+- name: scheduler_config.max_num_seqs
+  relation: Used as max_m when full_mode is false (decode-only)
+- name: cache_config.block_size
+  relation: Should be 128 for optimal xlite performance; warning issued otherwise
+constraints:
+- xlite_graph_config.enabled must be true for full_mode to have any effect
+- Speculative decoding must be disabled when xlite full_mode is enabled
+- Pipeline parallel size must be 1 when xlite full_mode is enabled
+- Only Llama, Qwen dense series models, and Qwen3-VL are supported
+tuning_advice:
+  summary: 'Enable full_mode when you need Xlite acceleration for both prefill and decode stages and can accept eager execution
+    (no CUDA graph). Use decode-only mode (full_mode=false) for higher throughput via graph replay.
+
+    '
+  suggested_values:
+  - scenario: High-throughput serving with large decode batches
+    value: false
+    reason: 'Decode-only mode retains FULL_DECODE_ONLY CUDA graph compilation, providing better throughput for decode-dominated
+      workloads.
+
+      '
+  - scenario: Latency-sensitive applications requiring prefill acceleration
+    value: true
+    reason: 'Full mode extends Xlite graph optimization to the prefill stage, reducing time-to-first-token at the cost of
+      disabling graph replay.
+
+      '
+  - scenario: Models not in the supported list (non-Llama/Qwen)
+    value: false
+    reason: 'Xlite graph mode only supports Llama, Qwen dense series, and Qwen3-VL; enabling it for other models may cause
+      errors.
+
+      '
+  caveats:
+  - full_mode=true disables all CUDA graph and ACLGraph compilation, forcing eager execution — this can reduce throughput
+    for decode-heavy workloads
+  - full_mode=true changes max_m to max_num_batched_tokens, which may increase Xlite tensor pool memory usage compared to
+    decode-only mode
+  - Cache block_size should be 128 for optimal xlite performance; other values trigger a warning
+  - Not compatible with speculative decoding or pipeline parallelism — enabling either will raise a RuntimeError
+  quick_guide: 'Use full_mode=true for prefill+decode Xlite acceleration on supported models when speculative decoding and
+    pipeline parallelism are disabled; use full_mode=false (default) for higher decode throughput with graph compilation.
+
+    '
+analysis_date: '2026-07-06'

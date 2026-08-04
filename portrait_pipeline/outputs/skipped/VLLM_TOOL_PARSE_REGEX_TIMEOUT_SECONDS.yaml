@@ -1,0 +1,6 @@
+name: VLLM_TOOL_PARSE_REGEX_TIMEOUT_SECONDS
+type: env
+performance_impact: none
+skip_reason: The pinned vLLM source only declares this as a one-second regex timeout for tool-parsing plugins, and neither
+  the pinned vLLM nor vLLM Ascend repository contains a runtime consumer. It therefore does not currently change model-serving
+  latency, throughput, or memory behavior in either pinned source tree.

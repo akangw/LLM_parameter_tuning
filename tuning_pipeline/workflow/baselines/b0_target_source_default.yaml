@@ -1,0 +1,124 @@
+# B0 is an isolated calibration specification.  It is deliberately outside
+# workflow/continuous so it cannot enter the A0/A1/A2/... Controller history.
+schema_version: 1
+baseline_id: b0-target-source-default
+status: frozen_spec_not_submitted
+
+purpose: >-
+  Measure the target-image source-default style deployment against the same
+  fixed L1 workload. This is the external reference for reporting the value of
+  the inherited deployment knowledge plus the later Agent tuning. It is not a
+  replacement for A0, which remains the Controller's accepted tuning anchor.
+
+target_identity:
+  image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  image_digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+
+isolation:
+  controller_session: separate_baseline_calibration_session
+  lease: separate_baseline_calibration_lease
+  output_root: separate_baseline_calibration_output_root
+  may_not_write_to: workflow/continuous/experiments
+  may_not_be_added_to: A0/A1/A2/A3_controller_history
+
+# These are deployment and measurement invariants, rather than parameters whose
+# performance effect B0 is intended to tune. max_model_len=64000 is retained so
+# B0, A0, and Best have the same advertised context-length contract.
+required_launch_contract:
+  model: /models/share/GLM-5.2-w8a8
+  quantization: ascend
+  trust_remote_code: true
+  served_model_name: glm-5
+  data_parallel_size: 2
+  data_parallel_size_local: 1
+  tensor_parallel_size: 16
+  data_parallel_address: platform_assigned_master_ip
+  data_parallel_rpc_port: 12980
+  max_model_len: 64000
+  seed: 1024
+  deployment_environment: >-
+    Reuse the pinned image's CANN/HCCL/NIC/runtime initialization needed to run
+    on this 2x16 NPU topology, but do not add performance-feature environment
+    overrides.
+
+# Do not pass any of these CLI flags or JSON fields. Let the exact target image
+# resolve its own defaults. "omitted" is essential: setting false/null is an
+# override and would no longer be source-default style.
+source_default_parameters:
+  omit_cli_flags:
+    - max_num_seqs
+    - max_num_batched_tokens
+    - gpu_memory_utilization
+    - enable_prefix_caching
+    - enable_chunked_prefill
+    - async_scheduling
+    - enable_expert_parallel
+    - decode_context_parallel_size
+    - long_prefill_token_threshold
+    - speculative_config
+    - enable_eplb
+    - eplb_config
+    - compilation_config
+    - additional_config
+  omit_environment_overrides:
+    - VLLM_ASCEND_ENABLE_FLASHCOMM1
+    - VLLM_ASCEND_ENABLE_MLAPO
+    - VLLM_ASCEND_ENABLE_FUSED_MC2
+    - VLLM_ASCEND_BALANCE_SCHEDULING
+
+# These values are documented source expectations, not values to inject. The
+# runner must capture effective_config.yaml and vllm_common_command.txt and use
+# those artifacts as the authoritative record because several defaults depend on
+# resolved model support, hardware memory, and usage context.
+expected_target_resolution:
+  gpu_memory_utilization: 0.92
+  enable_expert_parallel: false
+  enable_prefix_caching: true_or_model_resolved
+  enable_chunked_prefill: model_resolved
+  max_num_batched_tokens: hardware_and_openai_api_server_resolved
+  max_num_seqs: hardware_and_openai_api_server_resolved
+  speculative_decoding: disabled_without_speculative_config
+  additional_config:
+    enable_flashcomm1: false
+    enable_mlapo: true
+    enable_fused_mc2: 0
+  compilation: source_resolved
+
+benchmark_contract:
+  mode: aligned_l1
+  suite: 01_调优_结构化定长-v4.yaml
+  repetitions_per_configuration: 3
+  required_formal_cases_per_repetition: 12
+  warmups_per_repetition: 12
+  compare_with:
+    - A0_revalidation_same_contract_x3
+    - final_best_candidate_same_contract_x3
+  execution_order: interleave_B0_and_A0_to_reduce_time_drift
+  recommended_order:
+    - B0_rep1
+    - A0_rep1
+    - B0_rep2
+    - A0_rep2
+    - B0_rep3
+    - A0_rep3
+
+acceptance_and_reporting:
+  b0_is_a_reference_not_an_agent_acceptance_anchor: true
+  record:
+    - exact_launch_command
+    - effective_config
+    - image_and_source_identity
+    - benchmark_input_fingerprints
+    - all_L1_metrics
+    - startup_failure_if_any
+  report_axes:
+    - A0_vs_B0_inherited_deployment_knowledge_gain
+    - Best_vs_A0_agent_incremental_gain
+    - Best_vs_B0_end_to_end_project_gain
+  native_default_failure_policy: >-
+    If this exact B0 cannot start or cannot serve the fixed L1 contract, record
+    it as B0-native-not-deployable. Do not silently add an optimization under
+    the B0 label. Any minimal override must become a separately named
+    B0-deployable baseline with its own rationale and run.

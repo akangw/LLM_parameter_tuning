@@ -1,0 +1,120 @@
+name: StructuredOutputsConfig.backend
+type: nested
+category: other
+scope: both
+source_file:
+- vllm/config/structured_outputs.py:21
+- vllm/sampling_params.py:786
+- vllm/engine/arg_utils.py:1438
+- vllm_ascend/worker/model_runner_v1.py:2186
+- vllm_ascend/worker/v2/structured_outputs.py:35
+- vllm_ascend/patch/worker/patch_v2/patch_triton.py:32
+- docs/source/user_guide/feature_guide/structured_output.md:13
+value_type: str
+default: auto
+valid_choices:
+- auto
+- xgrammar
+- guidance
+- outlines
+- lm-format-enforcer
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: For requests that use structured outputs, this setting chooses the grammar backend that validates and compiles
+  a JSON schema, regex, choice set, grammar, or structural tag into token constraints. Backend compilation can add substantial
+  cold-request latency, while its cached grammar state and per-token mask construction affect memory, decode latency, and
+  throughput. The auto mode first tries xgrammar and falls back to guidance, or to outlines for a non-Tekken Mistral tokenizer
+  or a schema unsupported by guidance; an explicit backend disables these fallbacks. Requests without structured outputs return
+  before backend selection, so ordinary unconstrained generation is unaffected. On Ascend, the selected backend still produces
+  the grammar mask through upstream machinery. The V1 runner copies logits to CPU, applies the mask, and copies them back
+  to the NPU, which can dominate the backend difference; the V2 path instead replaces the upstream bitmask kernel with an
+  Ascend-specific Triton implementation whose sub-block tiling applies the mask on device.
+usage_locations:
+- file: vllm/config/structured_outputs.py:21
+  context: Declares the engine-wide default backend and its five accepted values; auto delegates the choice to request-content
+    and library support checks.
+- file: vllm/sampling_params.py:786
+  context: Reads the configured backend for every structured-output request, rejects request-level backend overrides, validates
+    explicit backends, and resolves auto to xgrammar with guidance or outlines fallback.
+- file: vllm/engine/arg_utils.py:1438
+  context: Exposes the containing structured outputs configuration through --structured-outputs-config and passes it into
+    VllmConfig.
+- file: vllm_ascend/worker/model_runner_v1.py:2186
+  context: Applies the resulting grammar bitmask on CPU for the Ascend V1 runner, including NPU-to-CPU and CPU-to-NPU logits
+    copies around every masked sampling step.
+- file: vllm_ascend/patch/worker/patch_v2/patch_triton.py:32
+  context: Replaces the upstream V2 structured-output mask kernel with the Ascend-specific implementation.
+- file: vllm_ascend/worker/v2/structured_outputs.py:35
+  context: Defines the NPU-compatible tiled kernel that writes negative infinity to logits disallowed by the backend-generated
+    grammar mask.
+related_parameters:
+- name: StructuredOutputsConfig.disable_any_whitespace
+  relation: Compact JSON whitespace is accepted only when backend is xgrammar or guidance.
+- name: StructuredOutputsConfig.disable_additional_properties
+  relation: This schema-normalization option is accepted only with the guidance backend.
+- name: StructuredOutputsConfig.enable_in_reasoning
+  relation: Determines whether the selected backend also constrains output while the model is in its reasoning phase.
+- name: StructuredOutputsParams
+  relation: The request's JSON schema, regex, choices, grammar, JSON-object flag, or structural tag determines whether a backend
+    is used and which auto fallback is compatible.
+constraints:
+- The value must be one of auto, xgrammar, guidance, outlines, or lm-format-enforcer.
+- Request-level backend selection is not supported; the request must use the backend configured when the engine was initialized.
+- A non-Tekken Mistral tokenizer cannot use guidance, and a Mistral tokenizer cannot use lm-format-enforcer; use a compatible
+  tokenizer mode or backend.
+- disable_any_whitespace requires xgrammar or guidance, while disable_additional_properties requires guidance.
+- 'Explicit backends have no fallback: unsupported request syntax or schema features raise validation errors instead of selecting
+  another backend.'
+tuning_advice:
+  summary: Keep auto unless workload-specific benchmarks and compatibility tests show that pinning a backend improves structured-output
+    latency or predictability.
+  suggested_values:
+  - scenario: General serving with varied schemas and constraint types
+    value: auto
+    reason: It prefers xgrammar and preserves compatibility by falling back to guidance or outlines when request contents
+      or tokenizer support require another implementation.
+  - scenario: Stable, validated schema workload requiring deterministic backend selection
+    value: xgrammar
+    reason: It avoids automatic backend changes and fallback attempts when every request has already been verified against
+      xgrammar; benchmark cold and warm latency before pinning it.
+  - scenario: Schema workload that fails xgrammar validation but is supported by guidance
+    value: guidance
+    reason: Pinning guidance makes the intended compatibility path explicit and is required when disable_additional_properties
+      is enabled.
+  caveats:
+  - Auto behavior is explicitly subject to change between releases as backend libraries gain or lose feature support.
+  - Compare first-use latency separately from warm steady state because grammar compilation can be expensive and compiled
+    state may be cached.
+  - Backend regex dialect and feature coverage differ; throughput is not a useful comparison if the candidate backend cannot
+    express the same constraint.
+  - On the Ascend V1 runner, CPU mask application and device copies can obscure backend-level gains; use V2 where supported
+    when measuring on-device mask performance.
+  quick_guide: Start with auto, replay representative schemas and concurrency, measure cold and cached structured-output latency
+    plus tokens per second, and pin a backend only after confirming identical constraint coverage and output validity on the
+    target tokenizer and Ascend runner version.
+analysis_date: '2026-07-31'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - high_concurrency

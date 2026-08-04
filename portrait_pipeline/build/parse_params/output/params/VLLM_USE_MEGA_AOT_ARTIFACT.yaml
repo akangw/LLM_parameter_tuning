@@ -1,0 +1,91 @@
+name: VLLM_USE_MEGA_AOT_ARTIFACT
+type: env
+category: compilation
+scope: vllm
+source_file:
+- vllm/envs.py:331
+- vllm/envs.py:654
+- vllm/envs.py:103
+value_type: bool
+default: <computed>
+valid_choices:
+- '0'
+- '1'
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled (set to "1"), VLLM_USE_MEGA_AOT_ARTIFACT changes how compiled model artifacts are loaded from
+  the disk cache. Instead of re-splitting graph modules and running aot_autograd on each subgraph during warm start, it reconstructs
+  the serializable function directly from standalone compile artifacts via `reconstruct_serializable_fn_from_mega_artifact`
+  (vllm/compilation/caching.py:319-333). This eliminates aot_autograd passes on subgraphs entirely — tests confirm 0 aot_autograd
+  invocations vs 30 without the flag (tests/compile/h100/test_startup.py:80-88). The result is significantly faster model
+  loading and warm-start time, which directly reduces end-to-end latency for cold/warm starts. It also affects the compilation
+  cache key by including inductor factors (vllm/compilation/caching.py:578-579) and disables `bundled_autograd_cache` in functorch
+  config (vllm/compilation/compiler_interface.py:165-166). Requires PyTorch >= 2.10.0 for the `aot` parameter in `standalone_compile`;
+  falls back to non-AOT mode with a warning on older versions (vllm/compilation/compiler_interface.py:305-311). On Ascend
+  NPU, this parameter is upstream-only — no vllm-ascend override was found in the provided context, so its behavior depends
+  on whether the Ascend PyTorch build meets the version requirement and whether `torch._inductor.standalone_compile` is available.
+
+  '
+usage_locations:
+- file: vllm/envs.py:331
+  context: 'Defines the env var lookup with computed default: ''1'' if PyTorch >= 2.12.0.dev AND VLLM_USE_AOT_COMPILE is enabled,
+    else ''0'''
+- file: vllm/compilation/backends.py:97
+  context: 'Assertion: VLLM_USE_MEGA_AOT_ARTIFACT=1 requires VLLM_USE_STANDALONE_COMPILE=1'
+- file: vllm/compilation/backends.py:883
+  context: 'In InductorStandaloneAdaptor.collect_standalone_compile_artifacts: gates whether to collect and return standalone
+    compile artifacts'
+- file: vllm/compilation/caching.py:319
+  context: 'In deserialize_compile_artifacts: when enabled, reconstructs fn from mega artifact instead of standard deserialization'
+- file: vllm/compilation/caching.py:578
+  context: 'In aot_compile_hash_factors: when enabled, includes inductor factors in the cache key hash'
+- file: vllm/compilation/compiler_interface.py:165
+  context: 'In _get_vllm_functorch_config: when enabled, does NOT set bundled_autograd_cache=False (keeps default)'
+- file: vllm/compilation/compiler_interface.py:305
+  context: 'In standalone_compile call: checks PyTorch version support; falls back with error log if version < 2.10.0'
+related_parameters:
+- name: VLLM_USE_AOT_COMPILE
+  relation: VLLM_USE_MEGA_AOT_ARTIFACT defaults to '1' only when VLLM_USE_AOT_COMPILE is enabled; otherwise defaults to '0'
+- name: VLLM_USE_STANDALONE_COMPILE
+  relation: VLLM_USE_MEGA_AOT_ARTIFACT=1 requires VLLM_USE_STANDALONE_COMPILE=1 (enforced by assertion)
+- name: VLLM_FORCE_AOT_LOAD
+  relation: Related AOT compilation flag; VLLM_FORCE_AOT_LOAD forces loading from disk but does not use mega artifact reconstruction
+constraints:
+- VLLM_USE_MEGA_AOT_ARTIFACT=1 requires VLLM_USE_STANDALONE_COMPILE=1; violating this triggers an assertion error at startup
+- PyTorch version must be >= 2.10.0 for full AOT support; on older versions, the flag falls back to non-AOT mode with a warning
+  log
+- The torch._inductor.standalone_compile symbol must exist in the PyTorch build; otherwise InductorStandaloneAdaptor is not
+  used
+tuning_advice:
+  summary: 'Enable VLLM_USE_MEGA_AOT_ARTIFACT=1 on Ascend NPU to accelerate warm-start model loading by skipping aot_autograd
+    on subgraphs, provided PyTorch >= 2.10.0 and VLLM_USE_STANDALONE_COMPILE=1 are both satisfied.
+
+    '
+  suggested_values:
+  - scenario: Production deployment with frequent model restarts or multi-model serving where warm-start latency matters
+    value: '1'
+    reason: Eliminates aot_autograd passes on subgraphs during warm start, reducing model loading time significantly
+  - scenario: PyTorch version < 2.10.0 on Ascend NPU
+    value: '0'
+    reason: The 'aot' parameter in standalone_compile is not available; enabling the flag would trigger a fallback warning
+      and provide no benefit
+  - scenario: VLLM_USE_STANDALONE_COMPILE is disabled or torch._inductor.standalone_compile is unavailable
+    value: '0'
+    reason: The flag requires standalone compile infrastructure; without it, the assertion at vllm/compilation/backends.py:97
+      will fail
+  caveats:
+  - On Ascend NPU, verify that the installed PyTorch version includes torch._inductor.standalone_compile with 'aot' parameter
+    support (>= 2.10.0). Ascend PyTorch builds may lag behind upstream.
+  - Enabling this flag changes the compilation cache key (adds inductor factors), so previously cached artifacts without this
+    flag will be invalidated and recompiled on first use.
+  - The flag disables bundled_autograd_cache in functorch config, which may affect compilation behavior for certain model
+    architectures.
+  - No vllm-ascend specific override was found; the flag behaves as in upstream vLLM. Test on your specific Ascend hardware/software
+    stack before production deployment.
+  quick_guide: Set VLLM_USE_MEGA_AOT_ARTIFACT=1 with VLLM_USE_STANDALONE_COMPILE=1 on PyTorch >= 2.10.0 to accelerate warm
+    starts; leave disabled (default) otherwise.
+analysis_date: '2026-07-06'

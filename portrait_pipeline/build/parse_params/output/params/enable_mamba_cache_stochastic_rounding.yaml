@@ -1,0 +1,68 @@
+name: --enable-mamba-cache-stochastic-rounding
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:888
+value_type: bool
+default: 'false'
+valid_choices: true, false
+cli_example: --enable-mamba-cache-stochastic-rounding
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- throughput
+impact_detail: 'This parameter controls whether stochastic rounding is applied when writing SSM (State Space Model) state
+  to the fp16 Mamba cache. When enabled, random bits are used to unbias the rounding error during the fp32-to-fp16 conversion
+  of SSM states. This can improve numerical stability for long sequences in Mamba/Mamba2 models, potentially preserving output
+  quality at the cost of a small computational overhead for generating random bits. The parameter is defined in vllm upstream
+  (MambaConfig.enable_stochastic_rounding) and is only relevant when using Mamba-family models (e.g., Mamba, Mamba2, Jamba).
+  No vllm-ascend override was found — the parameter passes through to the Mamba backend unchanged. On Ascend NPU, the actual
+  performance impact depends on whether the Mamba backend used (e.g., Triton via torch_npu, or a CANN-optimized kernel) implements
+  stochastic rounding efficiently. The overhead is typically negligible compared to the SSM computation itself, but enabling
+  it adds a small per-token cost for random number generation and biased rounding logic.
+
+  '
+usage_locations:
+- file: vllm/engine/arg_utils.py:664
+  context: Declared as EngineArgs field, defaulting to MambaConfig.enable_stochastic_rounding (false)
+- file: vllm/engine/arg_utils.py:888
+  context: CLI argument registration under MambaConfig group
+- file: vllm/engine/arg_utils.py:2061
+  context: Copied to mamba_config.enable_stochastic_rounding during config creation
+related_parameters:
+- name: --mamba-cache-philox-rounds
+  relation: Controls the number of Philox RNG rounds used when stochastic rounding is enabled
+- name: --mamba-backend
+  relation: The Mamba backend must support stochastic rounding for this flag to have any effect
+- name: --mamba-cache-dtype
+  relation: Stochastic rounding is only meaningful when the cache dtype is lower precision than the SSM computation dtype
+    (e.g., fp16 cache with fp32 compute)
+- name: --mamba-ssm-cache-dtype
+  relation: Same relationship as mamba-cache-dtype — applies to the SSM-specific cache
+constraints:
+- Only has effect when using Mamba-family models (Mamba, Mamba2, Jamba, etc.)
+- Requires a Mamba backend that implements stochastic rounding; silently ignored otherwise
+tuning_advice:
+  summary: 'Enable only for long-sequence Mamba inference where numerical drift in fp16 SSM state accumulation is a concern.
+    For most use cases on Ascend NPU, the default (disabled) is sufficient.
+
+    '
+  suggested_values:
+  - scenario: Long-sequence Mamba inference (>32K tokens) where output quality degradation is observed
+    value: 'true'
+    reason: Stochastic rounding reduces accumulated rounding bias in fp16 SSM state over many timesteps, improving numerical
+      stability for very long sequences.
+  - scenario: Standard Mamba inference with sequences under 32K tokens
+    value: 'false'
+    reason: The numerical benefit is negligible for shorter sequences, and the default avoids any overhead from random number
+      generation.
+  caveats:
+  - The actual performance overhead on Ascend NPU depends on whether the Mamba backend efficiently implements Philox random
+    number generation on the NPU.
+  - This flag only affects Mamba-family models; it has no effect on Transformer-based models.
+  - Stochastic rounding is most beneficial when the SSM cache dtype is fp16 (or lower precision) while SSM computation is
+    done in fp32.
+  quick_guide: Enable for Mamba models with sequences >32K tokens if output quality degrades; leave disabled otherwise.
+analysis_date: '2026-07-06'

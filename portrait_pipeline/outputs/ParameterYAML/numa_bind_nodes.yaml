@@ -1,0 +1,90 @@
+name: --numa-bind-nodes
+type: cli
+category: hardware
+scope: vllm
+source_file:
+- vllm/config/parallel.py:269
+- vllm/config/parallel.py:374
+- vllm/engine/arg_utils.py:937
+- docs/configuration/optimization.md:145
+- vllm_ascend/platform.py:1105
+- docs/source/developer_guide/Design_Documents/cpu_binding.md:24
+value_type: list[int]
+default: null
+valid_choices: A non-empty list containing one non-negative, valid numactl NUMA-node index per visible GPU, in visible-GPU
+  index order.
+cli_example: vllm serve <model> --numa-bind --numa-bind-nodes 0 0 1 1
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: In upstream vLLM, this option supplies the NUMA node for each visible GPU worker. With --numa-bind enabled,
+  the selected node is passed to numactl as both --cpunodebind and --membind, or as --membind when --numa-bind-cpus supplies
+  an explicit CPU set. A topology-correct mapping can reduce remote-NUMA memory traffic and CPU migration, improving latency
+  stability and potentially throughput on multi-socket GPU hosts; an incorrect mapping can increase remote access and regress
+  performance. It does not change model tensors or device-memory capacity. On the pinned vLLM-Ascend backend, platform configuration
+  explicitly logs that --numa-bind-nodes is ignored and resets it to null because Ascend computes CPU pools from NPU topology
+  or global logical NPU IDs, so this exact option has no runtime tuning effect on Ascend.
+usage_locations:
+- file: vllm/config/parallel.py:374
+  context: Validates that an explicitly supplied node list is non-empty and contains only non-negative integers; ParallelConfig
+    also requires --numa-bind.
+- file: docs/configuration/optimization.md:145
+  context: Documents per-worker numactl CPU and memory placement, visible-GPU ordering, explicit node mapping, and operational
+    requirements.
+- file: vllm_ascend/platform.py:1105
+  context: Ascend logs that the option is ignored and clears numa_bind_nodes because its native allocator chooses CPU affinity.
+- file: docs/source/developer_guide/Design_Documents/cpu_binding.md:24
+  context: Documents that Ascend ignores upstream explicit NUMA-node lists and computes CPU pools from NPU topology or global
+    logical NPU IDs.
+related_parameters:
+- name: --numa-bind
+  relation: Must be enabled; otherwise providing --numa-bind-nodes fails ParallelConfig validation.
+- name: --numa-bind-cpus
+  relation: Optionally replaces node-wide CPU binding with an explicit per-GPU physical CPU list, while this parameter continues
+    to select the memory-binding node.
+- name: --tensor-parallel-size
+  relation: Helps determine the GPU worker mapping, so the node list must cover every visible GPU worker used by the deployment.
+- name: --additional-config
+  relation: On Ascend, enable_cpu_binding controls the native topology-aware CPU binding mechanism that supersedes this option.
+- name: VLLM_WORKER_MULTIPROC_METHOD
+  relation: Upstream NUMA subprocess binding is effective only with the spawn multiprocessing method; CLI use selects spawn
+    automatically.
+constraints:
+- --numa-bind must be enabled whenever --numa-bind-nodes is provided.
+- The list must not be empty, every entry must be a non-negative integer, and each value must be a valid host numactl NUMA-node
+  index.
+- The list must contain an entry for every physical GPU index selected by the worker mapping; an undersized list causes worker
+  launch to fail.
+- numactl must be installed and on PATH, and the host or container must permit NUMA memory-policy operations.
+- The pinned vLLM-Ascend backend ignores and clears this option, so explicit NUMA nodes cannot override its native CPU-pool
+  allocation.
+tuning_advice:
+  summary: Leave this unset when automatic upstream GPU-to-NUMA detection is reliable; otherwise provide a topology-verified
+    node for every visible GPU. Do not use it to tune Ascend, where it is ignored.
+  suggested_values:
+  - scenario: Pinned vLLM-Ascend deployment
+    value: unset
+    reason: Ascend clears the list and derives CPU pools through its native topology-aware allocator.
+  - scenario: Upstream GPU host with reliable automatic topology detection
+    value: unset
+    reason: With --numa-bind enabled, omitting the list lets vLLM detect the GPU-to-NUMA mapping and avoids hard-coding host-specific
+      node indices.
+  - scenario: Upstream four-GPU, two-socket host where GPUs 0-1 attach to node 0 and GPUs 2-3 attach to node 1
+    value:
+    - 0
+    - 0
+    - 1
+    - 1
+    reason: One topology-local node per visible GPU keeps each worker's CPU execution and memory allocation near its GPU.
+  caveats:
+  - NUMA node numbering and GPU attachment are host-specific and may differ inside containers or after changing device visibility.
+  - A wrong mapping can increase cross-socket traffic and degrade latency or throughput compared with automatic detection.
+  - The option affects GPU execution subprocesses, not frontend API server processes, the data-parallel coordinator, or CPU-backend
+    thread affinity.
+  - When using the Python API rather than the CLI, set VLLM_WORKER_MULTIPROC_METHOD=spawn or the wrapper warns that binding
+    is ineffective.
+  quick_guide: Inspect GPU-to-NUMA topology on the target upstream host, enable --numa-bind, list one node per visible GPU
+    in index order, and benchmark against auto-detection; on Ascend, leave this unset.
+analysis_date: '2026-07-27'

@@ -1,0 +1,95 @@
+name: SpeculativeConfig.draft_load_config.load_format
+type: nested
+category: model
+scope: both
+source_file:
+- vllm/config/load.py:29
+- vllm/config/speculative.py:186
+- docs/features/speculative_decoding/README.md:138
+- vllm_ascend/spec_decode/llm_base_proposer.py:218
+- vllm_ascend/model_loader/netloader/netloader.py:39
+- vllm_ascend/model_loader/rfork/rfork_loader.py:38
+value_type: str
+default: auto
+valid_choices: Built-ins documented by the pinned vLLM LoadConfig are auto, pt, safetensors, instanttensor, npcache, dummy,
+  tensorizer, runai_streamer, runai_streamer_sharded, bitsandbytes, sharded_state, gguf, and mistral. Loader names registered
+  by plugins are also accepted; pinned vllm-ascend registers netloader and rfork.
+cli_example: null
+deprecated: false
+performance_impact: low
+performance_scope:
+- latency
+- memory
+impact_detail: 'This nested field selects how the speculative draft model''s weights are deserialized during engine initialization.
+  The default auto path tries safetensors and falls back to PyTorch bin weights. Different loaders can change cold-start I/O
+  and peak host-memory behavior: for example, npcache can reuse a NumPy cache, sharded_state loads prepared per-rank shards,
+  and streaming or plugin loaders use their own transfer paths. It does not change the speculative decoding algorithm, computation
+  graph, or steady-state token throughput. In the pinned Ascend implementation, the proposer passes the complete draft_load_config
+  to get_model; therefore the same selection governs draft loading on NPU, including the Ascend-specific netloader and rfork
+  plugins. The impact is classified low because this is an internal, initialization-only field and normally inherits the already-resolved
+  target load configuration rather than being tuned independently.'
+usage_locations:
+- file: vllm/config/load.py:29
+  context: Defines load_format, its auto default, the built-in loader semantics, and support for custom plugin values.
+- file: vllm/config/load.py:135
+  context: Lowercases the configured loader name after validation.
+- file: vllm/config/speculative.py:186
+  context: Embeds LoadConfig in SpeculativeConfig and states that an unspecified draft load configuration uses the target
+    model's load configuration.
+- file: docs/features/speculative_decoding/README.md:138
+  context: Identifies draft_load_config as an internal field populated by vLLM and not intended to be set by users.
+- file: vllm_ascend/spec_decode/llm_base_proposer.py:218
+  context: Reads and logs the draft load format, then passes draft_load_config to get_model when constructing the Ascend draft
+    proposer.
+- file: vllm_ascend/model_loader/netloader/netloader.py:39
+  context: Registers netloader as an Ascend-specific model loader.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:38
+  context: Registers rfork as an Ascend-specific model loader.
+- file: vllm_ascend/model_loader/rfork/rfork_loader.py:173
+  context: Resets load_format to auto before falling back to normal model loading when RFork transfer fails.
+related_parameters:
+- name: SpeculativeConfig.draft_load_config
+  relation: Parent internal configuration; when absent, vLLM uses the target model's load configuration for the draft model.
+- name: SpeculativeConfig.draft_model_config
+  relation: Identifies the draft checkpoint to which the selected loader applies.
+- name: SpeculativeConfig.draft_load_config.model_loader_extra_config
+  relation: Supplies loader-specific settings required by loaders such as RFork.
+- name: SpeculativeConfig.draft_load_config.safetensors_load_strategy
+  relation: Selects lazy, eager, prefetch, or torchao behavior when a safetensors path is used, controlling the detailed startup-I/O
+    and host-memory tradeoff.
+constraints:
+- draft_load_config and this nested field are internal speculative-decoding fields populated by vLLM, not supported user-facing
+  keys for --speculative-config in the pinned documentation.
+- The selected format must match the draft checkpoint layout and any required optional loader dependency or plugin.
+- sharded_state requires checkpoint shards prepared for the deployment's tensor-parallel topology.
+- The Ascend RFork loader requires model_loader_extra_config to be a dictionary and falls back to auto when its transfer path
+  fails.
+- Custom values are valid only after a matching model-loader plugin has been registered; in the pinned Ascend package those
+  values include netloader and rfork.
+tuning_advice:
+  summary: Leave this internal field under vLLM control and use auto for ordinary checkpoints. Framework integrators should
+    override it only to match a known draft-checkpoint layout or a configured loader service, then measure cold-start time
+    and peak host memory.
+  suggested_values:
+  - scenario: Standard draft checkpoint or no independently configured draft loader
+    value: auto
+    reason: It prefers safetensors, falls back to PyTorch bin weights, and is the safe inherited behavior for normal repositories.
+  - scenario: Draft checkpoint prepared as per-rank tensor-parallel shards
+    value: sharded_state
+    reason: This loader is intended for pre-sharded checkpoints and can avoid each worker reading the full unsharded checkpoint
+      during initialization.
+  - scenario: Ascend deployment with a configured RFork transfer service
+    value: rfork
+    reason: The pinned Ascend package registers this loader for transfer-based loading and falls back to auto if the transfer
+      cannot be used.
+  caveats:
+  - Loader choice affects initialization, not draft-token acceptance or steady-state decode throughput; benchmark cold starts
+    separately.
+  - A loader/checkpoint mismatch, missing plugin dependency, or incompatible shard topology prevents the draft model from
+    loading.
+  - Safetensors strategy is a separate nested field; format alone does not select its lazy, eager, or prefetch policy.
+  - Ascend-specific transfer loaders require their external infrastructure and extra configuration, so their names are not
+    portable to plain vLLM.
+  quick_guide: Keep auto unless integrating a verified specialized draft loader. For a deliberate override, cold-start once
+    with an empty cache, record peak host memory, and confirm that the draft checkpoint loads on every parallel rank.
+analysis_date: '2026-07-31'

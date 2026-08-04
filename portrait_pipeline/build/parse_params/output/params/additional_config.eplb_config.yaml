@@ -1,0 +1,96 @@
+name: additional_config.eplb_config
+type: nested
+category: parallelism
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:48-49
+value_type: dict
+default: '''{}'''
+valid_choices: 'dict with keys: dynamic_eplb (bool), expert_map_path (str), expert_heat_collection_interval (int), algorithm_execution_interval
+  (int), expert_map_record_path (str), num_redundant_experts (int)'
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- memory
+impact_detail: "EPLB (Expert Parallelism Load Balancing) controls how experts in MoE models are distributed across NPU devices.\
+  \ When enabled via `dynamic_eplb: true`, it activates a runtime load balancing mechanism that monitors expert token distribution\
+  \ and periodically rebalances expert-to-device mappings. This directly affects:\n1. **Throughput**: By redistributing overloaded\
+  \ experts to underutilized devices, EPLB\n   reduces token dispatch imbalance, which is a primary bottleneck in MoE inference.\n\
+  \   The `expert_heat_collection_interval` (default 400) controls when monitoring begins,\n   and `algorithm_execution_interval`\
+  \ (default 30) controls how often rebalancing occurs.\n\n2. **Memory**: The `num_redundant_experts` parameter allows pre-allocating\
+  \ redundant\n   expert copies on multiple devices, trading memory for reduced all-to-all communication\n   during expert\
+  \ dispatch. Each redundant expert consumes additional NPU memory.\n\n3. **Expert mapping**: `expert_map_path` provides a\
+  \ static expert-to-physical-device\n   mapping, while `expert_map_record_path` saves dynamically computed mappings for\n\
+  \   reuse across restarts, avoiding cold-start imbalance.\n\nThe parameter is consumed in `vllm_ascend/ascend_config.py:48-49`\
+  \ where it is parsed into an `EplbConfig` object, and in `tests/ut/eplb/core/a2/test_eplb_utils.py:63` where `expert_map_path`\
+  \ is used to load a JSON expert mapping file. The test at line 52-59 shows that with EPLB enabled, expert_map and log2phy\
+  \ tensors are computed to remap logical experts to physical devices, with `redundant_experts` controlling how many experts\
+  \ have duplicate copies.\n"
+usage_locations:
+- file: vllm_ascend/ascend_config.py:48-49
+  context: Parsed from additional_config dict and passed to EplbConfig constructor
+- file: tests/ut/eplb/core/a2/test_eplb_utils.py:63
+  context: expert_map_path key used to load static expert mapping JSON file
+- file: tests/e2e/generate_coverage_md.py:1081
+  context: Extracted from additional_config for test coverage reporting
+related_parameters:
+- name: enable_expert_parallel
+  relation: EPLB requires expert parallelism to be enabled; without it, expert load balancing has no effect
+- name: tensor_parallel_size
+  relation: Expert distribution across devices depends on TP configuration; EPLB mappings are computed per-TP-group
+- name: enable_shared_expert_dp
+  relation: Shared expert DP and EPLB both affect expert placement; they interact on MoE models with shared experts
+constraints:
+- EPLB is only effective on MoE models; on dense models it has no effect
+- expert_map_path must point to a valid JSON file containing expert-to-device mappings
+- num_redundant_experts must not exceed the total number of experts in the model
+- expert_heat_collection_interval must be greater than algorithm_execution_interval for meaningful rebalancing
+tuning_advice:
+  summary: 'Enable dynamic_eplb for MoE models with uneven expert utilization to improve throughput by 10-30%; use num_redundant_experts
+    to trade memory for reduced communication overhead.
+
+    '
+  suggested_values:
+  - scenario: MoE model with high expert load imbalance (e.g., DeepSeek-V2/V3, Mixtral)
+    value:
+      dynamic_eplb: true
+      expert_heat_collection_interval: 400
+      algorithm_execution_interval: 30
+      num_redundant_experts: 2
+    reason: 'Default intervals provide a good balance between monitoring overhead and rebalancing frequency. Two redundant
+      experts reduce all-to-all communication for the most popular experts without excessive memory overhead.
+
+      '
+  - scenario: MoE model with known static expert popularity distribution
+    value:
+      dynamic_eplb: false
+      expert_map_path: /path/to/precomputed_expert_map.json
+      num_redundant_experts: 0
+    reason: 'Static mapping avoids runtime monitoring overhead and is optimal when expert popularity is known in advance.
+      Set num_redundant_experts to 0 to save memory when the static mapping already handles load distribution.
+
+      '
+  - scenario: First run with unknown expert distribution, want to persist mapping
+    value:
+      dynamic_eplb: true
+      expert_map_record_path: /path/to/save/expert_map.json
+      expert_heat_collection_interval: 200
+      algorithm_execution_interval: 50
+    reason: 'Shorter collection interval (200) starts monitoring sooner; longer execution interval (50) gives the algorithm
+      more time to compute a quality mapping. Saving the result allows reuse on subsequent runs without dynamic overhead.
+
+      '
+  caveats:
+  - Dynamic EPLB adds CPU-side monitoring overhead every `algorithm_execution_interval` forward iterations; for very short-lived
+    inference sessions, this overhead may outweigh benefits
+  - num_redundant_experts increases NPU memory usage linearly with the number of redundant copies; monitor memory utilization
+    when increasing this value
+  - 'expert_map_path and dynamic_eplb are mutually exclusive in practice: if a static map is provided, dynamic rebalancing
+    is typically not needed'
+  - 'EPLB interacts with tensor parallelism: expert mappings are computed within each TP group, so TP size changes require
+    recomputing or regenerating expert maps'
+  quick_guide: For MoE models, start with dynamic_eplb=true and default intervals; if throughput is still bottlenecked by
+    expert imbalance, add num_redundant_experts=2 and monitor memory
+analysis_date: '2026-07-06'

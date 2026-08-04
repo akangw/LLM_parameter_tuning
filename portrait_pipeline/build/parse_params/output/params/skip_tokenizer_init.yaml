@@ -1,0 +1,68 @@
+name: --skip-tokenizer-init
+type: cli
+category: model
+scope: vllm
+source_file:
+- vllm/config/model.py:246
+- vllm/engine/arg_utils.py:806
+value_type: bool
+default: 'False'
+valid_choices:
+- 'True'
+- 'False'
+cli_example: --skip-tokenizer-init
+deprecated: false
+performance_impact: low
+performance_scope:
+- memory
+impact_detail: 'When enabled, this flag skips initialization of the tokenizer and detokenizer. This reduces CPU memory usage
+  and startup time by avoiding loading tokenizer vocabulary files and related data structures. On Ascend NPU, the tokenizer
+  runs on the host CPU, so this parameter does not directly affect NPU compute performance. However, it indirectly affects
+  memory by eliminating the tokenizer''s memory footprint on the host. The v1 upstream structured output module (vllm/v1/structured_output/__init__.py:70)
+  also conditionally skips creating a ThreadPoolExecutor and loading the tokenizer when this flag is set, further reducing
+  CPU resource usage. This parameter is listed in ModelConfig.computed_hash_ignored_factors (vllm/config/model.py:368), meaning
+  it does not affect the computation graph hash — confirming it has no impact on model execution or NPU kernel selection.
+
+  '
+usage_locations:
+- file: vllm/config/model.py:246
+  context: 'Field definition with docstring: ''Skip initialization of tokenizer and detokenizer.'''
+- file: vllm/engine/arg_utils.py:806
+  context: CLI argument registration under ModelConfig group
+- file: vllm/engine/arg_utils.py:1539
+  context: Passed to ModelConfig constructor during engine args creation
+- file: vllm/entrypoints/llm.py:220
+  context: LLM class constructor parameter, passed through to EngineArgs
+- file: vllm/v1/structured_output/__init__.py:70
+  context: 'V1: conditionally skips tokenizer loading and ThreadPoolExecutor creation'
+- file: vllm/benchmarks/serve.py:1716
+  context: 'Benchmark serve: skips tokenizer loading when set, sets tokenizer_id to None'
+- file: vllm/config/vllm.py:1823
+  context: Included in VllmConfig.__str__ for logging/debugging
+related_parameters:
+- name: --tokenizer
+  relation: When --skip-tokenizer-init is True, the --tokenizer value is ignored since no tokenizer is loaded.
+- name: --tokenizer-mode
+  relation: When --skip-tokenizer-init is True, --tokenizer-mode is ignored since no tokenizer is loaded.
+- name: --enable-prompt-embeds
+  relation: Both parameters relate to bypassing text tokenization; --enable-prompt-embeds allows raw embeddings as input while
+    --skip-tokenizer-init skips tokenizer loading entirely.
+constraints:
+- When --skip-tokenizer-init is True, inputs must provide valid prompt_token_ids and prompt must be None.
+- When --skip-tokenizer-init is True, generated output will contain token IDs instead of decoded text.
+tuning_advice:
+  summary: Enable only when providing pre-tokenized inputs and raw token ID outputs are acceptable; reduces host CPU memory
+    usage and startup time.
+  suggested_values:
+  - scenario: Offline batch inference with pre-tokenized datasets
+    value: 'True'
+    reason: Eliminates tokenizer memory overhead and startup latency when inputs are already tokenized.
+  - scenario: Standard online serving with text prompts
+    value: 'False'
+    reason: Tokenizer is required to convert text prompts to token IDs and decode output token IDs to text.
+  caveats:
+  - When enabled, all inputs must be pre-tokenized (prompt_token_ids); text prompts will not work.
+  - Output will be raw token IDs — no text decoding is performed, which may complicate result interpretation.
+  - On Ascend NPU, the tokenizer runs on CPU, so this flag only affects host memory, not device (NPU) memory.
+  quick_guide: Set to True only for pre-tokenized input pipelines; keep False (default) for normal text-based inference.
+analysis_date: '2026-07-06'

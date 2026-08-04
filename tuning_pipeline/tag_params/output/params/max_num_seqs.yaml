@@ -1,0 +1,116 @@
+name: --max-num-seqs
+type: cli
+category: scheduling
+scope: both
+source_file:
+- vllm/engine/arg_utils.py:1327
+- vllm/engine/arg_utils.py:2377
+- vllm/config/scheduler.py:63
+- vllm/config/vllm.py:1433
+- vllm_ascend/platform.py:179
+- vllm_ascend/attention/utils.py:20
+- vllm_ascend/attention/sfa_v1.py:208
+value_type: int
+default: null
+valid_choices: Integer greater than or equal to 1.
+cli_example: --max-num-seqs 256
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: This option caps the number of sequences the scheduler can process in one iteration, directly limiting request
+  concurrency and therefore the available batch parallelism. Raising it can improve throughput when there is enough token
+  budget and device memory; it can also increase queueing efficiency. It increases memory demand through more concurrent KV-cache
+  use and through metadata and workspace allocations, and may hurt latency under saturation when larger batches take longer
+  to execute. The CLI default is null and is resolved from usage context, hardware, and parallelism rather than being a fixed
+  user-facing value. On Ascend, the platform's implicit CUDA-graph upper bound is min(max_num_seqs * decode_query_len, 512)
+  unless graph sizes are explicitly supplied. Ascend attention implementations also allocate sequence-sized tensors and use
+  this value in the chunked-prefill workspace; context-parallel SFA adds 2 * pcp_size * max_num_seqs entries to its slot mapping
+  buffer. With speculative decoding, each additional sequence reserves draft-token slots from the scheduled-token budget.
+usage_locations:
+- file: vllm/engine/arg_utils.py:1327
+  context: Registers --max-num-seqs and passes the parsed value through scheduler argument metadata with a CLI default of
+    null.
+- file: vllm/engine/arg_utils.py:2377
+  context: Resolves an unspecified value from usage-context and hardware-specific batch defaults, then caps an inferred value
+    by max_num_batched_tokens.
+- file: vllm/config/scheduler.py:63
+  context: Defines the scheduler field as an integer with a minimum of one and documents it as the per-iteration sequence
+    limit.
+- file: vllm/config/scheduler.py:273
+  context: Rejects configurations where max_num_batched_tokens is below max_num_seqs.
+- file: vllm/config/vllm.py:1433
+  context: Reserves max_num_new_slots_for_drafting multiplied by max_num_seqs when speculative decoding is enabled.
+- file: vllm_ascend/platform.py:179
+  context: Derives Ascend's implicit CUDA-graph capture bound from max_num_seqs and decode query length, capped at 512.
+- file: vllm_ascend/attention/utils.py:20
+  context: Uses max_num_seqs and cache block size to establish the chunked-prefill workspace size.
+- file: vllm_ascend/attention/sfa_v1.py:208
+  context: Allocates SFA sequence-length metadata sized from max_num_seqs.
+- file: vllm_ascend/attention/context_parallel/sfa_cp.py:51
+  context: Adds context-parallel padding proportional to pcp_size times max_num_seqs when allocating the slot-mapping buffer.
+related_parameters:
+- name: --max-num-batched-tokens
+  relation: Must be at least max_num_seqs; together the two limits bound batch concurrency and token capacity.
+- name: --max-cudagraph-capture-size
+  relation: An explicit graph-capture limit overrides Ascend's implicit max_num_seqs-derived bound.
+- name: --num-speculative-tokens
+  relation: Increases decode_query_len and the per-sequence draft-slot reservation used with max_num_seqs.
+- name: --gpu-memory-utilization
+  relation: Affects available KV-cache blocks; reduce max_num_seqs or increase available cache capacity if sequence concurrency
+    exhausts memory.
+- name: --max-model-len
+  relation: Scheduler warns when max_num_batched_tokens exceeds max_num_seqs multiplied by max_model_len.
+constraints:
+- The value must be an integer greater than or equal to 1.
+- max_num_batched_tokens must be greater than or equal to max_num_seqs.
+- With speculative decoding, max_num_batched_tokens must leave room for max_num_new_slots_for_drafting multiplied by max_num_seqs
+  as well as scheduled tokens.
+- For Mamba models using full decode CUDA graphs, max_num_seqs cannot exceed the available Mamba cache blocks.
+tuning_advice:
+  summary: Start from the resolved platform default and benchmark against the target concurrency and memory headroom. Increase
+    the limit only while throughput improves without KV-cache pressure or unacceptable batch latency; lower it first when
+    memory is constrained.
+  suggested_values:
+  - scenario: Memory-constrained deployment or startup out-of-memory failure
+    value: 32
+    reason: Reduces the maximum concurrent sequence count and the Ascend sequence-sized metadata and workspace requirements.
+  - scenario: General serving baseline
+    value: 128
+    reason: Provides moderate concurrency, but the actual default should be checked because unspecified values are resolved
+      by usage context and hardware.
+  - scenario: High-throughput workload with verified NPU memory headroom
+    value: 256
+    reason: Allows more requests in an iteration; benchmark together with max_num_batched_tokens because token capacity can
+      otherwise become the limiting dimension.
+  caveats:
+  - Values above 512 still enlarge sequence-sized allocations but do not raise Ascend's implicit CUDA-graph bound above 512.
+  - Increasing this limit is not beneficial when max_num_batched_tokens, KV-cache capacity, or request load prevents the extra
+    sequences from being scheduled.
+  - Speculative decoding and full CUDA-graph Mamba workloads impose additional capacity constraints.
+  quick_guide: Use a lower value to reduce memory pressure, then raise it gradually with max_num_batched-tokens while measuring
+    throughput, latency, and KV-cache headroom.
+analysis_date: '2026-07-27'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - ttft
+  - tpot
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input
+  - high_concurrency

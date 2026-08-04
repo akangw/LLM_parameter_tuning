@@ -1,0 +1,109 @@
+name: PYTORCH_NPU_ALLOC_CONF
+type: env
+category: memory
+scope: vllm-ascend
+source_file:
+- vllm_ascend/platform.py:650
+- vllm_ascend/device_allocator/camem.py:150
+- vllm_ascend/worker/worker.py:488
+- docs/source/faqs.md:140
+- docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:145
+value_type: str
+default: expandable_segments:True
+valid_choices: comma-separated torch_npu allocator key:value entries; pinned sources show expandable_segments:True, max_split_size_mb:<MB>,
+  garbage_collection_threshold:<value>, and page_size:<size>
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- memory
+- throughput
+impact_detail: When a model configuration is present and sleep mode is disabled, vLLM-Ascend reads this environment variable
+  and defaults an unset value to "expandable_segments:True". If an existing value contains none of expandable_segments, max_split_size_mb,
+  or garbage_collection_threshold, it appends expandable_segments:True before writing the environment variable back. The Ascend
+  FAQ says expandable segments enable virtual memory to mitigate fragmentation from changing allocation sizes, while the tuning
+  guide documents max_split_size_mb as a way to avoid splitting large blocks. These allocator choices can therefore change
+  usable NPU memory, determine whether a fragmented workload reaches OOM, and affect sustained serving throughput. In contrast,
+  Ascend sleep mode uses CaMemAllocator's memory pool for weights and KV cache; its constructor rejects the exact substring
+  "expandable_segments:True", so an incompatible setting prevents that mode from initializing. The pinned upstream vLLM repository
+  has no occurrence of PYTORCH_NPU_ALLOC_CONF.
+usage_locations:
+- file: vllm_ascend/platform.py:650
+  context: Documents and applies expandable_segments:True as the normal non-sleep-mode allocator default.
+- file: vllm_ascend/platform.py:655
+  context: Reads the user value, conditionally appends expandable_segments:True, and writes the resulting configuration back
+    to the process environment.
+- file: vllm_ascend/device_allocator/camem.py:150
+  context: CaMemAllocator initialization asserts that the configuration does not contain expandable_segments:True because
+    expandable segments are incompatible with its memory pool.
+- file: vllm_ascend/worker/worker.py:488
+  context: With sleep mode enabled, model weights are allocated inside a tagged CaMemAllocator memory pool.
+- file: vllm_ascend/worker/worker.py:693
+  context: With sleep mode enabled, KV cache allocation also occurs inside a tagged CaMemAllocator memory pool.
+- file: docs/source/faqs.md:140
+  context: Explains that dynamic allocation can cause fragmentation and recommends expandable_segments:True as one OOM mitigation.
+- file: docs/source/developer_guide/performance_and_debug/optimization_and_tuning.md:145
+  context: Documents max_split_size_mb and expandable_segments:True as alternative torch_npu memory optimizations.
+related_parameters:
+- name: enable_sleep_mode
+  relation: vLLM-Ascend does not apply its expandable-segments default when sleep mode is enabled, and that mode's CaMemAllocator
+    rejects expandable_segments:True.
+- name: gpu_memory_utilization
+  relation: The Ascend OOM FAQ recommends lowering this value to reserve memory and reduce fragmentation risk alongside allocator
+    configuration.
+- name: max_model_len
+  relation: The same OOM guidance recommends limiting model length to reduce KV-cache memory allocation.
+constraints:
+- The value is a torch_npu allocator configuration string containing one or more comma-separated key:value entries.
+- expandable_segments:True cannot be combined with max_split_size_mb or garbage_collection_threshold; the platform avoids
+  auto-appending expandable segments whenever either conflicting key is present.
+- CaMemAllocator rejects any configuration containing the exact case-sensitive substring "expandable_segments:True"; this
+  allocator is used for model weights and KV cache when sleep mode is enabled.
+- The automatic default and append logic run only when model_config exists and enable_sleep_mode is false.
+- Supplying any expandable_segments entry, including expandable_segments:False, prevents vLLM-Ascend from appending its True
+  default.
+tuning_advice:
+  summary: Use the normal expandable_segments:True behavior for ordinary inference to mitigate fragmentation; use a non-expandable
+    allocator configuration for sleep mode.
+  suggested_values:
+  - scenario: Ordinary inference without sleep mode
+    value: expandable_segments:True
+    reason: This is the vLLM-Ascend default, and the pinned FAQ describes it as enabling virtual memory to mitigate fragmentation
+      caused by dynamically changing allocation sizes.
+  - scenario: Sleep mode using CaMemAllocator
+    value: max_split_size_mb:250
+    reason: The pinned tuning guide documents this value to prevent large memory blocks from being split, and unlike expandable_segments:True
+      it is not rejected by CaMemAllocator.
+  - scenario: Preserve a custom page size while retaining the normal fragmentation mitigation
+    value: page_size:1g,expandable_segments:True
+    reason: The platform source explicitly shows page_size:1g as a configuration to which expandable_segments:True may be
+      appended.
+  caveats:
+  - Do not carry expandable_segments:True into sleep-mode startup; CaMemAllocator raises an AssertionError.
+  - max_split_size_mb and garbage_collection_threshold suppress automatic expandable segments even if their values are ineffective,
+    because the platform checks only for key substrings.
+  - Explicitly setting the environment variable to an empty string produces a leading comma when the platform appends expandable_segments:True;
+    leaving it unset uses the clean default string.
+  - The pinned sources provide no comparative benchmark numbers, so validate OOM headroom and serving throughput on the target
+    model, request-length distribution, and NPU stack before replacing the default.
+  quick_guide: Leave the variable unset for normal inference; for sleep mode ensure expandable_segments:True is absent and
+    use max_split_size_mb:250 only when block-splitting control is needed.
+analysis_date: '2026-07-28'
+tags:
+  model:
+  - dense
+  - moe
+  - mla
+  - vlm
+  - quantized
+  optimize_target:
+  - throughput
+  - memory
+  deploy_topology:
+  - single_node
+  - multi_node
+  hardware:
+  - a2
+  - a3
+  deploy_scenario:
+  - long_input

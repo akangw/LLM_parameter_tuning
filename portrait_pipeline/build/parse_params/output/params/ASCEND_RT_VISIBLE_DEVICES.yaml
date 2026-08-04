@@ -1,0 +1,96 @@
+name: ASCEND_RT_VISIBLE_DEVICES
+type: env
+category: hardware
+scope: vllm-ascend
+source_file:
+- vllm_ascend/platform.py:112
+- vllm_ascend/cpu_binding.py:17
+- vllm_ascend/utils.py:360
+value_type: str
+default: <computed>
+valid_choices: comma-separated list of integer NPU device IDs (e.g., '0,1,2,3')
+cli_example: null
+deprecated: false
+performance_impact: high
+performance_scope:
+- throughput
+- latency
+- memory
+impact_detail: 'ASCEND_RT_VISIBLE_DEVICES is the Ascend NPU equivalent of CUDA_VISIBLE_DEVICES. It controls which NPU devices
+  are visible to the process and directly determines the number of available compute units, total NPU memory, and inter-device
+  communication topology. In vllm-ascend, this env var is read at multiple critical points: "(1) In cpu_binding.py:17, it
+  is read at module load time to filter which" NPUs participate in CPU affinity binding — if unset, all NPUs detected via
+  npu-smi are used; if set, only the specified devices are bound. (2) In utils.py:523, it determines which devices are available
+  for KV cache transfer endpoint configuration in disaggregated prefill/decode setups. (3) In platform.py:112, it is registered
+  as the device_control_env_var, meaning Ray uses it to isolate devices per worker. The number of visible devices directly
+  constrains tensor_parallel_size and pipeline_parallel_size — you cannot use more parallelism dimensions than visible devices.
+  Setting too few devices wastes available compute; setting too many without corresponding parallelism config leaves devices
+  idle. In disaggregated serving (examples/offline_disaggregated_prefill_npu.py), different processes set different ASCEND_RT_VISIBLE_DEVICES
+  values to partition NPUs between prefill and decode nodes.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:112
+  context: Registered as device_control_env_var for Ray-based device isolation per worker
+- file: vllm_ascend/cpu_binding.py:17
+  context: Read at module load to filter NPU devices for CPU affinity binding
+- file: vllm_ascend/cpu_binding.py:128
+  context: Intersects with running NPU set from npu-smi to determine active devices
+- file: vllm_ascend/utils.py:523
+  context: Used to map local_rank to physical NPU device for KV transfer endpoint config
+- file: vllm_ascend/utils.py:360
+  context: Lazy init of custom ops ensures ASCEND_RT_VISIBLE_DEVICES can be set before torch.npu.set_device()
+- file: examples/offline_disaggregated_prefill_npu.py:41
+  context: Set to '0' for prefill node in disaggregated serving example
+- file: examples/offline_disaggregated_prefill_npu.py:88
+  context: Set to '1' for decode node in disaggregated serving example
+- file: tests/e2e/conftest.py:525
+  context: Set per-server in PD (prefill-decode) test fixtures based on required device count
+related_parameters:
+- name: tensor_parallel_size
+  relation: Must not exceed the number of visible devices; each TP rank requires a distinct NPU
+- name: pipeline_parallel_size
+  relation: Total devices (tp_size × pp_size) must not exceed the number of visible NPUs
+- name: RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES
+  relation: When set, prevents Ray from overriding ASCEND_RT_VISIBLE_DEVICES per worker
+- name: VLLM_ASCEND_ENABLE_FUSED_MC2
+  relation: Fused MC2 communication pattern depends on device topology determined by visible devices
+constraints:
+- Each device ID in the list must be a valid integer corresponding to a physical NPU on the system
+- The number of visible devices must be at least tensor_parallel_size × pipeline_parallel_size
+- In CPU binding mode, at least 5 CPUs must be available per visible NPU (MIN_CPUS_PER_NPU=5)
+- When used with disaggregated prefill/decode, prefill and decode processes must use disjoint device sets
+tuning_advice:
+  summary: 'Set ASCEND_RT_VISIBLE_DEVICES to the exact set of NPUs needed for your parallelism configuration to maximize throughput
+    and avoid resource waste.
+
+    '
+  suggested_values:
+  - scenario: Single-node inference with tensor_parallel_size=N
+    value: 0,1,...,N-1
+    reason: Exposes exactly N devices matching the TP size, avoiding idle NPUs and ensuring each TP rank has a dedicated device
+  - scenario: Disaggregated prefill/decode on 8-NPU node
+    value: 0,1,2,3 for prefill; 4,5,6,7 for decode
+    reason: Partitions NPUs into disjoint sets so prefill and decode processes do not contend for the same devices, maximizing
+      throughput for both phases
+  - scenario: Multi-node distributed inference with Ray
+    value: 0,1,2,3,4,5,6,7 (all available NPUs per node)
+    reason: Ray automatically assigns subsets to workers; exposing all NPUs lets Ray manage device allocation based on num_gpus
+      resource requirements
+  - scenario: Quantization or offline processing on multi-NPU
+    value: 0,1,2,3,4,5,6,7
+    reason: Quantization scripts benefit from all available NPU memory and compute; documentation examples use all 8 devices
+  caveats:
+  - Setting ASCEND_RT_VISIBLE_DEVICES to fewer devices than physically available leaves NPUs idle and reduces maximum achievable
+    throughput
+  - In CPU binding mode, if ASCEND_RT_VISIBLE_DEVICES filters out all running NPUs, the process will fail with 'Can not get
+    running npu info'
+  - The env var must be set before torch.npu.set_device() is called; vllm-ascend uses lazy custom op initialization to ensure
+    this ordering
+  - When using Ray, Ray may override ASCEND_RT_VISIBLE_DEVICES per worker unless RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES
+    is set
+  - Device IDs in ASCEND_RT_VISIBLE_DEVICES are logical IDs as seen by the CANN runtime, which may differ from physical NPU
+    positions
+  quick_guide: Set ASCEND_RT_VISIBLE_DEVICES to a comma-separated list of NPU IDs matching your tensor_parallel_size (e.g.,
+    '0,1,2,3' for tp=4); for disaggregated serving, use disjoint sets for prefill and decode processes.
+analysis_date: '2026-07-06'

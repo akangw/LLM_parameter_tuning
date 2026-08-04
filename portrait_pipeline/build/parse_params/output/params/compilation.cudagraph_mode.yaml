@@ -1,0 +1,128 @@
+name: compilation.cudagraph_mode
+type: nested
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:947
+- vllm/config/vllm.py:1021
+- vllm_ascend/platform.py:431
+- vllm_ascend/platform.py:449
+- vllm_ascend/worker/model_runner_v1.py:310
+- vllm_ascend/worker/model_runner_v1.py:533
+- vllm_ascend/worker/v2/model_runner.py:131
+- vllm_ascend/worker/v2/spec_decode/eagle/speculator.py:61
+- vllm_ascend/worker/worker.py:505
+- vllm_ascend/attention/fa3_v1.py:54
+- vllm_ascend/attention/utils.py:51
+value_type: str
+default: FULL_AND_PIECEWISE
+valid_choices:
+- NONE
+- PIECEWISE
+- FULL
+- FULL_DECODE_ONLY
+- FULL_AND_PIECEWISE
+cli_example: '--compilation-config ''{"cudagraph_mode": "FULL_DECODE_ONLY"}'''
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: 'Controls the graph capture strategy on Ascend NPU, which directly determines whether kernel launch overhead
+  is eliminated via ACLGraph (torch.npu.NPUGraph) capture/replay. On Ascend, the effective mode is heavily overridden by vllm-ascend
+  in platform.py: if xlite full mode is enabled, it is forced to NONE; if xlite decode-only mode is enabled, it is forced
+  to FULL_DECODE_ONLY; if enforce_eager is True, it is forced to NONE; if compilation mode is not NONE or VLLM_COMPILE, it
+  is forced to NONE. In v1 worker, the mode determines whether cudagraph_batch_sizes are populated (model_runner_v1.py:533)
+  and whether full graph streams are created. In v2 worker, has_full_cudagraphs() controls creation of an update stream for
+  full graph parameter updates (model_runner.py:131). The mode also gates paged attention usage (attention/utils.py:51) —
+  only FULL_DECODE_ONLY enables paged attention for supported shapes. Additionally, FULL_DECODE_ONLY is incompatible with
+  AscendFAImpl attention backend (fa3_v1.py:54-60), which raises ValueError. Npugraph_ex (compile-time FX graph optimization)
+  is enabled by default only for FULL and FULL_DECODE_ONLY modes, providing additional performance gains.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:431
+  context: Overrides cudagraph_mode to NONE when xlite full mode is enabled
+- file: vllm_ascend/platform.py:434
+  context: Overrides cudagraph_mode to FULL_DECODE_ONLY when xlite decode-only mode is enabled
+- file: vllm_ascend/platform.py:449
+  context: Overrides cudagraph_mode to NONE when compilation mode is unsupported on NPU
+- file: vllm_ascend/worker/model_runner_v1.py:310
+  context: Checks if mode is NONE to decide between PrecisionDebugger and AclGraphDumper
+- file: vllm_ascend/worker/model_runner_v1.py:533
+  context: Gates cudagraph_batch_sizes population; non-NONE enables graph capture
+- file: vllm_ascend/worker/v2/model_runner.py:131
+  context: Creates update_stream for full graph parameter updates when has_full_cudagraphs()
+- file: vllm_ascend/worker/v2/spec_decode/eagle/speculator.py:61
+  context: Checks decode_mode for FULL to allocate draft_seq_lens_cpus buffers
+- file: vllm_ascend/worker/worker.py:505
+  context: Filters warmup sizes based on cudagraph_capture_sizes when mode is not NONE
+- file: vllm_ascend/attention/fa3_v1.py:54
+  context: Raises ValueError if FULL_DECODE_ONLY is used with AscendFAImpl backend
+- file: vllm_ascend/attention/utils.py:51
+  context: Only enables paged attention when mode is FULL_DECODE_ONLY
+- file: vllm/config/vllm.py:947
+  context: Upstream forces NONE when enforce_eager is True
+- file: vllm/config/vllm.py:1021
+  context: Upstream forces NONE when piecewise compilation is required but mode is not VLLM_COMPILE
+related_parameters:
+- name: enforce_eager
+  relation: When True, forces cudagraph_mode to NONE on both upstream and Ascend
+- name: compilation_config.mode
+  relation: If not NONE or VLLM_COMPILE, Ascend forces cudagraph_mode to NONE
+- name: ascend_config.xlite_graph_config.enabled
+  relation: When enabled with full_mode, forces cudagraph_mode to NONE; with decode-only mode, forces to FULL_DECODE_ONLY
+- name: compilation_config.cudagraph_capture_sizes
+  relation: Only used when cudagraph_mode is not NONE; determines which batch sizes are graph-captured
+- name: compilation_config.cudagraph_num_of_warmups
+  relation: vllm-ascend hardcodes this to 1 regardless of cudagraph_mode
+constraints:
+- FULL_DECODE_ONLY mode cannot be used with AscendFAImpl attention backend; use the default FIA backend or set enforce_eager=True
+- Graph mode (any non-NONE cudagraph_mode) is only available on the V1 engine, not V2
+- FULL mode is not sufficiently supported in context parallel scenarios
+- When xlite full mode is enabled, cudagraph_mode is silently forced to NONE
+- When compilation mode is not NONE or VLLM_COMPILE, cudagraph_mode is silently forced to NONE on NPU
+tuning_advice:
+  summary: 'For most Ascend deployments, use the default FULL_AND_PIECEWISE (v1) or FULL_DECODE_ONLY for pure decode workloads
+    to maximize throughput via ACLGraph capture and Npugraph_ex optimization. Avoid FULL_DECODE_ONLY if using AscendFAImpl
+    attention backend.
+
+    '
+  suggested_values:
+  - scenario: Default production deployment on V1 engine
+    value: FULL_AND_PIECEWISE
+    reason: 'Provides the best balance: "PIECEWISE for mixed prefill-decode batches" and FULL-capable for uniform decode batches.
+      This is the v1 default and works with most attention backends.
+
+      '
+  - scenario: Pure decode-only serving with FIA attention backend
+    value: FULL_DECODE_ONLY
+    reason: 'Enables Npugraph_ex FX optimization and ACLGraph capture for decode paths, plus paged attention for supported
+      shapes. Provides maximum decode throughput.
+
+      '
+  - scenario: Debugging or when graph capture causes issues
+    value: NONE
+    reason: 'Disables all graph capture and runs in eager mode. Useful for debugging with PrecisionDebugger or when encountering
+      graph capture compatibility issues.
+
+      '
+  - scenario: When using AscendFAImpl attention backend
+    value: PIECEWISE
+    reason: 'FULL_DECODE_ONLY raises ValueError with AscendFAImpl. PIECEWISE provides partial graph capture without triggering
+      the incompatibility.
+
+      '
+  caveats:
+  - vllm-ascend silently overrides cudagraph_mode based on xlite config, enforce_eager, and compilation mode — the user-set
+    value may not be the effective value
+  - cudagraph_num_of_warmups is hardcoded to 1 by vllm-ascend regardless of mode
+  - FULL mode is not sufficiently supported in context parallel (CP) scenarios
+  - Graph mode is only available on V1 engine; V2 engine behavior may differ
+  - Npugraph_ex is automatically enabled only for FULL and FULL_DECODE_ONLY modes, providing additional compile-time optimization
+  quick_guide: 'Use default FULL_AND_PIECEWISE on V1 for general serving; switch to FULL_DECODE_ONLY for pure decode workloads
+    with FIA backend; use NONE only for debugging.
+
+    '
+analysis_date: '2026-07-06'

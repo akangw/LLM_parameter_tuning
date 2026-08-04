@@ -1,0 +1,84 @@
+name: additional_config.ascend_compilation_config.fuse_norm_quant
+type: nested
+category: compilation
+scope: vllm-ascend
+source_file:
+- vllm_ascend/ascend_config.py:485
+- vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+value_type: bool
+default: true
+valid_choices:
+- true
+- false
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- latency
+- throughput
+impact_detail: 'When enabled (default), this parameter activates the AddRMSNormQuantFusionPass graph optimization pass during
+  model compilation on Ascend NPUs. This pass fuses RMSNorm (or LayerNorm) operations with subsequent quantization operations
+  into a single optimized kernel, reducing kernel launch overhead and improving compute efficiency. The fusion is applied
+  during the npugraph_ex compilation pipeline via the GraphFusionPassManager. On 310P hardware, this pass is automatically
+  disabled regardless of the setting (checked via is_310p() in graph_fusion_pass_manager.py:54), indicating a known compatibility
+  limitation on that platform. Disabling this fusion forces norm and quant operations to execute as separate kernels, which
+  increases kernel launch count and may reduce throughput, but can serve as a workaround for correctness issues on certain
+  model/hardware combinations.
+
+  '
+usage_locations:
+- file: vllm_ascend/compilation/graph_fusion_pass_manager.py:54
+  context: 'Reads fuse_norm_quant from ascend_compilation_config dict; if True and not on 310P, appends AddRMSNormQuantFusionPass
+    to the graph optimization pass list.
+
+    '
+- file: vllm_ascend/ascend_config.py:514
+  context: 'Stored as instance attribute self.fuse_norm_quant in AscendCompilationConfig.
+
+    '
+related_parameters:
+- name: additional_config.ascend_compilation_config.enable_npugraph_ex
+  relation: 'Must be enabled for any graph fusion passes (including fuse_norm_quant) to take effect, since these passes operate
+    within the npugraph_ex compilation pipeline.
+
+    '
+- name: additional_config.ascend_compilation_config.fuse_qknorm_rope
+  relation: 'Sibling fusion pass controlled by the same AscendCompilationConfig; both are enabled by default and applied during
+    graph compilation.
+
+    '
+- name: additional_config.ascend_compilation_config.fuse_allreduce_rms
+  relation: 'Another sibling fusion pass; disabled by default due to conflicts with sequence parallelism (SP).
+
+    '
+constraints:
+- fuse_norm_quant has no effect if enable_npugraph_ex is set to false.
+- On 310P hardware, fuse_norm_quant is automatically disabled and cannot be overridden.
+tuning_advice:
+  summary: 'Keep fuse_norm_quant enabled (default) for best performance on non-310P Ascend hardware; disable only if encountering
+    correctness issues with specific models.
+
+    '
+  suggested_values:
+  - scenario: General inference on Ascend 910B/910C (non-310P) with npugraph_ex enabled
+    value: true
+    reason: 'Fuses norm and quant operations into a single kernel, reducing kernel launch overhead and improving throughput.
+      This is the default and recommended setting.
+
+      '
+  - scenario: Debugging correctness issues or running on 310P hardware
+    value: false
+    reason: 'Disabling the fusion can help isolate whether the fused kernel is causing numerical discrepancies. On 310P, this
+      is automatically disabled and should be set to false to match the hardware limitation.
+
+      '
+  caveats:
+  - On 310P hardware, this fusion pass is unconditionally skipped regardless of the configured value.
+  - Disabling this fusion increases the number of separate kernel launches, which may reduce throughput by 5-15% depending
+    on model architecture and batch size.
+  - The fusion pass only applies to models that contain both normalization (RMSNorm/LayerNorm) and quantization operations
+    in sequence; models without quantized layers are unaffected.
+  quick_guide: 'Leave at default (true) unless running on 310P or debugging numerical issues.
+
+    '
+analysis_date: '2026-07-06'

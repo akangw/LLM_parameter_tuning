@@ -1,0 +1,104 @@
+name: --optimization-level
+type: cli
+category: compilation
+scope: both
+source_file:
+- vllm/config/vllm.py:68
+- vllm/config/vllm.py:130
+- vllm/config/vllm.py:260
+- vllm/config/vllm.py:340
+- vllm/config/vllm.py:647
+- vllm/config/vllm.py:983
+- vllm/engine/arg_utils.py:684
+- vllm/engine/arg_utils.py:1441
+- vllm/engine/arg_utils.py:2181
+- docs/design/optimization_levels.md:5
+- vllm_ascend/platform.py:218
+- vllm_ascend/platform.py:424
+value_type: int
+default: 2
+valid_choices:
+- 0
+- 1
+- 2
+- 3
+cli_example: --optimization-level 2
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Selects a preset of compilation, graph-capture, fusion, and kernel-autotuning defaults, trading initialization
+  and warmup cost against steady-state execution performance. O0 disables compilation and graph capture and supplies false
+  fusion defaults; O1 enables VLLM_COMPILE with PIECEWISE graph capture and selected fast fusions; O2, the default, uses FULL_AND_PIECEWISE
+  capture and additional fusions; O3 currently shares the O2 compilation/fusion preset but, in the pinned executable source,
+  additionally enables FlashInfer autotuning. Explicitly supplied nested settings are retained because optimization defaults
+  are applied only to fields that remain null. On Ascend these inherited presets feed NPU compilation and ACL graph configuration,
+  but later Ascend platform checks can disable or downgrade unsupported graph modes. The choice can therefore materially affect
+  startup latency, request latency, throughput, and graph/compilation memory.
+usage_locations:
+- file: vllm/config/vllm.py:130
+  context: Defines the O0 through O3 preset dictionaries for compilation passes, graph-capture mode, and kernel autotuning.
+- file: vllm/config/vllm.py:647
+  context: Recursively applies a selected preset only where the corresponding user configuration field is still null.
+- file: vllm/config/vllm.py:983
+  context: Resolves compilation mode from the level, applies kernel/platform defaults, then applies the selected preset.
+- file: vllm/engine/arg_utils.py:2181
+  context: Copies the parsed CLI value into VllmConfig when constructing the engine configuration.
+- file: vllm_ascend/platform.py:424
+  context: Applies Ascend-specific compatibility handling to the resulting compilation and ACL graph modes, including eager
+    and unsupported-mode fallbacks.
+related_parameters:
+- name: --compilation-config
+  relation: Explicit mode, cudagraph_mode, and pass_config fields override the optimization-level defaults.
+- name: --kernel-config
+  relation: Its enable_flashinfer_autotune field is defaulted by the selected level when left unset.
+- name: --enforce-eager
+  relation: Forces compilation and graph capture off, overriding the performance intent of an optimized level.
+- name: --enable-flashinfer-autotune
+  relation: O0 through O2 default it to false while O3 defaults it to true in the pinned source.
+- name: --performance-mode
+  relation: Independently selects runtime behavior oriented toward balanced, interactive, or throughput workloads.
+constraints:
+- The accepted numeric levels are 0, 1, 2, and 3; the default is 2.
+- Optimization-level defaults do not replace compilation, pass, or kernel fields explicitly supplied by the user.
+- Enforce-eager mode disables compilation and graph capture regardless of the selected optimization level.
+- On Ascend, platform compatibility processing may downgrade or disable a preset graph mode, so the requested level does not
+  guarantee that every upstream optimization remains active.
+- The pinned design documentation says O3 is currently equal to O2, but the pinned executable source differs because O3 enables
+  FlashInfer autotuning while O2 disables it.
+- The Ascend sequence-parallelism guide says optimization defaults enable SP for dense models, but the pinned upstream executable
+  constant IS_DENSE is false, so O2 and O3 currently default enable_sp to false.
+tuning_advice:
+  summary: Keep O2 for production-oriented serving unless measured startup cost, compilation failures, or Ascend graph compatibility
+    justify a lower level. Benchmark initialization separately from steady-state traffic and verify the effective Ascend graph
+    mode after platform fallbacks.
+  suggested_values:
+  - scenario: Production serving with a stable, warmed deployment
+    value: 2
+    reason: It is the current default and enables the fuller compilation, fusion, and graph-capture preset without O3's FlashInfer
+      autotuning warmup.
+  - scenario: Development or a deployment needing shorter startup while retaining compilation
+    value: 1
+    reason: It uses VLLM_COMPILE and PIECEWISE graph capture with a smaller optimization preset than O2.
+  - scenario: Debugging compilation or graph failures, or minimizing startup work
+    value: 0
+    reason: It disables compilation, graph capture, fusion defaults, and kernel autotuning.
+  - scenario: Validated upstream CUDA/FlashInfer deployment seeking the most aggressive current preset
+    value: 3
+    reason: In the pinned code it matches O2's compilation and fusion defaults while additionally enabling FlashInfer autotuning.
+  caveats:
+  - O1 through O3 can increase initialization, compilation, graph-capture, and warmup time; compare cold-start and steady-state
+    measurements separately.
+  - User-specified nested compilation and kernel values take precedence, so two deployments with the same level can have different
+    effective configurations.
+  - Ascend can force eager execution or downgrade unsupported ACL graph modes, reducing or eliminating the expected difference
+    between levels.
+  - O3's FlashInfer autotuning distinction is not established as an Ascend benefit and should not be selected for Ascend solely
+    on that basis.
+  - Current source and documentation disagree about O2 versus O3 and automatic sequence parallelism; rely on effective runtime
+    configuration from the deployed pinned code.
+  quick_guide: Start at O2, use O1 when cold-start cost matters, use O0 to isolate compilation or graph issues, and reserve
+    O3 for a benchmarked upstream FlashInfer path.
+analysis_date: '2026-07-27'

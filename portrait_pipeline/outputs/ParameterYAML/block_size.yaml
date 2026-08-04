@@ -1,0 +1,57 @@
+name: --block-size
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/config/cache.py:45
+- vllm/config/cache.py:47
+- vllm_ascend/ascend_config.py:560
+- vllm_ascend/attention/attention_v1.py:139
+value_type: int
+default: null
+valid_choices: Positive integer token count; the target Ascend attention backend reports supported kernel block size 128.
+cli_example: --block-size 128
+deprecated: false
+performance_impact: high
+performance_scope:
+- latency
+- throughput
+- memory
+impact_detail: Block size determines how many tokens occupy each contiguous KV-cache block, affecting block-table granularity,
+  KV-cache fragmentation, and attention-kernel shapes. Upstream uses 16 as its default when the value is unset. In the target
+  vllm-ascend source, the Ascend attention backend reports 128 as its supported kernel block size, and the Ascend configuration
+  warns that 128 is recommended for Xlite graph mode. Therefore this is a direct memory and kernel-efficiency tuning surface.
+usage_locations:
+- file: vllm/config/cache.py:45
+  context: Declares the upstream default block size of 16.
+- file: vllm/config/cache.py:47
+  context: Defines the configurable number of tokens in each contiguous cache block.
+- file: vllm_ascend/attention/attention_v1.py:139
+  context: Reports 128 as the supported Ascend attention kernel block size.
+- file: vllm_ascend/ascend_config.py:560
+  context: Warns that 128 is recommended when Xlite graph mode is enabled.
+related_parameters:
+- name: --gpu-memory-utilization
+  relation: Both influence available KV-cache capacity and memory pressure.
+- name: --max-model-len
+  relation: Sequence length changes the number of KV-cache blocks required.
+- name: xlite_graph_config.enabled
+  relation: The Ascend Xlite graph path explicitly recommends block size 128.
+constraints:
+- The block size must be a positive integer token count.
+- On the target Ascend attention backend, use a kernel-supported block size; the current backend reports 128 as its supported
+  size.
+tuning_advice:
+  summary: Use 128 as the target Ascend baseline, then validate memory headroom and workload efficiency on hardware.
+  suggested_values:
+  - scenario: Target Ascend attention backend or Xlite graph mode
+    value: 128
+    reason: The target Ascend backend reports 128 as supported and Xlite configuration recommends it.
+  - scenario: Upstream-only baseline or debugging outside the Ascend kernel path
+    value: 16
+    reason: 16 is the current upstream CacheConfig default when the option is unset.
+  caveats:
+  - Larger blocks can reduce metadata overhead but may waste KV-cache capacity for short or highly variable requests.
+  - The source establishes a supported/recommended Ascend size, not an end-to-end throughput optimum for every model.
+  quick_guide: For the target Ascend stack, begin with --block-size 128 and benchmark against memory headroom.
+analysis_date: '2026-07-27'

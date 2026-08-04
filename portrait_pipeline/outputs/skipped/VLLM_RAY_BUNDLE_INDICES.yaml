@@ -1,0 +1,6 @@
+name: VLLM_RAY_BUNDLE_INDICES
+type: env
+performance_impact: none
+skip_reason: In both pinned repositories this environment variable is only declared in upstream vllm/envs.py; no Ray executor
+  or other runtime code reads it, and vllm-ascend provides no consumer or override. Setting it therefore cannot affect worker
+  placement, latency, throughput, or memory in the pinned runtime.

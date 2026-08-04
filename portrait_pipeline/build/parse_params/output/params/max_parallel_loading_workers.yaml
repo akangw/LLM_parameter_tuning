@@ -1,0 +1,65 @@
+name: --max-parallel-loading-workers
+type: cli
+category: memory
+scope: vllm
+source_file:
+- vllm/engine/arg_utils.py:1060
+- vllm/config/parallel.py:185
+value_type: int | None
+default: null
+valid_choices: positive integer or null
+cli_example: --max-parallel-loading-workers 2
+deprecated: false
+performance_impact: medium
+performance_scope:
+- memory
+impact_detail: 'Controls the maximum number of worker processes that load model weights in parallel during model initialization.
+  When using tensor parallelism with large models, loading all shards simultaneously can cause RAM OOM on the host because
+  each worker loads its full weight shard into CPU memory before transferring to NPU. By limiting parallel loading workers,
+  weights are loaded sequentially in batches, reducing peak host RAM usage at the cost of slower model loading time. This
+  parameter does not affect runtime inference throughput or latency — it only impacts initialization memory and startup time.
+  On Ascend NPU, the same host RAM pressure exists, and since Ascend servers often have large numbers of NPUs per node (e.g.,
+  8-card Atlas 800T A2), the default of unlimited parallel loading can cause OOM during model loading for large models like
+  Llama-70B or DeepSeek-V2.
+
+  '
+usage_locations:
+- file: vllm/config/parallel.py:185
+  context: Field definition in ParallelConfig with default None (unlimited)
+- file: vllm/config/speculative.py:914
+  context: Copied to draft model's ParallelConfig for speculative decoding
+- file: vllm/config/parallel.py:734
+  context: Listed in ignored_factors for distributed config hashing (does not affect collective communication)
+related_parameters:
+- name: --tensor-parallel-size
+  relation: Higher tensor parallelism increases per-worker weight size, making parallel loading more memory-intensive and
+    this parameter more important
+- name: --pipeline-parallel-size
+  relation: Pipeline parallelism also distributes weights across workers, increasing total host RAM usage during loading
+constraints:
+- Must be a positive integer or null (None). Null means no limit on parallel loading workers.
+- Has no effect on runtime inference performance — only affects model loading phase.
+tuning_advice:
+  summary: Set to a small value (1-4) when loading large models with tensor parallelism to avoid host RAM OOM; leave as default
+    (null) for small models.
+  suggested_values:
+  - scenario: Large models (70B+) with tensor parallelism on Ascend nodes with limited host RAM
+    value: 2
+    reason: Limits concurrent weight loading to 2 workers, significantly reducing peak host RAM while keeping loading time
+      reasonable
+  - scenario: Very large models (e.g., DeepSeek-V2 236B) or nodes with <512GB RAM
+    value: 1
+    reason: Sequential loading minimizes peak RAM usage at the cost of longer startup time
+  - scenario: Small models (<13B) or nodes with abundant host RAM
+    value: null
+    reason: No parallel loading limit needed; all workers can load simultaneously for fastest startup
+  caveats:
+  - This parameter only affects model loading time, not inference throughput or latency.
+  - On Ascend NPU, host-to-device transfer is handled by the HCCL/CANN stack; the RAM pressure is on the CPU host side, not
+    NPU HBM.
+  - Setting this too low (e.g., 1) can significantly increase cold start time for large models.
+  - This parameter is ignored in distributed config hashing (see vllm/config/parallel.py:734), so changing it does not affect
+    collective communication patterns.
+  quick_guide: For Ascend deployments with large models, start with --max-parallel-loading-workers 2 and reduce to 1 if OOM
+    persists during model loading.
+analysis_date: '2026-07-06'

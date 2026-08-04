@@ -1,0 +1,107 @@
+name: --cp-kv-cache-interleave-size
+type: cli
+category: kv_cache
+scope: both
+source_file:
+- vllm/config/parallel.py:330
+- vllm/engine/arg_utils.py:959
+- vllm_ascend/platform.py:618
+- vllm_ascend/worker/block_table.py:22
+- vllm_ascend/worker/pcp_utils.py:1022
+value_type: int
+default: 1
+valid_choices: positive integer; must be <= block_size and block_size must be divisible by it
+cli_example: --cp-kv-cache-interleave-size 16
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- memory
+impact_detail: 'Controls the interleaving granularity of KV cache storage across context parallel (CP) ranks (DCP and PCP).
+  On Ascend NPU, this parameter directly affects:
+
+  1. **KV cache distribution pattern**: For `total_cp_rank = pcp_rank * dcp_world_size + dcp_rank`, tokens are stored in chunks
+  of `cp_kv_cache_interleave_size` across CP ranks in round-robin fashion. At interleave_size=1 (token-level), token `i` goes
+  to rank `i % total_cp_world_size`. At interleave_size=block_size (block-level), tokens fill one rank''s block completely
+  before moving to the next rank.
+
+  2. **Slot mapping computation** (vllm_ascend/_310p/block_table.py:33): The interleave size determines which rank owns each
+  token position via `virtual_block_offsets // cp_kv_cache_interleave_size % (dcp_world_size * pcp_world_size) == current_rank`.
+  Tokens not owned by the current rank get PAD_SLOT_ID, directly affecting memory access patterns and compute efficiency.
+
+  3. **Sequence length calculation** (vllm_ascend/worker/pcp_utils.py:1022-1038): The `_get_cp_local_seq_lens` function uses
+  interleave_size to compute per-rank KV cache lengths, which affects attention computation scope and memory allocation.
+
+  4. **Ascend-specific constraint** (vllm_ascend/platform.py:618-625): In P/D disaggregation with KV pool scenarios, `cp_kv_cache_interleave_size`
+  MUST equal `block_size` when `pcp_size * dcp_size > 1`, or an AssertionError is raised. This is stricter than upstream vLLM
+  which only requires block_size to be divisible by interleave_size.
+
+  5. **Sparse Flash Attention (SFA) compatibility** (vllm_ascend/platform.py:632-637): When using SFA with CP, interleave_size
+  is forcibly overridden to match block_size with a warning.
+
+  Larger interleave_size values reduce communication frequency but may cause load imbalance across CP ranks. Smaller values
+  improve load balance but increase communication overhead during attention computation.
+
+  '
+usage_locations:
+- file: vllm_ascend/platform.py:618
+  context: Validates cp_kv_cache_interleave_size == block_size for P/D disaggregation with KV pool
+- file: vllm_ascend/worker/block_table.py:96
+  context: Stored as instance attribute for slot mapping computation
+- file: vllm_ascend/_310p/block_table.py:33
+  context: Used in slot mapping to determine token-to-rank assignment via interleave mask
+- file: vllm_ascend/worker/pcp_utils.py:1022-1038
+  context: Computes per-rank local sequence lengths for CP attention
+- file: vllm_ascend/worker/model_runner_v1.py:510
+  context: Passed to NPUInputBatch constructor for block table initialization
+- file: vllm_ascend/worker/npu_input_batch.py:123
+  context: Forwarded to MultiGroupBlockTable for KV cache slot management
+- file: vllm/config/vllm.py:1953-1972
+  context: 'Upstream validation: interleave_size <= block_size and block_size % interleave_size == 0'
+related_parameters:
+- name: --decode-context-parallel-size
+  relation: DCP world size determines total CP rank count; interleave_size controls how tokens are distributed across DCP
+    ranks
+- name: --prefill-context-parallel-size
+  relation: PCP world size combines with DCP to form total CP world size; interleave_size applies to both
+- name: --block-size
+  relation: Must be >= and divisible by cp_kv_cache_interleave_size; on Ascend with P/D disaggregation, must be equal
+- name: --dcp-kv-cache-interleave-size
+  relation: Deprecated predecessor; if set > 1, overrides cp_kv_cache_interleave_size with a warning
+constraints:
+- cp_kv_cache_interleave_size must be less than or equal to block_size
+- block_size must be divisible by cp_kv_cache_interleave_size
+- On Ascend NPU with P/D disaggregation and KV pool, cp_kv_cache_interleave_size must equal block_size when pcp_size * dcp_size
+  > 1
+- When using Sparse Flash Attention (SFA) with CP, cp_kv_cache_interleave_size is forcibly overridden to equal block_size
+- If dcp_kv_cache_interleave_size > 1 and differs from cp_kv_cache_interleave_size, cp_kv_cache_interleave_size is overridden
+  by dcp_kv_cache_interleave_size
+tuning_advice:
+  summary: Set cp_kv_cache_interleave_size equal to block_size on Ascend NPU for P/D disaggregation scenarios; for non-disaggregated
+    CP, use block_size for reduced communication or 1 for better load balance.
+  suggested_values:
+  - scenario: Ascend NPU with P/D disaggregation and KV pool (pcp_size * dcp_size > 1)
+    value: block_size (typically 128 or 256)
+    reason: Ascend enforces cp_kv_cache_interleave_size == block_size in this scenario; any other value raises AssertionError
+  - scenario: Ascend NPU with Sparse Flash Attention (SFA) and CP
+    value: block_size
+    reason: SFA implementation requires interleave_size == block_size; the platform auto-overrides with a warning
+  - scenario: General CP usage without P/D disaggregation on Ascend
+    value: block_size
+    reason: Block-level interleaving reduces cross-rank communication frequency during attention; aligns with Ascend block
+      table implementation
+  - scenario: Fine-grained load balancing across CP ranks
+    value: 1
+    reason: Token-level interleaving ensures even distribution of tokens across ranks, minimizing idle time at the cost of
+      more frequent communication
+  caveats:
+  - On Ascend NPU, the constraint cp_kv_cache_interleave_size == block_size is stricter than upstream vLLM (which only requires
+    divisibility). This is enforced in vllm_ascend/platform.py for P/D disaggregation scenarios.
+  - The deprecated --dcp-kv-cache-interleave-size flag will silently override this parameter if set > 1, which may cause confusion.
+  - 'Larger interleave_size values may cause load imbalance: the last CP rank may have significantly fewer tokens than preceding
+    ranks if sequence lengths are not multiples of interleave_size * cp_size.'
+  - This parameter only takes effect when decode_context_parallel_size > 1 or prefill_context_parallel_size > 1; with cp_size=1,
+    it has no effect.
+  quick_guide: On Ascend NPU, always set --cp-kv-cache-interleave-size equal to --block-size when using context parallelism,
+    especially in P/D disaggregation deployments.
+analysis_date: '2026-07-06'

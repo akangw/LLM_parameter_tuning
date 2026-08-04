@@ -1,0 +1,67 @@
+name: eplb.step_interval
+type: nested
+category: scheduling
+scope: vllm
+source_file:
+- vllm/distributed/eplb/eplb_state.py:432
+value_type: int
+default: <computed>
+valid_choices: positive integer
+cli_example: null
+deprecated: false
+performance_impact: medium
+performance_scope:
+- throughput
+- latency
+impact_detail: 'This parameter controls how frequently expert parallelism load balancing (EPLB) rearranges experts across
+  devices. In vllm/distributed/eplb/eplb_state.py:432-436, the step_interval is used to set self.expert_rearrangement_step_interval,
+  which determines the number of forward steps between expert rearrangement operations. The initial rearrangement step is
+  set to step_interval - step_interval // 4 (i.e., 75% of the interval), meaning the first rearrangement occurs earlier than
+  the regular cadence. A smaller step_interval triggers more frequent expert redistribution, which can improve load balance
+  and throughput at the cost of rearrangement overhead (communication and computation). A larger interval reduces overhead
+  but may allow load imbalance to persist longer, degrading throughput. On Ascend NPU, the HCCL all-to-all communication used
+  during expert rearrangement is particularly sensitive to frequency — too-frequent rearrangement can saturate HCCL links
+  and hurt latency. The parameter also interacts with eplb.window_size: if step_interval exceeds window_size, only the most
+  recent window_size steps of metrics are used for rearrangement decisions, potentially making frequent rearrangements less
+  informed.
+
+  '
+usage_locations:
+- file: vllm/distributed/eplb/eplb_state.py:432
+  context: Reads eplb_config.step_interval to set expert_rearrangement_step and expert_rearrangement_step_interval
+related_parameters:
+- name: eplb.window_size
+  relation: If step_interval > window_size, only the last window_size steps of load metrics are used for rearrangement decisions
+- name: eplb.policy
+  relation: The EPLB policy determines how experts are rearranged; step_interval controls how often the chosen policy is applied
+constraints:
+- step_interval must be a positive integer
+- If step_interval is greater than eplb.window_size, only the most recent window_size steps of metrics will be used for rearranging
+  experts
+tuning_advice:
+  summary: 'Balance rearrangement frequency against HCCL communication overhead on Ascend NPU; start with a moderate interval
+    (e.g., 50-100 steps) and adjust based on observed load imbalance and HCCL bandwidth utilization.
+
+    '
+  suggested_values:
+  - scenario: Stable workloads with gradual load drift on Ascend NPU
+    value: 100
+    reason: Reduces HCCL all-to-all communication overhead while still correcting load imbalance before it significantly degrades
+      throughput
+  - scenario: Highly dynamic workloads with rapid load changes on Ascend NPU
+    value: 20
+    reason: Frequent rearrangement keeps expert load balanced, preventing straggler experts from becoming throughput bottlenecks
+  - scenario: Initial deployment or benchmarking on Ascend NPU
+    value: 50
+    reason: Provides a reasonable balance between rearrangement overhead and load balance freshness; can be tuned up or down
+      based on profiling results
+  caveats:
+  - On Ascend NPU, frequent expert rearrangement triggers HCCL all-to-all collectives which can saturate inter-chip bandwidth
+    and increase latency spikes
+  - The first rearrangement occurs at 75% of step_interval (step_interval - step_interval // 4), so the initial imbalance
+    is corrected sooner than subsequent ones
+  - If step_interval exceeds eplb.window_size, rearrangement decisions are based on stale metrics, reducing the effectiveness
+    of frequent rearrangements
+  quick_guide: Start with step_interval=50 on Ascend NPU; increase if HCCL overhead is high, decrease if expert load imbalance
+    persists
+analysis_date: '2026-07-06'
