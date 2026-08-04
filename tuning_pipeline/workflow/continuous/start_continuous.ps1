@@ -145,18 +145,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r .\tuning_pipeline\requirements-runtime.txt"
 }
 
-$configText = Get-Content -Raw -LiteralPath (Join-Path $root "config.yaml")
-$effectiveProvider = if ($AgentProvider) { $AgentProvider } elseif ($configText -match '(?ms)^agent:\s*.*?^\s+provider:\s*([^\s#]+)') { $Matches[1] } else { "codex" }
-if ($effectiveProvider -eq "codex") {
-    $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue
-    if ($null -eq $codex) {
-        $codex = Get-Command codex -ErrorAction SilentlyContinue
-    }
-    if (($null -eq $codex) -and (-not $env:VLLMTKB_CODEX_COMMAND)) {
-        throw "Codex CLI was not found. Put it on PATH or set VLLMTKB_CODEX_COMMAND."
-    }
-}
-
 $mode = "--start"
 if ($RetryPausedCurrent) {
     $mode = "--retry-paused-current"
@@ -187,16 +175,32 @@ Write-Host "Preflight: OK"
 Write-Host "Recommended launch mode: $mode"
 if ($CheckOnly) {
     $checkArguments = @((Join-Path $root "continuous_tuning.py"), "--check-only")
+    $allowActiveLease = $false
     if ($StrategyProfile) { $checkArguments += @("--strategy-profile", $StrategyProfile) }
     if ($AgentProvider) { $checkArguments += @("--agent-provider", $AgentProvider) }
     if ($BenchmarkProfile) { $checkArguments += @("--benchmark-profile", $BenchmarkProfile) }
+    if ($mode -eq "--resume" -or $RetryPausedCurrent) {
+        $checkArguments += "--use-frozen-session"
+        $checkStatePath = Join-Path $root "state.json"
+        if (Test-Path -LiteralPath $checkStatePath) {
+            $checkState = Get-Content -Raw -LiteralPath $checkStatePath | ConvertFrom-Json
+            if ($checkState.active_task_id) {
+                $checkArguments += "--allow-active-lease"
+                $allowActiveLease = $true
+            }
+        }
+    }
     & $python @checkArguments
     if ($LASTEXITCODE -ne 0) {
         $checkExitCode = $LASTEXITCODE
         Write-Host "End-to-end check failed; no controller or experiment was started." -ForegroundColor Red
         exit $checkExitCode
     }
-    Write-Host "Check-only mode: local config, AI provider, SSH, and idle Lease are ready."
+    if ($allowActiveLease) {
+        Write-Host "Check-only mode: frozen Session, AI provider, SSH, and active Lease are reachable."
+    } else {
+        Write-Host "Check-only mode: local config, AI provider, SSH, and idle Lease are ready."
+    }
     Write-Host "No controller was started and no local or remote files were changed."
     exit 0
 }

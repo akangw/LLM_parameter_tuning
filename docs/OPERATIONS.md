@@ -38,8 +38,12 @@
 
 `-CheckOnly` 会验证本地配置、所选 AI Provider、SSH 连通性以及持久 Lease
 是否空闲可用，但不会启动 Controller、提交实验或修改服务器文件。
+检查新 Session 时使用 `-CheckOnly -NewSession`；检查恢复链路时使用
+`-CheckOnly -Resume`，后者读取 Session 冻结配置，且仅在状态记录着活动任务时
+允许 Lease 保持运行。
 
-默认启动器会检查 PID、画像进度、标签进度、激活审批、Python 依赖和 Codex CLI。发现可续跑状态时优先使用 `--resume`。
+默认启动器会检查 PID、画像/标签进度、激活审批、Python 依赖和实际选中的
+Agent Provider。发现可续跑状态时优先使用 `--resume`。
 
 ## 停止语义
 

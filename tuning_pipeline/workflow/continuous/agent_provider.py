@@ -92,8 +92,29 @@ def _required_secret(settings: dict[str, Any]) -> str:
 def validate_agent_credentials(agent: dict[str, Any]) -> None:
     """Fail at Controller startup instead of after a costly benchmark round."""
     provider = str(agent.get("provider", "codex")).lower()
-    if provider in {"anthropic", "openai_compatible"}:
-        _required_secret(dict(agent.get("settings", {})))
+    settings = dict(agent.get("settings", {}))
+    if provider == "codex":
+        requested = os.environ.get("VLLMTKB_CODEX_COMMAND", "").strip() or str(
+            settings.get("command", "auto")
+        )
+        executable = (
+            shutil.which("codex.cmd") or shutil.which("codex")
+            if requested.lower() == "auto"
+            else (
+                requested
+                if Path(requested).expanduser().is_file()
+                else shutil.which(requested)
+            )
+        )
+        if not executable:
+            raise RuntimeError(
+                "Codex CLI was not found. Install/login Codex, or set "
+                "VLLMTKB_CODEX_COMMAND."
+            )
+    elif provider in {"anthropic", "openai_compatible"}:
+        _required_secret(settings)
+    elif provider == "command" and not settings.get("command"):
+        raise RuntimeError("command provider requires agent.settings.command")
 
 
 def _http_json(url: str, headers: dict[str, str], body: dict[str, Any], timeout: int) -> dict:

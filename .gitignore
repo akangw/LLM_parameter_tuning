@@ -5,6 +5,7 @@ __pycache__/
 *.lock
 STOP_REQUESTED*
 .pytest_cache/
+.venv/
 
 # Local runtime state and high-volume experiment evidence.
 tuning_pipeline/workflow/continuous/state.json

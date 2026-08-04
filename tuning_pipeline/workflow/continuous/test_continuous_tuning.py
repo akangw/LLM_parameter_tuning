@@ -408,6 +408,18 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual("lease ready", controller.check_ready())
         ensure.assert_called_once_with()
 
+    def test_resume_preflight_allows_the_recorded_task_to_keep_running(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        controller = tuning.Controller(configured)
+        running = (
+            "RESOURCE  status=active  nodes=2/2 Ready  npu=32/32\n"
+            "SLOT service status running=2\n"
+        )
+        with patch.object(controller, "lease_status", return_value=running):
+            self.assertEqual(
+                running, controller.check_ready(require_idle_lease=False)
+            )
+
     def test_model_loading_contract_rejects_unsafe_prefetch_settings(self) -> None:
         configured = config()
         configured["model_loading"] = {

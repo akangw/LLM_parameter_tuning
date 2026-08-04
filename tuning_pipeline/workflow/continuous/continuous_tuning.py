@@ -1305,10 +1305,10 @@ class Controller:
                 raise RuntimeError(f"Required remote script is missing locally: {source}")
             self.scp_to(source, f"{self.remote_auto}/{name}")
 
-    def ensure_lab_available(self) -> str:
+    def lease_status(self) -> str:
         lease_name = str(self.lab["lease_name"])
         try:
-            output = self.ssh(
+            return self.ssh(
                 f"cd {shlex.quote(self.remote_project)} && "
                 f"ktp-lab status --lease {shlex.quote(lease_name)} 2>&1 || true",
                 timeout=60,
@@ -1320,6 +1320,10 @@ class Controller:
                 "continuous_tuning.py --prepare-lab after setting mtp_draft_model, "
                 "then wait for the Lease to become ready."
             ) from exc
+
+    def ensure_lab_available(self) -> str:
+        lease_name = str(self.lab["lease_name"])
+        output = self.lease_status()
         normalized = output.lower()
         resource_active = bool(
             re.search(r"\bresource\s+status=active\b", normalized)
@@ -1343,11 +1347,23 @@ class Controller:
             )
         return output
 
-    def check_ready(self) -> str:
+    def check_ready(self, *, require_idle_lease: bool = True) -> str:
         """Run a read-only end-to-end launch preflight."""
         self.validate_deployment_configuration()
         self.validate_runtime_configuration(self.config["baseline"])
-        return self.ensure_lab_available()
+        if require_idle_lease:
+            return self.ensure_lab_available()
+        output = self.lease_status()
+        normalized = output.lower()
+        if not (
+            re.search(r"\bresource\s+status=active\b", normalized)
+            and re.search(r"\bnodes=2/2\s+ready\b", normalized)
+        ):
+            raise RuntimeError(
+                "The active Session Lease is reachable but its two-node "
+                f"resource is not ready:\n{output}"
+            )
+        return output
 
     def submit_lab(
         self,
@@ -4090,6 +4106,16 @@ def parse_args() -> argparse.Namespace:
         "--benchmark-profile",
         help="benchmark profile for a new Session; resume uses the frozen Session value",
     )
+    parser.add_argument(
+        "--use-frozen-session",
+        action="store_true",
+        help="with --check-only, validate the Session config referenced by state.json",
+    )
+    parser.add_argument(
+        "--allow-active-lease",
+        action="store_true",
+        help="with --check-only, allow a running Lease for an already-active task",
+    )
     return parser.parse_args()
 
 
@@ -4102,11 +4128,17 @@ def main() -> int:
         print(STATE_FILE.read_text(encoding="utf-8"))
         return 0
     search_space_result = None
-    if (
+    use_frozen_config = bool(
         args.resume
         or args.reanalyze_current
         or args.retry_paused_current
-    ) and STATE_FILE.exists():
+        or (args.check_only and args.use_frozen_session)
+    )
+    if (args.use_frozen_session or args.allow_active_lease) and not args.check_only:
+        raise RuntimeError("check-only flags require --check-only")
+    if use_frozen_config and not STATE_FILE.exists():
+        raise RuntimeError("No controller state exists for frozen-Session preflight")
+    if use_frozen_config and STATE_FILE.exists():
         if args.strategy_profile or args.agent_provider or args.benchmark_profile:
             raise RuntimeError(
                 "Strategy, Agent provider, and Benchmark profile are frozen in "
@@ -4141,7 +4173,9 @@ def main() -> int:
     validate_agent_credentials(controller.agent_config)
     if args.check_only:
         try:
-            controller.check_ready()
+            controller.check_ready(
+                require_idle_lease=not args.allow_active_lease
+            )
         except Exception as exc:
             print(f"End-to-end preflight failed: {exc}", file=sys.stderr)
             return 2

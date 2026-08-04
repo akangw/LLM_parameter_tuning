@@ -1,4 +1,4 @@
-"""Deterministic, high-recall relevance filter adapted from cjx_space."""
+"""Repository-local deterministic, high-recall relevance filter."""
 
 from __future__ import annotations
 

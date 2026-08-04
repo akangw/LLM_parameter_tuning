@@ -1,8 +1,8 @@
-"""Bridge the audited cjx_space extractor into the isolated migration run.
+"""Bridge this repository's structured extractor into an isolated migration run.
 
 The rich document is retained for Stage-1 and migration auditing.  A narrow
-projection is produced only at the boundary to the unchanged ParameterYAML
-analyzer, whose input contract predates structured source locations.
+projection is produced only at the boundary to the local ParameterYAML
+analyzer, whose compatibility input contract predates structured locations.
 """
 from __future__ import annotations
 

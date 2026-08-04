@@ -78,7 +78,12 @@ Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`�
 git clone https://github.com/chenasir/Auto_vllm_parameter.git
 cd Auto_vllm_parameter
 
-# Python 3.11+ 运行依赖
+# 建议使用独立 Python 3.11+ 虚拟环境，避免污染系统/Anaconda 环境
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# 安装运行依赖
+python -m pip install --upgrade pip
 python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 
 # 恢复不进入本仓库的固定版本源码
@@ -153,6 +158,14 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 ```
 
 当前配置的新 Session 会从 `round_000_b0` 官方默认参数基线开始；B0 成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
+
+如果本地已经存在旧 Session，先用相同选择执行新 Session 预检，避免普通
+`-CheckOnly` 自动检查旧 Session：
+
+```powershell
+.\一键启动.ps1 -CheckOnly -NewSession -AgentProvider codex `
+  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4
+```
 
 新建时会生成：
 

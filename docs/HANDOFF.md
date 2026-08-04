@@ -40,6 +40,8 @@ tuning_pipeline/workflow/continuous/experiments/glm52_continuous_20260804_112130
 git clone https://github.com/chenasir/Auto_vllm_parameter.git
 cd Auto_vllm_parameter
 .\scripts\fetch-sources.ps1
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 .\一键启动.ps1 -CheckOnly
 ```

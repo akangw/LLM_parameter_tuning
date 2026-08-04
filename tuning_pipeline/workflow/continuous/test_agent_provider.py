@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from . import agent_provider
 from .agent_provider import (
     _extract_json,
     run_structured_agent,
@@ -37,6 +38,20 @@ class AgentProviderTests(unittest.TestCase):
                     "provider": "openai_compatible",
                     "settings": {"api_key_env": "TEST_PROVIDER_KEY"},
                 })
+
+    def test_startup_validation_checks_codex_executable(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(agent_provider.shutil, "which", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Codex CLI was not found"):
+                validate_agent_credentials({
+                    "provider": "codex", "settings": {"command": "auto"}
+                })
+
+    def test_command_provider_requires_a_command(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "requires agent.settings.command"):
+            validate_agent_credentials({"provider": "command", "settings": {}})
 
     def test_unknown_provider_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
