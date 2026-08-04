@@ -1313,11 +1313,12 @@ class Controller:
                 f"ktp-lab status --lease {shlex.quote(lease_name)} 2>&1 || true",
                 timeout=60,
             )
-        except RuntimeError as exc:
+        except Exception as exc:
             raise RuntimeError(
-                f"Persistent lease {lease_name!r} is not available. "
-                "Run continuous_tuning.py --prepare-lab after setting "
-                "mtp_draft_model, then wait for the lease to become ready."
+                f"SSH or persistent lease {lease_name!r} is not available. "
+                "Verify SSH connectivity first; if the Lease is absent, run "
+                "continuous_tuning.py --prepare-lab after setting mtp_draft_model, "
+                "then wait for the Lease to become ready."
             ) from exc
         normalized = output.lower()
         resource_active = bool(
@@ -1341,6 +1342,12 @@ class Controller:
                 f"Persistent lease {lease_name!r} is not idle and ready:\n{output}"
             )
         return output
+
+    def check_ready(self) -> str:
+        """Run a read-only end-to-end launch preflight."""
+        self.validate_deployment_configuration()
+        self.validate_runtime_configuration(self.config["baseline"])
+        return self.ensure_lab_available()
 
     def submit_lab(
         self,
@@ -4050,6 +4057,11 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--resume", action="store_true", help="resume the active session from state.json")
     group.add_argument("--dry-run", action="store_true", help="validate without submitting")
     group.add_argument(
+        "--check-only",
+        action="store_true",
+        help="validate local configuration, SSH connectivity, and idle Lease without writes",
+    )
+    group.add_argument(
         "--prepare-lab",
         action="store_true",
         help="submit the persistent ktp-lab lease after validating configuration",
@@ -4127,6 +4139,14 @@ def main() -> int:
         search_space_result=search_space_result,
     )
     validate_agent_credentials(controller.agent_config)
+    if args.check_only:
+        try:
+            controller.check_ready()
+        except Exception as exc:
+            print(f"End-to-end preflight failed: {exc}", file=sys.stderr)
+            return 2
+        print("Controller, SSH, and persistent Lease preflight: OK")
+        return 0
     lock_descriptor = acquire_controller_lock()
     try:
         if args.prepare_lab:

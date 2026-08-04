@@ -393,6 +393,20 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(
             'if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime
         )
+        launcher = (tuning.HERE / "start_continuous.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
+        self.assertIn("Test-Path -LiteralPath $portraitIndexPath", launcher)
+
+    def test_check_ready_is_read_only_and_requires_an_idle_lease(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        controller = tuning.Controller(configured)
+        with patch.object(
+            controller, "ensure_lab_available", return_value="lease ready"
+        ) as ensure:
+            self.assertEqual("lease ready", controller.check_ready())
+        ensure.assert_called_once_with()
 
     def test_model_loading_contract_rejects_unsafe_prefetch_settings(self) -> None:
         configured = config()

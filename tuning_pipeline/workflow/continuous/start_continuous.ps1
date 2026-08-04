@@ -88,15 +88,20 @@ foreach ($relativePath in $requiredFiles) {
 }
 
 $portraitIndexPath = Join-Path $pipelineRoot "portrait_pipeline\build\codex_portrait_pipeline\run\index.json"
-if (-not (Test-Path -LiteralPath $portraitIndexPath)) {
-    throw "Portrait queue index is missing: $portraitIndexPath"
-}
-$portraitIndex = Get-Content -Raw -LiteralPath $portraitIndexPath | ConvertFrom-Json
-$portraitUnfinished = [int]$portraitIndex.summary.pending +
-    [int]$portraitIndex.summary.in_progress +
-    [int]$portraitIndex.summary.error
-if ($portraitUnfinished -gt 0) {
-    throw "Portrait migration is not complete: $portraitUnfinished unfinished tasks."
+$portraitOutputPath = Join-Path $pipelineRoot "portrait_pipeline\outputs\ParameterYAML"
+if (Test-Path -LiteralPath $portraitIndexPath) {
+    $portraitIndex = Get-Content -Raw -LiteralPath $portraitIndexPath | ConvertFrom-Json
+    $portraitUnfinished = [int]$portraitIndex.summary.pending +
+        [int]$portraitIndex.summary.in_progress +
+        [int]$portraitIndex.summary.error
+    if ($portraitUnfinished -gt 0) {
+        throw "Portrait migration is not complete: $portraitUnfinished unfinished tasks."
+    }
+} elseif (
+    -not (Test-Path -LiteralPath $portraitOutputPath) -or
+    (Get-ChildItem -LiteralPath $portraitOutputPath -Filter *.yaml -File).Count -eq 0
+) {
+    throw "Neither a completed portrait queue nor formal ParameterYAML artifacts are available."
 }
 
 $tagProgressPath = Join-Path $downstreamRoot "tag_params\output\progress.json"
@@ -135,7 +140,7 @@ foreach ($requiredIdentity in @(
 }
 
 $python = Resolve-Python
-& $python -c "import yaml, paramiko; print('Python dependencies: OK')"
+& $python -c "from importlib.metadata import version; from packaging.version import Version; import yaml, paramiko, pydantic, jsonschema, anthropic; required={'PyYAML':'6.0','paramiko':'3.0','pydantic':'2.0','jsonschema':'4.0','anthropic':'0.49','packaging':'23.0'}; bad=[f'{name}={version(name)} (need >= {minimum})' for name,minimum in required.items() if Version(version(name)) < Version(minimum)]; assert not bad, '; '.join(bad); print('Python dependencies: OK')"
 if ($LASTEXITCODE -ne 0) {
     throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r .\tuning_pipeline\requirements-runtime.txt"
 }
@@ -181,7 +186,18 @@ if ($RetryPausedCurrent) {
 Write-Host "Preflight: OK"
 Write-Host "Recommended launch mode: $mode"
 if ($CheckOnly) {
-    Write-Host "Check-only mode: no controller was started and no files were changed."
+    $checkArguments = @((Join-Path $root "continuous_tuning.py"), "--check-only")
+    if ($StrategyProfile) { $checkArguments += @("--strategy-profile", $StrategyProfile) }
+    if ($AgentProvider) { $checkArguments += @("--agent-provider", $AgentProvider) }
+    if ($BenchmarkProfile) { $checkArguments += @("--benchmark-profile", $BenchmarkProfile) }
+    & $python @checkArguments
+    if ($LASTEXITCODE -ne 0) {
+        $checkExitCode = $LASTEXITCODE
+        Write-Host "End-to-end check failed; no controller or experiment was started." -ForegroundColor Red
+        exit $checkExitCode
+    }
+    Write-Host "Check-only mode: local config, AI provider, SSH, and idle Lease are ready."
+    Write-Host "No controller was started and no local or remote files were changed."
     exit 0
 }
 

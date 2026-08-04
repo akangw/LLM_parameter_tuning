@@ -12,7 +12,7 @@
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
 - B0 已定义为“目标版本源码/启动日志中的官方默认值”，当前状态为等待项目负责人下令提交，尚未运行。
 
-## 两个稳定扩展接口
+## 三个可选扩展接口
 
 ### 更换 vLLM / vllm-ascend 版本
 
@@ -42,13 +42,11 @@ $env:ANTHROPIC_API_KEY = "..."
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -Provider anthropic
 ```
 
-`migrate` 会校验并哈希旧画像，将其仅作为需要新源码复核的提示；`rebuild` 的全部任务均为 `CURRENT_ONLY`，不会把任何旧画像内容送给 Agent。源码版本、两类 Provider、场景和旧画像哈希都会进入隔离运行身份。每次运行的 `00_sources → 01_extract → 02_portrait_plan → 03_portrait_queue → 04_tags → 05_search_limits` 构成完整产物链，不会覆盖当前正式画像；人工审计并明确激活之前，在线 Session 仍保持原版本。若新源码尚未对应到经过验证的运行镜像，生成的 Search Limits 会保留为离线提案并清空自动验证能力，不会冒充可直接上线的配置。
+画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择。画像 Provider 当前支持 `codex`、`anthropic`。
 
-画像生成当前支持 `codex`、`anthropic`；Tags 和在线调参还支持 `openai_compatible` 与自定义 `command`。Provider 的凭证都只从环境变量或本地配置引用，不写入产物。
+### 切换 Agent 策略与 Benchmark
 
-### 切换 Agent Provider 与选参策略
-
-在线闭环默认使用 `codex + best_anchor_coverage_v2`。新建 Session 时可显式选择策略或 Provider：
+在线闭环默认使用 `codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择策略、Provider 或 Benchmark：
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -56,9 +54,17 @@ $env:ANTHROPIC_API_KEY = "..."
 .\一键启动.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
 ```
 
-Provider 的模型、地址和 `api_key_env` 在 `workflow/continuous/config.yaml` 的 `agent.providers` 配置；支持 `codex`、`anthropic`、`openai_compatible` 和自定义 `command`。仓库与 Session 只记录环境变量名，不记录 Key。策略定义集中在 `strategy_profiles.yaml`；Benchmark 入口集中在 `benchmark_profiles.yaml`。Agent 策略、Provider 和 Benchmark Profile 都在 Session 创建时冻结，`-Resume` 不允许覆盖，避免续跑语义漂移。
+三个接口及定义位置：
 
-失败重试、规则兜底、Agent 候选重选以及 V2/V3 的完整差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+| 接口 | 启动参数 | 当前选项 | 定义位置 |
+|---|---|---|---|
+| 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
+| Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`legacy_random_32k1k` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+
+Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
+
+三个接口的设计原理、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
 
 ### Git 克隆后可直接复用的知识产物
 
@@ -96,7 +102,7 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 5. `activation.approved.yaml` 中的镜像、vLLM 和 vllm-ascend 身份与服务器一致。
 6. 只读 `liuxin-workspace` 依赖仍可访问。
 
-最后执行不提交任务的预检：
+最后执行不提交任务的端到端只读预检；它会检查本地配置、AI Provider、SSH 连接和 Lease 空闲状态：
 
 ```powershell
 .\一键启动.ps1 -CheckOnly
@@ -140,7 +146,13 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 
 # 可选：为这个新 Session 冻结另一套 Agent 选参策略
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
+
+# 可选：同时选择 Agent、策略与 Benchmark
+.\一键启动.ps1 -NewSession -AgentProvider codex `
+  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4
 ```
+
+当前配置的新 Session 会从 `round_000_b0` 官方默认参数基线开始；B0 成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
 
 新建时会生成：
 
