@@ -1,6 +1,17 @@
 remote_host: hetao-npu
 remote_transport: paramiko
 remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+deployment:
+  # Server-specific launch identity. These values are frozen in every Session
+  # and exported to both Lease workers; no operator path is hidden in Bash.
+  model_path: /models/share/GLM-5.2-w8a8
+  served_model_name: glm-5
+  service_port: 8000
+  quantization: ascend
+  network_interface: bond4.3000
+  vllm_compat_version: 0.21.0
+  init_env_script: /models/share/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
 poll_seconds: 60
 round_timeout_minutes: 750
 partial_exit_grace_seconds: 120

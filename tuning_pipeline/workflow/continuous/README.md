@@ -209,11 +209,15 @@ The controller fails closed when speculative decoding is enabled and this path
 is empty. It passes the path explicitly as `speculative_config.model`, avoiding
 a second scan of all main-model checkpoint shards.
 
-The lease name is versioned with the runtime image. Updating `lease_loop.yaml`
-does not mutate Pods in an already-created lease, so every image change requires
-a new lease name and a newly prepared lease. Controller state also records the
-verified image digest plus the vLLM and vLLM Ascend commits; `--resume` is
-rejected when that identity is missing or differs.
+The lease name is versioned with the runtime image. The repository YAML files
+are templates: before synchronization, the Controller renders their lease name,
+runtime image, and command paths from `config.yaml` and the verified image
+manifest. Updating the template does not mutate Pods in an already-created
+lease, so every image change requires a new lease name and a newly prepared
+lease. Controller state also records the verified image digest plus the vLLM
+and vLLM Ascend commits; `--resume` is rejected when that identity is missing
+or differs. All submitting entry points also require `activation.approved.yaml`
+to match the exact manifest identity.
 
 Synchronize the managed scripts and create the persistent two-node lease once:
 
@@ -276,8 +280,9 @@ of the next round:
 .\stop_continuous.ps1
 ```
 
-For legacy one-task-per-round KTP sessions, the active platform task can also
-be stopped:
+When immediate termination is explicitly required, the task recorded in the
+frozen Session can also be stopped. The command uses that Session's server,
+project path, execution mode, and Lease identity:
 
 ```powershell
 .\stop_continuous.ps1 -StopActiveTask

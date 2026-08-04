@@ -19,9 +19,16 @@ if ($existing) {
     exit 0
 }
 
-$python = Get-Command python -ErrorAction Stop
+$python = if ($env:VLLMTKB_PYTHON) {
+    if (-not (Test-Path -LiteralPath $env:VLLMTKB_PYTHON)) {
+        throw "VLLMTKB_PYTHON does not exist: $env:VLLMTKB_PYTHON"
+    }
+    (Resolve-Path -LiteralPath $env:VLLMTKB_PYTHON).Path
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 $process = Start-Process `
-    -FilePath $python.Source `
+    -FilePath $python `
     -ArgumentList @($runner) `
     -WorkingDirectory $root `
     -WindowStyle Hidden `

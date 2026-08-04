@@ -60,8 +60,16 @@ $tagArgs = @("--tag", "hardware=$hardwareTag")
 foreach ($tag in $modelTags) { $tagArgs += @("--tag", "model=$tag") }
 $tagArgs += @("--tag", "deploy_topology=$topologyTag", "--tag", "deploy_scenario=$DeployScenario", "--tag", "optimize_target=$OptimizeTarget", "--where", "performance_impact=high", "--show", "name,valid_choices,tuning_advice.suggested_values,constraints,category", "--format", "yaml")
 
+$pythonExecutable = if ($env:VLLMTKB_PYTHON) {
+    if (-not (Test-Path -LiteralPath $env:VLLMTKB_PYTHON)) {
+        throw "VLLMTKB_PYTHON does not exist: $env:VLLMTKB_PYTHON"
+    }
+    (Resolve-Path -LiteralPath $env:VLLMTKB_PYTHON).Path
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 Push-Location $KnowledgeBase
-try { $queryOutput = & python ".\query.py" @tagArgs 2>$null | Out-String }
+try { $queryOutput = & $pythonExecutable ".\query.py" @tagArgs 2>$null | Out-String }
 finally { Pop-Location }
 if ([string]::IsNullOrWhiteSpace($queryOutput)) { throw "The tag query returned no parameters." }
 $queryOutput.TrimEnd() | Set-Content -LiteralPath (Join-Path $runDir "glm5.2_search_space.yaml") -Encoding utf8

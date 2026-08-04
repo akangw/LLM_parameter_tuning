@@ -381,10 +381,19 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("SAFETENSORS_LOAD_STRATEGY=prefetch", env_text)
         self.assertIn("SAFETENSORS_PREFETCH_NUM_THREADS=8", env_text)
         self.assertIn("SAFETENSORS_PREFETCH_BLOCK_SIZE=16777216", env_text)
+        self.assertIn("MODEL_PATH=/models/share/GLM-5.2-w8a8", env_text)
+        self.assertIn("SERVED_MODEL_NAME=glm-5", env_text)
+        self.assertIn("SERVICE_PORT=8000", env_text)
+        self.assertIn("MODEL_QUANTIZATION=ascend", env_text)
+        self.assertIn("NIC_NAME=bond4.3000", env_text)
+        self.assertIn("LAB_OUTPUT_ROOT=/mnt/host-model/", env_text)
 
         runtime = (tuning.HERE / "remote" / "common_runtime_loop.sh").read_text(
             encoding="utf-8"
         )
+        self.assertNotIn("MODEL_PATH=/models/share/GLM-5.2-w8a8", runtime)
+        self.assertIn('source "${INIT_ENV_SCRIPT}"', runtime)
+        self.assertIn('--served-model-name "${SERVED_MODEL_NAME}"', runtime)
         self.assertIn('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"', runtime)
         self.assertIn(
             '--safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"',
@@ -393,11 +402,71 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(
             'if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime
         )
+        self.assertLess(
+            runtime.index('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"'),
+            runtime.index('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]'),
+        )
         launcher = (tuning.HERE / "start_continuous.ps1").read_text(
             encoding="utf-8"
         )
         self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
         self.assertIn("Test-Path -LiteralPath $portraitIndexPath", launcher)
+
+    def test_remote_control_templates_follow_configured_server_identity(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["remote_project"] = "/configured/project"
+        configured["lab"]["lease_name"] = "configured-lease"
+        controller = tuning.Controller(configured)
+        lease = controller.render_remote_control_document("lease_loop.yaml")
+        experiment = controller.render_remote_control_document(
+            "experiment_loop.yaml"
+        )
+        self.assertEqual("configured-lease", lease["name"])
+        for document in (lease, experiment):
+            for task in document["tasks"]:
+                self.assertIn("/configured/project/workflow/auto/", task["command"])
+        repository, tag = controller.image_identity["reference"].rsplit(":", 1)
+        self.assertEqual(repository, lease["image"])
+        self.assertEqual(tag, lease["image_tag"])
+        self.assertTrue(all(task["image"] == repository for task in experiment["tasks"]))
+
+    def test_deployment_identity_is_configuration_driven(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["deployment"].update(
+            model_path="/configured/model",
+            served_model_name="configured-model",
+            service_port=18000,
+            quantization="configured-quantization",
+            network_interface="configured-nic",
+        )
+        configured["benchmark"]["aligned_l1"]["served_model"] = "configured-model"
+        configured["benchmark"]["aligned_l1"]["service_port"] = 18000
+        controller = tuning.Controller(configured)
+        env_text = controller.candidate_env("b0", configured["baseline"])
+        self.assertIn("MODEL_PATH=/configured/model", env_text)
+        self.assertIn("SERVED_MODEL_NAME=configured-model", env_text)
+        self.assertIn("SERVICE_PORT=18000", env_text)
+        self.assertIn("MODEL_QUANTIZATION=configured-quantization", env_text)
+        self.assertIn("NIC_NAME=configured-nic", env_text)
+
+    def test_benchmark_model_identity_must_match_deployment(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["deployment"]["served_model_name"] = "different-model"
+        controller = tuning.Controller(configured)
+        with self.assertRaisesRegex(RuntimeError, "served_model must match"):
+            controller.validate_deployment_configuration()
+
+    def test_activation_approval_matches_the_runtime_manifest(self) -> None:
+        tuning.validate_activation_approval()
+
+    def test_activation_approval_rejects_version_drift(self) -> None:
+        approval = tuning.load_yaml(tuning.ACTIVATION_FILE)
+        approval["target"]["vllm_commit"] = "different-commit"
+        with tempfile.TemporaryDirectory() as temporary:
+            approval_path = Path(temporary) / "activation.approved.yaml"
+            tuning.save_yaml(approval_path, approval)
+            with self.assertRaisesRegex(RuntimeError, "does not match"):
+                tuning.validate_activation_approval(approval_path=approval_path)
 
     def test_check_ready_is_read_only_and_requires_an_idle_lease(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -419,6 +488,30 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(
                 running, controller.check_ready(require_idle_lease=False)
             )
+
+    def test_stop_active_task_uses_frozen_remote_configuration(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["remote_project"] = "/configured/project"
+        configured["lab"]["lease_name"] = "configured-lease"
+        controller = tuning.Controller(configured)
+        with patch.object(controller, "ssh", return_value="stopped") as ssh:
+            self.assertEqual(
+                "stopped",
+                controller.stop_active_task({
+                    "active_task_id": "service-task",
+                    "execution_mode": "ktp_lab",
+                    "lease_name": "configured-lease",
+                }),
+            )
+        command = ssh.call_args.args[0]
+        self.assertIn("cd /configured/project", command)
+        self.assertIn("ktp-lab stop --lease configured-lease", command)
+
+    def test_stop_without_active_task_never_contacts_server(self) -> None:
+        with patch.object(self.controller, "ssh") as ssh:
+            message = self.controller.stop_active_task({"active_task_id": None})
+        self.assertIn("No active task", message)
+        ssh.assert_not_called()
 
     def test_model_loading_contract_rejects_unsafe_prefetch_settings(self) -> None:
         configured = config()

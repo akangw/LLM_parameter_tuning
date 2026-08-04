@@ -58,6 +58,7 @@ Git 分发；它们应由入口脚本按所选版本和场景重新生成。
 
 - SSH 别名 `hetao-npu` 指向正确服务器；
 - `activation.approved.yaml` 与镜像 Digest 一致；
+- `config.yaml` 的 `deployment.*` 已按接手服务器配置（主模型、served-model、量化、网卡和环境脚本）；
 - 远端 Lease 名称和目录没有与 0706 共用；
 - `liuxin-workspace` 只读依赖仍可访问；
 - 没有另一台电脑正在运行同一个新项目 Controller。

@@ -5,8 +5,10 @@
 - Windows PowerShell、Python 3.11+、Git、Codex CLI。
 - `pip install -r tuning_pipeline/requirements-runtime.txt`。
 - SSH 别名 `hetao-npu` 可用。
-- `tuning_pipeline/workflow/continuous/activation.approved.yaml` 与目标镜像一致。
+- `tuning_pipeline/workflow/continuous/activation.approved.yaml` 与目标镜像、Digest 和两个源码 commit 一致；校验值来自 `remote/image_version_manifest.yaml`，不写死在启动代码中。
 - 如本地没有固定源码，先运行 `scripts/fetch-sources.ps1`。
+
+服务器差异统一配置在 `config.yaml` 的 `remote_*`、`deployment.*`、`lab.*` 和 Benchmark 路径中。主模型路径、served-model、量化方式、网卡及环境初始化脚本会写入每轮 `candidate.env` 并冻结进 Session，不需要修改远端 Bash。
 
 ## 常用命令
 
@@ -49,7 +51,7 @@ Agent Provider。发现可续跑状态时优先使用 `--resume`。
 
 优雅停止只写入 `STOP_REQUESTED`。Controller 会继续回收当前轮次，然后停止提交下一轮。若服务尚未产生指标，状态分类为 `operator_stop_before_metrics`，不能继承旧轮次的 OOM 分类。
 
-`-StopActiveTask` 会向远端 Lease 发出停止请求，只有明确需要立即停止计算时才使用。
+`-StopActiveTask` 会读取当前 Session 冻结的 `remote_host`、`remote_project` 和 `lease_name` 后向该 Lease 发出停止请求，只有明确需要立即停止计算时才使用；它不依赖仓库内的默认服务器硬编码。
 
 ## 恢复边界
 
@@ -73,6 +75,8 @@ model_loading:
   safetensors_prefetch_num_threads: 8
   safetensors_prefetch_block_size: 16777216
 ```
+
+这三个参数会同时应用于 B0 和后续 Agent 候选轮次。它们只改变权重读取策略和启动耗时，不属于 Search Limits，也不改变 B0 对吞吐/延迟相关 vLLM 参数采用官方源码默认值的定义。
 
 每轮的 `candidate.env`、`effective_config.yaml`、`vllm_common_command.txt` 和
 `startup_timeline.jsonl` 都会记录实际设置。若日志仍出现

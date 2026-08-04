@@ -21,6 +21,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -63,6 +64,7 @@ LOG_FILE = Path(
 )
 LOCK_FILE = HERE / "controller.lock"
 IMAGE_MANIFEST_FILE = HERE / "remote" / "image_version_manifest.yaml"
+ACTIVATION_FILE = HERE / "activation.approved.yaml"
 REMOTE_ARTIFACTS = (
     "candidate.env",
     "task.yaml",
@@ -154,6 +156,72 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def validate_activation_approval(
+    image_manifest: dict[str, Any] | None = None,
+    *,
+    approval_path: Path = ACTIVATION_FILE,
+) -> None:
+    """Require explicit approval for the exact runtime image and source pair."""
+    manifest = image_manifest or load_yaml(IMAGE_MANIFEST_FILE)
+    if not approval_path.is_file():
+        raise RuntimeError(
+            "Remote activation is locked. Copy activation.example.yaml to "
+            "activation.approved.yaml only after verifying the real runtime image."
+        )
+    approval = load_yaml(approval_path)
+    if approval.get("approved") is not True:
+        raise RuntimeError(f"Remote activation is not approved in {approval_path}")
+    target = approval.get("target")
+    if not isinstance(target, dict):
+        raise RuntimeError(f"Remote activation target is missing in {approval_path}")
+    manifest_target = manifest.get("target_image", {})
+    versions = manifest.get("versions", {})
+    expected = {
+        "image": (
+            f"{manifest_target.get('repository', '')}:"
+            f"{manifest_target.get('tag', '')}"
+        ),
+        "image_digest": manifest_target.get("digest"),
+        "vllm_commit": versions.get("vllm", {}).get("commit"),
+        "vllm_ascend_commit": versions.get("vllm_ascend", {}).get("commit"),
+    }
+    incomplete = [name for name, value in expected.items() if not value]
+    if incomplete:
+        raise RuntimeError(
+            "Image version manifest is incomplete for activation validation: "
+            + ", ".join(incomplete)
+        )
+    mismatches = {
+        name: {"approved": target.get(name), "expected": value}
+        for name, value in expected.items()
+        if target.get(name) != value
+    }
+    if mismatches:
+        raise RuntimeError(
+            "Remote activation does not match image_version_manifest.yaml: "
+            + json.dumps(mismatches, ensure_ascii=False, sort_keys=True)
+        )
+    evidence = approval.get("evidence")
+    required_evidence = {
+        "approved_at": approval.get("approved_at"),
+        "approved_by": approval.get("approved_by"),
+        "evidence.package_versions": (
+            evidence.get("package_versions") if isinstance(evidence, dict) else None
+        ),
+        "evidence.source_commit_probe": (
+            evidence.get("source_commit_probe") if isinstance(evidence, dict) else None
+        ),
+    }
+    missing_evidence = [
+        name for name, value in required_evidence.items() if not value
+    ]
+    if missing_evidence:
+        raise RuntimeError(
+            "Remote activation evidence is incomplete: "
+            + ", ".join(missing_evidence)
+        )
+
+
 def save_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -240,6 +308,42 @@ class Controller:
         self._paramiko_client_cache: Any | None = None
         self.remote_project = config["remote_project"]
         self.remote_auto = f"{self.remote_project}/workflow/auto"
+        legacy_aligned = config.get("benchmark", {}).get("aligned_l1", {})
+        deployment = {
+            "model_path": legacy_aligned.get(
+                "tokenizer", "/models/share/GLM-5.2-w8a8"
+            ),
+            "served_model_name": legacy_aligned.get("served_model", "glm-5"),
+            "service_port": legacy_aligned.get("service_port", 8000),
+            "quantization": "ascend",
+            "network_interface": "bond4.3000",
+            "vllm_compat_version": "0.21.0",
+            "init_env_script": "/models/share/init_env.sh",
+            "cann_env_script": "/usr/local/Ascend/cann/set_env.sh",
+            **dict(config.get("deployment", {})),
+        }
+        self.deployment = {
+            name: str(value).strip() for name, value in deployment.items()
+        }
+        empty_deployment = [
+            name for name, value in self.deployment.items() if not value
+        ]
+        if empty_deployment:
+            raise ValueError(
+                "deployment settings cannot be empty: "
+                + ", ".join(empty_deployment)
+            )
+        for name, value in self.deployment.items():
+            if "\n" in value or "\r" in value:
+                raise ValueError(f"deployment.{name} contains a newline")
+        for name in ("model_path", "init_env_script", "cann_env_script"):
+            if not PurePosixPath(self.deployment[name]).is_absolute():
+                raise ValueError(f"deployment.{name} must be an absolute server path")
+        if not self.deployment["service_port"].isdigit() or not (
+            1 <= int(self.deployment["service_port"]) <= 65535
+        ):
+            raise ValueError("deployment.service_port must be between 1 and 65535")
+        self.config["deployment"] = dict(self.deployment)
         self.poll_seconds = int(config["poll_seconds"])
         self.round_timeout_minutes = int(config.get("round_timeout_minutes", 750))
         self.partial_exit_grace_seconds = int(
@@ -1059,6 +1163,22 @@ class Controller:
                 text = str(value)
             lines.append(f"{env_name}={shlex.quote(text)}")
         lines.append(f"MTP_DRAFT_MODEL_PATH={shlex.quote(self.mtp_draft_model)}")
+        deployment_env = {
+            "MODEL_PATH": self.deployment["model_path"],
+            "SERVED_MODEL_NAME": self.deployment["served_model_name"],
+            "SERVICE_PORT": self.deployment["service_port"],
+            "MODEL_QUANTIZATION": self.deployment["quantization"],
+            "NIC_NAME": self.deployment["network_interface"],
+            "VLLM_COMPAT_VERSION": self.deployment["vllm_compat_version"],
+            "INIT_ENV_SCRIPT": self.deployment["init_env_script"],
+            "CANN_ENV_SCRIPT": self.deployment["cann_env_script"],
+        }
+        for env_name, value in deployment_env.items():
+            lines.append(f"{env_name}={shlex.quote(value)}")
+        lab_output_root = str(
+            self.lab.get("output_root", f"{self.remote_auto}/lab_runs")
+        )
+        lines.append("LAB_OUTPUT_ROOT=" + shlex.quote(lab_output_root))
         lines.append(
             "SAFETENSORS_LOAD_STRATEGY="
             + shlex.quote(self.safetensors_load_strategy)
@@ -1128,6 +1248,7 @@ class Controller:
             )
 
     def validate_deployment_configuration(self) -> None:
+        validate_activation_approval(self.image_manifest)
         expected_repository, expected_tag = self.image_identity["reference"].rsplit(":", 1)
         if self.benchmark_mode == "aligned_l1":
             benchmark_image = str(self.benchmark["aligned_l1"]["docker_image"])
@@ -1135,8 +1256,23 @@ class Controller:
                 raise RuntimeError(
                     "benchmark.aligned_l1.docker_image must be digest-qualified"
                 )
-        lease_path = HERE / "remote" / "lease_loop.yaml"
-        lease = load_yaml(lease_path)
+            if (
+                str(self.benchmark["aligned_l1"]["served_model"])
+                != self.deployment["served_model_name"]
+            ):
+                raise RuntimeError(
+                    "benchmark.aligned_l1.served_model must match "
+                    "deployment.served_model_name"
+                )
+            if (
+                int(self.benchmark["aligned_l1"]["service_port"])
+                != int(self.deployment["service_port"])
+            ):
+                raise RuntimeError(
+                    "benchmark.aligned_l1.service_port must match "
+                    "deployment.service_port"
+                )
+        lease = self.render_remote_control_document("lease_loop.yaml")
         if self.execution_mode == "ktp_lab":
             output_root = str(self.lab.get("output_root", ""))
             if not PurePosixPath(output_root).is_absolute():
@@ -1154,7 +1290,7 @@ class Controller:
                 raise RuntimeError(
                     "lease_loop.yaml image does not match image_version_manifest.yaml"
                 )
-        experiment = load_yaml(HERE / "remote" / "experiment_loop.yaml")
+        experiment = self.render_remote_control_document("experiment_loop.yaml")
         for task in experiment.get("tasks", []):
             if (
                 task.get("image") != expected_repository
@@ -1296,14 +1432,44 @@ class Controller:
             timeout=300,
         )
 
+    def render_remote_control_document(self, name: str) -> dict[str, Any]:
+        """Render server-specific control YAML from the repository template."""
+        if name not in {"lease_loop.yaml", "experiment_loop.yaml"}:
+            raise ValueError(f"Unsupported remote control document: {name}")
+        document = load_yaml(HERE / "remote" / name)
+        repository, tag = self.image_identity["reference"].rsplit(":", 1)
+        if name == "lease_loop.yaml":
+            document["name"] = str(self.lab["lease_name"])
+            document["image"] = repository
+            document["image_tag"] = tag
+        for task in document.get("tasks", []):
+            task_name = str(task.get("name", "")).lower()
+            if task_name not in {"master", "worker"}:
+                raise ValueError(f"Unsupported remote task role {task_name!r} in {name}")
+            script = (
+                "run_master_loop.sh"
+                if task_name == "master"
+                else "run_worker_loop.sh"
+            )
+            task["command"] = f"bash {self.remote_auto}/{script}"
+            if name == "experiment_loop.yaml":
+                task["image"] = repository
+                task["image_tag"] = tag
+        return document
+
     def sync_remote_scripts(self) -> None:
         remote_source = HERE / "remote"
         self.ssh(f"mkdir -p {shlex.quote(self.remote_auto)}")
-        for name in REMOTE_SCRIPT_NAMES:
-            source = remote_source / name
-            if not source.is_file():
-                raise RuntimeError(f"Required remote script is missing locally: {source}")
-            self.scp_to(source, f"{self.remote_auto}/{name}")
+        with tempfile.TemporaryDirectory(prefix="vllmtkb-remote-control-") as temporary:
+            rendered_root = Path(temporary)
+            for name in REMOTE_SCRIPT_NAMES:
+                source = remote_source / name
+                if not source.is_file():
+                    raise RuntimeError(f"Required remote script is missing locally: {source}")
+                if name in {"lease_loop.yaml", "experiment_loop.yaml"}:
+                    source = rendered_root / name
+                    save_yaml(source, self.render_remote_control_document(name))
+                self.scp_to(source, f"{self.remote_auto}/{name}")
 
     def lease_status(self) -> str:
         lease_name = str(self.lab["lease_name"])
@@ -1948,6 +2114,25 @@ class Controller:
             f"ktp-lab stop --lease {shlex.quote(str(task_id))}",
             timeout=180,
         )
+
+    def stop_active_task(self, state: dict[str, Any]) -> str:
+        """Stop only the task recorded by the frozen Session state."""
+        task_id = state.get("active_task_id")
+        if not task_id:
+            return "No active task is recorded; only the local stop request was saved."
+        execution_mode = str(state.get("execution_mode", self.execution_mode))
+        if execution_mode == "ktp_lab":
+            lease_name = str(state.get("lease_name") or self.lab.get("lease_name"))
+            if not lease_name:
+                raise RuntimeError("Frozen Session has no Lease identity to stop")
+            return self.ssh(
+                f"cd {shlex.quote(self.remote_project)} && "
+                f"ktp-lab stop --lease {shlex.quote(lease_name)}",
+                timeout=180,
+            )
+        if not str(task_id).isdigit():
+            raise RuntimeError(f"Invalid legacy ktp task id: {task_id!r}")
+        return self.ssh(f"ktp stop {int(task_id)}", timeout=180)
 
     @staticmethod
     def benchmark_regime(
@@ -4092,6 +4277,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="retry the paused candidate after an operator-authorized external fix",
     )
+    group.add_argument(
+        "--stop-active-task",
+        action="store_true",
+        help="stop only the task recorded by state.json using frozen Session config",
+    )
     group.add_argument("--status", action="store_true", help="print controller state")
     parser.add_argument(
         "--strategy-profile",
@@ -4132,6 +4322,7 @@ def main() -> int:
         args.resume
         or args.reanalyze_current
         or args.retry_paused_current
+        or args.stop_active_task
         or (args.check_only and args.use_frozen_session)
     )
     if (args.use_frozen_session or args.allow_active_lease) and not args.check_only:
@@ -4170,6 +4361,10 @@ def main() -> int:
         dry_run=args.dry_run,
         search_space_result=search_space_result,
     )
+    if args.stop_active_task:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        print(controller.stop_active_task(state))
+        return 0
     validate_agent_credentials(controller.agent_config)
     if args.check_only:
         try:

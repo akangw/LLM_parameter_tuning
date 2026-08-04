@@ -3,7 +3,6 @@ set -eo pipefail
 
 AUTO_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_DIR=$(cd -- "${AUTO_DIR}/../.." && pwd)
-MODEL_PATH=/models/share/GLM-5.2-w8a8
 if [[ -z "${EXPERIMENT_RUN_ID:-}" ]]; then
   LAB_ACTIVE_RUN="${AUTO_DIR}/lab_active_run.env"
   [[ -f "${LAB_ACTIVE_RUN}" ]] || {
@@ -25,6 +24,17 @@ fi
 # candidate.env is generated locally from a strict whitelist and copied into
 # this unique run directory before task submission.
 source "${PARAM_FILE}"
+: "${MODEL_PATH:?MODEL_PATH is required}"
+: "${SERVED_MODEL_NAME:?SERVED_MODEL_NAME is required}"
+: "${SERVICE_PORT:?SERVICE_PORT is required}"
+: "${MODEL_QUANTIZATION:?MODEL_QUANTIZATION is required}"
+: "${NIC_NAME:?NIC_NAME is required}"
+: "${VLLM_COMPAT_VERSION:?VLLM_COMPAT_VERSION is required}"
+: "${INIT_ENV_SCRIPT:?INIT_ENV_SCRIPT is required}"
+: "${CANN_ENV_SCRIPT:?CANN_ENV_SCRIPT is required}"
+: "${LAB_OUTPUT_ROOT:?LAB_OUTPUT_ROOT is required}"
+[[ -f "${INIT_ENV_SCRIPT}" ]] || { echo "Missing ${INIT_ENV_SCRIPT}" >&2; exit 2; }
+[[ -f "${CANN_ENV_SCRIPT}" ]] || { echo "Missing ${CANN_ENV_SCRIPT}" >&2; exit 2; }
 LAUNCH_PROFILE="${LAUNCH_PROFILE:-explicit_candidate}"
 case "${LAUNCH_PROFILE}" in
   official_source_defaults|explicit_candidate) ;;
@@ -47,8 +57,8 @@ ADDITIONAL_CONFIG_ENABLE_FUSED_MC2="${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2:-0}"
 SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
 SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
-source /models/share/init_env.sh
-source /usr/local/Ascend/cann/set_env.sh
+source "${INIT_ENV_SCRIPT}"
+source "${CANN_ENV_SCRIPT}"
 
 unset LOCAL_RANK
 export PYTHONUNBUFFERED=1
@@ -56,12 +66,11 @@ export VLLM_ENGINE_READY_TIMEOUT_S=10800
 # This customized glm5.2-a3 image carries source builds whose package version
 # is 0.1.dev*. vLLM Ascend uses VLLM_VERSION to select its compatible upstream
 # API branch; the deployment owner's known-good environment pins it to 0.21.0.
-export VLLM_VERSION=0.21.0
+export VLLM_VERSION="${VLLM_COMPAT_VERSION}"
 export VLLM_RPC_TIMEOUT=360000
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=3000
 export HCCL_CONNECT_TIMEOUT=1200
 export HCCL_EXEC_TIMEOUT=1200
-export NIC_NAME=bond4.3000
 export HCCL_IF_IP="${NODE_IP}"
 export GLOO_SOCKET_IFNAME="${NIC_NAME}"
 export TP_SOCKET_IFNAME="${NIC_NAME}"
@@ -103,9 +112,18 @@ VLLM_COMMON_ARGS=(
   --data-parallel-address "${MASTER_IP}"
   --data-parallel-rpc-port 12980
   --tensor-parallel-size 16
-  --served-model-name glm-5
+  --served-model-name "${SERVED_MODEL_NAME}"
   --trust-remote-code
-  --quantization ascend
+  --quantization "${MODEL_QUANTIZATION}"
+)
+
+# DTFS loading is a deployment transport contract, not an Agent-tuned serving
+# parameter. Apply it equally to B0 and later candidates so the source-default
+# baseline does not fall back to high-latency lazy mmap across all TP workers.
+VLLM_COMMON_ARGS+=(
+  --safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"
+  --safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"
+  --safetensors-prefetch-block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
 )
 
 if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
@@ -116,9 +134,6 @@ if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
     --max-model-len "${MAX_MODEL_LEN}"
     --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}"
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
-    --safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"
-    --safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"
-    --safetensors-prefetch-block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
   )
 
   bool_flag "${ENABLE_EXPERT_PARALLEL}" && VLLM_COMMON_ARGS+=(--enable-expert-parallel)

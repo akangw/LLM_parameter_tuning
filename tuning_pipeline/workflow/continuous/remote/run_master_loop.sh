@@ -43,6 +43,7 @@ launch_profile: ${LAUNCH_PROFILE}
 model: ${MODEL_PATH}
 topology: {pods: 2, npu_per_pod: 16, data_parallel_size: 2, tensor_parallel_size: 16}
 service:
+  port: ${SERVICE_PORT}
   value_origin: $([[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]] && printf 'source_resolved_from_omitted_flags' || printf 'explicit_candidate_env')
   max_num_seqs: ${MAX_NUM_SEQS}
   max_model_len: ${MAX_MODEL_LEN}
@@ -99,19 +100,19 @@ authoritative_server_artifacts:
     - BENCHMARK_DONE
     - BENCHMARK_FAILED
     - MASTER_DONE
-ktp_outer_logs: ${PROJECT_DIR}/workflow/auto/lab_runs/${EXPERIMENT_RUN_ID}/service/rank-<000|001>.log
+ktp_outer_logs: ${LAB_OUTPUT_ROOT}/${EXPERIMENT_RUN_ID}/service/rank-<000|001>.log
 local_policy: core_logs_and_metrics_only
 EOF
 
 write_startup_event "vllm_process_start"
-vllm serve "${MODEL_PATH}" --host 0.0.0.0 --port 8000 "${VLLM_COMMON_ARGS[@]}" &
+vllm serve "${MODEL_PATH}" --host 0.0.0.0 --port "${SERVICE_PORT}" "${VLLM_COMMON_ARGS[@]}" &
 VLLM_PID=$!
 
 write_status "waiting_for_api"
 READY=0
 READY_MAX_ATTEMPTS=1080
 for attempt in $(seq 1 "${READY_MAX_ATTEMPTS}"); do
-  if curl --fail --silent http://127.0.0.1:8000/v1/models > "${RUN_DIR}/models_response.json"; then
+  if curl --fail --silent "http://127.0.0.1:${SERVICE_PORT}/v1/models" > "${RUN_DIR}/models_response.json"; then
     READY=1
     echo "vLLM API is ready."
     break
@@ -131,13 +132,13 @@ write_startup_event "api_ready"
 
 if [[ "${BENCHMARK_MODE}" == "legacy_random_32k1k" ]]; then
   write_status "legacy_warmup"
-  vllm bench serve --served-model-name glm-5 --port 8000 --backend vllm \
+  vllm bench serve --served-model-name "${SERVED_MODEL_NAME}" --port "${SERVICE_PORT}" --backend vllm \
     --dataset-name random --random-input-len 32000 --random-output-len 1000 \
     --random-range-ratio 0.5 --request-rate 0.2 --num-prompts 8 --ignore-eos \
     --temperature 0 --trust-remote-code --seed 24 2>&1 | tee "${RUN_DIR}/warmup.log"
 
   write_status "legacy_formal_benchmark"
-  vllm bench serve --served-model-name glm-5 --port 8000 --backend vllm \
+  vllm bench serve --served-model-name "${SERVED_MODEL_NAME}" --port "${SERVICE_PORT}" --backend vllm \
     --dataset-name random --random-input-len 32000 --random-output-len 1000 \
     --random-range-ratio 0.5 --request-rate 0.2 --num-prompts 8 --ignore-eos \
     --temperature 0 --trust-remote-code --seed 42 2>&1 | tee "${RUN_DIR}/formal.log"

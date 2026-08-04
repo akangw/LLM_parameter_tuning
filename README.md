@@ -104,13 +104,15 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 2. `ssh hetao-npu` 可以连接。
 3. 默认模式下 `codex --version` 可用且 Codex 已登录；若选择 API Provider，则对应 Key 环境变量已设置。
 4. `tuning_pipeline/workflow/continuous/config.yaml` 中的远端项目、模型、MTP、Benchmark 和 Lease 配置仍适用于目标服务器。
-5. `activation.approved.yaml` 中的镜像、vLLM 和 vllm-ascend 身份与服务器一致。
+5. `activation.approved.yaml` 中的镜像、Digest、vLLM 和 vllm-ascend 身份与服务器一致；Controller 会逐项与 `remote/image_version_manifest.yaml` 动态核对，换版本不需要改校验代码。
 6. 只读 `liuxin-workspace` 依赖仍可访问。
+
+接手者需要修改的服务器项集中在 `config.yaml`：`remote_host`、`remote_project`、`deployment.*`（主模型、served-model、量化、网卡和环境脚本）、`lab.*` 以及所选 Benchmark 的服务端路径；镜像与源码身份集中在 `remote/image_version_manifest.yaml` 和 `activation.approved.yaml`。当前执行器明确支持两节点、每节点 16 NPU 的既定拓扑；更换主机和路径是配置操作，更换拓扑则属于新的执行器适配，不能只改一个数字后静默运行。
 
 最后执行不提交任务的端到端只读预检；它会检查本地配置、AI Provider、SSH 连接和 Lease 空闲状态：
 
 ```powershell
-.\一键启动.ps1 -CheckOnly
+.\一键启动.ps1 -CheckOnly -NewSession
 ```
 
 ### 2. Lease 是否需要重新创建
@@ -130,7 +132,7 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 | Service slot 为 `running` 或不是 `idle=2` | 不启动重叠实验，先确认当前操作者和任务 |
 | 服务镜像、Digest、节点资源或 Lease 模板发生变化 | 修改为新的版本化 Lease 名称，再创建新 Lease；不要用旧名称冒充新环境 |
 
-`prepare-remote.ps1` 会同步远端受管脚本并提交 Lease 创建，因此只在 Lease 不存在或明确升级 Lease 身份时使用。
+`prepare-remote.ps1` 会同步远端受管脚本并提交 Lease 创建，因此只在 Lease 不存在或明确升级 Lease 身份时使用。同步时，Controller 会依据 `config.yaml` 的 `remote_project`、`lab.lease_name` 和已验证镜像身份动态生成远端 Lease/Experiment 控制 YAML；接手者无需再搜索并替换模板内的旧服务器路径。
 
 ### 3. 新建 Session 实验
 

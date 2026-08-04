@@ -27,5 +27,13 @@ if ($Resume) { $arguments += "--resume" }
 if ($TagProvider) { $arguments += @("--tag-provider", $TagProvider) }
 if ($Scenario) { $arguments += @("--scenario", $Scenario) }
 if ($LegacyPortraitDir) { $arguments += @("--legacy-dir", $LegacyPortraitDir) }
-& python @arguments
+$python = if ($env:VLLMTKB_PYTHON) {
+    if (-not (Test-Path -LiteralPath $env:VLLMTKB_PYTHON)) {
+        throw "VLLMTKB_PYTHON does not exist: $env:VLLMTKB_PYTHON"
+    }
+    (Resolve-Path -LiteralPath $env:VLLMTKB_PYTHON).Path
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
+& $python @arguments
 exit $LASTEXITCODE

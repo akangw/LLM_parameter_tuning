@@ -116,33 +116,14 @@ if ($tagUnfinished -gt 0) {
     throw "Codex tags are not complete: $tagUnfinished unfinished items."
 }
 
-$activationPath = Join-Path $root "activation.approved.yaml"
-if (-not (Test-Path -LiteralPath $activationPath)) {
-    throw @"
-Remote activation is intentionally locked. Verify the target image actually
-contains vLLM 418bd6273c03bf48d5066733769e0a74bdc51694 and vllm-ascend
-32c8cf190f596b47f0d0b965e64aea9f2b789ad4, then create:
-$activationPath
-from activation.example.yaml.
-"@
-}
-$activationText = Get-Content -Raw -LiteralPath $activationPath
-if ($activationText -notmatch '(?m)^approved:\s*true\s*$') {
-    throw "Remote activation file does not contain 'approved: true': $activationPath"
-}
-foreach ($requiredIdentity in @(
-    "418bd6273c03bf48d5066733769e0a74bdc51694",
-    "32c8cf190f596b47f0d0b965e64aea9f2b789ad4"
-)) {
-    if ($activationText -notmatch [regex]::Escape($requiredIdentity)) {
-        throw "Remote activation evidence is missing commit $requiredIdentity"
-    }
-}
-
 $python = Resolve-Python
-& $python -c "from importlib.metadata import version; from packaging.version import Version; import yaml, paramiko, pydantic, jsonschema, anthropic; required={'PyYAML':'6.0','paramiko':'3.0','pydantic':'2.0','jsonschema':'4.0','anthropic':'0.49','packaging':'23.0'}; bad=[f'{name}={version(name)} (need >= {minimum})' for name,minimum in required.items() if Version(version(name)) < Version(minimum)]; assert not bad, '; '.join(bad); print('Python dependencies: OK')"
+& $python -c "import sys; assert sys.version_info >= (3, 11), f'Python 3.11+ required, found {sys.version}'; from importlib.metadata import version; from packaging.version import Version; import yaml, paramiko, pydantic, jsonschema, anthropic; required={'PyYAML':'6.0','paramiko':'3.0','pydantic':'2.0','jsonschema':'4.0','anthropic':'0.49','packaging':'23.0'}; bad=[f'{name}={version(name)} (need >= {minimum})' for name,minimum in required.items() if Version(version(name)) < Version(minimum)]; assert not bad, '; '.join(bad); print('Python dependencies: OK')"
 if ($LASTEXITCODE -ne 0) {
     throw "Python dependencies are incomplete. Run from the project root: python -m pip install -r .\tuning_pipeline\requirements-runtime.txt"
+}
+& $python -c "import sys; sys.path.insert(0, sys.argv[1]); from continuous_tuning import validate_activation_approval; validate_activation_approval(); print('Remote activation: OK')" $root
+if ($LASTEXITCODE -ne 0) {
+    throw "Remote activation does not match the verified image manifest. Update activation.approved.yaml only after verifying the target image."
 }
 
 $mode = "--start"

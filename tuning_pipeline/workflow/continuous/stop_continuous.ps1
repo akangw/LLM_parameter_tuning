@@ -9,15 +9,16 @@ $stopPath = Join-Path $root "STOP_REQUESTED"
 Write-Host "Graceful stop requested. No next experiment will be submitted."
 
 if ($StopActiveTask -and (Test-Path -LiteralPath $statePath)) {
-    $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
-    if ($state.active_task_id) {
-        if ($state.execution_mode -eq "ktp_lab" -or $state.active_task_id -notmatch '^\d+$') {
-            & ssh -o BatchMode=yes -o ConnectTimeout=15 hetao-npu `
-                "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190 && ktp-lab stop --lease $($state.active_task_id)"
-            Write-Host "Stop requested for persistent lease $($state.active_task_id)."
-        } else {
-            & ssh -o BatchMode=yes -o ConnectTimeout=15 hetao-npu "ktp stop $($state.active_task_id)"
-            Write-Host "Stop requested for active task $($state.active_task_id)."
+    $python = if ($env:VLLMTKB_PYTHON) {
+        if (-not (Test-Path -LiteralPath $env:VLLMTKB_PYTHON)) {
+            throw "VLLMTKB_PYTHON does not exist: $env:VLLMTKB_PYTHON"
         }
+        (Resolve-Path -LiteralPath $env:VLLMTKB_PYTHON).Path
+    } else {
+        (Get-Command python -ErrorAction Stop).Source
+    }
+    & $python (Join-Path $root "continuous_tuning.py") --stop-active-task
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
     }
 }
