@@ -8,6 +8,7 @@ param(
     [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
     [string]$TagProvider,
     [string]$Scenario,
+    [string]$SearchSpaceProfile = "automatic_registry_v1",
     [switch]$PrepareOnly,
     [switch]$Resume,
     [int]$Concurrency = 8
@@ -20,6 +21,7 @@ $arguments = @(
     "--vllm-ascend", $VllmAscend,
     "--provider", $Provider,
     "--portrait-mode", $PortraitMode,
+    "--search-space-profile", $SearchSpaceProfile,
     "--concurrency", $Concurrency
 )
 if ($PrepareOnly) { $arguments += "--prepare-only" }

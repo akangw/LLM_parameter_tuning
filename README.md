@@ -7,12 +7,12 @@
 - 固定源码：vLLM `418bd6273c03bf48d5066733769e0a74bdc51694`，vllm-ascend `32c8cf190f596b47f0d0b965e64aea9f2b789ad4`。
 - 参数知识：1540 个结构化表面，340 份完整 ParameterYAML，105 份带依据跳过记录。
 - 五维标签：340 份，审计错误 0；当前场景召回 109 份高影响画像。
-- 新 Session 搜索空间：16 个合格可调参数，12 Active、4 Reserve、6 Fixed、1 Rejected。
+- 新 Session 默认自动构建注册表：36 个最终可调参数，12 Active、24 Reserve、35 Fixed、0 Rejected；人工 23 项注册表作为可切换兼容路径保留。早期隔离审计的 44（12+32）已在接入审查中剔除 8 个已知无效/固定维度。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
 - B0 已定义为“目标版本源码/启动日志中的官方默认值”，当前状态为等待项目负责人下令提交，尚未运行。
 
-## 三个可选扩展接口
+## 四个可选扩展接口
 
 ### 更换 vLLM / vllm-ascend 版本
 
@@ -37,34 +37,49 @@
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
   -Scenario .\path\to\scenario.yaml
 
+# 可选择自动构建注册表（默认）或复用人工 23 项注册表
+.\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
+  -SearchSpaceProfile automatic_registry_v1
+
 # 也可使用 Anthropic；Key 只放环境变量
 $env:ANTHROPIC_API_KEY = "..."
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -Provider anthropic
 ```
 
-画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择。画像 Provider 当前支持 `codex`、`anthropic`。
+画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择；召回到 Search Limits 的构建方式通过 `-SearchSpaceProfile automatic_registry_v1|curated_registry_v1` 选择。画像 Provider 当前支持 `codex`、`anthropic`。
 
-### 切换 Agent 策略与 Benchmark
+Tags 召回到 Search Limits 之间另有一条独立的端到端自动化链路。它不读取或修改现有人工注册表，会自动完成语义归并、固定版本源码能力核验、场景兼容过滤、`unset/omit` 动作规范化、跨参数约束和通用注入校验，再调用现有 Search-Space Compiler。这条兼容判定链只使用程序和 YAML 策略，不依赖 AI：
 
-在线闭环默认使用 `codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择策略、Provider 或 Benchmark：
+```powershell
+cd .\tuning_pipeline
+python -m workflow.registry_builder.full_pipeline --dry-run
+```
+
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_v1` 已接入 Controller 并作为新 Session 默认值；生成的注册表、兼容策略、注入契约和 Search Limits 会冻结到 Session。`curated_registry_v1` 保留人工 23 项注册表，便于历史对照。独立命令仍只写指定审计目录、不提交服务器任务。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+
+### 切换 Search-Space、Agent 策略与 Benchmark
+
+在线闭环默认使用 `automatic_registry_v1 + codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择 Search-Space、策略、Provider 或 Benchmark：
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\一键启动.ps1 -NewSession -AgentProvider anthropic
 .\一键启动.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
+.\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
 ```
 
-三个接口及定义位置：
+四个接口及定义位置：
 
 | 接口 | 启动参数 | 当前选项 | 定义位置 |
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
+| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_v1`、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
 | Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`legacy_random_32k1k` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
 
-三个接口的设计原理、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+四个接口的设计原理、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
 
 ### Git 克隆后可直接复用的知识产物
 
@@ -156,7 +171,8 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 
 # 可选：同时选择 Agent、策略与 Benchmark
 .\一键启动.ps1 -NewSession -AgentProvider codex `
-  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4
+  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4 `
+  -SearchSpaceProfile automatic_registry_v1
 ```
 
 当前配置的新 Session 会从 `round_000_b0` 官方默认参数基线开始；B0 成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
@@ -166,7 +182,8 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 
 ```powershell
 .\一键启动.ps1 -CheckOnly -NewSession -AgentProvider codex `
-  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4
+  -StrategyProfile best_anchor_coverage_v2 -BenchmarkProfile aligned_l1_v4 `
+  -SearchSpaceProfile automatic_registry_v1
 ```
 
 新建时会生成：
@@ -241,6 +258,8 @@ Auto_vllm_parameter/
    ├─ search_limits/             最新独立编译产物
    ├─ logs/                      本地总控日志入口
    └─ workflow/
+      ├─ search_space_profiles.yaml  自动/人工注册表 Profile 入口
+      ├─ registry_builder/       自动注册表、兼容校验与通用注入
       ├─ search_space_compiler/  Search Limits 编译器
       ├─ sidecars/               画像检索和运行规则
       └─ continuous/             Controller、远端脚本和 Session 运行时

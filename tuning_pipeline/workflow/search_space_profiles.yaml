@@ -1,0 +1,28 @@
+# Search-space construction is a Session-level choice, just like Agent and
+# Benchmark profiles. The selected definition is frozen into session_config.yaml.
+default_profile: automatic_registry_v1
+
+profiles:
+  curated_registry_v1:
+    status: integrated
+    mode: curated_registry
+    purpose: >-
+      Preserve the reviewed 23-entry registry and its historical experiment
+      comparability. Tags recall and the compiler are automatic, while registry
+      membership and injection contracts remain human curated.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    registry: workflow/search_space_compiler/registry.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+
+  automatic_registry_v1:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      Build the registry from tagged portraits, pinned source evidence and a
+      deterministic compatibility policy before invoking the same compiler.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
+    source_root: ../portrait_pipeline/sources

@@ -7,6 +7,7 @@ param(
     [switch]$CheckOnly,
     [string]$StrategyProfile,
     [string]$BenchmarkProfile,
+    [string]$SearchSpaceProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
     [string]$AgentProvider
 )
@@ -19,8 +20,8 @@ $pipelineRoot = Split-Path -Parent $downstreamRoot
 if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
     throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
 }
-if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider -or $BenchmarkProfile)) {
-    throw "Strategy/Agent/Benchmark profiles are frozen in a Session and cannot be overridden during resume."
+if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider -or $BenchmarkProfile -or $SearchSpaceProfile)) {
+    throw "Search-space/Strategy/Agent/Benchmark profiles are frozen in a Session and cannot be overridden during resume."
 }
 
 function Get-ControllerProcess {
@@ -76,6 +77,7 @@ $requiredFiles = @(
     "agent_provider.py",
     "strategy_profiles.yaml",
     "benchmark_profiles.yaml",
+    "..\search_space_profiles.yaml",
     "agent_decision.schema.json",
     "failure_decision.schema.json",
     "remote\image_version_manifest.yaml"
@@ -160,6 +162,7 @@ if ($CheckOnly) {
     if ($StrategyProfile) { $checkArguments += @("--strategy-profile", $StrategyProfile) }
     if ($AgentProvider) { $checkArguments += @("--agent-provider", $AgentProvider) }
     if ($BenchmarkProfile) { $checkArguments += @("--benchmark-profile", $BenchmarkProfile) }
+    if ($SearchSpaceProfile) { $checkArguments += @("--search-space-profile", $SearchSpaceProfile) }
     if ($mode -eq "--resume" -or $RetryPausedCurrent) {
         $checkArguments += "--use-frozen-session"
         $checkStatePath = Join-Path $root "state.json"
@@ -196,6 +199,7 @@ $arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
 if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
 if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
 if ($BenchmarkProfile) { $arguments += @("--benchmark-profile", $BenchmarkProfile) }
+if ($SearchSpaceProfile) { $arguments += @("--search-space-profile", $SearchSpaceProfile) }
 if ($Foreground) {
     & $python @arguments
     exit $LASTEXITCODE

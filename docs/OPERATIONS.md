@@ -22,6 +22,10 @@
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
+# 显式选择自动注册表（默认）或人工注册表兼容路径
+.\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
+.\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
+
 # 新建 Session 时选择 Benchmark；续跑不可切换
 .\一键启动.ps1 -NewSession -BenchmarkProfile aligned_l1_v4
 
@@ -56,6 +60,7 @@ Agent Provider。发现可续跑状态时优先使用 `--resume`。
 ## 恢复边界
 
 - `--resume` 总是加载 Session 内冻结的配置和 Search Limits。
+- Search-Space、Agent Strategy 和 Benchmark Profile 只允许新建 Session 时选择；恢复时禁止覆盖。
 - 服务镜像身份不一致时拒绝恢复。
 - Benchmark 容器、Suite、Schema、Tokenizer 或 Dataset 指纹变化时，应创建新 Session。
 - 当前平台不允许 Agent 启用上游 `--enable-eplb`。

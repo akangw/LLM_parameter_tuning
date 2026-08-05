@@ -10,7 +10,9 @@ flowchart LR
     B --> C["Stage-1 初筛与迁移"]
     C --> D["ParameterYAML 参数画像"]
     D --> E["五维 Tags"]
-    E --> F["Search Limits 编译"]
+    E --> R["场景召回"]
+    R --> P["可选：自动注册表 / 人工注册表"]
+    P --> F["Search Limits 编译"]
     F --> G["本地 Controller"]
     G --> H["Codex 选参与确定性校验"]
     H --> I["独立 ktp-lab Lease"]
@@ -30,14 +32,14 @@ flowchart LR
 
 ## Search Limits
 
-当前静态编译结果：
+新 Session 默认自动构建结果：
 
 ```text
 340 ParameterYAML
 → 109 场景召回
-→ 16 合格可调参数
-→ 12 Active + 4 Reserve
-→ 6 Fixed + 1 Rejected
+→ 36 最终可调参数
+→ 12 Active + 24 Reserve
+→ 35 Fixed + 0 Rejected
 ```
 
 新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前 Active 是：
@@ -49,19 +51,21 @@ gpu_memory_utilization
 compilation_mode
 num_speculative_tokens
 enable_chunked_prefill
-long_prefill_token_threshold
 enable_prefix_caching
 cudagraph_capture_sizes
 max_cudagraph_capture_size
 mlapo
 flashcomm1
+speculative_config__method
 ```
+
+`automatic_registry_v1` 不读取人工 `registry.yaml`，从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留人工 23 项注册表。两条路径在新 Session 创建时选择并冻结。当前两条路径的 Active 均为 12 项，其中 11 项重合；自动路径的差异项为 `speculative_config__method`，人工路径为 `long_prefill_token_threshold`。
 
 `enable_eplb=false` 与 `eplb_num_redundant_experts=0` 是固定运行契约，不是搜索轴。当前 pinned Ascend 平台不支持上游 `--enable-eplb` CLI。
 
 ## 在线状态机
 
-- A0 建立基线。
+- B0 用官方源码默认值建立新 Session 基线；A0 作为历史专家配置基线保留。
 - Codex 从最佳已验收锚点出发提出候选。
 - 第一层使用画像和关系证据判断候选是否合理。
 - 第二层由 Python 强制执行白名单、参数组合、网格预算、重复候选和历史隔离。

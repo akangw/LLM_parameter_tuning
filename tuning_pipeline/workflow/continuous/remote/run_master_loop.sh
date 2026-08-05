@@ -44,6 +44,7 @@ model: ${MODEL_PATH}
 topology: {pods: 2, npu_per_pod: 16, data_parallel_size: 2, tensor_parallel_size: 16}
 service:
   port: ${SERVICE_PORT}
+  runtime_injection_mode: ${RUNTIME_INJECTION_MODE}
   value_origin: $([[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]] && printf 'source_resolved_from_omitted_flags' || printf 'explicit_candidate_env')
   max_num_seqs: ${MAX_NUM_SEQS}
   max_model_len: ${MAX_MODEL_LEN}
@@ -84,6 +85,10 @@ authoritative_server_artifacts:
     - effective_config.yaml
     - vllm_common_command.txt
     - task.yaml
+  generated_configuration_if_explicit_candidate:
+    - generated_json_configs.json
+    - generated_cli_args.nul
+    - generated_environment.sh
   service_logs:
     - master.log
     - worker.log

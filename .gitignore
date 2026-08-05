@@ -20,6 +20,7 @@ portrait_pipeline/build/codex_portrait_pipeline/run/
 portrait_pipeline/build/migration_pipeline/runs/
 portrait_pipeline/build/version_migrations/
 tuning_pipeline/workflow/search_space_compiler/runs/
+tuning_pipeline/workflow/registry_builder/runs/
 portrait_pipeline/build/parse_params/output/logs/
 tuning_pipeline/tag_params/output/logs/
 *.jsonl
@@ -32,3 +33,5 @@ portrait_pipeline/sources/
 .idea/
 .vscode/
 .DS_Store
+.codex-ppt-final/
+.codex-ppt-manual-polish/

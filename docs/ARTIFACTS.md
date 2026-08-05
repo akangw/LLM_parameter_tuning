@@ -14,6 +14,7 @@
 | Tags | `tuning_pipeline/tag_params/output/params/` | 340 份五维标签画像 |
 | Tags 审计 | `tuning_pipeline/tag_params/output/audit.json` | 数量、分布、召回与错误 |
 | Search Limits | `tuning_pipeline/search_limits/` | 最新编译边界和审批证据 |
+| Search-Space Profiles | `tuning_pipeline/workflow/search_space_profiles.yaml` | 自动注册表与人工注册表两条可替换定义 |
 
 以上正式知识产物纳入版本控制并随 Git 克隆分发。当前仓库基线包含 340 份参数
 画像、105 份跳过说明、340 份 Tags，以及 Search Limits 目录内的编译产物与证据。
@@ -31,6 +32,8 @@ Search Limits 文件：
 - `approval_queue.yaml`：需要人工批准的候选。
 - `rotation_report.yaml`：历史驱动的换入/换出说明。
 - `manifest.json`：输入和输出身份。
+
+每个新 Session 的 `00_search_space/` 是实际执行边界的权威副本。自动 Profile 还会保存 `search_space_profile.yaml`、`registry.generated.yaml` 和 `registry.audit.yaml`；因此即使全局画像、策略或默认 Profile 后来更新，续跑仍使用原 Session 的冻结注册表、兼容规则、值域和注入契约。
 
 ## 2. 离线日志
 
@@ -64,6 +67,16 @@ tuning_pipeline/workflow/continuous/experiments/<session>/
    ├─ 05_results/
    └─ 06_agent_analysis/
 ```
+
+`00_search_space/` 的核心文件：
+
+| 文件 | 含义 |
+|---|---|
+| `search_space_profile.yaml` | 本 Session 选择的构建方式及完整定义 |
+| `registry.generated.yaml` | 自动 Profile 生成的可执行参数及注入契约 |
+| `registry.audit.yaml` | 自动构建输入、源码身份、召回去向与兼容审计 |
+| `search_space.compiled.yaml` | Active/Reserve/Fixed/Rejected 全量分类 |
+| `manual_search_limits.yaml` | 兼容池与运行契约留档，不代表自动 Profile 依赖人工成员名单 |
 
 | 层级 | 关键文件 | 回答的问题 |
 |---|---|---|

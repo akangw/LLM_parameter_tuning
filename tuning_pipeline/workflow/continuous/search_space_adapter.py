@@ -12,22 +12,81 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from workflow.search_space_compiler.compiler import SearchSpaceCompiler
+from workflow.registry_builder.pipeline import AutomaticRegistryPipeline
 
 
 def _latest_history(archive_root: Path) -> Path | None:
     candidates = list(
-        archive_root.glob("glm52_continuous_*/round_*/06_agent_analysis/history_input.json")
-    )
-    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
-
-
-def _latest_previous_selection(archive_root: Path) -> Path | None:
-    candidates = list(
         archive_root.glob(
-            "glm52_continuous_*/00_search_space/search_space.compiled.yaml"
+            "glm52_continuous_*/round_*/06_agent_analysis/history_input.json"
         )
     )
-    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    return (
+        max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    )
+
+
+def _latest_previous_selection(archive_root: Path, profile_name: str) -> Path | None:
+    candidates = sorted(
+        archive_root.glob(
+            "glm52_continuous_*/00_search_space/search_space.compiled.yaml"
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        if (
+            isinstance(value, dict)
+            and value.get("integration", {}).get("search_space_profile") == profile_name
+        ):
+            return path
+    return None
+
+
+def _project_path(project_root: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else (project_root / path).resolve()
+
+
+def _resolve_profile(
+    config: dict[str, Any], project_root: Path
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    settings = config.get("search_space")
+    if not isinstance(settings, dict):
+        return None
+    frozen = settings.get("resolved_profile")
+    if isinstance(frozen, dict):
+        name = str(settings["profile"])
+        profile = copy.deepcopy(frozen)
+    else:
+        profiles_path = _project_path(
+            project_root,
+            str(settings.get("profiles_file", "workflow/search_space_profiles.yaml")),
+        )
+        document = yaml.safe_load(profiles_path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict):
+            raise ValueError(
+                f"Search-space profiles must be an object: {profiles_path}"
+            )
+        name = str(settings.get("profile") or document.get("default_profile"))
+        profiles = document.get("profiles", {})
+        if name not in profiles:
+            raise ValueError(
+                f"Unknown search-space profile {name!r}; available={sorted(profiles)}"
+            )
+        profile = copy.deepcopy(profiles[name])
+    if profile.get("status") != "integrated":
+        raise ValueError(f"Search-space profile {name!r} is not integrated")
+    mode = str(profile.get("mode", ""))
+    if mode not in {"curated_registry", "automatic_registry"}:
+        raise ValueError(f"Unsupported search-space profile mode={mode!r}")
+    config.setdefault("search_space", {})["profile"] = name
+    config["search_space"]["resolved_profile"] = copy.deepcopy(profile)
+    return name, profile, settings
 
 
 def resolve_search_limits(
@@ -40,8 +99,9 @@ def resolve_search_limits(
     config = copy.deepcopy(raw_config)
     if config.get("search_limits_resolved"):
         return config, None
-    mode = str(config.get("search_limits_mode", "manual"))
-    if mode == "manual":
+    profile_resolution = _resolve_profile(config, project_root)
+    legacy_mode = str(config.get("search_limits_mode", "manual"))
+    if profile_resolution is None and legacy_mode == "manual":
         config["manual_search_limits"] = copy.deepcopy(config["search_limits"])
         config["search_limits_resolved"] = True
         config["resolved_search_space"] = {
@@ -49,21 +109,33 @@ def resolve_search_limits(
             "source": "config.search_limits",
         }
         return config, None
-    if mode != "automated":
-        raise ValueError(f"Unsupported search_limits_mode={mode!r}")
-
-    settings = config.get("automated_search_limits", {})
-    scenario_path = project_root / settings.get(
-        "scenario", "workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml"
+    if profile_resolution is None:
+        if legacy_mode != "automated":
+            raise ValueError(f"Unsupported search_limits_mode={legacy_mode!r}")
+        profile_name = "legacy_curated_registry"
+        profile = {
+            "mode": "curated_registry",
+            **dict(config.get("automated_search_limits", {})),
+        }
+        settings = config.get("automated_search_limits", {})
+    else:
+        profile_name, profile, settings = profile_resolution
+    mode = str(profile["mode"])
+    scenario_path = _project_path(
+        project_root,
+        str(
+            profile.get(
+                "scenario",
+                "workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml",
+            )
+        ),
     )
-    registry_path = project_root / settings.get(
-        "registry", "workflow/search_space_compiler/registry.yaml"
+    policy_path = _project_path(
+        project_root,
+        str(profile.get("policy", "workflow/search_space_compiler/policy.yaml")),
     )
-    policy_path = project_root / settings.get(
-        "policy", "workflow/search_space_compiler/policy.yaml"
-    )
-    knowledge_dir = project_root / settings.get(
-        "knowledge_dir", "tag_params/output/params"
+    knowledge_dir = _project_path(
+        project_root, str(profile.get("knowledge_dir", "tag_params/output/params"))
     )
     history_path = None
     history_mode = str(settings.get("history_source", "latest_completed_session"))
@@ -75,29 +147,66 @@ def resolve_search_limits(
         explicit = settings.get("history_path")
         if not explicit:
             raise ValueError("history_path is required for history_source=explicit")
-        history_path = project_root / str(explicit)
+        history_path = _project_path(project_root, str(explicit))
     else:
         raise ValueError(f"Unsupported history_source={history_mode!r}")
 
-    previous_selection = _latest_previous_selection(archive_root)
-    compiler = SearchSpaceCompiler(
-        knowledge_dir=knowledge_dir,
-        scenario_path=scenario_path,
-        registry_path=registry_path,
-        policy_path=policy_path,
-        history_path=history_path,
-        previous_selection_path=previous_selection,
+    previous_selection = _latest_previous_selection(archive_root, profile_name)
+    automatic_registry: dict[str, Any] | None = None
+    if mode == "curated_registry":
+        registry_path = _project_path(
+            project_root,
+            str(
+                profile.get("registry", "workflow/search_space_compiler/registry.yaml")
+            ),
+        )
+        compiler = SearchSpaceCompiler(
+            knowledge_dir=knowledge_dir,
+            scenario_path=scenario_path,
+            registry_path=registry_path,
+            policy_path=policy_path,
+            history_path=history_path,
+            previous_selection_path=previous_selection,
+        )
+        result = compiler.compile()
+        compiler_scenario = compiler.scenario
+    else:
+        compatibility_policy_path = _project_path(
+            project_root,
+            str(
+                profile.get(
+                    "compatibility_policy",
+                    "workflow/registry_builder/compatibility_policy.yaml",
+                )
+            ),
+        )
+        source_root = _project_path(
+            project_root,
+            str(profile.get("source_root", "../portrait_pipeline/sources")),
+        )
+        automatic_pipeline = AutomaticRegistryPipeline(
+            knowledge_dir=knowledge_dir,
+            scenario_path=scenario_path,
+            policy_path=policy_path,
+            compatibility_policy_path=compatibility_policy_path,
+            source_root=source_root,
+        )
+        automatic_registry, result = automatic_pipeline.compile()
+        compiler_scenario = automatic_pipeline.scenario
+        result["automatic_registry_snapshot"] = automatic_registry
+        result["integration"]["compatibility_policy"] = str(compatibility_policy_path)
+        result["integration"]["source_identity"] = automatic_pipeline.source_identity
+    approved = {str(name) for name in settings.get("approved_planned_parameters", [])}
+    unapproved = (
+        []
+        if mode == "automatic_registry"
+        else [
+            item["canonical_name"]
+            for item in result["active_parameters"]
+            if item["integration_status"] != "existing"
+            and item["canonical_name"] not in approved
+        ]
     )
-    result = compiler.compile()
-    approved = {
-        str(name) for name in settings.get("approved_planned_parameters", [])
-    }
-    unapproved = [
-        item["canonical_name"]
-        for item in result["active_parameters"]
-        if item["integration_status"] != "existing"
-        and item["canonical_name"] not in approved
-    ]
     if unapproved:
         raise ValueError(
             "Automated search selected planned parameters without explicit "
@@ -107,7 +216,7 @@ def resolve_search_limits(
     manual_limits = copy.deepcopy(config["search_limits"])
     effective_limits = copy.deepcopy(result["active_search_limits"])
     baseline = copy.deepcopy(config["baseline"])
-    compiler_baseline = compiler.scenario.get("baseline", {})
+    compiler_baseline = compiler_scenario.get("baseline", {})
     for name, values in effective_limits.items():
         if name not in baseline:
             preferred = compiler_baseline.get(name)
@@ -151,8 +260,12 @@ def resolve_search_limits(
             source_default_anchors.append(name)
 
     result["integration"]["connected_to_mainflow"] = True
+    result["integration"]["search_space_profile"] = profile_name
+    result["integration"]["profile_mode"] = mode
     result["integration"]["approval_source"] = (
-        "config.automated_search_limits.approved_planned_parameters"
+        "deterministic_compatibility_and_runtime_validation"
+        if mode == "automatic_registry"
+        else "config.search_space.approved_planned_parameters"
     )
     result["integration"]["approved_planned_parameters"] = sorted(approved)
     result["integration"]["effective_candidate_parameters"] = list(effective_limits)
@@ -160,12 +273,35 @@ def resolve_search_limits(
     config["search_limits"] = effective_limits
     config["baseline"] = baseline
     config["search_limits_resolved"] = True
+    if automatic_registry is not None:
+        parameters = {
+            str(item["canonical_name"]): item
+            for item in automatic_registry["parameters"]
+        }
+        active_names = list(result["active_search_limits"])
+        validation_active = copy.deepcopy(result["active_parameters"])
+        for item in validation_active:
+            item["values"] = copy.deepcopy(
+                effective_limits[str(item["canonical_name"])]
+            )
+        config["automatic_registry_validation"] = {
+            "scenario": copy.deepcopy(compiler_scenario),
+            "compatibility_policy": copy.deepcopy(
+                automatic_pipeline.compatibility.policy
+            ),
+            "compiled": {
+                "active_parameters": validation_active,
+            },
+            "active_injections": {
+                name: copy.deepcopy(parameters[name]["injection"])
+                for name in active_names
+            },
+        }
     config["resolved_search_space"] = {
-        "mode": "automated",
+        "mode": mode,
+        "profile": profile_name,
         "history": str(history_path) if history_path else None,
-        "previous_selection": (
-            str(previous_selection) if previous_selection else None
-        ),
+        "previous_selection": (str(previous_selection) if previous_selection else None),
         "active_tunable_parameters": list(result["active_search_limits"]),
         "derived_runtime_parameters": derived_runtime_parameters,
         "fixed_runtime_parameters": [
@@ -196,6 +332,19 @@ def write_session_search_space(
         ),
         encoding="utf-8",
     )
+    profile = config.get("search_space", {})
+    if isinstance(profile, dict) and profile.get("resolved_profile"):
+        (output / "search_space_profile.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "profile": profile.get("profile"),
+                    "definition": profile.get("resolved_profile"),
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
     if result is None:
         (output / "selection.yaml").write_text(
             yaml.safe_dump(
@@ -209,8 +358,41 @@ def write_session_search_space(
             encoding="utf-8",
         )
         return
+    compiled = copy.deepcopy(result)
+    automatic_registry = compiled.pop("automatic_registry_snapshot", None)
+    if isinstance(automatic_registry, dict):
+        (output / "registry.generated.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": automatic_registry["schema_version"],
+                    "mode": automatic_registry["mode"],
+                    "parameters": automatic_registry["parameters"],
+                    "combination_constraints": automatic_registry[
+                        "combination_constraints"
+                    ],
+                },
+                allow_unicode=True,
+                sort_keys=False,
+                width=120,
+            ),
+            encoding="utf-8",
+        )
+        (output / "registry.audit.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "provenance": automatic_registry["provenance"],
+                    "audit": automatic_registry["audit"],
+                    "compatibility_audit": automatic_registry["compatibility_audit"],
+                    "recall_outcomes": automatic_registry["recall_outcomes"],
+                },
+                allow_unicode=True,
+                sort_keys=False,
+                width=120,
+            ),
+            encoding="utf-8",
+        )
     (output / "search_space.compiled.yaml").write_text(
-        yaml.safe_dump(result, allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(compiled, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
     (output / "rotation_report.yaml").write_text(

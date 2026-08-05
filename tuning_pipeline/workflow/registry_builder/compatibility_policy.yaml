@@ -1,0 +1,167 @@
+schema_version: 1
+
+# Purely deterministic candidate normalization. These tokens describe omission,
+# not literal values to inject into a process environment or CLI.
+normalization:
+  omit_tokens: [unset, "<unset>", omit, "<omit>"]
+  placeholder_patterns:
+    - "^<.*>$"
+    - "^(a|an|the) .*(name|path|class|checkpoint|identifier|callable)"
+    - "^.* supplied by .*$"
+    - "^.* for a .*$"
+  numeric_baseline:
+    minimum_factor: 0.5
+    maximum_factor: 2.0
+    allow_zero: true
+
+# Scenario-level invariants are not Agent tuning dimensions. The value is owned
+# by the selected model, topology or benchmark profile.
+parameter_rules:
+  - match: data_parallel_size
+    role: session_fixed
+    scenario_path: topology.data_parallel_size
+  - match: tensor_parallel_size
+    role: session_fixed
+    scenario_path: topology.tensor_parallel_size
+  - match: pipeline_parallel_size
+    role: session_fixed
+    scenario_path: topology.pipeline_parallel_size
+  - match: max_model_len
+    role: session_fixed
+    scenario_path: baseline.max_model_len
+  - match: dtype
+    role: session_fixed
+  - match: quantization
+    role: session_fixed
+  - match: worker_cls
+    role: session_fixed
+  - match: distributed_executor_backend
+    role: session_fixed
+  - match: async_scheduling
+    role: session_fixed
+    scenario_path: baseline.async_scheduling
+  - match: compilation_config__cudagraph_mode
+    rename_to: compilation_mode
+    scenario_path: baseline.compilation_mode
+    risk_override: medium
+  - match: compilation_config__pass_config__enable_sp
+    rename_to: compilation_enable_sp
+    scenario_path: baseline.compilation_enable_sp
+  - match: additional_config__enable_mlapo
+    rename_to: mlapo
+    scenario_path: baseline.mlapo
+  - match: additional_config__enable_flashcomm1
+    rename_to: flashcomm1
+    scenario_path: baseline.flashcomm1
+    risk_override: medium
+  - match: additional_config__enable_fused_mc2
+    rename_to: fused_mc2
+    scenario_path: baseline.fused_mc2
+  - match: e_p_l_b_config__num_redundant_experts
+    rename_to: eplb_num_redundant_experts
+    scenario_path: baseline.eplb_num_redundant_experts
+  # These fields are source-visible but are not safe tuning axes for the
+  # pinned Ascend scenario: the platform overrides/ignores them, their value
+  # is owned by the deployment, or their advertised alternatives violate the
+  # frozen DP2 topology.
+  - match: all2all_backend
+    role: session_fixed
+  - match: attention_backend
+    role: session_fixed
+  - match: attention_config__mla_prefill_backend
+    role: session_fixed
+  - match: compilation_config__backend
+    role: recovery_only
+  - match: additional_config__finegrained_tp_config__lmhead_tensor_parallel_size
+    role: session_fixed
+  - match: speculative_config__model
+    role: session_fixed
+  - match: speculative_config__quantization
+    role: session_fixed
+  - match: cudagraph_capture_sizes
+    risk_override: medium
+  - match: block_size
+    risk_override: high
+  - match: COMPILE_CUSTOM_KERNELS
+    role: build_fixed
+  - match: TORCH_COMPILE_DISABLE
+    role: recovery_only
+  - match: PYTORCH_NPU_ALLOC_CONF
+    role: recovery_only
+  - match: VLLM_MLA_DISABLE
+    role: recovery_only
+  - match: VLLM_USE_V2_MODEL_RUNNER
+    role: session_fixed
+  - match: VLLM_ASCEND_APPLY_DSV4_PATCH
+    require: {path: model.deepseek_v4, op: truthy}
+  - match: enforce_eager
+    role: recovery_only
+  - match: speculative_config__enforce_eager
+    role: recovery_only
+
+  # Feature families are rejected when the selected scenario does not enable
+  # the corresponding subsystem.
+  - match: "k_v_transfer_config__*"
+    require: {path: features.kv_transfer, op: truthy}
+  - match: "*lora*"
+    require: {path: features.lora, op: truthy}
+  - match: "*eplb*"
+    require: {path: features.dynamic_eplb, op: truthy}
+  # Source extraction spells EPLB object names as e_p_l_b before the canonical
+  # rename above. Gate both spellings so the disabled family cannot leak into
+  # Reserve through normalization order.
+  - match: "*e_p_l_b*"
+    require: {path: features.dynamic_eplb, op: truthy}
+  - match: "MOONCAKE_*"
+    require: {path: features.kv_transfer, op: truthy}
+  - match: additional_config__enable_balance_scheduling
+    require: {path: features.pd_disaggregated, op: truthy}
+  - match: additional_config__enable_dsa_cp
+    require: {path: model.dsa, op: truthy}
+  - match: "*xlite*"
+    require: {path: features.xlite, op: truthy}
+  - match: additional_config__profiling_chunk_config__enabled
+    role: diagnostic_only
+  - match: speculative_config__rejection_sample_method
+    role: session_fixed
+  - match: "speculative_config__synthetic_*"
+    role: diagnostic_only
+  - match: speculative_config__parallel_drafting
+    require: {path: features.parallel_drafting, op: truthy}
+  - match: "online_quantization_config_args__*"
+    role: session_fixed
+  - match: num_gpu_blocks_override
+    role: recovery_only
+  - match: "offload_*"
+    role: recovery_only
+  - match: enable_sleep_mode
+    role: session_fixed
+  - match: scheduler_cls
+    role: session_fixed
+
+# These constraints are emitted with the isolated Search Limits and can be
+# evaluated again before a future Controller submits a complete candidate.
+combination_constraints:
+  - id: speculative_method_requires_tokens
+    kind: require_if_active
+    parameter: speculative_config__method
+    inactive_values: [null]
+    required_parameter: num_speculative_tokens
+    required_op: gt
+    required_value: 0
+  - id: speculative_tokens_require_method
+    kind: require_if_active
+    parameter: num_speculative_tokens
+    inactive_values: [null, 0]
+    required_parameter: speculative_config__method
+    required_op: not_in
+    required_value: [null]
+  - id: eager_conflicts_with_npugraph
+    kind: mutually_exclusive_true
+    parameters:
+      - speculative_config__enforce_eager
+      - additional_config__ascend_compilation_config__enable_npugraph_ex
+  - id: torch_compile_disable_conflicts_with_compilation
+    kind: forbidden_pair
+    left: {parameter: TORCH_COMPILE_DISABLE, value: "1"}
+    right: {parameter: compilation_config__mode, not_in: [null, 0]}

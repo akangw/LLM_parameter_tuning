@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import base64
 import json
 import subprocess
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from . import continuous_tuning as tuning
-from .search_space_adapter import resolve_search_limits
+from .search_space_adapter import resolve_search_limits, write_session_search_space
 
 
 def config() -> dict:
@@ -142,12 +143,14 @@ class ControllerTests(unittest.TestCase):
             controller.validate_candidate(
                 self.baseline,
                 dict(self.baseline, max_num_seqs=64),
-                [{
-                    "parameter": "max_num_seqs",
-                    "before": 48,
-                    "after": 64,
-                    "rationale": "A single change is invalid under V3 exploration.",
-                }],
+                [
+                    {
+                        "parameter": "max_num_seqs",
+                        "before": 48,
+                        "after": 64,
+                        "rationale": "A single change is invalid under V3 exploration.",
+                    }
+                ],
             )
         frozen = controller.config
         frozen["strategy"]["profiles_file"] = "missing-after-session.yaml"
@@ -192,7 +195,9 @@ class ControllerTests(unittest.TestCase):
         controller = tuning.Controller(configured)
         self.assertEqual("legacy_random_32k1k", controller.benchmark_profile_name)
         self.assertEqual("legacy_random_32k1k", controller.benchmark_mode)
-        self.assertEqual("test-model", controller.benchmark["legacy_random_32k1k"]["model"])
+        self.assertEqual(
+            "test-model", controller.benchmark["legacy_random_32k1k"]["model"]
+        )
         frozen = controller.config
         frozen["benchmark"]["profiles_file"] = "missing-after-session.yaml"
         self.assertEqual(
@@ -257,7 +262,9 @@ class ControllerTests(unittest.TestCase):
             {"VLLMTKB_CODEX_COMMAND": "portable-codex"},
             clear=False,
         ):
-            with patch.object(tuning.shutil, "which", return_value="C:/tools/codex.cmd"):
+            with patch.object(
+                tuning.shutil, "which", return_value="C:/tools/codex.cmd"
+            ):
                 self.assertEqual(
                     tuning.resolve_codex_command("auto"),
                     "C:/tools/codex.cmd",
@@ -333,9 +340,7 @@ class ControllerTests(unittest.TestCase):
                 "gpu_memory_utilization remains inside the configured and legal interval.",
             ],
         }
-        self.controller.validate_candidate(
-            self.baseline, candidate, changes, decision
-        )
+        self.controller.validate_candidate(self.baseline, candidate, changes, decision)
         with self.assertRaises(ValueError):
             self.controller.validate_candidate(
                 self.baseline,
@@ -394,21 +399,19 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("MODEL_PATH=/models/share/GLM-5.2-w8a8", runtime)
         self.assertIn('source "${INIT_ENV_SCRIPT}"', runtime)
         self.assertIn('--served-model-name "${SERVED_MODEL_NAME}"', runtime)
-        self.assertIn('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"', runtime)
+        self.assertIn(
+            '--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"', runtime
+        )
         self.assertIn(
             '--safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"',
             runtime,
         )
-        self.assertIn(
-            'if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime
-        )
+        self.assertIn('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime)
         self.assertLess(
             runtime.index('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"'),
             runtime.index('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]'),
         )
-        launcher = (tuning.HERE / "start_continuous.ps1").read_text(
-            encoding="utf-8"
-        )
+        launcher = (tuning.HERE / "start_continuous.ps1").read_text(encoding="utf-8")
         self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
         self.assertIn("Test-Path -LiteralPath $portraitIndexPath", launcher)
 
@@ -418,9 +421,7 @@ class ControllerTests(unittest.TestCase):
         configured["lab"]["lease_name"] = "configured-lease"
         controller = tuning.Controller(configured)
         lease = controller.render_remote_control_document("lease_loop.yaml")
-        experiment = controller.render_remote_control_document(
-            "experiment_loop.yaml"
-        )
+        experiment = controller.render_remote_control_document("experiment_loop.yaml")
         self.assertEqual("configured-lease", lease["name"])
         for document in (lease, experiment):
             for task in document["tasks"]:
@@ -428,7 +429,9 @@ class ControllerTests(unittest.TestCase):
         repository, tag = controller.image_identity["reference"].rsplit(":", 1)
         self.assertEqual(repository, lease["image"])
         self.assertEqual(tag, lease["image_tag"])
-        self.assertTrue(all(task["image"] == repository for task in experiment["tasks"]))
+        self.assertTrue(
+            all(task["image"] == repository for task in experiment["tasks"])
+        )
 
     def test_deployment_identity_is_configuration_driven(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -485,9 +488,7 @@ class ControllerTests(unittest.TestCase):
             "SLOT service status running=2\n"
         )
         with patch.object(controller, "lease_status", return_value=running):
-            self.assertEqual(
-                running, controller.check_ready(require_idle_lease=False)
-            )
+            self.assertEqual(running, controller.check_ready(require_idle_lease=False))
 
     def test_stop_active_task_uses_frozen_remote_configuration(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -497,11 +498,13 @@ class ControllerTests(unittest.TestCase):
         with patch.object(controller, "ssh", return_value="stopped") as ssh:
             self.assertEqual(
                 "stopped",
-                controller.stop_active_task({
-                    "active_task_id": "service-task",
-                    "execution_mode": "ktp_lab",
-                    "lease_name": "configured-lease",
-                }),
+                controller.stop_active_task(
+                    {
+                        "active_task_id": "service-task",
+                        "execution_mode": "ktp_lab",
+                        "lease_name": "configured-lease",
+                    }
+                ),
             )
         command = ssh.call_args.args[0]
         self.assertIn("cd /configured/project", command)
@@ -563,7 +566,9 @@ class ControllerTests(unittest.TestCase):
                 (round_dir / "02_parameters" / "b0_effective_resolution.yaml").is_file()
             )
 
-    def test_default_automated_search_space_resolves_and_manual_fallback_remains(self) -> None:
+    def test_default_automated_search_space_resolves_and_manual_fallback_remains(
+        self,
+    ) -> None:
         project_root = tuning.KB_ROOT
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
         with tempfile.TemporaryDirectory() as temporary:
@@ -574,8 +579,13 @@ class ControllerTests(unittest.TestCase):
             )
             self.assertIsNotNone(result)
             self.assertEqual(
-                "automated", resolved["resolved_search_space"]["mode"]
+                "automatic_registry", resolved["resolved_search_space"]["mode"]
             )
+            self.assertEqual(
+                "automatic_registry_v1",
+                resolved["resolved_search_space"]["profile"],
+            )
+            self.assertEqual(36, result["summary"]["eligible_tunable_parameters"])
             self.assertEqual(12, len(result["active_search_limits"]))
             self.assertNotIn("enable_eplb", result["active_search_limits"])
             self.assertEqual([False], resolved["search_limits"]["enable_eplb"])
@@ -592,12 +602,8 @@ class ControllerTests(unittest.TestCase):
                 result["active_search_limits"]
             )
             self.assertEqual(expected_names, set(resolved["search_limits"]))
-            self.assertEqual(
-                raw["search_limits"], resolved["manual_search_limits"]
-            )
-            self.assertEqual(
-                [64000], resolved["search_limits"]["max_model_len"]
-            )
+            self.assertEqual(raw["search_limits"], resolved["manual_search_limits"])
+            self.assertEqual([64000], resolved["search_limits"]["max_model_len"])
             self.assertEqual(
                 [raw["baseline"]["async_scheduling"]],
                 resolved["search_limits"]["async_scheduling"],
@@ -619,19 +625,44 @@ class ControllerTests(unittest.TestCase):
                     resolved["resolved_search_space"]["derived_runtime_parameters"],
                 )
             controller = tuning.Controller(resolved)
+            generated_candidate = dict(resolved["baseline"])
+            generated_candidate["speculative_config__method"] = "mtp"
+            generated_candidate["num_speculative_tokens"] = 1
+            environment = controller.candidate_env("profile-test", generated_candidate)
+            self.assertIn("RUNTIME_INJECTION_MODE=generated_v1", environment)
+            encoded = next(
+                line.split("=", 1)[1]
+                for line in environment.splitlines()
+                if line.startswith("RUNTIME_INJECTION_PAYLOAD_B64=")
+            )
+            payload = json.loads(base64.b64decode(encoded).decode("utf-8"))
+            self.assertEqual(
+                {"method": "mtp"},
+                payload["json_configs"]["speculative_config"],
+            )
             mismatched_graph = dict(resolved["baseline"])
             mismatched_graph["max_cudagraph_capture_size"] = 256
             mismatched_graph["cudagraph_capture_sizes"] = [
-                16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192
+                16,
+                32,
+                48,
+                64,
+                80,
+                96,
+                112,
+                128,
+                144,
+                160,
+                176,
+                192,
             ]
-            with self.assertRaisesRegex(
-                ValueError, "must equal the largest explicit"
-            ):
+            with self.assertRaisesRegex(ValueError, "must equal the largest explicit"):
                 controller.validate_runtime_configuration(mismatched_graph)
             mismatched_graph["cudagraph_capture_sizes"] = None
             controller.validate_runtime_configuration(mismatched_graph)
 
             manual_raw = dict(raw)
+            manual_raw.pop("search_space", None)
             manual_raw["search_limits_mode"] = "manual"
             manual, manual_result = resolve_search_limits(
                 manual_raw,
@@ -641,7 +672,100 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(manual_result)
             self.assertEqual(17, len(manual["search_limits"]))
 
-    def test_reserved_decode_context_parameter_keeps_an_injection_contract(self) -> None:
+    def test_automatic_and_curated_profiles_have_auditable_overlap(self) -> None:
+        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary)
+            automatic, automatic_result = resolve_search_limits(
+                raw, project_root=tuning.KB_ROOT, archive_root=archive
+            )
+            curated_raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+            curated_raw["search_space"]["profile"] = "curated_registry_v1"
+            curated, curated_result = resolve_search_limits(
+                curated_raw, project_root=tuning.KB_ROOT, archive_root=archive
+            )
+            session = archive / "frozen-session"
+            write_session_search_space(
+                session, result=automatic_result, config=automatic
+            )
+            self.assertTrue(
+                (session / "00_search_space" / "search_space_profile.yaml").is_file()
+            )
+            self.assertTrue(
+                (session / "00_search_space" / "registry.generated.yaml").is_file()
+            )
+            self.assertTrue(
+                (session / "00_search_space" / "registry.audit.yaml").is_file()
+            )
+        registry = tuning.load_yaml(
+            tuning.KB_ROOT / "workflow" / "search_space_compiler" / "registry.yaml"
+        )
+        automatic_active = set(automatic_result["active_search_limits"])
+        curated_active = set(curated_result["active_search_limits"])
+        self.assertEqual(23, len(registry["parameters"]))
+        self.assertEqual(12, len(automatic_active))
+        self.assertEqual(24, automatic_result["summary"]["reserve_parameters"])
+        self.assertEqual(11, len(automatic_active & curated_active))
+        self.assertFalse(
+            automatic_result["automatic_registry_snapshot"]["audit"][
+                "existing_registry_dependency"
+            ]
+        )
+        self.assertEqual(
+            "automatic_registry_v1",
+            automatic["resolved_search_space"]["profile"],
+        )
+        self.assertEqual(
+            "curated_registry_v1", curated["resolved_search_space"]["profile"]
+        )
+
+    def test_b0_reconciliation_updates_frozen_automatic_domains(self) -> None:
+        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            resolved, result = resolve_search_limits(
+                raw, project_root=tuning.KB_ROOT, archive_root=root
+            )
+            controller = tuning.Controller(resolved, search_space_result=result)
+            session = root / "session"
+            round_dir = session / "round_000_b0"
+            (round_dir / "02_parameters").mkdir(parents=True)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "04_runtime" / "master.log").write_text(
+                "Chunked prefill is enabled with max_num_batched_tokens=2048.\n"
+                "Initializing a V1 LLM engine with config: max_seq_len=131072, "
+                "enable_prefix_caching=True, enable_chunked_prefill=True, "
+                "compilation_config={'cudagraph_mode': "
+                "<CUDAGraphMode.FULL_AND_PIECEWISE: (1, 1)>, "
+                "'cudagraph_capture_sizes': [16, 32, 64, 128, 256], "
+                "'max_cudagraph_capture_size': 256}\n",
+                encoding="utf-8",
+            )
+            state = {
+                "round_label": "b0",
+                "current_candidate": dict(resolved["baseline"]),
+            }
+            controller.reconcile_official_source_default_baseline(
+                session, round_dir, state
+            )
+            controller.validate_candidate_invariants(state["current_candidate"])
+            graph_parameter = next(
+                item
+                for item in controller.automatic_registry_validation["compiled"][
+                    "active_parameters"
+                ]
+                if item["canonical_name"] == "cudagraph_capture_sizes"
+            )
+            self.assertIn([16, 32, 64, 128, 256], graph_parameter["values"])
+            frozen = tuning.load_yaml(session / "session_config.yaml")
+            self.assertEqual(
+                controller.config["automatic_registry_validation"],
+                frozen["automatic_registry_validation"],
+            )
+
+    def test_reserved_decode_context_parameter_keeps_an_injection_contract(
+        self,
+    ) -> None:
         self.assertEqual(
             "DECODE_CONTEXT_PARALLEL_SIZE",
             tuning.ALL_PARAM_TO_ENV["decode_context_parallel_size"],
@@ -716,7 +840,9 @@ class ControllerTests(unittest.TestCase):
                 },
                 "l1": {
                     "all_repetitions_gate_passed": True,
-                    "repetition_count": configured["benchmark"]["aligned_l1"]["repetitions"],
+                    "repetition_count": configured["benchmark"]["aligned_l1"][
+                        "repetitions"
+                    ],
                     "primary_concurrency": 32,
                     "primary_aggregate_output_tps_geomean": score,
                     "primary_score_cv_percent": cv,
@@ -764,9 +890,7 @@ class ControllerTests(unittest.TestCase):
                 baseline_cases.append(base)
                 candidate = dict(base)
                 candidate["aggregate_output_tps"] = (
-                    90.0
-                    if workload == workloads[0] and concurrency == 32
-                    else 110.0
+                    90.0 if workload == workloads[0] and concurrency == 32 else 110.0
                 )
                 candidate_cases.append(candidate)
         base_l1 = {
@@ -791,7 +915,10 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertFalse(assessment["eligible_as_improvement"])
         self.assertTrue(
-            any("aggregate output TPS ratio" in item for item in assessment["violations"])
+            any(
+                "aggregate output TPS ratio" in item
+                for item in assessment["violations"]
+            )
         )
 
     def test_ssh_uses_explicit_remote_status_marker(self) -> None:
@@ -993,12 +1120,16 @@ SLOT  service
             )
 
             attempts = self.controller.attempted_history_summary(session)
-            self.assertEqual([item["outcome"] for item in attempts], ["success", "failed"])
+            self.assertEqual(
+                [item["outcome"] for item in attempts], ["success", "failed"]
+            )
             self.assertTrue(
                 self.controller.candidate_was_attempted(session, failed_candidate)
             )
 
-    def test_exploration_memory_uses_accepted_anchor_and_preserves_causality(self) -> None:
+    def test_exploration_memory_uses_accepted_anchor_and_preserves_causality(
+        self,
+    ) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
         controller = tuning.Controller(configured)
 
@@ -1021,7 +1152,9 @@ SLOT  service
                 "benchmark_mode": "aligned_l1",
                 "l1": {
                     "all_repetitions_gate_passed": True,
-                    "repetition_count": configured["benchmark"]["aligned_l1"]["repetitions"],
+                    "repetition_count": configured["benchmark"]["aligned_l1"][
+                        "repetitions"
+                    ],
                     "primary_concurrency": 32,
                     "primary_aggregate_output_tps_geomean": score,
                     "primary_score_cv_percent": 0.0,

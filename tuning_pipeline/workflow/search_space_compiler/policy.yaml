@@ -62,6 +62,7 @@ scoring:
   integration:
     existing: 12
     planned: 4
+    generated_compatible: 4
   category:
     scheduling: 8
     compilation: 7

@@ -7,6 +7,7 @@ param(
     [switch]$CheckOnly,
     [string]$StrategyProfile,
     [string]$BenchmarkProfile,
+    [string]$SearchSpaceProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
     [string]$AgentProvider
 )

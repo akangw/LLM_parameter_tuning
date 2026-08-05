@@ -31,12 +31,15 @@ Independent guesses must remain separate experiments.
 The Agent may return `stop_complete` when no useful, safe, untested change remains;
 the controller then archives the decision without submitting another task.
 
-## Search Limits modes
+## Search-Space profiles
 
-New Sessions default to `search_limits_mode: automated`. Before creating the
-Session, the controller invokes the independent compiler in
-`workflow/search_space_compiler`, reads the newest available completed-history
-snapshot, applies bounded history-aware rotation, and freezes the result.
+New Sessions default to `automatic_registry_v1`. Before creating the Session,
+the controller rebuilds a registry from tagged portraits and exact pinned source
+evidence, applies the deterministic compatibility policy, invokes the compiler,
+reads the newest compatible history snapshot, applies bounded history-aware
+rotation, and freezes the complete result. `curated_registry_v1` retains the
+reviewed 23-entry registry and historical behavior. Select either only when
+creating a Session with `-SearchSpaceProfile`.
 
 The effective candidate contains:
 
@@ -51,6 +54,9 @@ The frozen evidence is written below the new Session:
 ```text
 00_search_space/
   manual_search_limits.yaml
+  search_space_profile.yaml
+  registry.generated.yaml          # automatic profile only
+  registry.audit.yaml              # automatic profile only
   search_space.compiled.yaml
   rotation_report.yaml
   agent_decision.schema.json
@@ -60,19 +66,19 @@ The frozen evidence is written below the new Session:
   runtime_rules.yaml
 ```
 
-The manual fallback pool remains in `config.yaml`. Set
-`search_limits_mode: manual` to use it. Automated mode also copies that pool
-into `manual_search_limits` in the frozen Session configuration.
+The old `search_limits_mode` settings remain only for archived Session
+compatibility. New Sessions use `search_space.profile`. The manual pool in
+`config.yaml` is still frozen as runtime-contract values and audit evidence.
 
 `--resume` and `--reanalyze-current` always load the archived
 `session_config.yaml`, never the current global defaults. Therefore changing
 the default mode cannot change the schema or limits of an already-running
 Session.
 
-Planned parameters require an explicit entry in
-`automated_search_limits.approved_planned_parameters`. If history-aware
-rotation selects an unapproved Reserve parameter, Session creation fails
-closed instead of silently executing it.
+Curated planned parameters require explicit entries in
+`search_space.approved_planned_parameters`. Automatic parameters instead require
+exact source identity, compatibility acceptance, a validated generic injection
+contract, and a second deterministic candidate check before every submission.
 
 Dynamic EPLB is deliberately outside the current search space. The pinned
 Ascend runtime does not expose the required upstream CLI contract, so

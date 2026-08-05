@@ -43,7 +43,7 @@ cd Auto_vllm_parameter
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
-.\一键启动.ps1 -CheckOnly
+.\一键启动.ps1 -CheckOnly -NewSession
 ```
 
 若接手者需要迁移新版本，先使用 `-PrepareOnly` 审计确定性候选，再续跑
@@ -53,6 +53,8 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 Git 克隆已经包含当前正式画像、跳过清单、Tags 和 Search Limits，可直接作为
 知识库复用。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
 Git 分发；它们应由入口脚本按所选版本和场景重新生成。
+
+新建 Session 默认选择 `automatic_registry_v1`，会现场重建并冻结自动注册表；如需复现实验口径，使用 `-SearchSpaceProfile curated_registry_v1` 选择人工 23 项注册表。两种 Profile、Agent Strategy 和 Benchmark 均不得在 Resume 中切换。
 
 然后确认：
 

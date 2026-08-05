@@ -54,6 +54,8 @@ DECODE_CONTEXT_PARALLEL_SIZE="${DECODE_CONTEXT_PARALLEL_SIZE:-1}"
 ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1="${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1:-false}"
 ADDITIONAL_CONFIG_ENABLE_MLAPO="${ADDITIONAL_CONFIG_ENABLE_MLAPO:-true}"
 ADDITIONAL_CONFIG_ENABLE_FUSED_MC2="${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2:-0}"
+RUNTIME_INJECTION_MODE="${RUNTIME_INJECTION_MODE:-native_v1}"
+RUNTIME_INJECTION_PAYLOAD_B64="${RUNTIME_INJECTION_PAYLOAD_B64:-}"
 SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
 SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
@@ -127,6 +129,60 @@ VLLM_COMMON_ARGS+=(
 )
 
 if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
+  GENERATED_JSON_CONFIGS="${RUN_DIR}/generated_json_configs.json"
+  GENERATED_ARGS_FILE="${RUN_DIR}/generated_cli_args.nul"
+  GENERATED_ENV_FILE="${RUN_DIR}/generated_environment.sh"
+  : > "${GENERATED_ARGS_FILE}"
+  printf '{}\n' > "${GENERATED_JSON_CONFIGS}"
+  : > "${GENERATED_ENV_FILE}"
+  if [[ "${RUNTIME_INJECTION_MODE}" == "generated_v1" ]]; then
+    [[ -n "${RUNTIME_INJECTION_PAYLOAD_B64}" ]] || {
+      echo "generated_v1 requires RUNTIME_INJECTION_PAYLOAD_B64" >&2
+      exit 2
+    }
+    python - "${RUNTIME_INJECTION_PAYLOAD_B64}" "${GENERATED_JSON_CONFIGS}" \
+      "${GENERATED_ARGS_FILE}" "${GENERATED_ENV_FILE}" <<'PY'
+import base64
+import json
+import re
+import shlex
+import sys
+from pathlib import Path
+
+encoded, json_path, args_path, env_path = sys.argv[1:]
+payload = json.loads(base64.b64decode(encoded).decode("utf-8"))
+if payload.get("schema_version") != 1:
+    raise SystemExit("unsupported generated runtime payload")
+configs = payload.get("json_configs", {})
+root_flags = {
+    "attention_config": "--attention-config",
+    "eplb_config": "--eplb-config",
+    "kv_transfer_config": "--kv-transfer-config",
+    "offload_config": "--offload-config",
+}
+args = [str(item) for item in payload.get("cli_args", [])]
+for root in sorted(set(configs) - {"compilation_config", "additional_config", "speculative_config"}):
+    if root not in root_flags:
+        raise SystemExit(f"unsupported generated JSON config root: {root}")
+    args.extend([root_flags[root], json.dumps(configs[root], separators=(",", ":"))])
+Path(json_path).write_text(json.dumps(configs, separators=(",", ":")) + "\n", encoding="utf-8")
+Path(args_path).write_bytes(b"".join(item.encode("utf-8") + b"\0" for item in args))
+lines = []
+for name, value in payload.get("environment", {}).items():
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
+        raise SystemExit(f"invalid generated environment name: {name!r}")
+    if value is None:
+        lines.append(f"unset {name}")
+    else:
+        lines.append(f"export {name}={shlex.quote(str(value))}")
+Path(env_path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY
+    source "${GENERATED_ENV_FILE}"
+  elif [[ "${RUNTIME_INJECTION_MODE}" != "native_v1" ]]; then
+    echo "Unsupported RUNTIME_INJECTION_MODE=${RUNTIME_INJECTION_MODE}" >&2
+    exit 2
+  fi
+
   VLLM_COMMON_ARGS+=(
     --decode-context-parallel-size "${DECODE_CONTEXT_PARALLEL_SIZE}"
     --seed 1024
@@ -146,11 +202,12 @@ if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
   fi
   COMPILATION_CONFIG_JSON=$(
   python - "${COMPILATION_MODE}" "${MAX_CUDAGRAPH_CAPTURE_SIZE}" \
-    "${COMPILATION_ENABLE_SP}" "${CUDAGRAPH_CAPTURE_SIZES_JSON}" <<'PY'
+    "${COMPILATION_ENABLE_SP}" "${CUDAGRAPH_CAPTURE_SIZES_JSON}" \
+    "${GENERATED_JSON_CONFIGS}" <<'PY'
 import json
 import sys
 
-mode, maximum, enable_sp, sizes_json = sys.argv[1:]
+mode, maximum, enable_sp, sizes_json, generated_path = sys.argv[1:]
 config = {
     "cudagraph_mode": mode,
     "max_cudagraph_capture_size": int(maximum),
@@ -159,6 +216,15 @@ config = {
 sizes = json.loads(sizes_json)
 if sizes is not None:
     config["cudagraph_capture_sizes"] = sizes
+def merge(target, patch):
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge(target[key], value)
+        else:
+            target[key] = value
+with open(generated_path, encoding="utf-8") as handle:
+    generated = json.load(handle)
+merge(config, generated.get("compilation_config", {}))
 print(json.dumps(config, separators=(",", ":")))
 PY
   )
@@ -166,11 +232,12 @@ PY
   ADDITIONAL_CONFIG_JSON=$(
   python - "${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1}" \
     "${ADDITIONAL_CONFIG_ENABLE_MLAPO}" \
-    "${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}" <<'PY'
+    "${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}" \
+    "${GENERATED_JSON_CONFIGS}" <<'PY'
 import json
 import sys
 
-flashcomm1, mlapo, fused_mc2 = sys.argv[1:]
+flashcomm1, mlapo, fused_mc2, generated_path = sys.argv[1:]
 config = {
     "enable_npugraph_ex": True,
     "fuse_muls_add": True,
@@ -179,6 +246,15 @@ config = {
     "enable_mlapo": mlapo == "true",
     "enable_fused_mc2": int(fused_mc2),
 }
+def merge(target, patch):
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge(target[key], value)
+        else:
+            target[key] = value
+with open(generated_path, encoding="utf-8") as handle:
+    generated = json.load(handle)
+merge(config, generated.get("additional_config", {}))
 print(json.dumps(config, separators=(",", ":")))
 PY
   )
@@ -193,11 +269,32 @@ PY
 
   if (( NUM_SPECULATIVE_TOKENS > 0 )); then
     MTP_DRAFT_MODEL_PATH="${MTP_DRAFT_MODEL_PATH:?MTP_DRAFT_MODEL_PATH is required when speculative decoding is enabled}"
-    VLLM_COMMON_ARGS+=(--speculative-config "{\"model\":\"${MTP_DRAFT_MODEL_PATH}\",\"num_speculative_tokens\":${NUM_SPECULATIVE_TOKENS},\"method\":\"mtp\"}")
+    SPECULATIVE_CONFIG_JSON=$(
+    python - "${MTP_DRAFT_MODEL_PATH}" "${NUM_SPECULATIVE_TOKENS}" \
+      "${GENERATED_JSON_CONFIGS}" "${RUNTIME_INJECTION_MODE}" <<'PY'
+import json
+import sys
+
+model, tokens, generated_path, injection_mode = sys.argv[1:]
+config = {"model": model, "num_speculative_tokens": int(tokens)}
+if injection_mode == "native_v1":
+    config["method"] = "mtp"
+with open(generated_path, encoding="utf-8") as handle:
+    generated = json.load(handle)
+config.update(generated.get("speculative_config", {}))
+if not config.get("method"):
+    raise SystemExit("speculative decoding requires an explicit generated method")
+print(json.dumps(config, separators=(",", ":")))
+PY
+    )
+    VLLM_COMMON_ARGS+=(--speculative-config "${SPECULATIVE_CONFIG_JSON}")
   fi
   if (( LONG_PREFILL_TOKEN_THRESHOLD > 0 )); then
     VLLM_COMMON_ARGS+=(--long-prefill-token-threshold "${LONG_PREFILL_TOKEN_THRESHOLD}")
   fi
+  while IFS= read -r -d '' generated_arg; do
+    VLLM_COMMON_ARGS+=("${generated_arg}")
+  done < "${GENERATED_ARGS_FILE}"
 fi
 
 {

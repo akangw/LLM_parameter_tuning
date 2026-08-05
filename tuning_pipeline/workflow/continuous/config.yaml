@@ -152,10 +152,26 @@ baseline:
   cudagraph_capture_sizes: null
   # Source default is false; B0 omits --additional-config altogether.
   flashcomm1: false
-# New Sessions resolve this default through workflow/search_space_compiler.
-# Set to manual to reproduce the original fixed pool below. A Session freezes
-# its resolved limits in session_config.yaml, so changing this file never
-# changes an already-running or resumed Session.
+# Search-space construction is selected and frozen exactly like Agent and
+# Benchmark profiles. automatic_registry_v1 is the default end-to-end path;
+# curated_registry_v1 preserves the reviewed 23-entry registry for comparison.
+search_space:
+  profile: automatic_registry_v1
+  profiles_file: workflow/search_space_profiles.yaml
+  history_source: latest_completed_session
+  # Used only by curated_registry_v1 for entries marked planned. Automatic
+  # registry entries are admitted by source, compatibility and runtime checks.
+  approved_planned_parameters:
+    - enable_chunked_prefill
+    - max_cudagraph_capture_size
+    - compilation_enable_sp
+    - cudagraph_capture_sizes
+    - flashcomm1
+    - mlapo
+    - fused_mc2
+
+# Backward-compatible settings retained for archived Sessions created before
+# Search-Space Profiles existed. New Sessions use search_space.profile above.
 search_limits_mode: automated
 automated_search_limits:
   scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
@@ -163,8 +179,7 @@ automated_search_limits:
   policy: workflow/search_space_compiler/policy.yaml
   knowledge_dir: tag_params/output/params
   history_source: latest_completed_session
-  # Explicit integration approval from the owner. Reserve parameters not in
-  # this list fail closed if history-aware rotation tries to activate them.
+  # Explicit integration approval for the legacy curated profile.
   approved_planned_parameters:
     - enable_chunked_prefill
     - max_cudagraph_capture_size
