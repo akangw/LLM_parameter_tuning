@@ -15,18 +15,99 @@ from workflow.search_space_compiler.compiler import SearchSpaceCompiler
 from workflow.registry_builder.pipeline import AutomaticRegistryPipeline
 
 
-def _latest_history(archive_root: Path) -> Path | None:
-    candidates = list(
+def _selected_benchmark_identity(
+    config: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    settings = config.get("benchmark", {})
+    if not isinstance(settings, dict):
+        raise ValueError("benchmark configuration must be an object")
+    profile_name = settings.get("profile")
+    if profile_name:
+        frozen = settings.get("resolved_profile")
+        if isinstance(frozen, dict):
+            profile = frozen
+        else:
+            profiles_path = _project_path(
+                project_root,
+                str(
+                    settings.get(
+                        "profiles_file", "workflow/continuous/benchmark_profiles.yaml"
+                    )
+                ),
+            )
+            document = yaml.safe_load(profiles_path.read_text(encoding="utf-8"))
+            profile = document.get("profiles", {}).get(str(profile_name))
+            if not isinstance(profile, dict):
+                raise ValueError(f"Unknown Benchmark profile {profile_name!r}")
+        mode = str(profile["mode"])
+        definition_key = str(profile["definition_key"])
+    else:
+        mode = str(settings.get("mode", ""))
+        definition_key = mode
+    definition = settings.get(definition_key)
+    if not mode or not isinstance(definition, dict):
+        raise ValueError(
+            f"Benchmark definition is missing for mode={mode!r}, key={definition_key!r}"
+        )
+    return {"mode": mode, "definition": copy.deepcopy(definition)}
+
+
+def _manifest_matches_scenario(
+    manifest: dict[str, Any], scenario_image: dict[str, Any]
+) -> bool:
+    return (
+        manifest.get("target_image", {}).get("digest") == scenario_image.get("digest")
+        and manifest.get("versions", {}).get("vllm", {}).get("commit")
+        == scenario_image.get("vllm_commit")
+        and manifest.get("versions", {}).get("vllm_ascend", {}).get("commit")
+        == scenario_image.get("vllm_ascend_commit")
+    )
+
+
+def _latest_history(
+    archive_root: Path,
+    *,
+    benchmark_identity: dict[str, Any],
+    scenario_image: dict[str, Any],
+    project_root: Path,
+) -> Path | None:
+    candidates = sorted(
         archive_root.glob(
             "glm52_continuous_*/round_*/06_agent_analysis/history_input.json"
-        )
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
     )
-    return (
-        max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
-    )
+    for path in candidates:
+        session_dir = path.parents[2]
+        config_path = session_dir / "session_config.yaml"
+        manifest_path = session_dir / "image_version_manifest.yaml"
+        try:
+            frozen_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(frozen_config, dict) or not isinstance(manifest, dict):
+                continue
+            frozen_benchmark = _selected_benchmark_identity(
+                frozen_config, project_root
+            )
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
+            continue
+        if frozen_benchmark != benchmark_identity:
+            continue
+        if not _manifest_matches_scenario(manifest, scenario_image):
+            continue
+        return path
+    return None
 
 
-def _latest_previous_selection(archive_root: Path, profile_name: str) -> Path | None:
+def _latest_previous_selection(
+    archive_root: Path,
+    profile_name: str,
+    *,
+    benchmark_identity: dict[str, Any],
+    scenario_image: dict[str, Any],
+    project_root: Path,
+) -> Path | None:
     candidates = sorted(
         archive_root.glob(
             "glm52_continuous_*/00_search_space/search_space.compiled.yaml"
@@ -35,13 +116,29 @@ def _latest_previous_selection(archive_root: Path, profile_name: str) -> Path | 
         reverse=True,
     )
     for path in candidates:
+        session_dir = path.parents[1]
         try:
             value = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
+            frozen_config = yaml.safe_load(
+                (session_dir / "session_config.yaml").read_text(encoding="utf-8")
+            )
+            manifest = yaml.safe_load(
+                (session_dir / "image_version_manifest.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            if not isinstance(frozen_config, dict) or not isinstance(manifest, dict):
+                continue
+            frozen_benchmark = _selected_benchmark_identity(
+                frozen_config, project_root
+            )
+        except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
             continue
         if (
             isinstance(value, dict)
             and value.get("integration", {}).get("search_space_profile") == profile_name
+            and frozen_benchmark == benchmark_identity
+            and _manifest_matches_scenario(manifest, scenario_image)
         ):
             return path
     return None
@@ -130,6 +227,9 @@ def resolve_search_limits(
             )
         ),
     )
+    scenario_document = yaml.safe_load(scenario_path.read_text(encoding="utf-8"))
+    if not isinstance(scenario_document, dict):
+        raise ValueError(f"Scenario must be an object: {scenario_path}")
     policy_path = _project_path(
         project_root,
         str(profile.get("policy", "workflow/search_space_compiler/policy.yaml")),
@@ -140,7 +240,12 @@ def resolve_search_limits(
     history_path = None
     history_mode = str(settings.get("history_source", "latest_completed_session"))
     if history_mode == "latest_completed_session":
-        history_path = _latest_history(archive_root)
+        history_path = _latest_history(
+            archive_root,
+            benchmark_identity=_selected_benchmark_identity(config, project_root),
+            scenario_image=dict(scenario_document.get("image", {})),
+            project_root=project_root,
+        )
     elif history_mode == "none":
         history_path = None
     elif history_mode == "explicit":
@@ -151,7 +256,15 @@ def resolve_search_limits(
     else:
         raise ValueError(f"Unsupported history_source={history_mode!r}")
 
-    previous_selection = _latest_previous_selection(archive_root, profile_name)
+    benchmark_identity = _selected_benchmark_identity(config, project_root)
+    scenario_image = dict(scenario_document.get("image", {}))
+    previous_selection = _latest_previous_selection(
+        archive_root,
+        profile_name,
+        benchmark_identity=benchmark_identity,
+        scenario_image=scenario_image,
+        project_root=project_root,
+    )
     automatic_registry: dict[str, Any] | None = None
     if mode == "curated_registry":
         registry_path = _project_path(
@@ -260,6 +373,10 @@ def resolve_search_limits(
             source_default_anchors.append(name)
 
     result["integration"]["connected_to_mainflow"] = True
+    result["integration"]["note"] = (
+        "This Session-frozen result is connected to workflow/continuous via "
+        "the generic injection contract and is revalidated before submission."
+    )
     result["integration"]["search_space_profile"] = profile_name
     result["integration"]["profile_mode"] = mode
     result["integration"]["approval_source"] = (

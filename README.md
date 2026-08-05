@@ -7,7 +7,7 @@
 - 固定源码：vLLM `418bd6273c03bf48d5066733769e0a74bdc51694`，vllm-ascend `32c8cf190f596b47f0d0b965e64aea9f2b789ad4`。
 - 参数知识：1540 个结构化表面，340 份完整 ParameterYAML，105 份带依据跳过记录。
 - 五维标签：340 份，审计错误 0；当前场景召回 109 份高影响画像。
-- 新 Session 默认自动构建注册表：36 个最终可调参数，12 Active、24 Reserve、35 Fixed、0 Rejected；人工 23 项注册表作为可切换兼容路径保留。早期隔离审计的 44（12+32）已在接入审查中剔除 8 个已知无效/固定维度。
+- 新 Session 默认自动构建注册表：28 个当前场景可调维度，12 Active、16 Reserve、40 Fixed、0 Compiler Rejected；另有 21 个语义组在进入 Compiler 前因功能门禁或兼容性失败关闭。人工 23 项注册表作为可切换兼容路径保留。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
 - B0 已定义为“目标版本源码/启动日志中的官方默认值”，当前状态为等待项目负责人下令提交，尚未运行。
@@ -83,7 +83,7 @@ Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`�
 
 ### Git 克隆后可直接复用的知识产物
 
-仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因、Tags 与 Search Limits；接手者无需先重新调用 Agent 才能阅读或复用它们。源码 checkout、迁移运行目录、Session、临时队列和日志属于可再生产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
+仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因、Tags 与人工路径 Search Limits 参考快照；接手者无需先重新调用 Agent 就能阅读知识。默认自动路径会在新 Session 创建时现场编译并冻结权威 Search Limits。源码 checkout、迁移运行目录、Session、临时队列和日志属于可再生产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
 
 ## 从 GitHub 克隆后的启动流程
 
@@ -255,7 +255,7 @@ Auto_vllm_parameter/
 │  └─ sources/                   固定提交源码，本地生成且不入库
 └─ tuning_pipeline/              标签、搜索空间与在线调优
    ├─ tag_params/output/params/  340 份五维标签成品
-   ├─ search_limits/             最新独立编译产物
+   ├─ search_limits/             人工路径独立参考快照（非在线权威）
    ├─ logs/                      本地总控日志入口
    └─ workflow/
       ├─ search_space_profiles.yaml  自动/人工注册表 Profile 入口

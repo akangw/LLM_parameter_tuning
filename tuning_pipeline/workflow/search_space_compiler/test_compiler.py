@@ -26,6 +26,22 @@ class RecallTests(unittest.TestCase):
 
 
 class ConstraintTests(unittest.TestCase):
+    def test_physical_parallelism_must_fit_available_devices(self) -> None:
+        scenario = {
+            "topology": {
+                "data_parallel_size": 2,
+                "tensor_parallel_size": 16,
+                "pipeline_parallel_size": 1,
+                "total_npu": 32,
+            }
+        }
+        self.assertIn(
+            "physical_parallelism_within_available_devices",
+            validate_candidate(
+                {"prefill_context_parallel_size": 2}, scenario
+            ),
+        )
+
     def setUp(self) -> None:
         self.scenario = {"topology": {"tensor_parallel_size": 16}}
 

@@ -13,11 +13,11 @@
 | 跳过证据 | `portrait_pipeline/outputs/skipped/` | 105 份有理由跳过记录 |
 | Tags | `tuning_pipeline/tag_params/output/params/` | 340 份五维标签画像 |
 | Tags 审计 | `tuning_pipeline/tag_params/output/audit.json` | 数量、分布、召回与错误 |
-| Search Limits | `tuning_pipeline/search_limits/` | 最新编译边界和审批证据 |
+| Search Limits 参考快照 | `tuning_pipeline/search_limits/` | 人工注册表路径的独立审计快照，非在线权威 |
 | Search-Space Profiles | `tuning_pipeline/workflow/search_space_profiles.yaml` | 自动注册表与人工注册表两条可替换定义 |
 
 以上正式知识产物纳入版本控制并随 Git 克隆分发。当前仓库基线包含 340 份参数
-画像、105 份跳过说明、340 份 Tags，以及 Search Limits 目录内的编译产物与证据。
+画像、105 份跳过说明、340 份 Tags，以及 Search Limits 的人工路径参考快照。
 计数变化时以仓库实际文件和各阶段 manifest/audit 为准。
 
 新版本试迁移不会覆盖上表正式产物；其完整镜像链位于
@@ -33,7 +33,7 @@ Search Limits 文件：
 - `rotation_report.yaml`：历史驱动的换入/换出说明。
 - `manifest.json`：输入和输出身份。
 
-每个新 Session 的 `00_search_space/` 是实际执行边界的权威副本。自动 Profile 还会保存 `search_space_profile.yaml`、`registry.generated.yaml` 和 `registry.audit.yaml`；因此即使全局画像、策略或默认 Profile 后来更新，续跑仍使用原 Session 的冻结注册表、兼容规则、值域和注入契约。
+每个新 Session 的 `00_search_space/` 才是实际执行边界的权威副本。自动 Profile 还会保存 `search_space_profile.yaml`、`registry.generated.yaml` 和 `registry.audit.yaml`；因此即使全局画像、策略或默认 Profile 后来更新，续跑仍使用原 Session 的冻结注册表、兼容规则、值域和注入契约。
 
 ## 2. 离线日志
 

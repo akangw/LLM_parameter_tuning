@@ -16,9 +16,9 @@ ParameterYAML
 - 参数画像 YAML：340 份。
 - Tagged YAML：`tag_params/output/params/`，340 份，标签审计错误为 0。
 - 当前场景高影响召回：109 份。
-- Agent Search Limits：`search_limits/agent_search_limits.yaml`，12 个活动搜索参数。
-- 编译结果：Active 12、Reserve 4、Fixed 6、Rejected 1。
-- 被拒绝参数：`enable_eplb`。当前固定镜像的上游 CLI 不支持动态 EPLB，因此本场景固定 `enable_eplb=false`、`eplb_num_redundant_experts=0`。
+- 人工路径参考快照：`search_limits/`，Active 12、Reserve 4、Fixed 6、Rejected 1，仅用于复现与比较。
+- 新 Session 默认自动编译：28 Tunable（Active 12、Reserve 16）、40 Fixed、0 Compiler Rejected；实际权威结果冻结在该 Session 的 `00_search_space/`。
+- 当前固定镜像的上游 CLI 不支持动态 EPLB，因此本场景固定 `enable_eplb=false`、`eplb_num_redundant_experts=0`。
 - Controller：`workflow/continuous/continuous_tuning.py`。
 
 `reserve`、`fixed` 和 `rejected` 只作为审计分类；只有 Active 参数会进入 Agent 的可变搜索边界。Controller 再合并必要的单值运行契约，且会拒绝未批准或无法注入的参数。

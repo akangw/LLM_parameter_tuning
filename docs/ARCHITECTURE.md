@@ -37,9 +37,10 @@ flowchart LR
 ```text
 340 ParameterYAML
 → 109 场景召回
-→ 36 最终可调参数
-→ 12 Active + 24 Reserve
-→ 35 Fixed + 0 Rejected
+→ 89 个参数语义组
+→ 68 个兼容注册参数
+→ 28 Tunable：12 Active + 16 Reserve
+→ 40 Fixed + 0 Compiler Rejected
 ```
 
 新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前 Active 是：
@@ -50,7 +51,7 @@ max_num_batched_tokens
 gpu_memory_utilization
 compilation_mode
 num_speculative_tokens
-enable_chunked_prefill
+async_scheduling
 enable_prefix_caching
 cudagraph_capture_sizes
 max_cudagraph_capture_size
@@ -59,7 +60,9 @@ flashcomm1
 speculative_config__method
 ```
 
-`automatic_registry_v1` 不读取人工 `registry.yaml`，从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留人工 23 项注册表。两条路径在新 Session 创建时选择并冻结。当前两条路径的 Active 均为 12 项，其中 11 项重合；自动路径的差异项为 `speculative_config__method`，人工路径为 `long_prefill_token_threshold`。
+`automatic_registry_v1` 不读取人工 `registry.yaml`，从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留人工 23 项注册表。两条路径在新 Session 创建时选择并冻结。当前两条路径的 Active 均为 12 项，其中 10 项独立对齐；自动路径额外显式控制 `async_scheduling` 与 `speculative_config__method`，人工路径保留 `enable_chunked_prefill` 与 `long_prefill_token_threshold`。
+
+历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 
 `enable_eplb=false` 与 `eplb_num_redundant_experts=0` 是固定运行契约，不是搜索轴。当前 pinned Ascend 平台不支持上游 `--enable-eplb` CLI。
 

@@ -131,9 +131,9 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
 
     def test_final_tunable_pool_excludes_known_non_executable_axes(self) -> None:
         summary = self.search_result["summary"]
-        self.assertEqual(36, summary["eligible_tunable_parameters"])
+        self.assertEqual(28, summary["eligible_tunable_parameters"])
         self.assertEqual(12, summary["active_parameters"])
-        self.assertEqual(24, summary["reserve_parameters"])
+        self.assertEqual(16, summary["reserve_parameters"])
         tunable = {
             item["canonical_name"]
             for item in self.search_result["active_parameters"]
@@ -148,6 +148,14 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
             "speculative_config__model",
             "speculative_config__quantization",
             "eplb_num_redundant_experts",
+            "additional_config__layer_sharding",
+            "additional_config__mix_placement",
+            "additional_config__enable_shared_expert_dp",
+            "kv_cache_dtype",
+            "prefill_context_parallel_size",
+            "cp_kv_cache_interleave_size",
+            "block_size",
+            "enable_chunked_prefill",
         }:
             self.assertNotIn(name, tunable)
 
@@ -185,7 +193,7 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
             "gpu_memory_utilization",
             "compilation_mode",
             "num_speculative_tokens",
-            "enable_chunked_prefill",
+            "async_scheduling",
             "cudagraph_capture_sizes",
             "max_cudagraph_capture_size",
             "mlapo",
@@ -196,6 +204,30 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
         self.assertEqual(expected, set(self.search_result["active_search_limits"]))
         self.assertNotIn("TORCH_COMPILE_DISABLE", expected)
         self.assertNotIn("COMPILE_CUSTOM_KERNELS", expected)
+
+    def test_non_executable_values_and_coupled_constraints_fail_closed(self) -> None:
+        splitting = next(
+            item
+            for item in self.registry["parameters"]
+            if item["canonical_name"] == "compilation_config__splitting_ops"
+        )
+        self.assertNotIn(["namespace::operator"], splitting["candidate_values"])
+        validator = CompatibilityValidator(scenario=self.pipeline.scenario)
+        self.assertIn(
+            "speculative_tokens_require_async_scheduling",
+            validator.validate_combination(
+                {"num_speculative_tokens": 1, "async_scheduling": False}
+            ),
+        )
+        self.assertIn(
+            "static_kernel_requires_npugraph_ex",
+            validator.validate_combination(
+                {
+                    "additional_config__ascend_compilation_config__enable_static_kernel": True,
+                    "additional_config__ascend_compilation_config__enable_npugraph_ex": False,
+                }
+            ),
+        )
 
     def test_omit_tokens_are_actions_not_literal_environment_values(self) -> None:
         parameter = next(

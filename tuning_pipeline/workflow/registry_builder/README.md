@@ -115,4 +115,4 @@ python -m workflow.registry_builder.candidate_validator `
 
 兼容路径为：`109 召回 → 人工 registry.yaml（23 项）→ 同一个 Search-Space Compiler → Controller`。
 
-自动路径不会读取人工 `registry.yaml`。当前最终生成 36 个可调参数（Active 12 + Reserve 24），并在 Session 内保存自动注册表、审计、兼容策略与注入契约。早期第一轮兼容输出的 44 项中，1 个禁用 EPLB 维度被排除，7 个由平台覆盖、拓扑限制或部署拥有的维度被降为 Fixed/Recovery，避免未来轮换成无效 Active。Controller 对已存在的同名参数复用成熟运行适配器，对自动路径新增的参数使用通用 CLI/ENV/JSON 注入协议；每次提交前再次执行候选域和组合约束校验。
+自动路径不会读取人工 `registry.yaml`。当前场景生成 28 个可调维度（Active 12 + Reserve 16）和 40 个 Fixed；21 个语义组在进入 Compiler 前因功能门禁或兼容性失败关闭。PCP、KV Cache dtype、Layer Sharding、Mix Placement、共享专家 DP、Cache Block 布局和无效占位值等不会再作为当前 GLM/32-NPU 场景的可轮换轴。Controller 对已存在的同名参数复用成熟运行适配器，对自动路径新增的参数使用通用 CLI/ENV/JSON 注入协议；每次提交前再次执行候选域、物理拓扑、跨参数约束和注入渲染校验。

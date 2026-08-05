@@ -254,6 +254,19 @@ def machine_constraints() -> list[dict[str, Any]]:
             "only_if_present": True,
         },
         {
+            "id": "physical_parallelism_within_available_devices",
+            "kind": "product_lte_scenario",
+            "factors": [
+                "topology.data_parallel_size",
+                "topology.tensor_parallel_size",
+                "topology.pipeline_parallel_size",
+                "prefill_context_parallel_size",
+            ],
+            "right_scenario": "topology.total_npu",
+            "only_if_present": True,
+            "required_candidate_parameters": ["prefill_context_parallel_size"],
+        },
+        {
             "id": "cudagraph_sizes_match_speculation_factor",
             "kind": "all_multiples",
             "values": "cudagraph_capture_sizes",
@@ -269,7 +282,13 @@ def _resolve_operand(
     scenario: dict[str, Any],
 ) -> Any:
     if isinstance(operand, dict) and "add" in operand:
-        return sum(_resolve_operand(item, candidate, scenario) for item in operand["add"])
+        values = [
+            _resolve_operand(item, candidate, scenario)
+            for item in operand["add"]
+        ]
+        if any(value is None for value in values):
+            return None
+        return sum(values)
     if isinstance(operand, str):
         if operand in candidate:
             return candidate[operand]
@@ -296,6 +315,9 @@ def validate_candidate(
             )
             if isinstance(value, str) and "." not in value
         ]
+        required_names.extend(
+            str(name) for name in rule.get("required_candidate_parameters", [])
+        )
         if rule.get("only_if_present") and any(name not in candidate for name in required_names):
             continue
         if kind == "lte_or_disabled":
@@ -307,6 +329,17 @@ def validate_candidate(
             factors = [_resolve_operand(item, candidate, scenario) for item in rule["factors"]]
             right = candidate.get(rule["right"])
             if right is not None and all(isinstance(v, (int, float)) for v in factors):
+                if math.prod(factors) > right:
+                    violations.append(rule["id"])
+        elif kind == "product_lte_scenario":
+            factors = [
+                _resolve_operand(item, candidate, scenario)
+                for item in rule["factors"]
+            ]
+            right = dotted_get(scenario, str(rule["right_scenario"]))
+            if isinstance(right, (int, float)) and all(
+                isinstance(value, (int, float)) for value in factors
+            ):
                 if math.prod(factors) > right:
                     violations.append(rule["id"])
         elif kind in {"divides", "divides_or_disabled"}:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import fnmatch
+import json
 import math
 import re
 from pathlib import Path
@@ -155,6 +156,49 @@ class CompatibilityValidator:
                 )
         return stable_unique(normalized), rejected
 
+    def _filter_policy_values(
+        self,
+        values: list[Any],
+        rules: list[dict[str, Any]],
+    ) -> tuple[list[Any], list[dict[str, Any]]]:
+        """Apply scenario-gated value rules after executable normalization.
+
+        A parameter can exist in both pinned source trees while only some of
+        its values are safe for the selected model/topology.  Keeping this at
+        value level avoids either admitting an invalid enum wholesale or
+        permanently disabling a useful axis for future scenario profiles.
+        """
+        accepted: list[Any] = []
+        rejected: list[dict[str, Any]] = []
+        for value in values:
+            rejection_reason: str | None = None
+            value_key = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            for rule in rules:
+                for value_rule in rule.get("value_rules", []):
+                    gated_keys = {
+                        json.dumps(item, ensure_ascii=False, sort_keys=True)
+                        for item in value_rule.get("values", [])
+                    }
+                    if value_key not in gated_keys:
+                        continue
+                    condition = value_rule.get("require")
+                    if isinstance(condition, dict) and not evaluate_condition(
+                        condition, self.scenario
+                    ):
+                        rejection_reason = str(
+                            value_rule.get(
+                                "reason", "scenario_value_gate_not_met"
+                            )
+                        )
+                        break
+                if rejection_reason:
+                    break
+            if rejection_reason:
+                rejected.append({"value": value, "reason": rejection_reason})
+            else:
+                accepted.append(value)
+        return accepted, rejected
+
     def validate_parameter(self, parameter: dict[str, Any]) -> dict[str, Any]:
         canonical = str(parameter["canonical_name"])
         rules = self._matching_rules(canonical)
@@ -207,6 +251,8 @@ class CompatibilityValidator:
                 )
             accepted.append(value)
 
+        accepted, policy_rejections = self._filter_policy_values(accepted, rules)
+        rejected_values.extend(policy_rejections)
         accepted, domain_rejections = self._filter_special_domain(canonical, accepted)
         rejected_values.extend(domain_rejections)
         if baseline is not None:
@@ -218,6 +264,15 @@ class CompatibilityValidator:
         for rule in rules:
             if rule.get("role"):
                 role = str(rule["role"])
+                fixed_reason = f"compatibility_policy:{role}"
+                break
+            role_when = rule.get("role_when")
+            if (
+                isinstance(role_when, dict)
+                and isinstance(role_when.get("condition"), dict)
+                and evaluate_condition(role_when["condition"], self.scenario)
+            ):
+                role = str(role_when["role"])
                 fixed_reason = f"compatibility_policy:{role}"
                 break
         if role != "tunable" and baseline is not None:
@@ -283,6 +338,14 @@ class CompatibilityValidator:
                     valid = required is not None and required > expected
                 elif op == "not_in":
                     valid = required not in expected
+                elif op == "eq":
+                    valid = required == expected
+                elif op == "in":
+                    valid = required in expected
+                elif op == "truthy":
+                    valid = bool(required)
+                elif op == "falsy":
+                    valid = not bool(required)
                 else:
                     raise ValueError(f"Unsupported require_if_active operator: {op}")
                 if not valid:

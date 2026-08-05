@@ -11,7 +11,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from . import continuous_tuning as tuning
-from .search_space_adapter import resolve_search_limits, write_session_search_space
+from .search_space_adapter import (
+    _latest_history,
+    _latest_previous_selection,
+    _selected_benchmark_identity,
+    resolve_search_limits,
+    write_session_search_space,
+)
 
 
 def config() -> dict:
@@ -59,6 +65,77 @@ def config() -> dict:
 
 
 class ControllerTests(unittest.TestCase):
+    def test_automatic_history_reuse_requires_benchmark_and_image_identity(self) -> None:
+        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        project_root = tuning.KB_ROOT
+        scenario = tuning.load_yaml(
+            project_root
+            / "workflow"
+            / "search_space_compiler"
+            / "scenario.glm52-a3-aligned-l1.yaml"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / "glm52_continuous_20260805_000000"
+            history = session / "round_001_a1" / "06_agent_analysis" / "history_input.json"
+            history.parent.mkdir(parents=True)
+            history.write_text("[]\n", encoding="utf-8")
+            selection = session / "00_search_space" / "search_space.compiled.yaml"
+            selection.parent.mkdir(parents=True)
+            tuning.save_yaml(
+                selection,
+                {"integration": {"search_space_profile": "automatic_registry_v1"}},
+            )
+            frozen = json.loads(json.dumps(raw))
+            # A different repetition contract must not influence a new Session.
+            frozen["benchmark"]["aligned_l1"]["repetitions"] = 1
+            tuning.save_yaml(session / "session_config.yaml", frozen)
+            tuning.save_yaml(
+                session / "image_version_manifest.yaml",
+                tuning.load_yaml(tuning.IMAGE_MANIFEST_FILE),
+            )
+            selected = _latest_history(
+                root,
+                benchmark_identity=_selected_benchmark_identity(raw, project_root),
+                scenario_image=scenario["image"],
+                project_root=project_root,
+            )
+            self.assertIsNone(selected)
+            self.assertIsNone(
+                _latest_previous_selection(
+                    root,
+                    "automatic_registry_v1",
+                    benchmark_identity=_selected_benchmark_identity(
+                        raw, project_root
+                    ),
+                    scenario_image=scenario["image"],
+                    project_root=project_root,
+                )
+            )
+            frozen["benchmark"]["aligned_l1"]["repetitions"] = raw["benchmark"][
+                "aligned_l1"
+            ]["repetitions"]
+            tuning.save_yaml(session / "session_config.yaml", frozen)
+            selected = _latest_history(
+                root,
+                benchmark_identity=_selected_benchmark_identity(raw, project_root),
+                scenario_image=scenario["image"],
+                project_root=project_root,
+            )
+            self.assertEqual(history, selected)
+            self.assertEqual(
+                selection,
+                _latest_previous_selection(
+                    root,
+                    "automatic_registry_v1",
+                    benchmark_identity=_selected_benchmark_identity(
+                        raw, project_root
+                    ),
+                    scenario_image=scenario["image"],
+                    project_root=project_root,
+                ),
+            )
+
     def setUp(self) -> None:
         self._log_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self._log_directory.cleanup)
@@ -585,7 +662,7 @@ class ControllerTests(unittest.TestCase):
                 "automatic_registry_v1",
                 resolved["resolved_search_space"]["profile"],
             )
-            self.assertEqual(36, result["summary"]["eligible_tunable_parameters"])
+            self.assertEqual(28, result["summary"]["eligible_tunable_parameters"])
             self.assertEqual(12, len(result["active_search_limits"]))
             self.assertNotIn("enable_eplb", result["active_search_limits"])
             self.assertEqual([False], resolved["search_limits"]["enable_eplb"])
@@ -605,7 +682,7 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(raw["search_limits"], resolved["manual_search_limits"])
             self.assertEqual([64000], resolved["search_limits"]["max_model_len"])
             self.assertEqual(
-                [raw["baseline"]["async_scheduling"]],
+                result["active_search_limits"]["async_scheduling"],
                 resolved["search_limits"]["async_scheduling"],
             )
             self.assertEqual(
@@ -704,8 +781,8 @@ class ControllerTests(unittest.TestCase):
         curated_active = set(curated_result["active_search_limits"])
         self.assertEqual(23, len(registry["parameters"]))
         self.assertEqual(12, len(automatic_active))
-        self.assertEqual(24, automatic_result["summary"]["reserve_parameters"])
-        self.assertEqual(11, len(automatic_active & curated_active))
+        self.assertEqual(16, automatic_result["summary"]["reserve_parameters"])
+        self.assertEqual(10, len(automatic_active & curated_active))
         self.assertFalse(
             automatic_result["automatic_registry_snapshot"]["audit"][
                 "existing_registry_dependency"
@@ -749,6 +826,15 @@ class ControllerTests(unittest.TestCase):
                 session, round_dir, state
             )
             controller.validate_candidate_invariants(state["current_candidate"])
+            mtp_candidate = {
+                **state["current_candidate"],
+                "async_scheduling": True,
+                "num_speculative_tokens": 1,
+                "speculative_config__method": "mtp",
+            }
+            # This is the first post-B0 transition the automatic profile must
+            # support; before async_scheduling became Active it was impossible.
+            controller.validate_candidate_invariants(mtp_candidate)
             graph_parameter = next(
                 item
                 for item in controller.automatic_registry_validation["compiled"][

@@ -50,8 +50,8 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 完整命令。新版本链只有在画像、Tags、场景 Search Limits 和对应运行镜像
 身份全部审计后才能激活；生成离线提案不代表服务器已支持该版本。
 
-Git 克隆已经包含当前正式画像、跳过清单、Tags 和 Search Limits，可直接作为
-知识库复用。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
+Git 克隆已经包含当前正式画像、跳过清单、Tags 和人工路径 Search Limits 参考快照，可直接作为
+知识库复用；默认自动路径的权威 Search Limits 在新 Session 创建时重新编译并冻结。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
 Git 分发；它们应由入口脚本按所选版本和场景重新生成。
 
 新建 Session 默认选择 `automatic_registry_v1`，会现场重建并冻结自动注册表；如需复现实验口径，使用 `-SearchSpaceProfile curated_registry_v1` 选择人工 23 项注册表。两种 Profile、Agent Strategy 和 Benchmark 均不得在 Resume 中切换。

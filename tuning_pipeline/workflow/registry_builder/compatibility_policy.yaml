@@ -6,6 +6,7 @@ normalization:
   omit_tokens: [unset, "<unset>", omit, "<omit>"]
   placeholder_patterns:
     - "^<.*>$"
+    - "^namespace::operator$"
     - "^(a|an|the) .*(name|path|class|checkpoint|identifier|callable)"
     - "^.* supplied by .*$"
     - "^.* for a .*$"
@@ -37,9 +38,11 @@ parameter_rules:
     role: session_fixed
   - match: distributed_executor_backend
     role: session_fixed
+  # B0 resolves async scheduling to false, while MTP requires true in this
+  # workflow. It must remain a coupled Agent axis rather than a frozen field.
   - match: async_scheduling
-    role: session_fixed
     scenario_path: baseline.async_scheduling
+    risk_override: medium
   - match: compilation_config__cudagraph_mode
     rename_to: compilation_mode
     scenario_path: baseline.compilation_mode
@@ -47,6 +50,10 @@ parameter_rules:
   - match: compilation_config__pass_config__enable_sp
     rename_to: compilation_enable_sp
     scenario_path: baseline.compilation_enable_sp
+  - match: compilation_config__pass_config__sp_min_token_num
+    # This threshold has no independent effect while the SP pass is not part
+    # of the active profile. Keep it fixed instead of consuming an Active slot.
+    role: session_fixed
   - match: additional_config__enable_mlapo
     rename_to: mlapo
     scenario_path: baseline.mlapo
@@ -81,7 +88,21 @@ parameter_rules:
   - match: cudagraph_capture_sizes
     risk_override: medium
   - match: block_size
-    risk_override: high
+    # The target Ascend attention backend owns the effective kernel block
+    # size. Upstream's alternative 16 is not a proven online tuning value.
+    role: session_fixed
+  - match: kv_cache_dtype
+    # The upstream enum mixes CUDA/ROCm/model-specific formats. Keep the
+    # source/platform resolved value until this exact model path is probed.
+    role: session_fixed
+  - match: prefill_context_parallel_size
+    # PCP multiplies the physical model world size. With DP2 x TP16 on 32
+    # NPUs, PCP=2 would require 64 NPUs and cannot be an online candidate.
+    role: session_fixed
+  - match: cp_kv_cache_interleave_size
+    # This is a coupled cache-layout field, not an independent performance
+    # knob; it must move with block size and an enabled CP deployment.
+    role: session_fixed
   - match: COMPILE_CUSTOM_KERNELS
     role: build_fixed
   - match: TORCH_COMPILE_DISABLE
@@ -116,6 +137,12 @@ parameter_rules:
     require: {path: features.kv_transfer, op: truthy}
   - match: additional_config__enable_balance_scheduling
     require: {path: features.pd_disaggregated, op: truthy}
+  - match: additional_config__layer_sharding
+    require: {path: features.pd_disaggregated, op: truthy}
+  - match: additional_config__mix_placement
+    require: {path: model.mix_placement_supported, op: truthy}
+  - match: additional_config__enable_shared_expert_dp
+    require: {path: model.shared_expert_dp_supported, op: truthy}
   - match: additional_config__enable_dsa_cp
     require: {path: model.dsa, op: truthy}
   - match: "*xlite*"
@@ -138,6 +165,14 @@ parameter_rules:
     role: session_fixed
   - match: scheduler_cls
     role: session_fixed
+  - match: enable_chunked_prefill
+    role_when:
+      role: session_fixed
+      condition: {path: features.chunked_prefill_disable_safe, op: falsy}
+    value_rules:
+      - values: [false]
+        require: {path: features.chunked_prefill_disable_safe, op: truthy}
+        reason: chunked_prefill_false_cannot_cover_current_context_budget
 
 # These constraints are emitted with the isolated Search Limits and can be
 # evaluated again before a future Controller submits a complete candidate.
@@ -156,11 +191,51 @@ combination_constraints:
     required_parameter: speculative_config__method
     required_op: not_in
     required_value: [null]
+  - id: speculative_tokens_require_async_scheduling
+    kind: require_if_active
+    parameter: num_speculative_tokens
+    inactive_values: [null, 0]
+    required_parameter: async_scheduling
+    required_op: eq
+    required_value: true
+  - id: static_kernel_requires_npugraph_ex
+    kind: require_if_active
+    parameter: additional_config__ascend_compilation_config__enable_static_kernel
+    inactive_values: [null, false]
+    required_parameter: additional_config__ascend_compilation_config__enable_npugraph_ex
+    required_op: eq
+    required_value: true
+  - id: unpadded_drafter_requires_async_disabled
+    kind: require_if_active
+    parameter: speculative_config__disable_padded_drafter_batch
+    inactive_values: [null, false]
+    required_parameter: async_scheduling
+    required_op: eq
+    required_value: false
+  - id: unpadded_drafter_requires_pcp_one
+    kind: require_if_active
+    parameter: speculative_config__disable_padded_drafter_batch
+    inactive_values: [null, false]
+    required_parameter: prefill_context_parallel_size
+    required_op: eq
+    required_value: 1
+  - id: shared_expert_dp_requires_expert_parallel
+    kind: require_if_active
+    parameter: additional_config__enable_shared_expert_dp
+    inactive_values: [null, false]
+    required_parameter: enable_expert_parallel
+    required_op: eq
+    required_value: true
   - id: eager_conflicts_with_npugraph
     kind: mutually_exclusive_true
     parameters:
       - speculative_config__enforce_eager
       - additional_config__ascend_compilation_config__enable_npugraph_ex
+  - id: mix_placement_conflicts_with_shared_expert_dp
+    kind: mutually_exclusive_true
+    parameters:
+      - additional_config__mix_placement
+      - additional_config__enable_shared_expert_dp
   - id: torch_compile_disable_conflicts_with_compilation
     kind: forbidden_pair
     left: {parameter: TORCH_COMPILE_DISABLE, value: "1"}

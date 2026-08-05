@@ -18,7 +18,13 @@ activation:
     - gpu_memory_utilization
     - compilation_mode
     - num_speculative_tokens
+    # Retained for the curated profile. The automatic current-scenario policy
+    # classifies it as fixed because false cannot cover the 64k context.
     - enable_chunked_prefill
+    # B0 resolves this to false, but MTP trials require true. Keep the
+    # prerequisite in the same active Session schema as speculative tokens.
+    - async_scheduling
+    - speculative_config__method
     - long_prefill_token_threshold
 
 history_selection:

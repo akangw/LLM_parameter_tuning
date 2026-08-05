@@ -39,6 +39,10 @@ model:
   quantized: true
   encoder_decoder: false
   uses_kv_cache: true
+  # These pinned Ascend paths are not implemented for the selected GLM model.
+  # A future model profile can enable them explicitly after source/runtime proof.
+  mix_placement_supported: false
+  shared_expert_dp_supported: false
 
 topology:
   nodes: 2
@@ -56,6 +60,9 @@ features:
   lora: false
   hierarchy_communication: false
   dynamic_eplb: false
+  # false is invalid here because the offered scheduler budget is below the
+  # 64k context. A future short-context profile may explicitly set this true.
+  chunked_prefill_disable_safe: false
 
 benchmark:
   mode: aligned_l1
