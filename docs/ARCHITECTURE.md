@@ -32,15 +32,14 @@ flowchart LR
 
 ## Search Limits
 
-新 Session 默认自动构建结果：
+新 Session 默认使用人工审计注册表：
 
 ```text
 340 ParameterYAML
 → 109 场景召回
-→ 89 个参数语义组
-→ 68 个兼容注册参数
-→ 28 Tunable：12 Active + 16 Reserve
-→ 40 Fixed + 0 Compiler Rejected
+→ 人工审计 registry.yaml：23 项
+→ 16 Tunable：12 Active + 4 Reserve
+→ 6 Fixed + 1 Rejected
 ```
 
 新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前 Active 是：
@@ -51,16 +50,18 @@ max_num_batched_tokens
 gpu_memory_utilization
 compilation_mode
 num_speculative_tokens
-async_scheduling
+enable_chunked_prefill
+long_prefill_token_threshold
 enable_prefix_caching
 cudagraph_capture_sizes
 max_cudagraph_capture_size
 mlapo
 flashcomm1
-speculative_config__method
 ```
 
-`automatic_registry_v1` 不读取人工 `registry.yaml`，从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留人工 23 项注册表。两条路径在新 Session 创建时选择并冻结。当前两条路径的 Active 均为 12 项，其中 10 项独立对齐；自动路径额外显式控制 `async_scheduling` 与 `speculative_config__method`，人工路径保留 `enable_chunked_prefill` 与 `long_prefill_token_threshold`。
+`curated_registry_v1` 是默认值，复用人工审计的 23 项 `registry.yaml`；`automatic_registry_v1` 是可插拔替代选项，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表。两条路径在新 Session 创建时选择并冻结。当前两条路径的 Active 均为 12 项，其中 10 项独立对齐；自动路径额外显式控制 `async_scheduling` 与 `speculative_config__method`，人工路径保留 `enable_chunked_prefill` 与 `long_prefill_token_threshold`。人工路径在 MTP tokens 从 0 变为正数时，把 `async_scheduling=true` 作为派生配套变化，由 Controller 强制校验，不额外计作独立调参轴。
+
+自动替代路径当前结果为：109 召回 → 89 个语义组 → 68 个兼容注册参数 → 28 Tunable（12 Active + 16 Reserve）→ 40 Fixed + 0 Compiler Rejected。
 
 历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 

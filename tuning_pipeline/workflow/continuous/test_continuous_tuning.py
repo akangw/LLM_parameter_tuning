@@ -643,11 +643,12 @@ class ControllerTests(unittest.TestCase):
                 (round_dir / "02_parameters" / "b0_effective_resolution.yaml").is_file()
             )
 
-    def test_default_automated_search_space_resolves_and_manual_fallback_remains(
+    def test_explicit_automatic_search_space_resolves_and_manual_fallback_remains(
         self,
     ) -> None:
         project_root = tuning.KB_ROOT
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        raw["search_space"]["profile"] = "automatic_registry_v1"
         with tempfile.TemporaryDirectory() as temporary:
             resolved, result = resolve_search_limits(
                 raw,
@@ -749,15 +750,80 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(manual_result)
             self.assertEqual(17, len(manual["search_limits"]))
 
+    def test_default_search_space_is_reviewed_curated_registry(self) -> None:
+        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        profile_document = tuning.load_yaml(
+            tuning.KB_ROOT / "workflow" / "search_space_profiles.yaml"
+        )
+        self.assertEqual(
+            profile_document["default_profile"], raw["search_space"]["profile"]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            resolved, result = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+        self.assertEqual(
+            "curated_registry_v1", resolved["resolved_search_space"]["profile"]
+        )
+        self.assertEqual(
+            "curated_registry", resolved["resolved_search_space"]["mode"]
+        )
+        self.assertEqual(23, result["summary"]["registry_parameters"])
+        self.assertEqual(12, result["summary"]["active_parameters"])
+        self.assertEqual(4, result["summary"]["reserve_parameters"])
+        self.assertEqual(6, result["summary"]["fixed_parameters"])
+        self.assertEqual(1, result["summary"]["rejected_parameters"])
+        self.assertEqual(
+            ["async_scheduling"],
+            resolved["resolved_search_space"]["derived_runtime_parameters"],
+        )
+        self.assertEqual([False, True], resolved["search_limits"]["async_scheduling"])
+        self.assertEqual(
+            ["async_scheduling"],
+            result["integration"]["derived_runtime_parameters"],
+        )
+        self.assertEqual(
+            resolved["search_limits"], result["integration"]["effective_search_limits"]
+        )
+        controller = tuning.Controller(resolved, search_space_result=result)
+        mtp_candidate = {
+            **resolved["baseline"],
+            "async_scheduling": True,
+            "num_speculative_tokens": 1,
+        }
+        controller.validate_candidate_invariants(mtp_candidate)
+        controller.validate_candidate(
+            resolved["baseline"],
+            mtp_candidate,
+            [
+                {
+                    "parameter": "num_speculative_tokens",
+                    "before": 0,
+                    "after": 1,
+                    "rationale": "Enable one-token MTP exploration after B0.",
+                },
+                {
+                    "parameter": "async_scheduling",
+                    "before": False,
+                    "after": True,
+                    "rationale": "Required derived companion for MTP scheduling.",
+                },
+            ],
+        )
+        environment = controller.candidate_env("curated-mtp", mtp_candidate)
+        self.assertIn("RUNTIME_INJECTION_MODE=native_v1", environment)
+
     def test_automatic_and_curated_profiles_have_auditable_overlap(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        raw["search_space"]["profile"] = "automatic_registry_v1"
         with tempfile.TemporaryDirectory() as temporary:
             archive = Path(temporary)
             automatic, automatic_result = resolve_search_limits(
                 raw, project_root=tuning.KB_ROOT, archive_root=archive
             )
             curated_raw = tuning.load_yaml(tuning.HERE / "config.yaml")
-            curated_raw["search_space"]["profile"] = "curated_registry_v1"
             curated, curated_result = resolve_search_limits(
                 curated_raw, project_root=tuning.KB_ROOT, archive_root=archive
             )
@@ -798,6 +864,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_b0_reconciliation_updates_frozen_automatic_domains(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        raw["search_space"]["profile"] = "automatic_registry_v1"
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             resolved, result = resolve_search_limits(

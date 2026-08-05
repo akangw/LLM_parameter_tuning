@@ -16,8 +16,8 @@ ParameterYAML
 - 参数画像 YAML：340 份。
 - Tagged YAML：`tag_params/output/params/`，340 份，标签审计错误为 0。
 - 当前场景高影响召回：109 份。
-- 人工路径参考快照：`search_limits/`，Active 12、Reserve 4、Fixed 6、Rejected 1，仅用于复现与比较。
-- 新 Session 默认自动编译：28 Tunable（Active 12、Reserve 16）、40 Fixed、0 Compiler Rejected；实际权威结果冻结在该 Session 的 `00_search_space/`。
+- 人工路径参考快照：`search_limits/`，Active 12、Reserve 4、Fixed 6、Rejected 1；这是新 Session 的默认构建口径，实际权威结果仍冻结在该 Session 的 `00_search_space/`。
+- 自动注册表是可插拔替代选项：28 Tunable（Active 12、Reserve 16）、40 Fixed、0 Compiler Rejected。
 - 当前固定镜像的上游 CLI 不支持动态 EPLB，因此本场景固定 `enable_eplb=false`、`eplb_num_redundant_experts=0`。
 - Controller：`workflow/continuous/continuous_tuning.py`。
 

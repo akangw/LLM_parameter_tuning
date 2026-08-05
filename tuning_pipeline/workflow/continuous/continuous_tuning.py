@@ -1518,8 +1518,8 @@ class Controller:
             raise RuntimeError(
                 f"SSH or persistent lease {lease_name!r} is not available. "
                 "Verify SSH connectivity first; if the Lease is absent, run "
-                "continuous_tuning.py --prepare-lab after setting mtp_draft_model, "
-                "then wait for the Lease to become ready."
+                ".\\scripts\\prepare-remote.ps1 from the repository root, then "
+                "wait for the Lease to become ready."
             ) from exc
 
     def ensure_lab_available(self) -> str:

@@ -340,8 +340,30 @@ def resolve_search_limits(
     # can maintain coupled invariants (for example, clearing an explicit
     # cudagraph capture list when changing its maximum).
     derived_runtime_parameters: list[str] = []
-    derived_rules = config.get("change_policy", {}).get("derived_parameters", {})
+    change_policy = config.setdefault("change_policy", {})
+    derived_rules = change_policy.setdefault("derived_parameters", {})
     active_names = set(result["active_search_limits"])
+    profile_derived_rules = profile.get("derived_parameters", {})
+    if not isinstance(profile_derived_rules, dict):
+        raise ValueError("Search-space profile derived_parameters must be an object")
+    unknown_derived = sorted(set(profile_derived_rules) - set(manual_limits))
+    if unknown_derived:
+        raise ValueError(
+            "Search-space profile derived parameters are missing from the runtime "
+            f"schema: {unknown_derived}"
+        )
+    for name, rule in profile_derived_rules.items():
+        if not isinstance(rule, dict) or not isinstance(rule.get("drivers"), list):
+            raise ValueError(
+                f"Search-space derived rule for {name!r} must define a drivers list"
+            )
+        unknown_drivers = sorted(set(map(str, rule["drivers"])) - active_names)
+        if unknown_drivers:
+            raise ValueError(
+                f"Search-space derived rule for {name!r} has non-active drivers: "
+                f"{unknown_drivers}"
+            )
+        derived_rules[str(name)] = copy.deepcopy(rule)
     for name, values in manual_limits.items():
         if name not in effective_limits:
             if name not in baseline:
@@ -372,6 +394,13 @@ def resolve_search_limits(
             effective_limits[name] = [value, *effective_limits[name]]
             source_default_anchors.append(name)
 
+    fixed_runtime_parameters = [
+        name
+        for name in effective_limits
+        if name not in result["active_search_limits"]
+        and name not in derived_runtime_parameters
+    ]
+
     result["integration"]["connected_to_mainflow"] = True
     result["integration"]["note"] = (
         "This Session-frozen result is connected to workflow/continuous via "
@@ -386,6 +415,15 @@ def resolve_search_limits(
     )
     result["integration"]["approved_planned_parameters"] = sorted(approved)
     result["integration"]["effective_candidate_parameters"] = list(effective_limits)
+    result["integration"]["effective_search_limits"] = copy.deepcopy(
+        effective_limits
+    )
+    result["integration"]["derived_runtime_parameters"] = list(
+        derived_runtime_parameters
+    )
+    result["integration"]["fixed_runtime_parameters"] = list(
+        fixed_runtime_parameters
+    )
     config["manual_search_limits"] = manual_limits
     config["search_limits"] = effective_limits
     config["baseline"] = baseline
@@ -421,12 +459,7 @@ def resolve_search_limits(
         "previous_selection": (str(previous_selection) if previous_selection else None),
         "active_tunable_parameters": list(result["active_search_limits"]),
         "derived_runtime_parameters": derived_runtime_parameters,
-        "fixed_runtime_parameters": [
-            name
-            for name in effective_limits
-            if name not in result["active_search_limits"]
-            and name not in derived_runtime_parameters
-        ],
+        "fixed_runtime_parameters": fixed_runtime_parameters,
         "source_default_anchor_parameters": source_default_anchors,
         "rotation_swaps": result["rotation_audit"]["swaps"],
     }

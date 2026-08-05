@@ -131,8 +131,11 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument(
         "--search-space-profile",
-        default="automatic_registry_v1",
-        help="profile from workflow/search_space_profiles.yaml",
+        default=None,
+        help=(
+            "profile from workflow/search_space_profiles.yaml; defaults to "
+            "that file's default_profile"
+        ),
     )
     result.add_argument(
         "--prepare-only",
@@ -159,7 +162,14 @@ def main() -> int:
     profiles_document = yaml.safe_load(
         SEARCH_SPACE_PROFILES.read_text(encoding="utf-8")
     )
+    if not isinstance(profiles_document, dict):
+        raise SystemExit("Search-Space profiles document must be an object")
     profiles = profiles_document.get("profiles", {})
+    args.search_space_profile = str(
+        args.search_space_profile or profiles_document.get("default_profile", "")
+    )
+    if not args.search_space_profile:
+        raise SystemExit("Search-Space profiles document has no default_profile")
     if args.search_space_profile not in profiles:
         raise SystemExit(
             f"Unknown Search-Space profile {args.search_space_profile!r}; "

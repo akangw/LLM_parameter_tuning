@@ -1,6 +1,6 @@
 # Search-space construction is a Session-level choice, just like Agent and
 # Benchmark profiles. The selected definition is frozen into session_config.yaml.
-default_profile: automatic_registry_v1
+default_profile: curated_registry_v1
 
 profiles:
   curated_registry_v1:
@@ -14,6 +14,12 @@ profiles:
     scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
     registry: workflow/search_space_compiler/registry.yaml
     policy: workflow/search_space_compiler/policy.yaml
+    # B0 resolves async scheduling to false. When the reviewed MTP token axis is
+    # enabled later, async scheduling is its required companion rather than an
+    # additional independent search dimension.
+    derived_parameters:
+      async_scheduling:
+        drivers: [num_speculative_tokens]
 
   automatic_registry_v1:
     status: integrated

@@ -22,9 +22,9 @@
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
-# 显式选择自动注册表（默认）或人工注册表兼容路径
-.\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
+# 默认使用人工审计注册表；也可以显式写出或切换自动替代路径
 .\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
+.\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 
 # 新建 Session 时选择 Benchmark；续跑不可切换
 .\一键启动.ps1 -NewSession -BenchmarkProfile aligned_l1_v4

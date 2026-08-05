@@ -33,19 +33,19 @@ the controller then archives the decision without submitting another task.
 
 ## Search-Space profiles
 
-New Sessions default to `automatic_registry_v1`. Before creating the Session,
-the controller rebuilds a registry from tagged portraits and exact pinned source
-evidence, applies the deterministic compatibility policy, invokes the compiler,
-reads the newest compatible history snapshot, applies bounded history-aware
-rotation, and freezes the complete result. `curated_registry_v1` retains the
-reviewed 23-entry registry and historical behavior. Select either only when
-creating a Session with `-SearchSpaceProfile`.
+New Sessions default to `curated_registry_v1`: the controller compiles the
+reviewed 23-entry registry, reads only identity-compatible history, applies
+bounded history-aware rotation, and freezes the complete result. The independent
+`automatic_registry_v1` replacement rebuilds a registry from tagged portraits,
+exact pinned source evidence, and the deterministic compatibility policy. Select
+either only when creating a Session with `-SearchSpaceProfile`.
 
 The effective candidate contains:
 
 - 12 active tunable parameters selected by the compiler;
-- one coupled derived parameter whose allowed values maintain graph invariants;
-- four single-value runtime-contract parameters as fixed fields;
+- `async_scheduling` as a coupled derived companion when the curated MTP token
+  axis is enabled after B0;
+- the remaining single-value runtime-contract parameters as fixed fields;
 - a Session-specific Agent output schema generated from those exact fields;
 - explicit runtime injection contracts for every active parameter.
 

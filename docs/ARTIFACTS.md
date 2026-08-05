@@ -33,7 +33,7 @@ Search Limits 文件：
 - `rotation_report.yaml`：历史驱动的换入/换出说明。
 - `manifest.json`：输入和输出身份。
 
-每个新 Session 的 `00_search_space/` 才是实际执行边界的权威副本。自动 Profile 还会保存 `search_space_profile.yaml`、`registry.generated.yaml` 和 `registry.audit.yaml`；因此即使全局画像、策略或默认 Profile 后来更新，续跑仍使用原 Session 的冻结注册表、兼容规则、值域和注入契约。
+每个新 Session 的 `00_search_space/` 才是实际执行边界的权威副本。两种 Profile 都保存 `search_space_profile.yaml`；自动 Profile 额外保存 `registry.generated.yaml` 和 `registry.audit.yaml`。因此即使全局画像、策略或默认 Profile 后来更新，续跑仍使用原 Session 的冻结注册表、兼容规则、值域和注入契约。
 
 ## 2. 离线日志
 
@@ -75,8 +75,8 @@ tuning_pipeline/workflow/continuous/experiments/<session>/
 | `search_space_profile.yaml` | 本 Session 选择的构建方式及完整定义 |
 | `registry.generated.yaml` | 自动 Profile 生成的可执行参数及注入契约 |
 | `registry.audit.yaml` | 自动构建输入、源码身份、召回去向与兼容审计 |
-| `search_space.compiled.yaml` | Active/Reserve/Fixed/Rejected 全量分类 |
-| `manual_search_limits.yaml` | 兼容池与运行契约留档，不代表自动 Profile 依赖人工成员名单 |
+| `search_space.compiled.yaml` | Active/Reserve/Fixed/Rejected 全量分类，以及 Controller 最终有效候选域、派生参数和固定运行参数 |
+| `manual_search_limits.yaml` | 原始兼容池与运行契约留档；实际执行边界以编译产物的 `integration.effective_search_limits` 和 `session_config.yaml` 为准 |
 
 | 层级 | 关键文件 | 回答的问题 |
 |---|---|---|

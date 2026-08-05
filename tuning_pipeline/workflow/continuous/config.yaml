@@ -153,14 +153,14 @@ baseline:
   # Source default is false; B0 omits --additional-config altogether.
   flashcomm1: false
 # Search-space construction is selected and frozen exactly like Agent and
-# Benchmark profiles. automatic_registry_v1 is the default end-to-end path;
-# curated_registry_v1 preserves the reviewed 23-entry registry for comparison.
+# Search-Space profiles. curated_registry_v1 is the default reviewed path;
+# automatic_registry_v1 remains an independently generated replacement option.
 search_space:
-  profile: automatic_registry_v1
+  profile: curated_registry_v1
   profiles_file: workflow/search_space_profiles.yaml
   history_source: latest_completed_session
-  # Used only by curated_registry_v1 for entries marked planned. Automatic
-  # registry entries are admitted by source, compatibility and runtime checks.
+  # Used by curated_registry_v1 for entries marked planned. Automatic registry
+  # entries are admitted by source, compatibility and runtime checks instead.
   approved_planned_parameters:
     - enable_chunked_prefill
     - max_cudagraph_capture_size
