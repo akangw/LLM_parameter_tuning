@@ -54,10 +54,8 @@ parameters:
 
   - canonical_name: enable_expert_parallel
     knowledge_names: [--enable-expert-parallel]
-    candidate_values: [true]
+    candidate_values: [false, true]
     risk: high
-    role: session_fixed
-    fixed_reason: glm52_moe_topology_contract
     prerequisites:
       - {path: model.moe, op: eq, value: true}
     integration_status: existing
@@ -180,6 +178,34 @@ parameters:
       - {path: features.hierarchy_communication, op: eq, value: false}
     integration_status: planned
     injection: {kind: json_field, object: additional_config, field: enable_fused_mc2}
+
+  - canonical_name: enable_balance_scheduling
+    knowledge_names: [additional_config.enable_balance_scheduling]
+    candidate_values: [false, true]
+    risk: high
+    prerequisites:
+      - {path: topology.data_parallel_size, op: gt, value: 1}
+      - {path: features.pd_disaggregated, op: eq, value: false}
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: enable_balance_scheduling}
+
+  - canonical_name: enable_reduce_sample
+    knowledge_names: [additional_config.enable_reduce_sample]
+    candidate_values: [false, true]
+    risk: high
+    prerequisites:
+      - {path: topology.tensor_parallel_size, op: gt, value: 1}
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: enable_reduce_sample}
+
+  - canonical_name: speculative_config__enforce_eager
+    knowledge_names: [SpeculativeConfig.enforce_eager]
+    candidate_values: [null, false, true]
+    risk: high
+    prerequisites:
+      - {path: features.mtp, op: eq, value: true}
+    integration_status: planned
+    injection: {kind: json_field, object: speculative_config, field: enforce_eager}
 
   - canonical_name: decode_context_parallel_size
     knowledge_names: [--decode-context-parallel-size]

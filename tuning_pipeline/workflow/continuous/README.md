@@ -34,7 +34,7 @@ the controller then archives the decision without submitting another task.
 ## Search-Space profiles
 
 New Sessions default to `curated_registry_v1`: the controller compiles the
-reviewed 23-entry registry, reads only identity-compatible history, applies
+reviewed curated registry, reads only identity-compatible history, applies
 bounded history-aware rotation, and freezes the complete result. The independent
 `automatic_registry_v1` replacement rebuilds a registry from tagged portraits,
 exact pinned source evidence, and the deterministic compatibility policy. Select
@@ -179,8 +179,8 @@ the screening helpers in `hierarchical_strategy.py` are reserved for a future
 reviewed Screen-to-Full state machine and cannot accept an improvement today.
 
 The provider and strategy are selected in `config.yaml` and frozen into each new
-Session. `codex` is the default provider; `anthropic`, `openai_compatible`, and a
-structured-stdout `command` adapter are available through `agent.providers`.
+Session. `codex` is the default provider; `anthropic`, `openai_compatible`,
+`deepseek`, and a structured-stdout `command` adapter are available through `agent.providers`.
 Credentials are referenced only by environment-variable name. New Sessions may
 override the selection with `-AgentProvider` and `-StrategyProfile`; resume/retry
 reject overrides so an existing experiment cannot drift.
@@ -251,7 +251,13 @@ python .\continuous_tuning.py --dry-run
 .\start_continuous.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\start_continuous.ps1 -NewSession -AgentProvider anthropic
 .\start_continuous.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
+.\start_continuous.ps1 -NewSession -AgentProvider deepseek `
+  -BenchmarkProfile vllm_bench_public_v1 -SearchSpaceProfile automatic_registry_v1
 ```
+
+For a portable installation, create the Git-ignored `config.local.yaml` from
+`config.local.example.yaml`; the start and prepare scripts auto-detect it. An
+explicit alternative can be selected with `-Config <path>`.
 
 Use `-Foreground` if you want the controller attached to the current terminal.
 

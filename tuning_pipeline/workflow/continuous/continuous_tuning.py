@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Continuous GLM-5.2 tuning controller.
 
-The controller runs on Windows beside the local knowledge base. The server is
-only used to execute one parameterized experiment at a time. Remote experiment
-artifacts are never deleted by this program.
+The default mode runs on Windows beside the local knowledge base.  An isolated
+server-autonomous mode can run the same deterministic controller on Linux with
+its own state root and local execution transport.  Experiment artifacts are
+never deleted by this program.
 """
 
 from __future__ import annotations
@@ -115,6 +116,8 @@ REMOTE_SCRIPT_NAMES = (
     "run_servebench_attempt.sh",
     "benchmark_watchdog.sh",
     "validate_aligned_l1_inputs.py",
+    "benchmark_driver.py",
+    "benchmark_result.schema.json",
 )
 
 
@@ -143,7 +146,12 @@ ALL_PARAM_TO_ENV = {
     "flashcomm1": "ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1",
     "mlapo": "ADDITIONAL_CONFIG_ENABLE_MLAPO",
     "fused_mc2": "ADDITIONAL_CONFIG_ENABLE_FUSED_MC2",
+    "enable_balance_scheduling": "ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING",
+    "enable_reduce_sample": "ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE",
+    "speculative_config__enforce_eager": "SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON",
 }
+
+B0_LAUNCH_PROFILE = "official_source_defaults_deployable"
 
 
 def now() -> str:
@@ -160,6 +168,44 @@ def log(message: str) -> None:
 
 def load_yaml(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    """Load a config and an optional relative ``base_config`` overlay."""
+    path = path.resolve()
+    value = load_yaml(path)
+    base_setting = value.pop("base_config", None)
+    if not base_setting:
+        return value
+    base_path = (path.parent / str(base_setting)).resolve()
+    if base_path == path:
+        raise RuntimeError("Configuration cannot extend itself")
+    return deep_merge(load_config(base_path), value)
+
+
+def configure_runtime_root(path: Path | None) -> None:
+    """Redirect mutable controller state without changing legacy defaults."""
+    if path is None:
+        return
+    root = path.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    global ARCHIVE_ROOT, STATE_FILE, STOP_FILE, LOG_FILE, LOCK_FILE
+    ARCHIVE_ROOT = root / "experiments"
+    STATE_FILE = root / "state.json"
+    STOP_FILE = root / "STOP_REQUESTED"
+    LOCK_FILE = root / "controller.lock"
+    if "VLLMTKB_CONTROLLER_LOG" not in os.environ:
+        LOG_FILE = root / "logs" / "controller" / "controller.log"
 
 
 def validate_activation_approval(
@@ -284,11 +330,13 @@ class Controller:
         config: dict[str, Any],
         *,
         dry_run: bool = False,
+        offline_dry_run: bool = False,
         search_space_result: dict[str, Any] | None = None,
     ):
         self.config = copy.deepcopy(config)
         config = self.config
         self.dry_run = dry_run
+        self.offline_dry_run = offline_dry_run
         self.search_space_result = search_space_result
         if set(config["baseline"]) != set(config["search_limits"]):
             raise ValueError("baseline and search_limits parameter schemas differ")
@@ -331,10 +379,33 @@ class Controller:
             )
         self.remote_host = config["remote_host"]
         self.remote_transport = str(config.get("remote_transport", "native_ssh"))
-        if self.remote_transport not in {"native_ssh", "paramiko"}:
+        if self.remote_transport not in {"native_ssh", "paramiko", "local"}:
             raise ValueError(f"Unsupported remote_transport={self.remote_transport!r}")
+        self.operation_mode = str(config.get("operation_mode", "windows_remote"))
+        if self.remote_transport == "local" and self.operation_mode != "server_autonomous":
+            raise ValueError(
+                "remote_transport=local is restricted to operation_mode=server_autonomous"
+            )
+        if self.operation_mode == "server_autonomous" and self.remote_transport != "local":
+            raise ValueError("server_autonomous mode requires remote_transport=local")
         self._paramiko_client_cache: Any | None = None
         self.remote_project = config["remote_project"]
+        self.allowed_write_root = str(
+            config.get("autonomous", {}).get("allowed_write_root", "")
+        ).strip()
+        if self.remote_transport == "local":
+            if os.name == "nt":
+                raise RuntimeError("Local transport is supported only on the Linux server")
+            if not self.allowed_write_root:
+                raise ValueError(
+                    "server_autonomous mode requires autonomous.allowed_write_root"
+                )
+            project = Path(self.remote_project).resolve()
+            allowed = Path(self.allowed_write_root).resolve()
+            if not project.is_relative_to(allowed):
+                raise ValueError(
+                    "server_autonomous remote_project must stay under allowed_write_root"
+                )
         self.remote_auto = f"{self.remote_project}/workflow/auto"
         legacy_aligned = config.get("benchmark", {}).get("aligned_l1", {})
         deployment = {
@@ -457,7 +528,12 @@ class Controller:
                 f"Benchmark profile {self.benchmark_profile_name!r} is not integrated"
             )
         self.benchmark_mode = str(self.benchmark_profile.get("mode", ""))
-        if self.benchmark_mode not in {"aligned_l1", "legacy_random_32k1k"}:
+        if self.benchmark_mode not in {
+            "aligned_l1",
+            "legacy_random_32k1k",
+            "vllm_bench_serve",
+            "custom_adapter",
+        }:
             raise ValueError(f"Unsupported benchmark.mode={self.benchmark_mode!r}")
         definition_key = str(
             self.benchmark_profile.get("definition_key", self.benchmark_mode)
@@ -478,6 +554,19 @@ class Controller:
         self.config.setdefault("benchmark", {})["profile"] = self.benchmark_profile_name
         self.config["benchmark"][definition_key] = dict(definition)
         self.config["benchmark"]["resolved_profile"] = dict(self.benchmark_profile)
+        self.benchmark_identity = {
+            "schema_version": "vllmtkb-benchmark-identity/v1",
+            "profile": self.benchmark_profile_name,
+            "mode": self.benchmark_mode,
+            "definition": dict(definition),
+        }
+        identity_bytes = json.dumps(
+            self.benchmark_identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.benchmark_identity["sha256"] = hashlib.sha256(identity_bytes).hexdigest()
         if self.benchmark_mode == "aligned_l1":
             aligned = self.benchmark.get("aligned_l1")
             if not isinstance(aligned, dict):
@@ -519,6 +608,45 @@ class Controller:
                 retry_limit = int(aligned.get(field, 2))
                 if not 0 <= retry_limit <= 3:
                     raise ValueError(f"aligned L1 {field} must be between 0 and 3")
+        elif self.benchmark_mode == "vllm_bench_serve":
+            public = self.benchmark[self.benchmark_mode]
+            required = ("input_tokens", "output_tokens", "num_prompts", "request_rate")
+            missing = [field for field in required if public.get(field) is None]
+            if missing:
+                raise ValueError(
+                    f"benchmark.vllm_bench_serve is missing required fields: {missing}"
+                )
+            if any(int(public[field]) < 1 for field in required[:3]):
+                raise ValueError("public vLLM benchmark token and prompt counts must be positive")
+        elif self.benchmark_mode == "custom_adapter":
+            custom = self.benchmark[self.benchmark_mode]
+            adapter_path = PurePosixPath(str(custom.get("adapter_path", "")))
+            roots = [PurePosixPath(str(item)) for item in custom.get("allowlisted_roots", [])]
+            if (
+                not str(adapter_path)
+                or adapter_path.is_absolute()
+                or ".." in adapter_path.parts
+                or adapter_path.suffix != ".py"
+            ):
+                raise ValueError(
+                    "benchmark.custom_adapter.adapter_path must be a relative .py path"
+                )
+            if not roots or not any(
+                adapter_path == root or root in adapter_path.parents for root in roots
+            ):
+                raise ValueError(
+                    "benchmark.custom_adapter.adapter_path is outside allowlisted_roots"
+                )
+            local_adapter = (KB_ROOT / Path(*adapter_path.parts)).resolve()
+            if not local_adapter.is_file() or not local_adapter.is_relative_to(
+                KB_ROOT.resolve()
+            ):
+                raise ValueError(
+                    "benchmark.custom_adapter.adapter_path does not exist in the project"
+                )
+            timeout_seconds = int(custom.get("timeout_seconds", 3600))
+            if not 1 <= timeout_seconds <= 43200:
+                raise ValueError("custom benchmark timeout_seconds must be 1..43200")
         self.change_policy = config.get("change_policy", {})
         strategy_settings = dict(config.get("strategy", {}))
         frozen_strategy_profile = strategy_settings.get("resolved_profile")
@@ -675,6 +803,16 @@ class Controller:
         return output
 
     def ssh(self, command: str, *, timeout: int = 120) -> str:
+        if self.remote_transport == "local":
+            result = run_process(["bash", "-lc", command], timeout=timeout)
+            if result.returncode != 0:
+                details = "\n".join(
+                    part for part in (result.stdout.strip(), result.stderr.strip()) if part
+                )
+                raise RuntimeError(
+                    details or f"Local server command failed ({result.returncode}): {command}"
+                )
+            return result.stdout.strip()
         if self.remote_transport == "paramiko":
             return self._ssh_paramiko(command, timeout=timeout)
         marker = "__CONTINUOUS_REMOTE_RC__="
@@ -1004,6 +1142,20 @@ class Controller:
         return path
 
     def scp_to(self, source: Path, destination: str) -> None:
+        if self.remote_transport == "local":
+            target = Path(destination).resolve()
+            allowed = Path(self.allowed_write_root).resolve()
+            if not target.is_relative_to(allowed):
+                raise RuntimeError(f"Local upload escapes allowed_write_root: {target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(
+                f"{target.name}.upload-{os.getpid()}-{time.time_ns()}"
+            )
+            shutil.copyfile(source, temporary)
+            if temporary.stat().st_size != source.stat().st_size:
+                raise RuntimeError(f"Local upload size mismatch: {source}")
+            os.replace(temporary, target)
+            return
         if self.remote_transport == "paramiko":
             sftp = self._paramiko_client().open_sftp()
             try:
@@ -1027,6 +1179,19 @@ class Controller:
 
     def scp_from(self, source: str, destination: Path) -> bool:
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if self.remote_transport == "local":
+            origin = Path(source).resolve()
+            allowed = Path(self.allowed_write_root).resolve()
+            if not origin.is_relative_to(allowed) or not origin.is_file():
+                return False
+            temporary = destination.with_name(
+                f"{destination.name}.download-{os.getpid()}-{time.time_ns()}"
+            )
+            shutil.copyfile(origin, temporary)
+            if temporary.stat().st_size != origin.stat().st_size:
+                return False
+            os.replace(temporary, destination)
+            return True
         if self.remote_transport == "paramiko":
             temporary = destination.with_name(
                 f"{destination.name}.download-{os.getpid()}-{time.time_ns()}"
@@ -1129,7 +1294,7 @@ class Controller:
             "--tag",
             "optimize_target=throughput",
             "--where",
-            "performance_impact=high",
+            "performance_impact=high,medium",
             "--show",
             "name,valid_choices,tuning_advice.suggested_values,constraints,category",
             "--format",
@@ -1213,6 +1378,13 @@ class Controller:
             + str(self.safetensors_prefetch_block_size)
         )
         lines.append(f"BENCHMARK_MODE={shlex.quote(self.benchmark_mode)}")
+        lines.append(f"BENCHMARK_PROFILE={shlex.quote(self.benchmark_profile_name)}")
+        lines.append(
+            "BENCHMARK_IDENTITY_JSON="
+            + shlex.quote(
+                json.dumps(self.benchmark_identity, ensure_ascii=False, sort_keys=True)
+            )
+        )
         if self.benchmark_mode == "aligned_l1":
             aligned = self.benchmark["aligned_l1"]
             benchmark_env = {
@@ -1256,6 +1428,14 @@ class Controller:
                     json.dumps(fingerprint, ensure_ascii=False, sort_keys=True)
                 )
             )
+        elif self.benchmark_mode in {"vllm_bench_serve", "custom_adapter"}:
+            definition = self.benchmark[self.benchmark_mode]
+            encoded = base64.b64encode(
+                json.dumps(
+                    definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).decode("ascii")
+            lines.append("BENCHMARK_DEFINITION_B64=" + shlex.quote(encoded))
         return "\n".join(lines) + "\n"
 
     def validate_runtime_configuration(self, candidate: dict[str, Any]) -> None:
@@ -1299,6 +1479,13 @@ class Controller:
                 raise RuntimeError(
                     "lab.output_root must be an absolute server path in ktp_lab mode"
                 )
+            if self.remote_transport == "local":
+                allowed = Path(self.allowed_write_root).resolve()
+                if not Path(output_root).resolve().is_relative_to(allowed):
+                    raise RuntimeError(
+                        "server_autonomous lab.output_root must stay under "
+                        "autonomous.allowed_write_root"
+                    )
             if lease.get("name") != self.lab.get("lease_name"):
                 raise RuntimeError(
                     "lab.lease_name does not match remote/lease_loop.yaml name"
@@ -1428,6 +1615,28 @@ class Controller:
                 "Ascend platform. Native dynamic EPLB requires a separately "
                 "reviewed additional_config integration."
             )
+        if candidate.get("fused_mc2", 0) and not candidate.get(
+            "enable_expert_parallel", False
+        ):
+            raise ValueError("fused_mc2 requires enable_expert_parallel=true")
+        if candidate.get("fused_mc2") == 2 and candidate.get(
+            "num_speculative_tokens", 0
+        ) <= 0:
+            raise ValueError("fused_mc2=2 requires speculative decoding")
+        if candidate.get("enable_balance_scheduling", False):
+            scenario = self.config.get("fixed_scenario", {})
+            data_parallel_size = int(
+                self.config.get("topology", {}).get(
+                    "data_parallel_size", scenario.get("data_parallel_size", 2)
+                )
+            )
+            if data_parallel_size <= 1:
+                raise ValueError("enable_balance_scheduling requires DP > 1")
+        draft_eager = candidate.get("speculative_config__enforce_eager")
+        if draft_eager is True and candidate.get("num_speculative_tokens", 0) <= 0:
+            raise ValueError(
+                "speculative draft enforce_eager only applies when speculative decoding is enabled"
+            )
         capture_sizes = candidate.get("cudagraph_capture_sizes")
         maximum_capture = candidate.get("max_cudagraph_capture_size")
         if (
@@ -1452,6 +1661,7 @@ class Controller:
     def prepare_lab(self, *, submit: bool) -> str:
         self.validate_deployment_configuration()
         self.validate_runtime_configuration(self.config["baseline"])
+        self.ensure_no_blocked_leases()
         self.sync_remote_scripts()
         lease_name = str(self.lab["lease_name"])
         lease_yaml = str(self.lab.get("lease_yaml", "workflow/auto/lease_loop.yaml"))
@@ -1505,6 +1715,13 @@ class Controller:
                     source = rendered_root / name
                     save_yaml(source, self.render_remote_control_document(name))
                 self.scp_to(source, f"{self.remote_auto}/{name}")
+        if self.benchmark_mode == "custom_adapter":
+            adapter = PurePosixPath(
+                str(self.benchmark["custom_adapter"]["adapter_path"])
+            )
+            remote_adapter = PurePosixPath(self.remote_project) / adapter
+            self.ssh(f"mkdir -p {shlex.quote(str(remote_adapter.parent))}")
+            self.scp_to(KB_ROOT / Path(*adapter.parts), str(remote_adapter))
 
     def lease_status(self) -> str:
         lease_name = str(self.lab["lease_name"])
@@ -1523,6 +1740,7 @@ class Controller:
             ) from exc
 
     def ensure_lab_available(self) -> str:
+        self.ensure_no_blocked_leases()
         lease_name = str(self.lab["lease_name"])
         output = self.lease_status()
         normalized = output.lower()
@@ -1542,12 +1760,31 @@ class Controller:
             )
         return output
 
+    def ensure_no_blocked_leases(self) -> None:
+        """Prevent the autonomous mode from overlapping declared main-chain leases."""
+        if self.operation_mode != "server_autonomous":
+            return
+        for lease_name in self.lab.get("blocked_lease_names", []):
+            lease_name = str(lease_name).strip()
+            if not lease_name or lease_name == str(self.lab.get("lease_name", "")):
+                continue
+            output = self.ssh(
+                f"ktp-lab status --lease {shlex.quote(lease_name)} 2>&1 || true",
+                timeout=60,
+            )
+            if re.search(r"\bresource\s+status=active\b", output.lower()):
+                raise RuntimeError(
+                    "Autonomous mode is isolated and will not compete with the "
+                    f"active main-chain Lease {lease_name!r}."
+                )
+
     def check_ready(self, *, require_idle_lease: bool = True) -> str:
         """Run a read-only end-to-end launch preflight."""
         self.validate_deployment_configuration()
         self.validate_runtime_configuration(self.config["baseline"])
         if require_idle_lease:
             return self.ensure_lab_available()
+        self.ensure_no_blocked_leases()
         output = self.lease_status()
         normalized = output.lower()
         if not (
@@ -1580,7 +1817,11 @@ class Controller:
             # healthy and idle. Validate the already-created lease instead;
             # this remains non-submitting and catches the same readiness
             # conditions used by a real round.
-            output = self.ensure_lab_available()
+            output = (
+                "Lease preflight intentionally skipped by --offline-dry-run."
+                if self.offline_dry_run
+                else self.ensure_lab_available()
+            )
             run_id = f"{label}_{dt.datetime.now():%Y%m%d_%H%M%S}"
             (round_dir / "03_submission" / "submit_output.txt").write_text(
                 output + "\n", encoding="utf-8"
@@ -1748,9 +1989,14 @@ class Controller:
                 prefix = history[:end]
                 if prefix[-1]["metrics"].get("benchmark_mode") == "aligned_l1":
                     assessment = self.assess_aligned_l1(prefix)
-                    if assessment.get("eligible_as_improvement"):
-                        phase = "refinement"
-                        break
+                else:
+                    assessment = self.assess_measurement(
+                        prefix,
+                        self.pairwise_metric_comparison(prefix[0], prefix[-1]),
+                    )
+                if assessment.get("eligible_as_improvement"):
+                    phase = "refinement"
+                    break
 
         phase_config = adaptive.get(phase, {}) if adaptive.get("enabled") else {}
         return {
@@ -2182,6 +2428,9 @@ class Controller:
     ) -> str:
         """Identify stable benchmark inputs without per-run target details."""
         mode = str(metrics.get("benchmark_mode", "legacy_or_unknown"))
+        identity = metrics.get("benchmark_identity", {})
+        if isinstance(identity, dict) and identity.get("sha256"):
+            return f"identity:{identity['sha256']}"
         if mode != "aligned_l1":
             return f"mode:{mode}"
         if round_dir is not None:
@@ -2301,9 +2550,12 @@ class Controller:
         baseline = history[0]
         accepted = [baseline]
         for item in history[1:]:
-            if item.get("metrics", {}).get("benchmark_mode") != "aligned_l1":
-                continue
-            assessment = self.assess_aligned_l1([baseline, item])
+            if item.get("metrics", {}).get("benchmark_mode") == "aligned_l1":
+                assessment = self.assess_aligned_l1([baseline, item])
+            else:
+                assessment = self.assess_measurement(
+                    [baseline, item], self.pairwise_metric_comparison(baseline, item)
+                )
             if assessment.get("eligible_as_improvement"):
                 accepted.append(item)
         scored = [(self.primary_performance_score(item), item) for item in accepted]
@@ -2326,6 +2578,34 @@ class Controller:
                 "by the deterministic baseline-relative measurement gate"
             ),
         }
+
+    @staticmethod
+    def pairwise_metric_comparison(
+        baseline: dict[str, Any], current: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build the baseline deltas used by non-L1 deterministic gates."""
+        baseline_metrics = baseline.get("metrics", {}).get("metrics", {})
+        current_metrics = current.get("metrics", {}).get("metrics", {})
+        deltas: dict[str, Any] = {}
+        for key, current_value in current_metrics.items():
+            baseline_value = baseline_metrics.get(key)
+            if (
+                isinstance(current_value, (int, float))
+                and not isinstance(current_value, bool)
+                and isinstance(baseline_value, (int, float))
+                and not isinstance(baseline_value, bool)
+            ):
+                deltas[key] = {
+                    "current": current_value,
+                    "reference": baseline_value,
+                    "absolute": current_value - baseline_value,
+                    "percent": (
+                        (current_value - baseline_value) / baseline_value * 100
+                        if baseline_value != 0
+                        else None
+                    ),
+                }
+        return {"numeric_metric_deltas_vs_baseline": deltas}
 
     def exploration_memory(
         self,
@@ -2482,17 +2762,17 @@ class Controller:
         round_dir: Path,
         state: dict[str, Any],
     ) -> None:
-        """Replace B0 bookkeeping estimates with values resolved by vLLM.
+        """Replace source-default baseline estimates with values resolved by vLLM.
 
-        B0 intentionally omits serving-performance flags.  The Agent must not
-        receive the typed pre-launch estimates as if they were observed values,
-        so the first successful round is reconciled from the engine log before
-        analysis or candidate generation can begin.
+        B0 adds only the audited ``max_model_len=64000`` compatibility override.
+        The Agent must not receive other typed pre-launch estimates as if they
+        were observed values, so the first successful round is reconciled from
+        the engine log before analysis or candidate generation can begin.
         """
         initial = self.config.get("initial_baseline", {})
         if (
             state.get("round_label") != str(initial.get("label", "a0"))
-            or initial.get("launch_profile") != "official_source_defaults"
+            or initial.get("launch_profile") != B0_LAUNCH_PROFILE
             or state.get("official_source_defaults_reconciled")
         ):
             return
@@ -2504,8 +2784,9 @@ class Controller:
             )
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
         resolved = dict(state["current_candidate"])
+        launch_profile = str(initial["launch_profile"])
         evidence: dict[str, Any] = {
-            "launch_profile": "official_source_defaults",
+            "launch_profile": launch_profile,
             "authoritative_log": str(log_path),
             "source_defaults": {
                 "max_num_seqs": 256,
@@ -2518,8 +2799,19 @@ class Controller:
                 "flashcomm1": False,
                 "mlapo": True,
                 "fused_mc2": 0,
+                "enable_balance_scheduling": False,
+                "enable_reduce_sample": False,
+                "speculative_config__enforce_eager": None,
             },
             "log_resolved": {},
+        }
+        evidence["explicit_deployment_overrides"] = {
+            "max_model_len": int(state["current_candidate"]["max_model_len"]),
+            "rationale": (
+                "The pinned model resolves max_seq_len=1048576, which requires "
+                "107.25 GiB KV cache while the 2x16-NPU deployment exposes "
+                "28.82 GiB. Fixing 64000 is the sole deployability override."
+            ),
         }
 
         def required_int(name: str, pattern: str) -> int:
@@ -2552,6 +2844,12 @@ class Controller:
             resolved["mlapo"] = True
         if "fused_mc2" in resolved:
             resolved["fused_mc2"] = 0
+        if "enable_balance_scheduling" in resolved:
+            resolved["enable_balance_scheduling"] = False
+        if "enable_reduce_sample" in resolved:
+            resolved["enable_reduce_sample"] = False
+        if "speculative_config__enforce_eager" in resolved:
+            resolved["speculative_config__enforce_eager"] = None
         if "speculative_config__method" in resolved:
             resolved["speculative_config__method"] = None
 
@@ -2598,6 +2896,20 @@ class Controller:
             if value not in limits:
                 self.config["search_limits"][name] = [value, *limits]
 
+        # Automatic Search Limits are initially compiled before B0 has run.
+        # Re-anchor numeric axes using the authoritative effective B0 values,
+        # rather than the older portrait/scenario snapshot.
+        if self.automatic_compatibility:
+            for name, value in resolved.items():
+                rebuilt = self.automatic_compatibility.numeric_domain(
+                    name,
+                    value,
+                    self.config["search_limits"][name],
+                    include_source_values=False,
+                )
+                if rebuilt is not None:
+                    self.config["search_limits"][name] = rebuilt
+
         # The B0 log is authoritative for source-default anchors. Keep the
         # frozen automatic validator on exactly the same post-reconciliation
         # domains as the Session whitelist, otherwise a newly observed source
@@ -2620,9 +2932,11 @@ class Controller:
         )
         effective_path = round_dir / "02_parameters" / "effective_config.yaml"
         effective = load_yaml(effective_path) if effective_path.is_file() else {}
-        effective["launch_profile"] = "official_source_defaults"
+        effective["launch_profile"] = launch_profile
         effective["authoritative_effective_service"] = resolved
-        effective["authoritative_source"] = "master.log plus pinned-source defaults"
+        effective["authoritative_source"] = (
+            "master.log plus pinned-source defaults and max_model_len deployability override"
+        )
         save_yaml(effective_path, effective)
         save_yaml(session_dir / "session_config.yaml", self.config)
         state["current_candidate"] = resolved
@@ -2644,14 +2958,26 @@ class Controller:
         current = history[-1]["metrics"].get("metrics", {})
         successful = int(current.get("successful_requests", 0) or 0)
         failed = int(current.get("failed_requests", 0) or 0)
+        selected_definition = self.benchmark.get(self.benchmark_mode, {})
         required_successes = int(
-            policy.get(
+            selected_definition.get(
                 "minimum_successful_requests",
-                self.config["fixed_scenario"]["num_prompts"],
+                policy.get(
+                    "minimum_successful_requests",
+                    selected_definition.get(
+                        "num_prompts", self.config.get("fixed_scenario", {}).get("num_prompts", 1)
+                    ),
+                ),
             )
         )
         passes_guardrails = successful >= required_successes
-        if policy.get("require_zero_failed_requests", True):
+        require_zero_failed = bool(
+            selected_definition.get(
+                "require_zero_failed_requests",
+                policy.get("require_zero_failed_requests", True),
+            )
+        )
+        if require_zero_failed:
             passes_guardrails = passes_guardrails and failed == 0
         assessment: dict[str, Any] = {
             "classification": "baseline_only" if len(history) == 1 else "candidate",
@@ -2678,11 +3004,11 @@ class Controller:
         assessment["eligible_as_improvement"] = bool(
             passes_guardrails
             and throughput_gain
-            >= float(policy.get("minimum_throughput_gain_percent", 3.0))
+            >= float(selected_definition.get("minimum_throughput_gain_percent", policy.get("minimum_throughput_gain_percent", 3.0)))
             and ttft_change
-            <= float(policy.get("maximum_ttft_regression_percent", 10.0))
+            <= float(selected_definition.get("maximum_ttft_regression_percent", policy.get("maximum_ttft_regression_percent", 10.0)))
             and tpot_change
-            <= float(policy.get("maximum_tpot_regression_percent", 10.0))
+            <= float(selected_definition.get("maximum_tpot_regression_percent", policy.get("maximum_tpot_regression_percent", 10.0)))
         )
         return assessment
 
@@ -3087,11 +3413,17 @@ fixed JSONL prompts, temperature=0, and {repetition_count} complete repetition(s
 The primary score is {repetition_aggregation} of the C32 workload geometric mean.
 TTFT/TPOT P50/P90, zero errors/incomplete requests, exact token shapes,
 per-workload throughput, and run-to-run CV are deterministic guardrails."""
-        else:
+        elif self.benchmark_mode == "legacy_random_32k1k":
             benchmark_goal = """Goal: improve measured output throughput under the historical
 random 32K-centered input / 1K-centered output / 8 prompts / 0.2 req/s /
 temperature=0 workload. TTFT, TPOT, success rate, and memory are guardrails.
 Treat this small legacy measurement as exploratory evidence."""
+        else:
+            definition = self.benchmark[self.benchmark_mode]
+            benchmark_goal = f"""Goal: improve measured output-token throughput under the frozen
+{self.benchmark_profile_name} benchmark profile ({self.benchmark_mode}). Its complete definition
+is present in the evidence bundle. Successful/failed request counts, mean TTFT and mean TPOT are
+deterministic guardrails. Never compare this profile with a different benchmark identity."""
         prompt = f"""You are the Codex tuning analyst for a measured GLM-5.2 vLLM-Ascend experiment.
 
 The controller has embedded all required read-only evidence below. Treat it as
@@ -4322,6 +4654,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run", action="store_true", help="validate without submitting"
     )
     group.add_argument(
+        "--offline-dry-run",
+        action="store_true",
+        help="validate local knowledge/config generation without querying or writing a Lease",
+    )
+    group.add_argument(
         "--check-only",
         action="store_true",
         help="validate local configuration, SSH connectivity, and idle Lease without writes",
@@ -4353,8 +4690,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--agent-provider",
-        choices=["codex", "anthropic", "openai_compatible", "command"],
+        choices=["codex", "anthropic", "openai_compatible", "deepseek", "command"],
         help="Agent provider for a new Session; credentials stay in environment variables",
+    )
+    parser.add_argument(
+        "--config",
+        help="configuration file for a new Session; defaults to continuous/config.yaml",
+    )
+    parser.add_argument(
+        "--runtime-root",
+        help="isolated mutable state/log/Session root; legacy paths remain the default",
     )
     parser.add_argument(
         "--benchmark-profile",
@@ -4379,6 +4724,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    configure_runtime_root(Path(args.runtime_root) if args.runtime_root else None)
     if args.status:
         if not STATE_FILE.exists():
             print("No controller state exists.")
@@ -4417,7 +4763,8 @@ def main() -> int:
             )
         config = load_yaml(frozen_config)
     else:
-        raw_config = load_yaml(HERE / "config.yaml")
+        config_path = Path(args.config).expanduser() if args.config else HERE / "config.yaml"
+        raw_config = load_config(config_path)
         if args.strategy_profile:
             raw_config.setdefault("strategy", {})["profile"] = args.strategy_profile
         if args.agent_provider:
@@ -4435,7 +4782,8 @@ def main() -> int:
         )
     controller = Controller(
         config,
-        dry_run=args.dry_run,
+        dry_run=bool(args.dry_run or args.offline_dry_run),
+        offline_dry_run=args.offline_dry_run,
         search_space_result=search_space_result,
     )
     if args.stop_active_task:
@@ -4449,7 +4797,8 @@ def main() -> int:
         except Exception as exc:
             print(f"End-to-end preflight failed: {exc}", file=sys.stderr)
             return 2
-        print("Controller, SSH, and persistent Lease preflight: OK")
+        transport = "local server" if controller.remote_transport == "local" else "SSH"
+        print(f"Controller, {transport}, and persistent Lease preflight: OK")
         return 0
     lock_descriptor = acquire_controller_lock()
     try:
@@ -4477,7 +4826,7 @@ def main() -> int:
             # unattended and no later metrics/Agent decision can advance the
             # closed loop.
             controller.start(resume=True)
-        elif args.dry_run:
+        elif args.dry_run or args.offline_dry_run:
             controller.dry_run_validation()
         else:
             if STOP_FILE.exists():

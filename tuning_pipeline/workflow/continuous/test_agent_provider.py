@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,6 +53,64 @@ class AgentProviderTests(unittest.TestCase):
     def test_command_provider_requires_a_command(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "requires agent.settings.command"):
             validate_agent_credentials({"provider": "command", "settings": {}})
+
+    def test_deepseek_uses_json_mode_and_retries_empty_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            schema = root / "schema.json"
+            schema.write_text(
+                json.dumps(
+                    {
+                        "type": "object",
+                        "required": ["ok"],
+                        "properties": {"ok": {"type": "boolean"}},
+                        "additionalProperties": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            responses = [
+                {"choices": [{"message": {"content": ""}}]},
+                {"choices": [{"message": {"content": '{"ok": true}'}}]},
+            ]
+            captured: list[dict] = []
+
+            def fake_http(url, headers, body, timeout):
+                captured.append({"url": url, "headers": headers, "body": body})
+                return responses.pop(0)
+
+            with (
+                patch.dict(os.environ, {"DEEPSEEK_TEST_KEY": "secret"}, clear=True),
+                patch.object(agent_provider, "_http_json", side_effect=fake_http),
+                patch.object(agent_provider.time, "sleep"),
+            ):
+                result = run_structured_agent(
+                    {
+                        "provider": "deepseek",
+                        "settings": {
+                            "api_key_env": "DEEPSEEK_TEST_KEY",
+                            "model": "deepseek-v4-flash",
+                            "thinking": "enabled",
+                            "max_api_retries": 1,
+                        },
+                    },
+                    prompt="return json",
+                    schema_path=schema,
+                    output_path=root / "output.json",
+                    cwd=root,
+                    allowed_dir=root,
+                )
+
+            self.assertEqual(0, result.returncode)
+            self.assertEqual({"ok": True}, json.loads((root / "output.json").read_text()))
+            self.assertEqual(2, len(captured))
+            self.assertEqual(
+                {"type": "json_object"}, captured[0]["body"]["response_format"]
+            )
+            self.assertEqual(
+                {"type": "enabled"}, captured[0]["body"]["thinking"]
+            )
+            self.assertNotIn("secret", json.dumps(captured[0]["body"]))
 
     def test_unknown_provider_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

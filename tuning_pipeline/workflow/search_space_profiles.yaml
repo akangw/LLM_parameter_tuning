@@ -7,13 +7,22 @@ profiles:
     status: integrated
     mode: curated_registry
     purpose: >-
-      Preserve the reviewed 23-entry registry and its historical experiment
+      Preserve the reviewed curated registry and its historical experiment
       comparability. Tags recall and the compiler are automatic, while registry
       membership and injection contracts remain human curated.
     knowledge_dir: tag_params/output/params
     scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
     registry: workflow/search_space_compiler/registry.yaml
     policy: workflow/search_space_compiler/policy.yaml
+    activation:
+      target_count: 15
+      maximum_count: 18
+      max_per_category: 5
+      additional_core_parameters:
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager
     # B0 resolves async scheduling to false. When the reviewed MTP token axis is
     # enabled later, async scheduling is its required companion rather than an
     # additional independent search dimension.
@@ -32,3 +41,14 @@ profiles:
     policy: workflow/search_space_compiler/policy.yaml
     compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
     source_root: ../portrait_pipeline/sources
+    activation:
+      # Keep the Agent schema broad enough for one-Session exploration without
+      # admitting the low-ranked Ray/special-backend tail of the 102-axis pool.
+      target_count: 22
+      maximum_count: 26
+      max_per_category: 6
+      additional_core_parameters:
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager

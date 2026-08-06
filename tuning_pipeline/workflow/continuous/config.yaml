@@ -29,6 +29,14 @@ agent:
       base_url: https://api.openai.com/v1
       model: configure-model-name
       api_key_env: OPENAI_API_KEY
+    deepseek:
+      base_url: https://api.deepseek.com
+      model: deepseek-v4-flash
+      api_key_env: DEEPSEEK_API_KEY
+      thinking: enabled
+      reasoning_effort: high
+      max_tokens: 16384
+      max_api_retries: 3
     command:
       command: configure-structured-json-command
 strategy:
@@ -116,6 +124,43 @@ benchmark:
     request_rate: 0.2
     temperature: 0
     primary_metric: output_throughput
+  # Portable public option. Select with --benchmark-profile
+  # vllm_bench_public_v1; it uses only the vllm CLI already in the serving image.
+  vllm_bench_public:
+    backend: vllm
+    input_tokens: 1024
+    output_tokens: 256
+    random_range_ratio: 1.0
+    num_prompts: 128
+    request_rate: 4.0
+    warmup_prompts: 8
+    warmup_seed: 24
+    seed: 42
+    temperature: 0
+    ignore_eos: true
+    trust_remote_code: true
+    timeout_seconds: 3600
+    minimum_successful_requests: 128
+    require_zero_failed_requests: true
+    minimum_throughput_gain_percent: 3.0
+    maximum_ttft_regression_percent: 15.0
+    maximum_tpot_regression_percent: 15.0
+  # Extensibility option. The adapter is copied from the local project during
+  # prepare-remote and is executed as argv, never as an Agent-provided shell.
+  custom_benchmark:
+    adapter_path: workflow/benchmark_adapters/example_http_adapter.py
+    allowlisted_roots:
+      - workflow/benchmark_adapters
+    timeout_seconds: 3600
+    minimum_successful_requests: 16
+    require_zero_failed_requests: true
+    minimum_throughput_gain_percent: 3.0
+    maximum_ttft_regression_percent: 15.0
+    maximum_tpot_regression_percent: 15.0
+    config:
+      num_prompts: 16
+      concurrency: 4
+      max_tokens: 64
 # Compatibility alias for archived sessions and the legacy benchmark path.
 fixed_scenario:
   model: GLM-5.2-w8a8
@@ -126,13 +171,14 @@ fixed_scenario:
   temperature: 0
   primary_metric: output_throughput
 initial_baseline:
-  label: b0
-  launch_profile: official_source_defaults
-  definition: workflow/baselines/b0_target_source_default.yaml
+  label: b0_deployable
+  launch_profile: official_source_defaults_deployable
+  definition: workflow/baselines/b0_deployable_64k.yaml
 baseline:
-  # Typed pre-launch estimates only. The B0 launch omits all of these
-  # serving-performance flags. After a successful run, the Controller replaces
-  # model/platform-dependent estimates from master.log before Agent analysis.
+  # Typed pre-launch estimates. B0-deployable passes only max_model_len=64000;
+  # all other serving-performance flags remain source-resolved. After a
+  # successful run, the Controller replaces model/platform-dependent estimates
+  # from master.log before Agent analysis.
   max_num_seqs: 256
   max_model_len: 64000
   max_num_batched_tokens: 2048
@@ -152,6 +198,14 @@ baseline:
   cudagraph_capture_sizes: null
   # Source default is false; B0 omits --additional-config altogether.
   flashcomm1: false
+  # Source defaults resolved from the pinned Ascend configuration. B0 still
+  # omits --additional-config; these values define the post-B0 schema.
+  mlapo: true
+  fused_mc2: 0
+  enable_balance_scheduling: false
+  enable_reduce_sample: false
+  # null and false are both falsey for the draft proposer; null preserves B0.
+  speculative_config__enforce_eager: null
 # Search-space construction is selected and frozen exactly like Agent and
 # Search-Space profiles. curated_registry_v1 is the default reviewed path;
 # automatic_registry_v1 remains an independently generated replacement option.
@@ -169,6 +223,9 @@ search_space:
     - flashcomm1
     - mlapo
     - fused_mc2
+    - enable_balance_scheduling
+    - enable_reduce_sample
+    - speculative_config__enforce_eager
 
 # Backward-compatible settings retained for archived Sessions created before
 # Search-Space Profiles existed. New Sessions use search_space.profile above.
@@ -188,6 +245,9 @@ automated_search_limits:
     - flashcomm1
     - mlapo
     - fused_mc2
+    - enable_balance_scheduling
+    - enable_reduce_sample
+    - speculative_config__enforce_eager
 sidecars:
   enabled: true
   scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
@@ -218,6 +278,11 @@ search_limits:
   compilation_enable_sp: [false, true]
   # B0 starts with source-default false; true is an Agent candidate.
   flashcomm1: [false, true]
+  mlapo: [true, false]
+  fused_mc2: [0, 1, 2]
+  enable_balance_scheduling: [false, true]
+  enable_reduce_sample: [false, true]
+  speculative_config__enforce_eager: [null, false, true]
   cudagraph_capture_sizes:
     # null is the B0 source resolution; the explicit profile is searchable.
     - null
@@ -263,11 +328,27 @@ change_policy:
     compilation:
       - compilation_mode
       - compilation_enable_sp
+    communication:
+      - enable_expert_parallel
+      - flashcomm1
+      - mlapo
+      - fused_mc2
+      - enable_reduce_sample
+    scheduling_balance:
+      - enable_balance_scheduling
+      - max_num_seqs
+    draft_execution:
+      - num_speculative_tokens
+      - speculative_config__enforce_eager
   high_risk_parameters:
     - gpu_memory_utilization
     - compilation_mode
     - compilation_enable_sp
     - fused_mc2
+    - enable_expert_parallel
+    - enable_balance_scheduling
+    - enable_reduce_sample
+    - speculative_config__enforce_eager
 measurement_policy:
   minimum_successful_requests: 8
   require_zero_failed_requests: true

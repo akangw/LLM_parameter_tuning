@@ -111,7 +111,7 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
     def test_full_chain_is_automatic_and_isolated(self) -> None:
         audit = self.registry["audit"]
         summary = self.search_result["summary"]
-        self.assertEqual(109, audit["tag_recalled_parameters"])
+        self.assertGreaterEqual(audit["tag_recalled_parameters"], 200)
         self.assertGreater(audit["compatible_registry_parameters"], 23)
         self.assertFalse(audit["existing_registry_dependency"])
         self.assertFalse(audit["connected_to_mainflow"])
@@ -131,9 +131,12 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
 
     def test_final_tunable_pool_excludes_known_non_executable_axes(self) -> None:
         summary = self.search_result["summary"]
-        self.assertEqual(28, summary["eligible_tunable_parameters"])
+        self.assertGreaterEqual(summary["eligible_tunable_parameters"], 100)
         self.assertEqual(12, summary["active_parameters"])
-        self.assertEqual(16, summary["reserve_parameters"])
+        self.assertEqual(
+            summary["eligible_tunable_parameters"] - summary["active_parameters"],
+            summary["reserve_parameters"],
+        )
         tunable = {
             item["canonical_name"]
             for item in self.search_result["active_parameters"]
@@ -197,8 +200,8 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
             "cudagraph_capture_sizes",
             "max_cudagraph_capture_size",
             "mlapo",
-            "enable_prefix_caching",
-            "flashcomm1",
+            "long_prefill_token_threshold",
+            "enable_expert_parallel",
             "speculative_config__method",
         }
         self.assertEqual(expected, set(self.search_result["active_search_limits"]))
@@ -267,11 +270,20 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
                 }
             ),
         )
-        self.assertIn(
+        self.assertNotIn(
             "eager_conflicts_with_npugraph",
             validator.validate_combination(
                 {
                     "speculative_config__enforce_eager": True,
+                    "additional_config__ascend_compilation_config__enable_npugraph_ex": True,
+                }
+            ),
+        )
+        self.assertIn(
+            "eager_conflicts_with_npugraph",
+            validator.validate_combination(
+                {
+                    "enforce_eager": True,
                     "additional_config__ascend_compilation_config__enable_npugraph_ex": True,
                 }
             ),
@@ -294,6 +306,17 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
         self.assertFalse(invalid["valid"])
         self.assertEqual("value_not_in_compiled_domain", invalid["violations"][0]["id"])
 
+    def test_numeric_domains_are_parameter_specific_and_b0_anchored(self) -> None:
+        validator = CompatibilityValidator(scenario=self.pipeline.scenario)
+        self.assertEqual(
+            [256, 32, 64, 128, 192],
+            validator.numeric_domain("max_num_seqs", 256, [32, 128, 256]),
+        )
+        self.assertEqual(
+            [0.92, 0.85, 0.9, 0.93, 0.95],
+            validator.numeric_domain("gpu_memory_utilization", 0.92, [0.93]),
+        )
+
     def test_full_chain_does_not_modify_manual_registry(self) -> None:
         manual_registry = MODULE_DIR.parent / "search_space_compiler" / "registry.yaml"
         before = manual_registry.read_bytes()
@@ -304,13 +327,16 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "full"
             files = write_full_outputs(self.registry, self.search_result, output)
-            self.assertEqual(10, len(files))
+            self.assertEqual(11, len(files))
             self.assertTrue((output / "registry.generated.yaml").is_file())
             self.assertTrue((output / "registry.audit.json").is_file())
             self.assertTrue((output / "pipeline_manifest.json").is_file())
             self.assertTrue((output / "compatibility_constraints.yaml").is_file())
             self.assertTrue(
                 (output / "search_limits" / "agent_search_limits.yaml").is_file()
+            )
+            self.assertTrue(
+                (output / "search_limits" / "classified_search_limits.yaml").is_file()
             )
             limits = yaml.safe_load(
                 (output / "search_limits" / "agent_search_limits.yaml").read_text(

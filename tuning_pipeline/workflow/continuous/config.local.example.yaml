@@ -1,0 +1,36 @@
+# Copy this file to config.local.yaml and replace every CHANGE_ME value.
+# config.local.yaml is intentionally ignored by Git and is auto-detected by
+# the Windows start and prepare-remote entry points.
+base_config: config.yaml
+
+remote_host: CHANGE_ME_SSH_ALIAS
+remote_project: /CHANGE_ME/writable/project-root
+
+deployment:
+  model_path: /CHANGE_ME/model-path
+  served_model_name: CHANGE_ME_SERVED_MODEL
+  service_port: 8000
+  network_interface: CHANGE_ME_NETWORK_INTERFACE
+  init_env_script: /CHANGE_ME/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
+
+# Leave empty when speculative decoding is disabled. When it is enabled, this
+# must point to the sliced MTP-only checkpoint on the target server.
+mtp_draft_model: ""
+
+lab:
+  lease_name: CHANGE_ME_VERSIONED_LEASE_NAME
+  output_root: /CHANGE_ME/writable/project-root/workflow/auto/lab_runs
+
+# Portable defaults: no Codex installation and no private ServeBench required.
+agent:
+  provider: deepseek
+
+benchmark:
+  profile: vllm_bench_public_v1
+
+search_space:
+  profile: automatic_registry_v1
+
+strategy:
+  profile: best_anchor_coverage_v2

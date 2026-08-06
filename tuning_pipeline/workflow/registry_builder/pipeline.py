@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
 import subprocess
@@ -378,6 +379,7 @@ class AutomaticRegistryPipeline:
         policy_path: Path,
         compatibility_policy_path: Path | None = None,
         source_root: Path | None = None,
+        activation_override: dict[str, Any] | None = None,
     ) -> None:
         self.knowledge_dir = knowledge_dir.resolve()
         self.scenario_path = scenario_path.resolve()
@@ -386,6 +388,7 @@ class AutomaticRegistryPipeline:
             compatibility_policy_path or DEFAULT_POLICY_PATH
         ).resolve()
         self.source_root = (source_root or DEFAULT_SOURCE_ROOT).resolve()
+        self.activation_override = copy.deepcopy(activation_override or {})
         self.scenario = yaml.safe_load(self.scenario_path.read_text(encoding="utf-8"))
         self.source_identity = verify_source_identity(self.source_root, self.scenario)
         self.compatibility = CompatibilityValidator(
@@ -628,6 +631,7 @@ class AutomaticRegistryPipeline:
                 scenario_path=self.scenario_path,
                 registry_path=registry_path,
                 policy_path=self.policy_path,
+                activation_override=self.activation_override,
             ).compile()
         result["integration"]["connected_to_mainflow"] = False
         result["integration"]["registry_source"] = "automatic_registry_generated"

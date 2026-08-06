@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import math
 import statistics
 from pathlib import Path
@@ -528,6 +529,16 @@ def main() -> int:
                 "failures": [f"{type(exc).__name__}: {exc}"],
             },
         }
+    result["schema_version"] = "vllmtkb-benchmark-result/v1"
+    result["benchmark_profile"] = os.environ.get(
+        "BENCHMARK_PROFILE", "aligned_l1_v4"
+    )
+    try:
+        identity = json.loads(os.environ.get("BENCHMARK_IDENTITY_JSON", "{}"))
+    except json.JSONDecodeError:
+        identity = {}
+    if identity:
+        result["benchmark_identity"] = identity
     rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

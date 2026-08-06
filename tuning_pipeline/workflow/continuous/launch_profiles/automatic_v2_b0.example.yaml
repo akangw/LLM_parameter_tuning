@@ -1,0 +1,17 @@
+# Portable Session-level selection. Copy to a *.local.yaml file when adding
+# machine-specific Lease names or output paths.
+base_config: ../config.local.yaml
+
+search_space:
+  profile: automatic_registry_v1
+
+strategy:
+  profile: best_anchor_coverage_v2
+
+benchmark:
+  profile: vllm_bench_public_v1
+
+initial_baseline:
+  label: b0_deployable
+  launch_profile: official_source_defaults_deployable
+  definition: workflow/baselines/b0_deployable_64k.yaml

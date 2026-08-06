@@ -10,10 +10,39 @@ normalization:
     - "^(a|an|the) .*(name|path|class|checkpoint|identifier|callable)"
     - "^.* supplied by .*$"
     - "^.* for a .*$"
-  numeric_baseline:
-    minimum_factor: 0.5
-    maximum_factor: 2.0
-    allow_zero: true
+
+# Numeric dimensions do not share one universal "0.5x to 2x" envelope.
+# Their safe shape depends on what the parameter controls. The Controller
+# rebuilds these domains from the observed B0 value after the first B0 log is
+# accepted. Before B0, the scenario snapshot is only a provisional seed.
+numeric_candidate_domains:
+  max_num_seqs:
+    kind: factor
+    factors: [0.125, 0.25, 0.5, 0.75, 1.0]
+    minimum: 8
+    integer: true
+  max_num_batched_tokens:
+    kind: factor
+    factors: [1.0, 2.0, 4.0, 8.0, 16.0]
+    minimum: 1024
+    maximum: 32768
+    integer: true
+  gpu_memory_utilization:
+    kind: offset
+    offsets: [-0.07, -0.02, 0.0, 0.01, 0.03]
+    minimum: 0.8
+    maximum: 0.98
+    precision: 2
+  max_cudagraph_capture_size:
+    kind: factor
+    factors: [0.5, 0.75, 1.0]
+    minimum: 16
+    integer: true
+  num_speculative_tokens:
+    # B0 disables speculative decoding. These are deliberately discrete
+    # serving modes, rather than values derived by multiplying zero.
+    kind: fixed
+    values: [0, 1, 2, 3]
 
 # Scenario-level invariants are not Agent tuning dimensions. The value is owned
 # by the selected model, topology or benchmark profile.
@@ -64,6 +93,15 @@ parameter_rules:
   - match: additional_config__enable_fused_mc2
     rename_to: fused_mc2
     scenario_path: baseline.fused_mc2
+  - match: additional_config__enable_balance_scheduling
+    rename_to: enable_balance_scheduling
+    scenario_path: baseline.enable_balance_scheduling
+  - match: additional_config__enable_reduce_sample
+    rename_to: enable_reduce_sample
+    scenario_path: baseline.enable_reduce_sample
+    risk_override: high
+  - match: speculative_config__enforce_eager
+    scenario_path: baseline.speculative_config__enforce_eager
   - match: e_p_l_b_config__num_redundant_experts
     rename_to: eplb_num_redundant_experts
     scenario_path: baseline.eplb_num_redundant_experts
@@ -117,8 +155,6 @@ parameter_rules:
     require: {path: model.deepseek_v4, op: truthy}
   - match: enforce_eager
     role: recovery_only
-  - match: speculative_config__enforce_eager
-    role: recovery_only
 
   # Feature families are rejected when the selected scenario does not enable
   # the corresponding subsystem.
@@ -136,7 +172,9 @@ parameter_rules:
   - match: "MOONCAKE_*"
     require: {path: features.kv_transfer, op: truthy}
   - match: additional_config__enable_balance_scheduling
-    require: {path: features.pd_disaggregated, op: truthy}
+    require: {path: topology.data_parallel_size, op: gt, value: 1}
+  - match: additional_config__enable_balance_scheduling
+    require: {path: features.pd_disaggregated, op: eq, value: false}
   - match: additional_config__layer_sharding
     require: {path: features.pd_disaggregated, op: truthy}
   - match: additional_config__mix_placement
@@ -226,10 +264,19 @@ combination_constraints:
     required_parameter: enable_expert_parallel
     required_op: eq
     required_value: true
+  - id: fused_mc2_requires_expert_parallel
+    kind: require_if_active
+    parameter: fused_mc2
+    inactive_values: [null, 0]
+    required_parameter: enable_expert_parallel
+    required_op: eq
+    required_value: true
   - id: eager_conflicts_with_npugraph
     kind: mutually_exclusive_true
     parameters:
-      - speculative_config__enforce_eager
+      # Target-model eager mode disables target graph execution. Draft eager is
+      # an independent proposer switch and must not be conflated with it.
+      - enforce_eager
       - additional_config__ascend_compilation_config__enable_npugraph_ex
   - id: mix_placement_conflicts_with_shared_expert_dp
     kind: mutually_exclusive_true

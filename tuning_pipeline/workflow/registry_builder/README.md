@@ -20,7 +20,7 @@ Tags 场景精确召回
   → Compatibility Validator
      ├─ 模型 / 硬件 / Benchmark 功能门禁
      ├─ 占位符和 unset / omit 动作规范化
-     ├─ 候选值基线边界和场景枚举过滤
+     ├─ 参数专属候选域；B0 成功后按日志实际值重新定锚
      ├─ 跨参数依赖与互斥规则
      └─ CLI / ENV / JSON path 注入渲染校验
   → registry.generated.yaml

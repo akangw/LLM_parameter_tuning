@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vllmtkb.local/schemas/benchmark-result-v1.json",
+  "title": "vLLMTKB benchmark result v1",
+  "type": "object",
+  "required": ["schema_version", "benchmark_mode", "benchmark_profile", "benchmark_identity", "metrics"],
+  "properties": {
+    "schema_version": {"const": "vllmtkb-benchmark-result/v1"},
+    "benchmark_mode": {"type": "string", "minLength": 1},
+    "benchmark_profile": {"type": "string", "minLength": 1},
+    "benchmark_identity": {
+      "type": "object",
+      "required": ["profile", "mode", "sha256"],
+      "properties": {
+        "profile": {"type": "string"},
+        "mode": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["successful_requests", "failed_requests", "output_token_throughput"],
+      "properties": {
+        "successful_requests": {"type": "number", "minimum": 0},
+        "failed_requests": {"type": "number", "minimum": 0},
+        "output_token_throughput": {"type": "number", "minimum": 0},
+        "mean_ttft": {"type": "number", "minimum": 0},
+        "mean_tpot": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

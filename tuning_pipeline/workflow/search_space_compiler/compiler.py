@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -379,6 +380,7 @@ class SearchSpaceCompiler:
         policy_path: Path | None = None,
         history_path: Path | None = None,
         previous_selection_path: Path | None = None,
+        activation_override: dict[str, Any] | None = None,
     ):
         self.knowledge_dir = knowledge_dir.resolve()
         self.scenario_path = scenario_path.resolve()
@@ -391,6 +393,7 @@ class SearchSpaceCompiler:
         self.scenario = read_yaml(self.scenario_path)
         self.registry = read_yaml(self.registry_path)
         self.policy = read_yaml(self.policy_path)
+        self.activation_override = copy.deepcopy(activation_override or {})
         self.parameters = load_knowledge_base(self.knowledge_dir)
         self.by_name = {str(param["name"]): param for param in self.parameters}
         self.by_token: dict[str, list[dict[str, Any]]] = {}
@@ -617,7 +620,15 @@ class SearchSpaceCompiler:
             record["activation_score"] = float(score)
             eligible.append(record)
 
-        activation = self.policy["activation"]
+        activation = copy.deepcopy(self.policy["activation"])
+        activation_override = copy.deepcopy(self.activation_override)
+        additional_core = list(
+            activation_override.pop("additional_core_parameters", [])
+        )
+        activation.update(activation_override)
+        activation["core_parameters"] = stable_unique(
+            [*activation.get("core_parameters", []), *additional_core]
+        )
         target = min(
             int(activation["target_count"]),
             int(activation["maximum_count"]),
@@ -851,6 +862,27 @@ class SearchSpaceCompiler:
             str(item["canonical_name"]): item["values"]
             for item in active
         }
+        reserve_limits = {
+            str(item["canonical_name"]): item["values"]
+            for item in reserves
+        }
+        classified_limits = {
+            "active": active_limits,
+            "reserve": reserve_limits,
+        }
+        classified_names = set(active_limits) | set(reserve_limits)
+        material_names = {
+            str(item["canonical_name"])
+            for item in eligible
+            if str(item.get("performance_impact", "")).lower()
+            in {"high", "medium"}
+        }
+        unclassified_material = sorted(material_names - classified_names)
+        if unclassified_material:
+            raise RuntimeError(
+                "Material tunable parameters escaped Active/Reserve classification: "
+                + ", ".join(unclassified_material)
+            )
         naive_combination_count = math.prod(
             len(values) for values in active_limits.values()
         )
@@ -897,6 +929,8 @@ class SearchSpaceCompiler:
                 "eligible_tunable_parameters": len(eligible),
                 "active_parameters": len(active),
                 "reserve_parameters": len(reserves),
+                "material_parameters_classified": len(material_names),
+                "unclassified_material_parameters": len(unclassified_material),
                 "fixed_parameters": len(fixed),
                 "rejected_parameters": len(rejected),
                 "mainflow_ready_active_parameters": len(mainflow_ready),
@@ -918,6 +952,18 @@ class SearchSpaceCompiler:
                 "rotation_swaps": len(rotation_audit["swaps"]),
             },
             "active_search_limits": active_limits,
+            "reserve_search_limits": reserve_limits,
+            "classified_search_limits": classified_limits,
+            "impact_classification": {
+                "recalled_impacts": sorted(impacts),
+                "material_tunable_parameters": sorted(material_names),
+                "unclassified_material_parameters": unclassified_material,
+                "policy": (
+                    "Every scenario-compatible high/medium tunable is exactly "
+                    "one of Active or Reserve. Fixed/recovery/rejected axes remain "
+                    "outside the Agent pool with an explicit reason."
+                ),
+            },
             "search_space": {
                 "naive_discrete_combinations": naive_combination_count,
                 "materialized": False,
@@ -961,6 +1007,7 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> list[Path]:
         )
     output_dir.mkdir(parents=True, exist_ok=False)
     agent_limits = output_dir / "agent_search_limits.yaml"
+    classified_limits = output_dir / "classified_search_limits.yaml"
     compiled = output_dir / "search_space.compiled.yaml"
     audit = output_dir / "audit.json"
     approval = output_dir / "approval_queue.yaml"
@@ -969,6 +1016,14 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> list[Path]:
     agent_limits.write_text(
         yaml.safe_dump(
             {"search_limits": result["active_search_limits"]},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    classified_limits.write_text(
+        yaml.safe_dump(
+            result["classified_search_limits"],
             allow_unicode=True,
             sort_keys=False,
         ),
@@ -1024,7 +1079,14 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> list[Path]:
                 "created_at": result["generated_at"],
                 "files": {
                     path.name: file_sha256(path)
-                    for path in (agent_limits, compiled, audit, approval, rotation)
+                    for path in (
+                        agent_limits,
+                        classified_limits,
+                        compiled,
+                        audit,
+                        approval,
+                        rotation,
+                    )
                 },
             },
             ensure_ascii=False,
@@ -1033,4 +1095,12 @@ def write_outputs(result: dict[str, Any], output_dir: Path) -> list[Path]:
         + "\n",
         encoding="utf-8",
     )
-    return [agent_limits, compiled, audit, approval, rotation, manifest]
+    return [
+        agent_limits,
+        classified_limits,
+        compiled,
+        audit,
+        approval,
+        rotation,
+        manifest,
+    ]

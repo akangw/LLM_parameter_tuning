@@ -8,8 +8,9 @@ param(
     [string]$StrategyProfile,
     [string]$BenchmarkProfile,
     [string]$SearchSpaceProfile,
-    [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
-    [string]$AgentProvider
+    [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
+    [string]$AgentProvider,
+    [string]$Config
 )
 
 $ErrorActionPreference = "Stop"

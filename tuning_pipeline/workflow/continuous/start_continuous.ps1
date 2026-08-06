@@ -8,8 +8,9 @@ param(
     [string]$StrategyProfile,
     [string]$BenchmarkProfile,
     [string]$SearchSpaceProfile,
-    [ValidateSet("codex", "anthropic", "openai_compatible", "command")]
-    [string]$AgentProvider
+    [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
+    [string]$AgentProvider,
+    [string]$Config
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,8 +21,21 @@ $pipelineRoot = Split-Path -Parent $downstreamRoot
 if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
     throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
 }
-if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider -or $BenchmarkProfile -or $SearchSpaceProfile)) {
-    throw "Search-space/Strategy/Agent/Benchmark profiles are frozen in a Session and cannot be overridden during resume."
+if (($Resume -or $RetryPausedCurrent) -and ($StrategyProfile -or $AgentProvider -or $BenchmarkProfile -or $SearchSpaceProfile -or $Config)) {
+    throw "Config and Search-space/Strategy/Agent/Benchmark profiles are frozen in a Session and cannot be overridden during resume."
+}
+
+$configPath = $null
+if ($Config) {
+    if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
+        throw "Config file does not exist: $Config"
+    }
+    $configPath = (Resolve-Path -LiteralPath $Config).Path
+} else {
+    $localConfig = Join-Path $root "config.local.yaml"
+    if (Test-Path -LiteralPath $localConfig -PathType Leaf) {
+        $configPath = (Resolve-Path -LiteralPath $localConfig).Path
+    }
 }
 
 function Get-ControllerProcess {
@@ -158,6 +172,7 @@ Write-Host "Preflight: OK"
 Write-Host "Recommended launch mode: $mode"
 if ($CheckOnly) {
     $checkArguments = @((Join-Path $root "continuous_tuning.py"), "--check-only")
+    if ($configPath) { $checkArguments += @("--config", $configPath) }
     $allowActiveLease = $false
     if ($StrategyProfile) { $checkArguments += @("--strategy-profile", $StrategyProfile) }
     if ($AgentProvider) { $checkArguments += @("--agent-provider", $AgentProvider) }
@@ -196,6 +211,7 @@ if (Test-Path -LiteralPath $stopFile) {
 }
 
 $arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
+if ($configPath) { $arguments += @("--config", $configPath) }
 if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
 if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
 if ($BenchmarkProfile) { $arguments += @("--benchmark-profile", $BenchmarkProfile) }

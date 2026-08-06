@@ -11,6 +11,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -41,7 +42,13 @@ def resolve_agent_profile(
         settings = dict(
             section.get("settings", {"command": legacy_command})
         )
-    if provider not in {"codex", "anthropic", "openai_compatible", "command"}:
+    if provider not in {
+        "codex",
+        "anthropic",
+        "openai_compatible",
+        "deepseek",
+        "command",
+    }:
         raise ValueError(f"Unsupported agent.provider={provider!r}")
     return {"provider": provider, "settings": settings}
 
@@ -111,7 +118,7 @@ def validate_agent_credentials(agent: dict[str, Any]) -> None:
                 "Codex CLI was not found. Install/login Codex, or set "
                 "VLLMTKB_CODEX_COMMAND."
             )
-    elif provider in {"anthropic", "openai_compatible"}:
+    elif provider in {"anthropic", "openai_compatible", "deepseek"}:
         _required_secret(settings)
     elif provider == "command" and not settings.get("command"):
         raise RuntimeError("command provider requires agent.settings.command")
@@ -130,6 +137,75 @@ def _http_json(url: str, headers: dict[str, str], body: dict[str, Any], timeout:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Agent API returned HTTP {exc.code}: {detail[-2000:]}") from exc
+
+
+def _run_deepseek(
+    settings: dict[str, Any],
+    *,
+    schema_prompt: str,
+    schema_path: Path,
+    output_path: Path,
+    timeout: int,
+) -> AgentResult:
+    """Call DeepSeek with bounded transport/format recovery.
+
+    JSON mode guarantees syntactic JSON, not conformance to our decision
+    schema.  The frozen local schema remains authoritative and is checked on
+    every attempt before a response is accepted.
+    """
+    base = str(settings.get("base_url", "https://api.deepseek.com")).rstrip("/")
+    model = str(settings.get("model", "deepseek-v4-flash")).strip()
+    if not model:
+        raise RuntimeError("DeepSeek provider requires agent.settings.model")
+    attempts = int(settings.get("max_api_retries", 3)) + 1
+    if not 1 <= attempts <= 6:
+        raise RuntimeError("DeepSeek max_api_retries must be between 0 and 5")
+    thinking = str(settings.get("thinking", "enabled")).lower()
+    if thinking not in {"enabled", "disabled"}:
+        raise RuntimeError("DeepSeek thinking must be enabled or disabled")
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": schema_prompt}],
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": thinking},
+        "max_tokens": int(settings.get("max_tokens", 16384)),
+    }
+    if thinking == "enabled":
+        body["reasoning_effort"] = str(settings.get("reasoning_effort", "high"))
+    else:
+        body["temperature"] = float(settings.get("temperature", 0))
+
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            payload = _http_json(
+                base + "/chat/completions",
+                {"Authorization": "Bearer " + _required_secret(settings)},
+                body,
+                timeout,
+            )
+            text = str(payload["choices"][0]["message"].get("content") or "").strip()
+            if not text:
+                raise RuntimeError("DeepSeek returned empty content")
+            value = _extract_json(text)
+            _validate_and_write(value, schema_path, output_path)
+            return AgentResult("deepseek", 0, text, "")
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            urllib.error.URLError,
+            TimeoutError,
+            RuntimeError,
+        ) as exc:
+            failures.append(f"attempt {attempt}/{attempts}: {type(exc).__name__}: {exc}")
+            if attempt == attempts:
+                break
+            delay = min(60, 5 * (4 ** (attempt - 1)))
+            time.sleep(delay)
+    return AgentResult("deepseek", 1, "", "\n".join(failures)[-8000:])
 
 
 def run_structured_agent(
@@ -195,6 +271,14 @@ def run_structured_agent(
         + "\n\nReturn one JSON value only. It must validate against this JSON Schema:\n"
         + json.dumps(schema, ensure_ascii=False)
     )
+    if provider == "deepseek":
+        return _run_deepseek(
+            settings,
+            schema_prompt=schema_prompt,
+            schema_path=schema_path,
+            output_path=output_path,
+            timeout=timeout,
+        )
     if provider == "anthropic":
         payload = _http_json(
             str(settings.get("base_url", "https://api.anthropic.com/v1/messages")),
@@ -248,7 +332,7 @@ def run_structured_agent(
     else:
         raise RuntimeError(
             f"Unsupported Agent provider {provider!r}; choose codex, anthropic, "
-            "openai_compatible, or command"
+            "openai_compatible, deepseek, or command"
         )
 
     value = _extract_json(text)

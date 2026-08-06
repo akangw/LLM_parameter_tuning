@@ -75,6 +75,30 @@ rules:
     factor: {add: [num_speculative_tokens, 1]}
     source: {type: existing_compiler_contract}
 
+  - id: fused_mc2_requires_expert_parallel
+    status: active
+    severity: hard
+    kind: implies
+    if: {parameter: fused_mc2, op: gt, value: 0}
+    then: {parameter: enable_expert_parallel, op: eq, value: true}
+    source: {type: pinned_ascend_runtime_contract}
+
+  - id: fused_mc2_mode2_requires_speculation
+    status: active
+    severity: hard
+    kind: implies
+    if: {parameter: fused_mc2, op: eq, value: 2}
+    then: {parameter: num_speculative_tokens, op: gt, value: 0}
+    source: {type: pinned_ascend_runtime_contract}
+
+  - id: draft_eager_requires_speculation
+    status: active
+    severity: hard
+    kind: implies
+    if: {parameter: speculative_config__enforce_eager, op: eq, value: true}
+    then: {parameter: num_speculative_tokens, op: gt, value: 0}
+    source: {type: pinned_ascend_runtime_contract}
+
 quarantines: []
 proposals: []
 processed_history: []

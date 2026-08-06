@@ -65,6 +65,23 @@ def config() -> dict:
 
 
 class ControllerTests(unittest.TestCase):
+    def test_config_overlay_preserves_base_and_replaces_nested_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "base.yaml").write_text(
+                "remote_transport: paramiko\nagent:\n  provider: codex\n  keep: true\n",
+                encoding="utf-8",
+            )
+            (root / "server.yaml").write_text(
+                "base_config: base.yaml\nremote_transport: local\n"
+                "agent:\n  provider: deepseek\n",
+                encoding="utf-8",
+            )
+            config = tuning.load_config(root / "server.yaml")
+            self.assertEqual("local", config["remote_transport"])
+            self.assertEqual("deepseek", config["agent"]["provider"])
+            self.assertTrue(config["agent"]["keep"])
+
     def test_automatic_history_reuse_requires_benchmark_and_image_identity(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
         project_root = tuning.KB_ROOT
@@ -285,6 +302,62 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown benchmark profile"):
             tuning.Controller(configured)
 
+    def test_public_vllm_benchmark_exports_frozen_definition_and_identity(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["benchmark"]["profile"] = "vllm_bench_public_v1"
+        controller = tuning.Controller(configured)
+        environment = controller.candidate_env(
+            configured["initial_baseline"]["label"], configured["baseline"]
+        )
+        self.assertEqual("vllm_bench_serve", controller.benchmark_mode)
+        self.assertIn("BENCHMARK_MODE=vllm_bench_serve", environment)
+        self.assertIn("BENCHMARK_DEFINITION_B64=", environment)
+        self.assertIn("BENCHMARK_IDENTITY_JSON=", environment)
+
+    def test_custom_benchmark_adapter_is_project_local_and_allowlisted(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["benchmark"]["profile"] = "custom_adapter_v1"
+        controller = tuning.Controller(configured)
+        self.assertEqual("custom_adapter", controller.benchmark_mode)
+        configured["benchmark"]["custom_benchmark"]["adapter_path"] = "../escape.py"
+        with self.assertRaisesRegex(ValueError, "relative .py path"):
+            tuning.Controller(configured)
+
+    def test_benchmark_identity_prevents_cross_profile_history_comparison(self) -> None:
+        one = {"benchmark_mode": "custom_adapter", "benchmark_identity": {"sha256": "a" * 64}}
+        two = {"benchmark_mode": "custom_adapter", "benchmark_identity": {"sha256": "b" * 64}}
+        self.assertNotEqual(
+            tuning.Controller.benchmark_regime(one),
+            tuning.Controller.benchmark_regime(two),
+        )
+
+    def test_public_benchmark_can_promote_an_accepted_best_anchor(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["benchmark"]["profile"] = "vllm_bench_public_v1"
+        configured["benchmark"]["vllm_bench_public"]["minimum_successful_requests"] = 1
+        controller = tuning.Controller(configured)
+
+        def item(round_name: str, throughput: float, ttft: float, tpot: float) -> dict:
+            return {
+                "round": round_name,
+                "params": {"max_num_seqs": 48 if round_name == "b0" else 64},
+                "metrics": {
+                    "benchmark_mode": "vllm_bench_serve",
+                    "metrics": {
+                        "successful_requests": 1,
+                        "failed_requests": 0,
+                        "output_token_throughput": throughput,
+                        "mean_ttft": ttft,
+                        "mean_tpot": tpot,
+                    },
+                },
+            }
+
+        anchor = controller.best_accepted_anchor(
+            [item("b0", 100.0, 10.0, 5.0), item("a1", 105.0, 10.5, 5.1)]
+        )
+        self.assertEqual("a1", anchor["round"])
+
     def test_candidate_rejection_is_reselected_and_audited(self) -> None:
         configured = config()
         configured["change_policy"]["max_candidate_reselections"] = 2
@@ -451,8 +524,12 @@ class ControllerTests(unittest.TestCase):
         controller = tuning.Controller(configured)
         controller.validate_deployment_configuration()
         self.assertEqual(controller.benchmark_mode, "aligned_l1")
-        env_text = controller.candidate_env("b0", configured["baseline"])
-        self.assertIn("LAUNCH_PROFILE=official_source_defaults", env_text)
+        env_text = controller.candidate_env(
+            configured["initial_baseline"]["label"], configured["baseline"]
+        )
+        self.assertIn(
+            "LAUNCH_PROFILE=official_source_defaults_deployable", env_text
+        )
         self.assertIn("BENCHMARK_MODE=aligned_l1", env_text)
         self.assertIn("BENCHMARK_REPETITIONS=3", env_text)
         self.assertIn(
@@ -488,6 +565,13 @@ class ControllerTests(unittest.TestCase):
             runtime.index('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"'),
             runtime.index('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]'),
         )
+        self.assertIn(
+            'if [[ "${LAUNCH_PROFILE}" == "official_source_defaults_deployable" ]]',
+            runtime,
+        )
+        self.assertIn(
+            'VLLM_COMMON_ARGS+=(--max-model-len "${MAX_MODEL_LEN}")', runtime
+        )
         launcher = (tuning.HERE / "start_continuous.ps1").read_text(encoding="utf-8")
         self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
         self.assertIn("Test-Path -LiteralPath $portraitIndexPath", launcher)
@@ -522,7 +606,9 @@ class ControllerTests(unittest.TestCase):
         configured["benchmark"]["aligned_l1"]["served_model"] = "configured-model"
         configured["benchmark"]["aligned_l1"]["service_port"] = 18000
         controller = tuning.Controller(configured)
-        env_text = controller.candidate_env("b0", configured["baseline"])
+        env_text = controller.candidate_env(
+            configured["initial_baseline"]["label"], configured["baseline"]
+        )
         self.assertIn("MODEL_PATH=/configured/model", env_text)
         self.assertIn("SERVED_MODEL_NAME=configured-model", env_text)
         self.assertIn("SERVICE_PORT=18000", env_text)
@@ -613,12 +699,12 @@ class ControllerTests(unittest.TestCase):
         controller = tuning.Controller(configured)
         with tempfile.TemporaryDirectory() as temporary:
             session = Path(temporary) / "session"
-            round_dir = session / "round_000_b0"
+            round_dir = session / "round_000_b0_deployable"
             (round_dir / "02_parameters").mkdir(parents=True)
             (round_dir / "04_runtime").mkdir(parents=True)
             (round_dir / "04_runtime" / "master.log").write_text(
                 "Chunked prefill is enabled with max_num_batched_tokens=2048.\n"
-                "Initializing a V1 LLM engine with config: max_seq_len=131072, "
+                "Initializing a V1 LLM engine with config: max_seq_len=64000, "
                 "enable_prefix_caching=True, enable_chunked_prefill=True, "
                 "compilation_config={'cudagraph_mode': "
                 "<CUDAGraphMode.FULL_AND_PIECEWISE: (1, 1)>, "
@@ -627,14 +713,14 @@ class ControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             state = {
-                "round_label": "b0",
+                "round_label": "b0_deployable",
                 "current_candidate": dict(configured["baseline"]),
             }
             controller.reconcile_official_source_default_baseline(
                 session, round_dir, state
             )
             self.assertTrue(state["official_source_defaults_reconciled"])
-            self.assertEqual(131072, state["current_candidate"]["max_model_len"])
+            self.assertEqual(64000, state["current_candidate"]["max_model_len"])
             self.assertEqual(
                 [16, 32, 64, 128, 256],
                 state["current_candidate"]["cudagraph_capture_sizes"],
@@ -642,6 +728,13 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(
                 (round_dir / "02_parameters" / "b0_effective_resolution.yaml").is_file()
             )
+            evidence = tuning.load_yaml(
+                round_dir / "02_parameters" / "b0_effective_resolution.yaml"
+            )
+            overrides = evidence["explicit_deployment_overrides"]
+            self.assertEqual({"max_model_len", "rationale"}, set(overrides))
+            self.assertEqual(64000, overrides["max_model_len"])
+            self.assertIn("sole deployability override", overrides["rationale"])
 
     def test_explicit_automatic_search_space_resolves_and_manual_fallback_remains(
         self,
@@ -663,8 +756,10 @@ class ControllerTests(unittest.TestCase):
                 "automatic_registry_v1",
                 resolved["resolved_search_space"]["profile"],
             )
-            self.assertEqual(28, result["summary"]["eligible_tunable_parameters"])
-            self.assertEqual(12, len(result["active_search_limits"]))
+            self.assertGreaterEqual(
+                result["summary"]["eligible_tunable_parameters"], 100
+            )
+            self.assertEqual(22, len(result["active_search_limits"]))
             self.assertNotIn("enable_eplb", result["active_search_limits"])
             self.assertEqual([False], resolved["search_limits"]["enable_eplb"])
             self.assertEqual(
@@ -687,8 +782,7 @@ class ControllerTests(unittest.TestCase):
                 resolved["search_limits"]["async_scheduling"],
             )
             self.assertEqual(
-                [raw["baseline"]["enable_expert_parallel"]],
-                resolved["search_limits"]["enable_expert_parallel"],
+                {False, True}, set(resolved["search_limits"]["enable_expert_parallel"])
             )
             self.assertEqual(
                 [
@@ -715,8 +809,12 @@ class ControllerTests(unittest.TestCase):
             )
             payload = json.loads(base64.b64decode(encoded).decode("utf-8"))
             self.assertEqual(
-                {"method": "mtp"},
-                payload["json_configs"]["speculative_config"],
+                "mtp", payload["json_configs"]["speculative_config"]["method"]
+            )
+            self.assertFalse(
+                payload["json_configs"]["speculative_config"][
+                    "disable_padded_drafter_batch"
+                ]
             )
             mismatched_graph = dict(resolved["baseline"])
             mismatched_graph["max_cudagraph_capture_size"] = 256
@@ -748,7 +846,7 @@ class ControllerTests(unittest.TestCase):
                 archive_root=Path(temporary),
             )
             self.assertIsNone(manual_result)
-            self.assertEqual(17, len(manual["search_limits"]))
+            self.assertEqual(22, len(manual["search_limits"]))
 
     def test_default_search_space_is_reviewed_curated_registry(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -770,10 +868,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             "curated_registry", resolved["resolved_search_space"]["mode"]
         )
-        self.assertEqual(23, result["summary"]["registry_parameters"])
-        self.assertEqual(12, result["summary"]["active_parameters"])
-        self.assertEqual(4, result["summary"]["reserve_parameters"])
-        self.assertEqual(6, result["summary"]["fixed_parameters"])
+        self.assertEqual(26, result["summary"]["registry_parameters"])
+        self.assertEqual(15, result["summary"]["active_parameters"])
+        self.assertEqual(5, result["summary"]["reserve_parameters"])
+        self.assertEqual(5, result["summary"]["fixed_parameters"])
         self.assertEqual(1, result["summary"]["rejected_parameters"])
         self.assertEqual(
             ["async_scheduling"],
@@ -787,6 +885,14 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             resolved["search_limits"], result["integration"]["effective_search_limits"]
         )
+        for name in {
+            "enable_expert_parallel",
+            "fused_mc2",
+            "enable_balance_scheduling",
+            "enable_reduce_sample",
+            "speculative_config__enforce_eager",
+        }:
+            self.assertIn(name, result["active_search_limits"])
         controller = tuning.Controller(resolved, search_space_result=result)
         mtp_candidate = {
             **resolved["baseline"],
@@ -814,6 +920,36 @@ class ControllerTests(unittest.TestCase):
         )
         environment = controller.candidate_env("curated-mtp", mtp_candidate)
         self.assertIn("RUNTIME_INJECTION_MODE=native_v1", environment)
+
+    def test_migration_parameters_are_validated_and_rendered_end_to_end(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        controller = tuning.Controller(configured)
+        candidate = {
+            **configured["baseline"],
+            "async_scheduling": True,
+            "enable_expert_parallel": True,
+            "num_speculative_tokens": 3,
+            "fused_mc2": 1,
+            "enable_balance_scheduling": True,
+            "enable_reduce_sample": True,
+            "speculative_config__enforce_eager": True,
+        }
+        controller.validate_candidate_invariants(candidate)
+        environment = controller.candidate_env("migration-chain", candidate)
+        self.assertIn("ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING=true", environment)
+        self.assertIn("ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE=true", environment)
+        self.assertIn("SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON=true", environment)
+
+        invalid_fused = {**candidate, "enable_expert_parallel": False}
+        with self.assertRaisesRegex(ValueError, "fused_mc2 requires"):
+            controller.validate_candidate_invariants(invalid_fused)
+        invalid_draft = {
+            **candidate,
+            "num_speculative_tokens": 0,
+            "async_scheduling": False,
+        }
+        with self.assertRaisesRegex(ValueError, "only applies"):
+            controller.validate_candidate_invariants(invalid_draft)
 
     def test_automatic_and_curated_profiles_have_auditable_overlap(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -845,10 +981,10 @@ class ControllerTests(unittest.TestCase):
         )
         automatic_active = set(automatic_result["active_search_limits"])
         curated_active = set(curated_result["active_search_limits"])
-        self.assertEqual(23, len(registry["parameters"]))
-        self.assertEqual(12, len(automatic_active))
-        self.assertEqual(16, automatic_result["summary"]["reserve_parameters"])
-        self.assertEqual(10, len(automatic_active & curated_active))
+        self.assertEqual(26, len(registry["parameters"]))
+        self.assertEqual(22, len(automatic_active))
+        self.assertEqual(80, automatic_result["summary"]["reserve_parameters"])
+        self.assertEqual(14, len(automatic_active & curated_active))
         self.assertFalse(
             automatic_result["automatic_registry_snapshot"]["audit"][
                 "existing_registry_dependency"
@@ -872,12 +1008,12 @@ class ControllerTests(unittest.TestCase):
             )
             controller = tuning.Controller(resolved, search_space_result=result)
             session = root / "session"
-            round_dir = session / "round_000_b0"
+            round_dir = session / "round_000_b0_deployable"
             (round_dir / "02_parameters").mkdir(parents=True)
             (round_dir / "04_runtime").mkdir(parents=True)
             (round_dir / "04_runtime" / "master.log").write_text(
                 "Chunked prefill is enabled with max_num_batched_tokens=2048.\n"
-                "Initializing a V1 LLM engine with config: max_seq_len=131072, "
+                "Initializing a V1 LLM engine with config: max_seq_len=64000, "
                 "enable_prefix_caching=True, enable_chunked_prefill=True, "
                 "compilation_config={'cudagraph_mode': "
                 "<CUDAGraphMode.FULL_AND_PIECEWISE: (1, 1)>, "
@@ -886,7 +1022,7 @@ class ControllerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             state = {
-                "round_label": "b0",
+                "round_label": "b0_deployable",
                 "current_candidate": dict(resolved["baseline"]),
             }
             controller.reconcile_official_source_default_baseline(
@@ -910,6 +1046,14 @@ class ControllerTests(unittest.TestCase):
                 if item["canonical_name"] == "cudagraph_capture_sizes"
             )
             self.assertIn([16, 32, 64, 128, 256], graph_parameter["values"])
+            self.assertEqual(
+                [256, 32, 64, 128, 192],
+                controller.config["search_limits"]["max_num_seqs"],
+            )
+            self.assertEqual(
+                [2048, 4096, 8192, 16384, 32768],
+                controller.config["search_limits"]["max_num_batched_tokens"],
+            )
             frozen = tuning.load_yaml(session / "session_config.yaml")
             self.assertEqual(
                 controller.config["automatic_registry_validation"],
@@ -1210,6 +1354,30 @@ SLOTS  none
                 encoding="utf-8"
             )
             self.assertIn("MAX_NUM_SEQS=48", rendered)
+
+    def test_offline_dry_run_never_queries_a_lease(self) -> None:
+        self.controller.offline_dry_run = True
+        self.controller.lab = {"lease_name": "isolated"}
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "03_submission").mkdir()
+            (round_dir / "02_parameters").mkdir()
+            with (
+                patch.object(self.controller, "validate_runtime_configuration"),
+                patch.object(
+                    self.controller,
+                    "ensure_lab_available",
+                    side_effect=AssertionError("offline dry-run must not query Lease"),
+                ),
+            ):
+                task_id, _ = self.controller.submit_lab(
+                    round_dir, "a0", self.baseline, dry_run=True
+                )
+            self.assertIsNone(task_id)
+            submission = json.loads(
+                (round_dir / "03_submission" / "submission.json").read_text()
+            )
+            self.assertTrue(submission["dry_run"])
 
     def test_partial_lease_exit_is_detected_after_grace_period(self) -> None:
         output = """\

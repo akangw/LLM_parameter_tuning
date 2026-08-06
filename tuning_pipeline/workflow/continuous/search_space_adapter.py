@@ -280,6 +280,7 @@ def resolve_search_limits(
             policy_path=policy_path,
             history_path=history_path,
             previous_selection_path=previous_selection,
+            activation_override=dict(profile.get("activation", {})),
         )
         result = compiler.compile()
         compiler_scenario = compiler.scenario
@@ -303,6 +304,7 @@ def resolve_search_limits(
             policy_path=policy_path,
             compatibility_policy_path=compatibility_policy_path,
             source_root=source_root,
+            activation_override=dict(profile.get("activation", {})),
         )
         automatic_registry, result = automatic_pipeline.compile()
         compiler_scenario = automatic_pipeline.scenario
@@ -418,6 +420,18 @@ def resolve_search_limits(
     result["integration"]["effective_search_limits"] = copy.deepcopy(
         effective_limits
     )
+    result["integration"]["classified_search_limits"] = copy.deepcopy(
+        result.get(
+            "classified_search_limits",
+            {
+                "active": result["active_search_limits"],
+                "reserve": {
+                    str(item["canonical_name"]): item["values"]
+                    for item in result.get("reserve_candidates", [])
+                },
+            },
+        )
+    )
     result["integration"]["derived_runtime_parameters"] = list(
         derived_runtime_parameters
     )
@@ -458,6 +472,7 @@ def resolve_search_limits(
         "history": str(history_path) if history_path else None,
         "previous_selection": (str(previous_selection) if previous_selection else None),
         "active_tunable_parameters": list(result["active_search_limits"]),
+        "reserve_tunable_parameters": list(result.get("reserve_search_limits", {})),
         "derived_runtime_parameters": derived_runtime_parameters,
         "fixed_runtime_parameters": fixed_runtime_parameters,
         "source_default_anchor_parameters": source_default_anchors,
@@ -541,6 +556,20 @@ def write_session_search_space(
             ),
             encoding="utf-8",
         )
+    (output / "classified_search_limits.yaml").write_text(
+        yaml.safe_dump(
+            compiled.get(
+                "classified_search_limits",
+                {
+                    "active": compiled["active_search_limits"],
+                    "reserve": compiled.get("reserve_search_limits", {}),
+                },
+            ),
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     (output / "search_space.compiled.yaml").write_text(
         yaml.safe_dump(compiled, allow_unicode=True, sort_keys=False),
         encoding="utf-8",

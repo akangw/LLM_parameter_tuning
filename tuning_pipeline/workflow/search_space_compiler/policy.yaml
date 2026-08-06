@@ -1,9 +1,10 @@
 schema_version: 1
 
 recall:
-  performance_impacts: [high]
-  # This medium-impact parameter is retained because it is already part of the
-  # measured baseline contract and interacts with chunked prefill.
+  # High- and medium-impact parameters form the complete classified pool.
+  # The activation budget decides Active versus Reserve; recall must not drop
+  # a material axis before that decision is made.
+  performance_impacts: [high, medium]
   supplemental_canonical_names:
     - long_prefill_token_threshold
 
@@ -24,6 +25,9 @@ activation:
     # B0 resolves this to false, but MTP trials require true. Keep the
     # prerequisite in the same active Session schema as speculative tokens.
     - async_scheduling
+    # B0 intentionally starts from the upstream default false, but later MoE
+    # communication trials must be able to reach expert-parallel baselines.
+    - enable_expert_parallel
     - speculative_config__method
     - long_prefill_token_threshold
 

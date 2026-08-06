@@ -140,7 +140,7 @@ class CompilerIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "compiled"
             files = write_outputs(self.result, output)
-            self.assertEqual(6, len(files))
+            self.assertEqual(7, len(files))
             agent_limits = yaml.safe_load(
                 (output / "agent_search_limits.yaml").read_text(encoding="utf-8")
             )
@@ -150,6 +150,28 @@ class CompilerIntegrationTests(unittest.TestCase):
             self.assertNotIn("rejected_parameters", agent_limits)
             self.assertTrue(all(path.is_file() for path in files))
             self.assertTrue((output / "rotation_report.yaml").is_file())
+            classified = yaml.safe_load(
+                (output / "classified_search_limits.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(self.result["active_search_limits"], classified["active"])
+            self.assertEqual(self.result["reserve_search_limits"], classified["reserve"])
+
+    def test_material_migration_axes_are_active_or_reserve(self) -> None:
+        classified = {
+            **{name: "active" for name in self.result["active_search_limits"]},
+            **{name: "reserve" for name in self.result["reserve_search_limits"]},
+        }
+        for name in {
+            "enable_expert_parallel",
+            "fused_mc2",
+            "enable_balance_scheduling",
+            "enable_reduce_sample",
+            "speculative_config__enforce_eager",
+        }:
+            self.assertIn(name, classified)
+        self.assertEqual("active", classified["enable_expert_parallel"])
 
     def test_live_controller_directory_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

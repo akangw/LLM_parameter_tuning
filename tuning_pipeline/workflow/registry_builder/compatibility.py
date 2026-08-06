@@ -106,24 +106,64 @@ class CompatibilityValidator:
                     return value
         return None
 
-    def _within_numeric_baseline(self, value: Any, baseline: Any) -> bool:
-        if (
-            isinstance(value, bool)
-            or isinstance(baseline, bool)
-            or not isinstance(value, (int, float))
-            or not isinstance(baseline, (int, float))
-            or baseline == 0
-            or abs(float(baseline)) < 8
-        ):
-            return True
-        config = self.policy.get("normalization", {}).get("numeric_baseline", {})
-        if value == 0 and config.get("allow_zero", False):
-            return True
-        lower = float(baseline) * float(config.get("minimum_factor", 0.5))
-        upper = float(baseline) * float(config.get("maximum_factor", 2.0))
-        if lower > upper:
-            lower, upper = upper, lower
-        return lower <= float(value) <= upper
+    def numeric_domain(
+        self,
+        canonical: str,
+        baseline: Any,
+        source_values: list[Any],
+        *,
+        include_source_values: bool = True,
+    ) -> list[Any] | None:
+        """Build a parameter-specific domain around an effective B0 anchor.
+
+        ``None`` means the parameter has no numeric-domain policy and retains
+        its source-derived values. Sequence capacity, batching, memory fraction
+        and CUDAGraph sizes intentionally have different safe shapes.
+        """
+        rules = self.policy.get("numeric_candidate_domains", {})
+        rule = rules.get(canonical) if isinstance(rules, dict) else None
+        if not isinstance(rule, dict):
+            return None
+        if isinstance(baseline, bool) or not isinstance(baseline, (int, float)):
+            return None
+        kind = str(rule.get("kind", ""))
+        if kind == "factor":
+            values = [float(baseline) * float(factor) for factor in rule.get("factors", [])]
+        elif kind == "offset":
+            values = [float(baseline) + float(offset) for offset in rule.get("offsets", [])]
+        elif kind == "fixed":
+            values = list(rule.get("values", []))
+        else:
+            raise ValueError(
+                f"Unsupported numeric candidate-domain kind for {canonical}: {kind!r}"
+            )
+        minimum = rule.get("minimum")
+        maximum = rule.get("maximum")
+        precision = rule.get("precision")
+        integer = bool(rule.get("integer", False))
+        normalized: list[Any] = []
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"Numeric candidate-domain value for {canonical} is not numeric: {value!r}"
+                )
+            if minimum is not None and value < float(minimum):
+                continue
+            if maximum is not None and value > float(maximum):
+                continue
+            if integer:
+                value = int(round(value))
+            elif precision is not None:
+                value = round(float(value), int(precision))
+            normalized.append(value)
+        # B0 is always a legal starting point, even if a defensive bound in a
+        # future policy would otherwise omit it.
+        anchor: Any = int(baseline) if integer else baseline
+        # Before B0, source values remain useful, source-verified provisional
+        # evidence. After B0 the Controller disables this merge so the frozen
+        # online domain is exclusively B0-anchored.
+        source = source_values if include_source_values else []
+        return stable_unique([anchor, *normalized, *source])
 
     def _filter_special_domain(
         self, canonical: str, values: list[Any]
@@ -240,11 +280,6 @@ class CompatibilityValidator:
             except ValueError as exc:
                 rejected_values.append({"value": raw, "reason": str(exc)})
                 continue
-            if not self._within_numeric_baseline(value, baseline):
-                rejected_values.append(
-                    {"value": raw, "reason": "outside_configured_baseline_envelope"}
-                )
-                continue
             if reasons:
                 normalization_events.append(
                     {"input": raw, "output": value, "reasons": reasons}
@@ -255,6 +290,9 @@ class CompatibilityValidator:
         rejected_values.extend(policy_rejections)
         accepted, domain_rejections = self._filter_special_domain(canonical, accepted)
         rejected_values.extend(domain_rejections)
+        numeric_domain = self.numeric_domain(canonical, baseline, accepted)
+        if numeric_domain is not None:
+            accepted = numeric_domain
         if baseline is not None:
             accepted.insert(0, baseline)
         accepted = stable_unique(accepted)
@@ -305,6 +343,7 @@ class CompatibilityValidator:
             "source_canonical_name": source_canonical,
             "normalization_events": normalization_events,
             "rejected_values": rejected_values,
+            "numeric_domain_policy_applied": numeric_domain is not None,
         }
         return {
             "accepted": True,
@@ -317,6 +356,7 @@ class CompatibilityValidator:
                 "compatible_values": accepted,
                 "normalization_events": normalization_events,
                 "rejected_values": rejected_values,
+                "numeric_domain_policy_applied": numeric_domain is not None,
             },
         }
 

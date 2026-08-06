@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -55,10 +56,21 @@ def main() -> int:
             metrics[key] = parse_value(raw_value)
 
     payload = {
+        "schema_version": "vllmtkb-benchmark-result/v1",
+        "benchmark_mode": os.environ.get("BENCHMARK_MODE", "legacy_random_32k1k"),
+        "benchmark_profile": os.environ.get(
+            "BENCHMARK_PROFILE", "legacy_random_32k1k"
+        ),
         "source_log": str(source),
         "metrics": metrics,
         "parse_status": "ok" if metrics else "no_metrics_matched",
     }
+    try:
+        identity = json.loads(os.environ.get("BENCHMARK_IDENTITY_JSON", "{}"))
+    except json.JSONDecodeError:
+        identity = {}
+    if identity:
+        payload["benchmark_identity"] = identity
     destination.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

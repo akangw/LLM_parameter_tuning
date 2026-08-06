@@ -14,3 +14,15 @@ profiles:
     mode: legacy_random_32k1k
     definition_key: legacy_random_32k1k
     purpose: Historical random 32K/1K exploratory benchmark reproduction only.
+
+  vllm_bench_public_v1:
+    status: integrated
+    mode: vllm_bench_serve
+    definition_key: vllm_bench_public
+    purpose: Public, dependency-free vllm bench serve profile for portable tuning.
+
+  custom_adapter_v1:
+    status: integrated
+    mode: custom_adapter
+    definition_key: custom_benchmark
+    purpose: Operator-configured project-local benchmark using the result-v1 contract.

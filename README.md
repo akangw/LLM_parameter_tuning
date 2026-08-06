@@ -1,5 +1,7 @@
 # Auto vLLM Parameter
 
+> 新使用者建议先阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置可以放在 Git 忽略的 `config.local.yaml`，无需修改仓库公共默认配置。
+
 面向 GLM-5.2、Atlas A3 和 vLLM Ascend 的参数知识构建与连续自动调优项目。项目从 `vllmTKB0706` 的在线闭环迁移而来，但使用独立源码版本、知识产物、Controller 状态、远端目录和 ktp-lab Lease。
 
 ## 当前状态
@@ -10,7 +12,7 @@
 - 新 Session 默认复用人工审计的 23 项注册表，经 Tags 召回和 Compiler 得到 12 Active、4 Reserve、6 Fixed、1 Rejected。独立自动注册表链路完整保留，可显式切换为 28 个当前场景可调维度（12 Active、16 Reserve、40 Fixed、0 Compiler Rejected）。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
-- B0 已定义为“目标版本源码/启动日志中的官方默认值”，当前状态为等待项目负责人下令提交，尚未运行。
+- 唯一 B0 为 `B0-deployable`：模型原生 `max_model_len=1048576` 需要 `107.25 GiB` KV Cache，而当前拓扑仅有 `28.82 GiB`，因此只固定 `max_model_len=64000`，其余参数继续由目标版本源码解析。
 
 ## 四个可选扩展接口
 
@@ -48,7 +50,7 @@ $env:ANTHROPIC_API_KEY = "..."
 
 画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择；召回到 Search Limits 的构建方式通过 `-SearchSpaceProfile automatic_registry_v1|curated_registry_v1` 选择。画像 Provider 当前支持 `codex`、`anthropic`。
 
-Tags 召回到 Search Limits 之间另有一条独立的端到端自动化链路。它不读取或修改现有人工注册表，会自动完成语义归并、固定版本源码能力核验、场景兼容过滤、`unset/omit` 动作规范化、跨参数约束和通用注入校验，再调用现有 Search-Space Compiler。这条兼容判定链只使用程序和 YAML 策略，不依赖 AI：
+Tags 召回到 Search Limits 之间另有一条独立的端到端自动化链路。它不读取或修改现有人工注册表，会自动完成语义归并、固定版本源码能力核验、场景兼容过滤、`unset/omit` 动作规范化、跨参数约束和通用注入校验，再调用现有 Search-Space Compiler。数值参数不再共用倍率边界：B0 前保留源码验证的临时候选，B0 成功后 Controller 从 `master.log` 读取实际生效值，并按参数专属策略重建候选域。这条兼容判定链只使用程序和 YAML 策略，不依赖 AI：
 
 ```powershell
 cd .\tuning_pipeline
@@ -65,6 +67,7 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\一键启动.ps1 -NewSession -AgentProvider anthropic
 .\一键启动.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
+.\一键启动.ps1 -NewSession -BenchmarkProfile vllm_bench_public_v1
 .\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 ```
 
@@ -75,9 +78,11 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
 | Search-Space 构建 | `-SearchSpaceProfile` | `curated_registry_v1`（默认）、`automatic_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
 | Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
-| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`legacy_random_32k1k` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1`、`legacy_random_32k1k` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
-Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
+Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible`、`deepseek` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
+
+Benchmark 与 Agent Provider、选参策略相互独立。没有 ServeBench/GuideLLM 权限时，推荐选择 `vllm_bench_public_v1`：它只调用服务镜像内已有的公开 `vllm bench serve`，参数在 `config.yaml` 的 `benchmark.vllm_bench_public` 中配置。需要接入自有测试时，选择 `custom_adapter_v1`，并将 `benchmark.custom_benchmark.adapter_path` 指向 `workflow/benchmark_adapters/` 白名单目录内的 Python 适配器；接口与示例见 [`benchmark_adapters/README.md`](tuning_pipeline/workflow/benchmark_adapters/README.md)。不同 Profile/配置会生成不同的 Benchmark 身份摘要，Controller 不会跨口径比较历史结果。
 
 四个接口的设计原理、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
 
@@ -175,7 +180,7 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
   -SearchSpaceProfile curated_registry_v1
 ```
 
-当前配置的新 Session 会从 `round_000_b0` 官方默认参数基线开始；B0 成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
+当前配置的新 Session 会从 `round_000_b0_deployable` 开始：它保留官方源码默认启动，仅显式设置 `--max-model-len 64000` 以满足固定拓扑的 KV Cache 约束。成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
 
 如果本地已经存在旧 Session，先用相同选择执行新 Session 预检，避免普通
 `-CheckOnly` 自动检查旧 Session：

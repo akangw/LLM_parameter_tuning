@@ -37,6 +37,15 @@ echo "EXPERIMENT_RUN_ID=${EXPERIMENT_RUN_ID}"
 echo "ROLE=master NODE_IP=${NODE_IP} MASTER_IP=${MASTER_IP} NIC_NAME=${NIC_NAME}"
 write_status "starting_vllm"
 
+case "${LAUNCH_PROFILE}" in
+  official_source_defaults_deployable)
+    SERVICE_VALUE_ORIGIN="source_resolved_with_max_model_len_override"
+    ;;
+  explicit_candidate)
+    SERVICE_VALUE_ORIGIN="explicit_candidate_env"
+    ;;
+esac
+
 cat > "${RUN_DIR}/effective_config.yaml" <<EOF
 experiment_id: ${EXPERIMENT_RUN_ID}
 launch_profile: ${LAUNCH_PROFILE}
@@ -45,7 +54,7 @@ topology: {pods: 2, npu_per_pod: 16, data_parallel_size: 2, tensor_parallel_size
 service:
   port: ${SERVICE_PORT}
   runtime_injection_mode: ${RUNTIME_INJECTION_MODE}
-  value_origin: $([[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]] && printf 'source_resolved_from_omitted_flags' || printf 'explicit_candidate_env')
+  value_origin: ${SERVICE_VALUE_ORIGIN}
   max_num_seqs: ${MAX_NUM_SEQS}
   max_model_len: ${MAX_MODEL_LEN}
   max_num_batched_tokens: ${MAX_NUM_BATCHED_TOKENS}
@@ -66,6 +75,9 @@ service:
   flashcomm1: ${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1}
   mlapo: ${ADDITIONAL_CONFIG_ENABLE_MLAPO}
   fused_mc2: ${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}
+  enable_balance_scheduling: ${ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING}
+  enable_reduce_sample: ${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE}
+  speculative_config__enforce_eager: ${SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON}
   safetensors_load_strategy: ${SAFETENSORS_LOAD_STRATEGY}
   safetensors_prefetch_num_threads: ${SAFETENSORS_PREFETCH_NUM_THREADS}
   safetensors_prefetch_block_size: ${SAFETENSORS_PREFETCH_BLOCK_SIZE}
@@ -176,6 +188,15 @@ elif [[ "${BENCHMARK_MODE}" == "aligned_l1" ]]; then
     echo "Aligned L1 completed without consolidated metrics."
     exit 1
   }
+elif [[ "${BENCHMARK_MODE}" == "vllm_bench_serve" || "${BENCHMARK_MODE}" == "custom_adapter" ]]; then
+  write_status "${BENCHMARK_MODE}"
+  touch "${RUN_DIR}/BENCHMARK_STARTED"
+  if ! python3 "${SCRIPT_DIR}/benchmark_driver.py" \
+    --mode "${BENCHMARK_MODE}" --run-dir "${RUN_DIR}" --project-dir "${PROJECT_DIR}"; then
+    touch "${RUN_DIR}/BENCHMARK_FAILED"
+    exit 1
+  fi
+  touch "${RUN_DIR}/BENCHMARK_DONE"
 else
   echo "Unsupported BENCHMARK_MODE=${BENCHMARK_MODE}" >&2
   exit 2

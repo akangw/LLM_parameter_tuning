@@ -37,7 +37,7 @@ source "${PARAM_FILE}"
 [[ -f "${CANN_ENV_SCRIPT}" ]] || { echo "Missing ${CANN_ENV_SCRIPT}" >&2; exit 2; }
 LAUNCH_PROFILE="${LAUNCH_PROFILE:-explicit_candidate}"
 case "${LAUNCH_PROFILE}" in
-  official_source_defaults|explicit_candidate) ;;
+  official_source_defaults_deployable|explicit_candidate) ;;
   *)
     echo "Unsupported LAUNCH_PROFILE=${LAUNCH_PROFILE}" >&2
     exit 2
@@ -54,6 +54,9 @@ DECODE_CONTEXT_PARALLEL_SIZE="${DECODE_CONTEXT_PARALLEL_SIZE:-1}"
 ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1="${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1:-false}"
 ADDITIONAL_CONFIG_ENABLE_MLAPO="${ADDITIONAL_CONFIG_ENABLE_MLAPO:-true}"
 ADDITIONAL_CONFIG_ENABLE_FUSED_MC2="${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2:-0}"
+ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING="${ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING:-false}"
+ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE="${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE:-false}"
+SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON="${SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON:-null}"
 RUNTIME_INJECTION_MODE="${RUNTIME_INJECTION_MODE:-native_v1}"
 RUNTIME_INJECTION_PAYLOAD_B64="${RUNTIME_INJECTION_PAYLOAD_B64:-}"
 SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
@@ -86,7 +89,7 @@ unset VLLM_ASCEND_ENABLE_FUSED_MC2
 # The explicit-candidate path retains the already validated deployment settings
 # used by Agent rounds.  Keeping these branches separate prevents inherited
 # expert settings from silently contaminating the official-default baseline.
-if [[ "${LAUNCH_PROFILE}" == "official_source_defaults" ]]; then
+if [[ "${LAUNCH_PROFILE}" == "official_source_defaults_deployable" ]]; then
   unset HCCL_OP_EXPANSION_MODE
   unset VLLM_ASCEND_BALANCE_SCHEDULING
   unset OMP_PROC_BIND
@@ -127,6 +130,15 @@ VLLM_COMMON_ARGS+=(
   --safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"
   --safetensors-prefetch-block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
 )
+
+# B0-deployable preserves the official source-default serving configuration and
+# injects exactly one compatibility override. The pinned model resolves a
+# 1,048,576-token context, which needs 107.25 GiB of KV cache on this topology;
+# the measured deployment exposes 28.82 GiB. Keep the 64k exception explicit
+# in the sole B0 launch identity.
+if [[ "${LAUNCH_PROFILE}" == "official_source_defaults_deployable" ]]; then
+  VLLM_COMMON_ARGS+=(--max-model-len "${MAX_MODEL_LEN}")
+fi
 
 if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
   GENERATED_JSON_CONFIGS="${RUN_DIR}/generated_json_configs.json"
@@ -233,11 +245,13 @@ PY
   python - "${ADDITIONAL_CONFIG_ENABLE_FLASHCOMM1}" \
     "${ADDITIONAL_CONFIG_ENABLE_MLAPO}" \
     "${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}" \
+    "${ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING}" \
+    "${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE}" \
     "${GENERATED_JSON_CONFIGS}" <<'PY'
 import json
 import sys
 
-flashcomm1, mlapo, fused_mc2, generated_path = sys.argv[1:]
+flashcomm1, mlapo, fused_mc2, balance, reduce_sample, generated_path = sys.argv[1:]
 config = {
     "enable_npugraph_ex": True,
     "fuse_muls_add": True,
@@ -245,6 +259,8 @@ config = {
     "enable_flashcomm1": flashcomm1 == "true",
     "enable_mlapo": mlapo == "true",
     "enable_fused_mc2": int(fused_mc2),
+    "enable_balance_scheduling": balance == "true",
+    "enable_reduce_sample": reduce_sample == "true",
 }
 def merge(target, patch):
     for key, value in patch.items():
@@ -271,14 +287,18 @@ PY
     MTP_DRAFT_MODEL_PATH="${MTP_DRAFT_MODEL_PATH:?MTP_DRAFT_MODEL_PATH is required when speculative decoding is enabled}"
     SPECULATIVE_CONFIG_JSON=$(
     python - "${MTP_DRAFT_MODEL_PATH}" "${NUM_SPECULATIVE_TOKENS}" \
-      "${GENERATED_JSON_CONFIGS}" "${RUNTIME_INJECTION_MODE}" <<'PY'
+      "${GENERATED_JSON_CONFIGS}" "${RUNTIME_INJECTION_MODE}" \
+      "${SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON}" <<'PY'
 import json
 import sys
 
-model, tokens, generated_path, injection_mode = sys.argv[1:]
+model, tokens, generated_path, injection_mode, enforce_eager_json = sys.argv[1:]
 config = {"model": model, "num_speculative_tokens": int(tokens)}
 if injection_mode == "native_v1":
     config["method"] = "mtp"
+enforce_eager = json.loads(enforce_eager_json)
+if enforce_eager is not None:
+    config["enforce_eager"] = enforce_eager
 with open(generated_path, encoding="utf-8") as handle:
     generated = json.load(handle)
 config.update(generated.get("speculative_config", {}))

@@ -28,6 +28,9 @@ capabilities:
     - enable_prefix_caching
     - async_scheduling
     - enable_expert_parallel
+    - enable_balance_scheduling
+    - enable_reduce_sample
+    - speculative_config__enforce_eager
     - compilation_mode
     - num_speculative_tokens
     - long_prefill_token_threshold
@@ -98,4 +101,8 @@ baseline:
   flashcomm1: true
   mlapo: true
   fused_mc2: 0
+  enable_balance_scheduling: false
+  enable_reduce_sample: false
+  # null is the source default and is falsey in the Ascend draft proposer.
+  speculative_config__enforce_eager: null
   decode_context_parallel_size: 1

@@ -1,0 +1,37 @@
+base_config: ../config.yaml
+
+operation_mode: server_autonomous
+remote_transport: local
+remote_host: localhost
+remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
+
+autonomous:
+  allowed_write_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
+
+agent:
+  provider: deepseek
+  providers:
+    deepseek:
+      base_url: https://api.deepseek.com
+      model: deepseek-v4-flash
+      api_key_env: DEEPSEEK_API_KEY
+      thinking: enabled
+      reasoning_effort: high
+      response_format: json_object
+      max_tokens: 16384
+      max_api_retries: 3
+
+lab:
+  lease_name: vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu
+  lease_yaml: workflow/auto/lease_loop.yaml
+  output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/lab_runs
+  # Autonomous mode fails closed while either existing chain owns resources.
+  blocked_lease_names:
+    - vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+    - vllmtkb-senior-migrated-w8a8-dp2tp16-20260806
+
+benchmark:
+  aligned_l1:
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/datasets

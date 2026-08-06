@@ -44,3 +44,12 @@ python -m unittest workflow.search_space_compiler.test_compiler workflow.sidecar
 ```
 
 整体架构、依赖边界、产物和交接方式以项目根目录的 `README.md` 与 `docs/` 为准。
+
+## 可移植 Benchmark
+
+- `aligned_l1_v4`：现有内部 ServeBench/GuideLLM 严格矩阵。
+- `vllm_bench_public_v1`：无需内部 Benchmark 权限，只依赖服务镜像中的公开 `vllm bench serve`。
+- `custom_adapter_v1`：运行项目白名单目录中的自定义 Python 适配器，协议见 `workflow/benchmark_adapters/README.md`。
+- `legacy_random_32k1k`：仅用于复现历史探索口径。
+
+用 `-BenchmarkProfile vllm_bench_public_v1` 在新 Session 中选择公开路径。每个 Profile 的完整定义与 SHA-256 身份都会冻结到 Session 和 `metrics.json`，因此不同 Benchmark 或不同配置不会混合比较。
