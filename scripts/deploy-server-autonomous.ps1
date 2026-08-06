@@ -19,6 +19,8 @@ $remoteArchive = "$allowedPrefix$archiveName"
 & tar -czf $localArchive `
     --exclude=.git `
     --exclude=.pytest_cache `
+    --exclude='.codex-*' `
+    --exclude='node_modules' `
     --exclude='*/__pycache__' `
     --exclude='*.pyc' `
     --exclude='portrait_pipeline/sources' `
