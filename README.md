@@ -1,6 +1,6 @@
 # Auto vLLM Parameter
 
-> 新使用者建议先阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置可以放在 Git 忽略的 `config.local.yaml`，无需修改仓库公共默认配置。
+> 新使用者建议先阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置可以放在 Git 忽略的 `config.local.yaml`，无需修改仓库公共默认配置。更换 Ascend 模型、量化、镜像或 DP/TP/节点数时，使用 [Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md) 固定适配边界。
 
 面向 GLM-5.2、Atlas A3 和 vLLM Ascend 的参数知识构建与连续自动调优项目。项目从 `vllmTKB0706` 的在线闭环迁移而来，但使用独立源码版本、知识产物、Controller 状态、远端目录和 ktp-lab Lease。
 
@@ -14,7 +14,7 @@
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
 - 唯一 B0 为 `B0-deployable`：模型原生 `max_model_len=1048576` 需要 `107.25 GiB` KV Cache，而当前拓扑仅有 `28.82 GiB`，因此只固定 `max_model_len=64000`，其余参数继续由目标版本源码解析。
 
-## 四个可选扩展接口
+## 可选扩展接口与 Ascend Runtime Adapter
 
 ### 更换 vLLM / vllm-ascend 版本
 
@@ -59,6 +59,27 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 
 它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_v1` 已完整接入 Controller，作为可插拔替代选项；生成的注册表、兼容策略、注入契约和 Search Limits 会冻结到 Session。默认 `curated_registry_v1` 使用人工审计的 23 项注册表。独立命令仍只写指定审计目录、不提交服务器任务。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
 
+### 更换 Ascend 模型、镜像、量化或拓扑
+
+模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、B0、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包 `glm52_w8a8_a3_dp2_tp16` 完整保留现有 GLM-5.2 W8A8、A3、两节点 × 16 NPU、DP2/TP16 主流程。
+
+新组合先生成 `planned` 适配包：
+
+```powershell
+.\scripts\new-runtime-adapter.ps1 scaffold `
+  --name glm52-bf16-a3-dp4-tp8 `
+  --model-family glm --model-variant glm-5.2 --weight-format bf16 `
+  --image-manifest <manifest.yaml> --activation <activation.yaml> `
+  --scenario <scenario.yaml> --baseline <b0.yaml> `
+  --nodes 4 --npu-per-node 8 --data-parallel-size 4 --tensor-parallel-size 8 `
+  --worker-replicas 3 --executor ktp_multi_role `
+  --output <runtime-adapter.yaml>
+
+.\scripts\new-runtime-adapter.ps1 validate <runtime-adapter.yaml>
+```
+
+只有执行器、B0、Benchmark 和 Search-Space 四项真实验证完成，且镜像批准、Scenario 的 Digest/commit、DP×TP 与总 NPU、worker rank 契约全部一致，适配包才能成为 `integrated`。`planned` 包不能提交任务。新拓扑若超出现有 `ktp_two_role` 能力，需要增加对应 Executor Profile 和 rank/Lease 实现；上层 Session、Agent、Benchmark、失败恢复和验收状态机无需重写。完整流程见 [Ascend Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md)。
+
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
 在线闭环默认使用 `curated_registry_v1 + codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择 Search-Space、策略、Provider 或 Benchmark：
@@ -84,7 +105,7 @@ Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`�
 
 Benchmark 与 Agent Provider、选参策略相互独立。没有 ServeBench/GuideLLM 权限时，推荐选择 `vllm_bench_public_v1`：它只调用服务镜像内已有的公开 `vllm bench serve`，参数在 `config.yaml` 的 `benchmark.vllm_bench_public` 中配置。需要接入自有测试时，选择 `custom_adapter_v1`，并将 `benchmark.custom_benchmark.adapter_path` 指向 `workflow/benchmark_adapters/` 白名单目录内的 Python 适配器；接口与示例见 [`benchmark_adapters/README.md`](tuning_pipeline/workflow/benchmark_adapters/README.md)。不同 Profile/配置会生成不同的 Benchmark 身份摘要，Controller 不会跨口径比较历史结果。
 
-四个接口的设计原理、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
 
 ### Git 克隆后可直接复用的知识产物
 
@@ -123,11 +144,11 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 
 2. `ssh hetao-npu` 可以连接。
 3. 默认模式下 `codex --version` 可用且 Codex 已登录；若选择 API Provider，则对应 Key 环境变量已设置。
-4. `tuning_pipeline/workflow/continuous/config.yaml` 中的远端项目、模型、MTP、Benchmark 和 Lease 配置仍适用于目标服务器。
+4. `tuning_pipeline/workflow/continuous/config.yaml` 中的远端项目、模型、MTP、Benchmark、Runtime Adapter 和 Lease 配置仍适用于目标服务器。
 5. `activation.approved.yaml` 中的镜像、Digest、vLLM 和 vllm-ascend 身份与服务器一致；Controller 会逐项与 `remote/image_version_manifest.yaml` 动态核对，换版本不需要改校验代码。
 6. 只读 `liuxin-workspace` 依赖仍可访问。
 
-接手者需要修改的服务器项集中在 `config.yaml`：`remote_host`、`remote_project`、`deployment.*`（主模型、served-model、量化、网卡和环境脚本）、`lab.*` 以及所选 Benchmark 的服务端路径；镜像与源码身份集中在 `remote/image_version_manifest.yaml` 和 `activation.approved.yaml`。当前执行器明确支持两节点、每节点 16 NPU 的既定拓扑；更换主机和路径是配置操作，更换拓扑则属于新的执行器适配，不能只改一个数字后静默运行。
+接手者需要修改的服务器项集中在 Git 忽略的 `config.local.yaml`：`remote_host`、`remote_project`、`deployment.*`（主模型、served-model、量化、网卡和环境脚本）、`lab.*` 以及所选 Benchmark 的服务端路径。相同运行组合可继续使用默认 Runtime Adapter；更换模型、量化、镜像或拓扑时，用 `-RuntimeAdapter` 选择新的 integrated 适配包。当前执行器明确支持两节点、每节点 16 NPU 的既定拓扑；其他拓扑会在 Executor Profile 校验阶段失败关闭，不能只改一个数字后静默运行。
 
 最后执行不提交任务的端到端只读预检；它会检查本地配置、AI Provider、SSH 连接和 Lease 空闲状态：
 
@@ -268,6 +289,9 @@ Auto_vllm_parameter/
       ├─ search_space_compiler/  Search Limits 编译器
       ├─ sidecars/               画像检索和运行规则
       └─ continuous/             Controller、远端脚本和 Session 运行时
+         ├─ runtime_profiles.yaml    模型/镜像/拓扑组合入口
+         ├─ topology_profiles.yaml   节点、NPU、DP/TP 资源定义
+         └─ executor_profiles.yaml   已实现远端执行器能力边界
 ```
 
 ## 经批准保留的外部依赖
@@ -289,11 +313,16 @@ Benchmark 运行阶段仍以只读方式挂载：
 - [交接清单](docs/HANDOFF.md)
 - [外部依赖](docs/DEPENDENCIES.md)
 - [当前实验摘要](docs/CURRENT_SESSION.md)
+- [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)
+- [Linux / Docker Controller](docs/LINUX_DOCKER_CONTROLLER.md)
+- [Ascend 模型、镜像与拓扑适配包](docs/ASCEND_RUNTIME_ADAPTERS.md)
 
 ## 安全边界
 
 - 本地保存知识、决策、状态和实验归档；远端只执行服务与 Benchmark。
 - 远端项目目录固定为 `/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190`。
 - 服务镜像和 Benchmark 容器均使用 Digest 固定身份。
+- Runtime Adapter、Scenario、B0、镜像、Topology 和 Executor 文件均记录 SHA-256；同一 Session 禁止跨适配身份续跑。
+- `planned` Runtime Adapter 和未集成 Executor 一律失败关闭，不能提交远端任务。
 - 上游 `--enable-eplb` 在当前 Ascend 版本中禁止进入搜索；Native Dynamic EPLB 接线完成前保持 `false/0`。
 - 失败或残缺结果不会进入性能比较。
