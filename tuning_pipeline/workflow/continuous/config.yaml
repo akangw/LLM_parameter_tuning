@@ -43,6 +43,11 @@ strategy:
   profile: best_anchor_coverage_v2
   profiles_file: workflow/continuous/strategy_profiles.yaml
 execution_mode: ktp_lab
+# Execution layout is named and frozen into each Session. The only integrated
+# executor remains the already validated two-node, 16-NPU-per-node layout.
+topology:
+  profile: a3_dp2_tp16
+  profiles_file: workflow/continuous/topology_profiles.yaml
 # The sliced MTP-only checkpoint made by the deployment owner. Set the exact
 # server path before preparing the lease; leaving it empty fails closed.
 mtp_draft_model: /models/share/GLM-5.2-w8a8-mtp-only-vllm0.25.1-image46d8bbb4

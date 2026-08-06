@@ -35,6 +35,7 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
+    from .topology_profile import resolve_topology_profile
     from .agent_provider import (
         resolve_agent_profile,
         run_structured_agent,
@@ -42,6 +43,7 @@ try:
     )
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
+    from topology_profile import resolve_topology_profile
     from agent_provider import (
         resolve_agent_profile,
         run_structured_agent,
@@ -333,7 +335,7 @@ class Controller:
         offline_dry_run: bool = False,
         search_space_result: dict[str, Any] | None = None,
     ):
-        self.config = copy.deepcopy(config)
+        self.config, self.topology = resolve_topology_profile(config, KB_ROOT)
         config = self.config
         self.dry_run = dry_run
         self.offline_dry_run = offline_dry_run
@@ -1336,6 +1338,20 @@ class Controller:
         if launch_profile not in {B0_LAUNCH_PROFILE, "explicit_candidate"}:
             raise ValueError(f"Unsupported launch profile: {launch_profile!r}")
         lines.append(f"LAUNCH_PROFILE={shlex.quote(launch_profile)}")
+        topology_env = {
+            "TOPOLOGY_PROFILE": self.config["topology"]["profile"],
+            "TOPOLOGY_NODES": self.topology["nodes"],
+            "NPU_PER_NODE": self.topology["npu_per_node"],
+            "DATA_PARALLEL_SIZE": self.topology["data_parallel_size"],
+            "DATA_PARALLEL_SIZE_LOCAL": self.topology["data_parallel_size_local"],
+            "TENSOR_PARALLEL_SIZE": self.topology["tensor_parallel_size"],
+            "DATA_PARALLEL_RPC_PORT": self.topology["data_parallel_rpc_port"],
+            "WORKER_DATA_PARALLEL_START_RANK": self.topology[
+                "worker_data_parallel_start_rank"
+            ],
+        }
+        for env_name, value in topology_env.items():
+            lines.append(f"{env_name}={shlex.quote(str(value))}")
         for key, env_name in self.param_to_env.items():
             value = candidate[key]
             if isinstance(value, bool):
@@ -1633,12 +1649,7 @@ class Controller:
         ) <= 0:
             raise ValueError("fused_mc2=2 requires speculative decoding")
         if candidate.get("enable_balance_scheduling", False):
-            scenario = self.config.get("fixed_scenario", {})
-            data_parallel_size = int(
-                self.config.get("topology", {}).get(
-                    "data_parallel_size", scenario.get("data_parallel_size", 2)
-                )
-            )
+            data_parallel_size = int(self.topology["data_parallel_size"])
             if data_parallel_size <= 1:
                 raise ValueError("enable_balance_scheduling requires DP > 1")
         draft_eager = candidate.get("speculative_config__enforce_eager")
@@ -1694,6 +1705,7 @@ class Controller:
             document["name"] = str(self.lab["lease_name"])
             document["image"] = repository
             document["image_tag"] = tag
+        document["min_available"] = self.topology["nodes"]
         for task in document.get("tasks", []):
             task_name = str(task.get("name", "")).lower()
             if task_name not in {"master", "worker"}:
@@ -1704,6 +1716,9 @@ class Controller:
                 "run_master_loop.sh" if task_name == "master" else "run_worker_loop.sh"
             )
             task["command"] = f"bash {self.remote_auto}/{script}"
+            task["npu"] = self.topology["npu_per_node"]
+            if task_name == "worker":
+                task["replicas"] = self.topology["worker_replicas"]
             if name == "experiment_loop.yaml":
                 task["image"] = repository
                 task["image_tag"] = tag
@@ -1753,9 +1768,12 @@ class Controller:
         lease_name = str(self.lab["lease_name"])
         output = self.lease_status()
         normalized = output.lower()
+        nodes = self.topology["nodes"]
         resource_active = bool(re.search(r"\bresource\s+status=active\b", normalized))
-        nodes_ready = bool(re.search(r"\bnodes=2/2\s+ready\b", normalized))
-        service_idle = bool(re.search(r"\bstatus\s+idle=2\b", normalized))
+        nodes_ready = bool(
+            re.search(rf"\bnodes={nodes}/{nodes}\s+ready\b", normalized)
+        )
+        service_idle = bool(re.search(rf"\bstatus\s+idle={nodes}\b", normalized))
         # A brand-new persistent lease has no service slot until its first
         # `ktp-lab run`.  Treat that state as available; subsequent runs must
         # see both nodes idle.  Running/partial slots match neither condition
@@ -1796,12 +1814,13 @@ class Controller:
         self.ensure_no_blocked_leases()
         output = self.lease_status()
         normalized = output.lower()
+        nodes = self.topology["nodes"]
         if not (
             re.search(r"\bresource\s+status=active\b", normalized)
-            and re.search(r"\bnodes=2/2\s+ready\b", normalized)
+            and re.search(rf"\bnodes={nodes}/{nodes}\s+ready\b", normalized)
         ):
             raise RuntimeError(
-                "The active Session Lease is reachable but its two-node "
+                f"The active Session Lease is reachable but its {nodes}-node "
                 f"resource is not ready:\n{output}"
             )
         return output

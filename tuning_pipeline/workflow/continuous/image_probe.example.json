@@ -1,0 +1,21 @@
+{
+  "image": "registry.example.com/team/vllm-ascend:release-tag",
+  "digest": "sha256:replace-with-64-lowercase-hex-characters-after-sha256-prefix",
+  "size_bytes": 1,
+  "vllm": {
+    "package": "replace-with-installed-package-version",
+    "commit": "replace-with-40-lowercase-hex-commit"
+  },
+  "vllm_ascend": {
+    "package": "replace-with-installed-package-version",
+    "commit": "replace-with-40-lowercase-hex-commit"
+  },
+  "platform": {
+    "os": "linux",
+    "architecture": "arm64",
+    "accelerator": "replace-with-accelerator"
+  },
+  "evidence": {
+    "source_commit_probe": "describe the exact digest-qualified probe command and result"
+  }
+}

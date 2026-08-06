@@ -63,12 +63,22 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 
 ## 5. 核验镜像身份
 
-根据目标服务器上的真实镜像更新以下两个文件：
+根据目标服务器上的真实镜像生成以下两个文件：
 
 - `tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml`
 - `tuning_pipeline/workflow/continuous/activation.approved.yaml`
 
 必须核对镜像 digest、vLLM commit、vllm-ascend commit 和参数画像版本。`activation.approved.yaml` 只有在完成真实核验后才能设置为批准；Controller 会在提交昂贵任务前 fail closed。
+
+推荐使用封装命令从可信探针 JSON 同时生成并交叉校验两个 YAML，避免手工同步错误：
+
+```powershell
+.\scripts\verify-image-identity.ps1 validate
+.\scripts\verify-image-identity.ps1 approve --probe-json C:\secure\image-probe.json --approved-by operator --dry-run
+```
+
+Linux、Docker、拓扑 Profile、Session 导入导出的完整说明见
+[`LINUX_DOCKER_CONTROLLER.md`](LINUX_DOCKER_CONTROLLER.md)。
 
 如果换了 vLLM 或 vllm-ascend 版本，先执行：
 

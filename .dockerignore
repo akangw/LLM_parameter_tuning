@@ -1,0 +1,9 @@
+.git
+.github
+.runtime
+.venv
+**/__pycache__
+**/.pytest_cache
+**/experiments
+**/*.log
+portrait_pipeline/sources

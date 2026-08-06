@@ -1,0 +1,18 @@
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: docker/controller/Dockerfile
+    network_mode: host
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - ${HOME}/.ssh:/root/.ssh:ro
+      - ${VLLMTKB_RUNTIME_HOST_DIR:-./.runtime/controller}:/runtime
+    environment:
+      VLLMTKB_CONFIG: ${VLLMTKB_CONFIG:-/workspace/tuning_pipeline/workflow/continuous/config.local.yaml}
+      VLLMTKB_RUNTIME_ROOT: /runtime
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    command: ["help"]
