@@ -1,5 +1,8 @@
 [unix_http_server]
-file=@SERVICE_ROOT@/supervisor.sock
+# AF_UNIX paths are limited to roughly 108 bytes on Linux. The autonomous
+# repository path is intentionally descriptive and longer than that, so
+# service.sh runs Supervisor from @SERVICE_ROOT@ and uses this relative socket.
+file=supervisor.sock
 chmod=0700
 
 [supervisord]
@@ -13,7 +16,7 @@ minfds=1024
 supervisor.rpcinterface_factory=supervisor.rpcinterface:make_main_rpcinterface
 
 [supervisorctl]
-serverurl=unix://@SERVICE_ROOT@/supervisor.sock
+serverurl=unix://supervisor.sock
 
 [program:vllmtkb-server-autonomous]
 directory=@REPO_ROOT@

@@ -101,6 +101,9 @@ class ServiceRenderTests(unittest.TestCase):
             self.assertIn("RestartPreventExitStatus=78", unit)
             supervisor = (output / "supervisord.conf").read_text(encoding="utf-8")
             self.assertIn("exitcodes=0,78", supervisor)
+            self.assertIn("file=supervisor.sock", supervisor)
+            self.assertIn("serverurl=unix://supervisor.sock", supervisor)
+            self.assertNotIn(f"unix://{output}", supervisor)
 
 
 if __name__ == "__main__":

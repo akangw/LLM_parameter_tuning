@@ -109,26 +109,26 @@ case "${1:-}" in
     SUPERVISORD=$(supervisor_bin supervisord) || { echo "Run first: $0 supervisor-install" >&2; exit 2; }
     SUPERVISORCTL=$(supervisor_bin supervisorctl) || { echo "Run first: $0 supervisor-install" >&2; exit 2; }
     render
-    if "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" status >/dev/null 2>&1; then
-      "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" start "${SERVICE_NAME}"
+    if (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" status >/dev/null 2>&1); then
+      (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" start "${SERVICE_NAME}")
     else
-      "${SUPERVISORD}" -c "${SUPERVISOR_CONFIG}"
+      (cd "${SERVICE_ROOT}" && "${SUPERVISORD}" -c "${SUPERVISOR_CONFIG}")
     fi
     ;;
   supervisor-stop|supervisor-status)
     ACTION=${1#supervisor-}
     SUPERVISORCTL=$(supervisor_bin supervisorctl) || { echo "Supervisor is not installed" >&2; exit 2; }
-    "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" "${ACTION}" "${SERVICE_NAME}"
+    (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" "${ACTION}" "${SERVICE_NAME}")
     ;;
   supervisor-restart)
     SUPERVISORCTL=$(supervisor_bin supervisorctl) || { echo "Supervisor is not installed" >&2; exit 2; }
-    "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" stop "${SERVICE_NAME}"
+    (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" stop "${SERVICE_NAME}")
     archive_stop_marker
-    "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" start "${SERVICE_NAME}"
+    (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" start "${SERVICE_NAME}")
     ;;
   supervisor-shutdown)
     SUPERVISORCTL=$(supervisor_bin supervisorctl) || { echo "Supervisor is not installed" >&2; exit 2; }
-    "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" shutdown
+    (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" shutdown)
     ;;
   *)
     echo "usage: $0 {prepare-env|render|authorize-resume|authorize-new-session|systemd-install|systemd-start|systemd-stop|systemd-restart|systemd-status|systemd-logs [N]|supervisor-install|supervisor-start|supervisor-stop|supervisor-restart|supervisor-status|supervisor-shutdown}" >&2
