@@ -24,5 +24,32 @@ jobs:
         run: python -m pip install -r tuning_pipeline/requirements-dev.txt
       - name: Validate configuration and scan secrets
         run: python scripts/validate_repository.py
+      - name: Check out pinned portrait sources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          checkout_pinned_source() {
+            local name="$1"
+            local url="$2"
+            local commit="$3"
+            local path="portrait_pipeline/sources/${name}"
+
+            git init --quiet "${path}"
+            git -C "${path}" remote add origin "${url}"
+            git -C "${path}" -c protocol.version=2 fetch \
+              --quiet --depth=1 --filter=blob:none origin "${commit}"
+            git -C "${path}" checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "${path}" rev-parse HEAD)" = "${commit}"
+          }
+
+          checkout_pinned_source \
+            vllm \
+            https://github.com/vllm-project/vllm.git \
+            418bd6273c03bf48d5066733769e0a74bdc51694
+          checkout_pinned_source \
+            vllm-ascend \
+            https://github.com/vllm-project/vllm-ascend.git \
+            32c8cf190f596b47f0d0b965e64aea9f2b789ad4
       - name: Run tests
         run: python -m pytest -q
