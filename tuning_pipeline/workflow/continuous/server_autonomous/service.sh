@@ -117,7 +117,10 @@ case "${1:-}" in
     SUPERVISORD=$(supervisor_bin supervisord) || { echo "Run first: $0 supervisor-install" >&2; exit 2; }
     SUPERVISORCTL=$(supervisor_bin supervisorctl) || { echo "Run first: $0 supervisor-install" >&2; exit 2; }
     render
-    if (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" status >/dev/null 2>&1); then
+    # `status` returns 3 when the managed program is EXITED even though the
+    # supervisord daemon is healthy. Probe the daemon itself before deciding
+    # whether to start a new daemon or restart the existing program.
+    if (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" pid >/dev/null 2>&1); then
       (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" start "${SERVICE_NAME}")
     else
       (cd "${SERVICE_ROOT}" && "${SUPERVISORD}" -c "${SUPERVISOR_CONFIG}")
