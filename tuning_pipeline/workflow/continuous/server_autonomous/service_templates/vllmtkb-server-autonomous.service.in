@@ -1,0 +1,23 @@
+[Unit]
+Description=vLLM TKB server-autonomous tuning controller
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+Environment=VLLMTKB_ENV_FILE=@ENV_FILE@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash @RUNNER@ auto
+Restart=on-failure
+RestartSec=30s
+RestartPreventExitStatus=78
+SuccessExitStatus=78
+KillMode=mixed
+TimeoutStopSec=24h
+UMask=0077
+
+[Install]
+WantedBy=default.target

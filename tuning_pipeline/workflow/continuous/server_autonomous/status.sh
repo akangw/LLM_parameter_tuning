@@ -4,15 +4,29 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/common.sh"
 
-if [[ -f "${PROCESS_ROOT}/launcher.pid" ]]; then
-  PID=$(tr -d '[:space:]' < "${PROCESS_ROOT}/launcher.pid")
-  if [[ "${PID}" =~ ^[0-9]+$ ]] && kill -0 "${PID}" 2>/dev/null; then
-    echo "Controller: running (PID=${PID})"
-  else
-    echo "Controller: not running (recorded PID=${PID:-invalid})"
+RUNNING=false
+for PID_FILE in controller.pid launcher.pid; do
+  if [[ -f "${PROCESS_ROOT}/${PID_FILE}" ]]; then
+    PID=$(tr -d '[:space:]' < "${PROCESS_ROOT}/${PID_FILE}")
+    if [[ "${PID}" =~ ^[0-9]+$ ]] && kill -0 "${PID}" 2>/dev/null; then
+      echo "Controller: running (PID=${PID}, source=${PID_FILE})"
+      RUNNING=true
+      break
+    fi
   fi
-else
-  echo "Controller: not started"
+done
+if [[ "${RUNNING}" == false ]]; then
+  echo "Controller: not running"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  SYSTEMD_STATE=$(systemctl --user is-active vllmtkb-server-autonomous.service 2>/dev/null || true)
+  echo "systemd user service: ${SYSTEMD_STATE:-unavailable}"
+fi
+if [[ -f "${SERVICE_ROOT}/supervisord.conf" ]] && command -v supervisorctl >/dev/null 2>&1; then
+  SUPERVISOR_STATE=$(supervisorctl -c "${SERVICE_ROOT}/supervisord.conf" status \
+    vllmtkb-server-autonomous 2>/dev/null || true)
+  echo "Supervisor service: ${SUPERVISOR_STATE:-not running}"
 fi
 
 controller --status

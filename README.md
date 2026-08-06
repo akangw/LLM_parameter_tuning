@@ -316,6 +316,7 @@ Benchmark 运行阶段仍以只读方式挂载：
 - [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)
 - [Linux / Docker Controller](docs/LINUX_DOCKER_CONTROLLER.md)
 - [Ascend 模型、镜像与拓扑适配包](docs/ASCEND_RUNTIME_ADAPTERS.md)
+- [服务器自治 systemd / Supervisor 服务](tuning_pipeline/workflow/continuous/server_autonomous/README.md)
 
 ## 安全边界
 

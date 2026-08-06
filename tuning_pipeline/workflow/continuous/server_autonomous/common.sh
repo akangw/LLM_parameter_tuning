@@ -7,9 +7,11 @@ CONTROLLER="${REPO_ROOT}/tuning_pipeline/workflow/continuous/continuous_tuning.p
 CONFIG="${SCRIPT_DIR}/config.yaml"
 RUNTIME_ROOT="${SCRIPT_DIR}/runtime"
 PROCESS_ROOT="${RUNTIME_ROOT}/process"
+SERVICE_ROOT="${RUNTIME_ROOT}/service"
+SERVICE_ENV_FILE="${VLLMTKB_ENV_FILE:-${SCRIPT_DIR}/.secrets/controller.env}"
 PYTHON_BIN="${VLLMTKB_PYTHON:-python3}"
 
-mkdir -p "${PROCESS_ROOT}"
+mkdir -p "${PROCESS_ROOT}" "${SERVICE_ROOT}"
 
 controller() {
   "${PYTHON_BIN}" "${CONTROLLER}" \
