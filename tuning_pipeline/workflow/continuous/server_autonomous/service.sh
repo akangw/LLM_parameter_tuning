@@ -32,11 +32,16 @@ import json, sys
 state = json.load(open(sys.argv[1], encoding="utf-8"))
 status = str(state.get("status", ""))
 terminal = {"dry_run_complete", "completed_by_agent", "tuning_complete"}
-if state.get("active_task_id") or state.get("active_run_id") or status not in terminal:
+has_task = bool(state.get("active_task_id"))
+has_run = bool(state.get("active_run_id"))
+# Older dry-run states retained the simulated run id even though no task was
+# submitted. Accept that one legacy shape, while keeping real terminal states
+# and every dry-run task identity fail-closed.
+legacy_dry_run = status == "dry_run_complete" and not has_task
+if status not in terminal or has_task or (has_run and not legacy_dry_run):
     raise SystemExit(
         f"Refusing to archive non-terminal state: status={status!r}, "
-        f"active_task={bool(state.get('active_task_id'))}, "
-        f"active_run={bool(state.get('active_run_id'))}"
+        f"active_task={has_task}, active_run={has_run}"
     )
 print(status)
 PY

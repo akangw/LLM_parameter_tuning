@@ -8,6 +8,20 @@ remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vl
 autonomous:
   allowed_write_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
 
+# Freeze the autonomous experiment choices independently from the default
+# Windows-to-server chain. A new Session starts from the reviewed B0 and only
+# enters Agent proposals after the B0 Benchmark acceptance gate passes.
+search_space:
+  profile: automatic_registry_v1
+
+strategy:
+  profile: best_anchor_coverage_v2
+
+initial_baseline:
+  label: b0_deployable
+  launch_profile: official_source_defaults_deployable
+  definition: workflow/baselines/b0_deployable_64k.yaml
+
 agent:
   provider: deepseek
   providers:

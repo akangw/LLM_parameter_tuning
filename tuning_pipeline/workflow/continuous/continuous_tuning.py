@@ -4475,7 +4475,10 @@ Embedded evidence:
         _, run_id = self.submit(
             round_dir, "a0dryrun", self.config["baseline"], dry_run=True
         )
-        state["active_run_id"] = run_id
+        # Preserve the simulated identity as audit evidence without presenting
+        # it as a resumable live run to the service recovery wrapper.
+        state["last_dry_run_id"] = run_id
+        state["active_run_id"] = None
         state["status"] = "dry_run_complete"
         self.save_state(state)
         log(f"Dry-run complete: {session_dir}")
