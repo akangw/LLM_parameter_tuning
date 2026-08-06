@@ -8,6 +8,7 @@ generated service definitions treat it as a clean, non-restartable outcome.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -92,11 +93,19 @@ def render(repo_root: Path, env_file: Path, output_root: Path) -> list[Path]:
     autonomous = repo_root / "tuning_pipeline/workflow/continuous/server_autonomous"
     runner = autonomous / "run_foreground.sh"
     output_root.mkdir(parents=True, exist_ok=True)
+    socket_tag = hashlib.sha256(str(repo_root).encode("utf-8")).hexdigest()[:12]
+    supervisor_socket = repo_root.parent / f".vllmtkb-{socket_tag}.sock"
+    if len(os.fsencode(supervisor_socket)) >= 104:
+        raise ValueError(
+            "Approved workspace parent is too long for a safe Supervisor AF_UNIX socket: "
+            f"{supervisor_socket}"
+        )
     values = {
         "@REPO_ROOT@": str(repo_root),
         "@RUNNER@": str(runner),
         "@ENV_FILE@": str(env_file),
         "@SERVICE_ROOT@": str(output_root),
+        "@SUPERVISOR_SOCKET@": str(supervisor_socket),
     }
     template_root = autonomous / "service_templates"
     outputs = []

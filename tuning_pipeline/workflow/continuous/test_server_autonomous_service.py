@@ -101,8 +101,14 @@ class ServiceRenderTests(unittest.TestCase):
             self.assertIn("RestartPreventExitStatus=78", unit)
             supervisor = (output / "supervisord.conf").read_text(encoding="utf-8")
             self.assertIn("exitcodes=0,78", supervisor)
-            self.assertIn("file=supervisor.sock", supervisor)
-            self.assertIn("serverurl=unix://supervisor.sock", supervisor)
+            socket_lines = [
+                line.split("=", 1)[1]
+                for line in supervisor.splitlines()
+                if line.startswith("file=")
+            ]
+            self.assertEqual(len(socket_lines), 1)
+            self.assertLess(len(socket_lines[0].encode()), 104)
+            self.assertIn(f"serverurl=unix://{socket_lines[0]}", supervisor)
             self.assertNotIn(f"unix://{output}", supervisor)
 
 
