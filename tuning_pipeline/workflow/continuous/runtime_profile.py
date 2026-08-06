@@ -229,9 +229,23 @@ def resolve_runtime_profile(
         bindings = profile.get("config", {})
         if not isinstance(bindings, dict):
             raise ValueError(f"Runtime profile {profile_name!r} config must be a mapping")
-        # The adapter is the source of truth for compatibility-critical profile
-        # selections. Host paths and credentials remain operator overlays.
+        # The adapter owns model/image/topology bindings. Profile selectors are
+        # operator choices constrained by compatibility.allowed_profiles, so an
+        # explicit config overlay must survive the adapter defaults. Validation
+        # below still fails closed for every cross-scenario selection.
         resolved = _merge(source, bindings) if apply_bindings else source
+        if apply_bindings:
+            for section, field in (
+                ("search_space", "profile"),
+                ("strategy", "profile"),
+                ("benchmark", "profile"),
+                ("agent", "provider"),
+            ):
+                selected = source.get(section, {})
+                if isinstance(selected, dict) and field in selected:
+                    resolved.setdefault(section, {})[field] = copy.deepcopy(
+                        selected[field]
+                    )
 
     if frozen_identity is not None:
         identity = frozen_identity

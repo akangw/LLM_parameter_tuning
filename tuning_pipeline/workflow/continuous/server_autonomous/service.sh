@@ -34,11 +34,19 @@ status = str(state.get("status", ""))
 terminal = {"dry_run_complete", "completed_by_agent", "tuning_complete"}
 has_task = bool(state.get("active_task_id"))
 has_run = bool(state.get("active_run_id"))
+operator_stopped = (
+    status == "stopped_after_failed_round"
+    and state.get("last_failure_classification") == "operator_stop_before_metrics"
+    and not has_task
+)
 # Older dry-run states retained the simulated run id even though no task was
 # submitted. Accept that one legacy shape, while keeping real terminal states
-# and every dry-run task identity fail-closed.
+# and every dry-run task identity fail-closed. An explicitly operator-stopped
+# round is also terminal once the Controller has cleared its active task.
 legacy_dry_run = status == "dry_run_complete" and not has_task
-if status not in terminal or has_task or (has_run and not legacy_dry_run):
+archivable = status in terminal or operator_stopped
+retained_audit_run = legacy_dry_run or operator_stopped
+if not archivable or has_task or (has_run and not retained_audit_run):
     raise SystemExit(
         f"Refusing to archive non-terminal state: status={status!r}, "
         f"active_task={has_task}, active_run={has_run}"
