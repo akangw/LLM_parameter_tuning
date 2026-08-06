@@ -103,10 +103,14 @@ Supervisor needs no system configuration in this mode; its socket, PID, config,
 and logs all stay below `runtime/service`:
 
 ```bash
-python3 -m pip install supervisor
+bash "$AUTO/service.sh" supervisor-install
 bash "$AUTO/service.sh" supervisor-start
 bash "$AUTO/service.sh" supervisor-status
 ```
+
+`supervisor-install` pins Supervisor 4.3.0 in
+`runtime/service/supervisor-venv`; it does not write to the system Python or the
+operator's home directory.
 
 This Supervisor fallback recovers a crashed Controller while `supervisord` is
 alive. To recover automatically after a server reboot, the Supervisor daemon
@@ -133,6 +137,16 @@ bash "$AUTO/service.sh" systemd-start   # or supervisor-start
 The provided `systemd-restart` and `supervisor-restart` commands perform this
 stop-marker archival automatically because invoking restart is itself explicit
 authorization to continue the same Session.
+
+An offline dry-run intentionally leaves a terminal `state.json`. Before the
+first real service start, archive that state without deleting its evidence:
+
+```bash
+bash "$AUTO/service.sh" authorize-new-session
+```
+
+This command refuses active, paused, failed, or otherwise non-terminal state;
+it accepts only `dry_run_complete`, `completed_by_agent`, or `tuning_complete`.
 
 Render both generated configurations without installing or starting anything:
 
