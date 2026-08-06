@@ -85,7 +85,7 @@ benchmark:
     # One complete repetition still runs all 24 GuideLLM configs (12 formal
     # cases plus their warmups). Historical A0 calibration measured 1.06% CV
     # for the C32 geometric-mean score, so continuous screening uses one pass.
-    repetitions: 3
+    repetitions: 1
     # Retry budgets are frozen into each candidate.env for auditability.
     # Targeted case retry is cheap; full runtime/metrics reruns remain bounded.
     case_retry_limit: 2
@@ -359,7 +359,7 @@ measurement_policy:
   maximum_tpot_regression_percent: 10.0
   aligned_l1:
     require_all_repetitions: true
-    minimum_repetitions: 3
+    minimum_repetitions: 1
     minimum_throughput_gain_percent: 3.0
     noise_cv_multiplier: 2.0
     maximum_single_workload_throughput_regression_percent: 5.0

@@ -107,7 +107,7 @@ class ControllerTests(unittest.TestCase):
             )
             frozen = json.loads(json.dumps(raw))
             # A different repetition contract must not influence a new Session.
-            frozen["benchmark"]["aligned_l1"]["repetitions"] = 1
+            frozen["benchmark"]["aligned_l1"]["repetitions"] = 3
             tuning.save_yaml(session / "session_config.yaml", frozen)
             tuning.save_yaml(
                 session / "image_version_manifest.yaml",
@@ -525,7 +525,7 @@ class ControllerTests(unittest.TestCase):
             "LAUNCH_PROFILE=official_source_defaults_deployable", env_text
         )
         self.assertIn("BENCHMARK_MODE=aligned_l1", env_text)
-        self.assertIn("BENCHMARK_REPETITIONS=3", env_text)
+        self.assertIn("BENCHMARK_REPETITIONS=1", env_text)
         self.assertIn(
             "BENCHMARK_SUITE='01_调优_结构化定长-v4.yaml'",
             env_text,
