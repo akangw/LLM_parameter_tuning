@@ -2,26 +2,29 @@
 
 这份文档只回答三个问题：从哪里开始、每个目录负责什么、产物最终写到哪里。
 
-## 一眼看懂的四层结构
+## 一眼看懂：三条业务链 + 两个操作入口
 
 ```text
 Auto_vllm_parameter/
-├─ scenarios/             ① 用户层：选择一个模型/量化/拓扑场景
-├─ portrait_pipeline/     ② 共享知识层：从固定源码生成参数画像
-├─ tuning_pipeline/       ③ 公共引擎层：Tags、Search Limits、Controller、Benchmark
-├─ scripts/               ④ 操作入口：初始化、预检、启动、状态、停止
-├─ docs/                    说明文档
-├─ docker/                  Linux/Docker Controller 封装
-└─ .runtime/               本机运行状态和 Session，不进入 Git
+├─ pipeline/
+│  ├─ 01_parameter_knowledge/  画像、迁移、Tags、召回、Search Limits
+│  ├─ 02_agent_tuning/         Agent 选参和 Controller 校验
+│  └─ 03_benchmark/            测量、比较和结果回填
+├─ scenarios/                  选择运行身份
+├─ scripts/                    执行操作
+├─ portrait_pipeline/          参数知识内部实现
+├─ tuning_pipeline/            调优与 Benchmark 内部实现
+└─ .runtime/                   Session 产物，不进入 Git
 ```
 
-正常使用者只需要进入 `scenarios/`，不应该先在 `tuning_pipeline/workflow/continuous/`
-里寻找配置。
+理解项目先进入 `pipeline/`；运行项目再进入 `scenarios/`。不应该从
+`tuning_pipeline/workflow/continuous/` 开始阅读。
 
 ## 每个目录的职责
 
 | 目录 | 层级 | 内容 | 谁会修改 |
 |---|---|---|---|
+| `pipeline/` | 业务导航 | 参数知识、Agent 调参、Benchmark 三条一级链路 | 业务边界变化时维护 |
 | `scenarios/` | 用户入口 | 场景身份、个人配置模板、固定产物索引 | 新增模型/拓扑时维护 |
 | `portrait_pipeline/sources/` | 源码输入 | 固定 commit 的 vLLM/vllm-ascend | 版本迁移脚本生成，不入 Git |
 | `portrait_pipeline/outputs/ParameterYAML/` | 共享知识 | 340 份源码级参数画像 | 画像流水线生成 |
@@ -32,6 +35,9 @@ Auto_vllm_parameter/
 | `tuning_pipeline/workflow/benchmark_adapters/` | 扩展接口 | 自定义 Benchmark result-v1 适配器 | Benchmark 接入者维护 |
 | `.runtime/scenarios/<id>/` | 本机运行产物 | state、Session、日志、PID | Controller 自动生成，不入 Git |
 | `<remote_project>/workflow/auto/lab_runs/` | 服务器产物 | 完整服务和 Benchmark 原始证据 | 远端执行器自动生成 |
+
+`pipeline/` 不保存第二份配置或产物，只解释业务步骤并指向下表中的唯一实现位置，避免
+“为了易读而复制代码”造成两套事实来源。
 
 ## 为什么不是每个场景复制 340 份画像
 

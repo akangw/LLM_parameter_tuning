@@ -1,6 +1,6 @@
 # Auto vLLM Parameter
 
-> 新使用者先从 [场景目录](scenarios/README.md) 选择 W8A8/W4A8C8 路线，再阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置放在场景自己的 Git 忽略配置里，无需修改仓库公共默认配置。更换 Ascend 模型、量化、镜像或 DP/TP/节点数时，使用 [Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md) 固定适配边界。
+> 第一次阅读只看 [业务链路总览](pipeline/README.md)：参数知识 → Agent 调参 → Benchmark。准备运行时再从 [场景目录](scenarios/README.md) 选择 W8A8/W4A8C8，并阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。
 
 > GLM-5.2-W4A8C8 单节点 DP2-local2/TP8 已建立独立 planned 适配路线，现有调优脚本作为 A0，详见 [W4A8C8 A0 场景](docs/GLM52_W4A8C8_A0.md)。该路线使用独立本地 Runtime Root、远端项目、Lease、Session、缓存和实验产物，不改变 W8A8 默认链路。
 
@@ -272,32 +272,20 @@ tuning_pipeline/workflow/continuous/experiments/<session>/
 
 ```text
 Auto_vllm_parameter/
-├─ README.md                     项目总入口
-├─ 框架.md                       三大板块的交接讲解
-├─ docs/                         架构、运行、产物和交接文档
-├─ scripts/                      面向操作者的稳定入口
-├─ scenarios/                    同级、隔离的模型/拓扑场景入口与个人配置模板
-│  ├─ glm52-w8a8-a3-2n-dp2-tp16/   integrated 正式路线
-│  └─ glm52-w4a8c8-a3-1n-dp2-tp8/  planned 独立验证路线
-├─ portrait_pipeline/            离线参数画像构建
-│  ├─ build/                     提取、初筛、迁移和画像程序/证据
-│  ├─ outputs/ParameterYAML/     340 份正式参数画像
-│  ├─ outputs/skipped/           105 份跳过证据
-│  └─ sources/                   固定提交源码，本地生成且不入库
-└─ tuning_pipeline/              标签、搜索空间与在线调优
-   ├─ tag_params/output/params/  340 份五维标签成品
-   ├─ search_limits/             人工路径独立参考快照（非在线权威）
-   ├─ logs/                      本地总控日志入口
-   └─ workflow/
-      ├─ search_space_profiles.yaml  自动/人工注册表 Profile 入口
-      ├─ registry_builder/       自动注册表、兼容校验与通用注入
-      ├─ search_space_compiler/  Search Limits 编译器
-      ├─ sidecars/               画像检索和运行规则
-      └─ continuous/             Controller、远端脚本和 Session 运行时
-         ├─ runtime_profiles.yaml    模型/镜像/拓扑组合入口
-         ├─ topology_profiles.yaml   节点、NPU、DP/TP 资源定义
-         └─ executor_profiles.yaml   已实现远端执行器能力边界
+├─ pipeline/                     业务阅读入口（先读这里）
+│  ├─ 01_parameter_knowledge/    画像 → 迁移 → Tags → 召回 → Search Limits
+│  ├─ 02_agent_tuning/           基线 → Agent 候选 → Controller 校验
+│  └─ 03_benchmark/              测量 → 比较 → 结果回填
+├─ scenarios/                    选择模型、量化、镜像、拓扑和基线
+├─ scripts/                      初始化、预检、启动、恢复、状态和停止
+├─ docs/                         操作手册和详细设计
+├─ portrait_pipeline/            参数知识内部实现（普通使用者跳过）
+├─ tuning_pipeline/              调优与 Benchmark 内部实现（普通使用者跳过）
+├─ docker/                       Linux/Docker Controller 封装
+└─ .runtime/                     本地状态、Session 和日志（不进入 Git）
 ```
+
+阅读项目使用 `pipeline → scenarios → scripts`；只有开发框架时才进入两个内部实现目录。
 
 ## 经批准保留的外部依赖
 
