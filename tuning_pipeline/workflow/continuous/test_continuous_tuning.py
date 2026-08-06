@@ -1644,6 +1644,65 @@ SLOT  service
             self.assertEqual(decision["action"], "retry_same")
             self.assertEqual(decision["candidate"], self.baseline)
 
+    def test_startup_zmq_collision_gets_identical_bounded_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (runtime_dir / "master.log").write_text(
+                "ApiServer_1 zmq.error.ZMQError: Address already in use "
+                "(addr='tcp://10.1.30.10:39099')\n"
+                "Process ApiServer_1 (PID: 123) died with exit code 1\n",
+                encoding="utf-8",
+            )
+
+            decision = self.controller.deterministic_startup_port_retry(
+                round_dir, self.baseline
+            )
+
+            self.assertIsNotNone(decision)
+            self.assertEqual("retry_same", decision["action"])
+            self.assertEqual("transient_infrastructure", decision["classification"])
+            self.assertEqual(self.baseline, decision["candidate"])
+
+    def test_b0_retry_preserves_launch_profile_and_reconciliation(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        controller = tuning.Controller(configured)
+        env_text = controller.candidate_env(
+            "a0r1",
+            configured["baseline"],
+            launch_profile=tuning.B0_LAUNCH_PROFILE,
+        )
+        self.assertIn(
+            "LAUNCH_PROFILE=official_source_defaults_deployable", env_text
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "session"
+            round_dir = session / "round_001_a0r1"
+            (round_dir / "02_parameters").mkdir(parents=True)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "02_parameters" / "candidate.env").write_text(
+                env_text, encoding="utf-8"
+            )
+            (round_dir / "04_runtime" / "master.log").write_text(
+                "Chunked prefill is enabled with max_num_batched_tokens=2048.\n"
+                "Initializing a V1 LLM engine with config: max_seq_len=64000, "
+                "enable_prefix_caching=True, enable_chunked_prefill=True, "
+                "compilation_config={'cudagraph_mode': "
+                "<CUDAGraphMode.FULL_AND_PIECEWISE: (1, 1)>, "
+                "'cudagraph_capture_sizes': [16, 32, 64, 128, 256], "
+                "'max_cudagraph_capture_size': 256}\n",
+                encoding="utf-8",
+            )
+            state = {
+                "round_label": "a0r1",
+                "current_candidate": dict(configured["baseline"]),
+            }
+            controller.reconcile_official_source_default_baseline(
+                session, round_dir, state
+            )
+            self.assertTrue(state["official_source_defaults_reconciled"])
+
     def test_log_fallback_scales_case_count_with_repetitions(self) -> None:
         self.controller.benchmark_mode = "aligned_l1"
         self.controller.benchmark = {"aligned_l1": {"repetitions": 2}}

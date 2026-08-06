@@ -1317,15 +1317,24 @@ class Controller:
         )
         return output_path
 
-    def candidate_env(self, label: str, candidate: dict[str, Any]) -> str:
+    def candidate_env(
+        self,
+        label: str,
+        candidate: dict[str, Any],
+        *,
+        launch_profile: str | None = None,
+    ) -> str:
         lines = [f"ROUND_LABEL={shlex.quote(label)}"]
         initial_baseline = self.config.get("initial_baseline", {})
         initial_label = str(initial_baseline.get("label", "a0"))
-        launch_profile = (
-            str(initial_baseline.get("launch_profile", "explicit_candidate"))
-            if label == initial_label
-            else "explicit_candidate"
-        )
+        if launch_profile is None:
+            launch_profile = (
+                str(initial_baseline.get("launch_profile", "explicit_candidate"))
+                if label == initial_label
+                else "explicit_candidate"
+            )
+        if launch_profile not in {B0_LAUNCH_PROFILE, "explicit_candidate"}:
+            raise ValueError(f"Unsupported launch profile: {launch_profile!r}")
         lines.append(f"LAUNCH_PROFILE={shlex.quote(launch_profile)}")
         for key, env_name in self.param_to_env.items():
             value = candidate[key]
@@ -1804,11 +1813,16 @@ class Controller:
         candidate: dict[str, Any],
         *,
         dry_run: bool,
+        launch_profile: str | None = None,
     ) -> tuple[str | None, str]:
         self.validate_runtime_configuration(candidate)
         env_path = round_dir / "02_parameters" / "candidate.env"
         env_path.write_text(
-            self.candidate_env(label, candidate), encoding="utf-8", newline="\n"
+            self.candidate_env(
+                label, candidate, launch_profile=launch_profile
+            ),
+            encoding="utf-8",
+            newline="\n",
         )
         if dry_run:
             # The persistent lease is created once and deliberately stays
@@ -2118,6 +2132,7 @@ class Controller:
         candidate: dict[str, Any],
         *,
         dry_run: bool = False,
+        launch_profile: str | None = None,
     ) -> tuple[str | None, str]:
         self.validate_deployment_configuration()
         rule_evaluation = self.runtime_rule_evaluation(candidate)
@@ -2138,10 +2153,15 @@ class Controller:
                 label,
                 candidate,
                 dry_run=dry_run,
+                launch_profile=launch_profile,
             )
         env_path = round_dir / "02_parameters" / "candidate.env"
         env_path.write_text(
-            self.candidate_env(label, candidate), encoding="utf-8", newline="\n"
+            self.candidate_env(
+                label, candidate, launch_profile=launch_profile
+            ),
+            encoding="utf-8",
+            newline="\n",
         )
         remote_candidates = f"{self.remote_auto}/candidates"
         self.ssh(f"mkdir -p {shlex.quote(remote_candidates)}")
@@ -2770,8 +2790,17 @@ class Controller:
         the engine log before analysis or candidate generation can begin.
         """
         initial = self.config.get("initial_baseline", {})
+        round_launch_profile = self.round_launch_profile(round_dir)
+        if round_launch_profile is None:
+            # Compatibility with archived/tests created before candidate.env
+            # recorded the launch identity next to every round.
+            round_launch_profile = (
+                str(initial.get("launch_profile", "explicit_candidate"))
+                if state.get("round_label") == str(initial.get("label", "a0"))
+                else "explicit_candidate"
+            )
         if (
-            state.get("round_label") != str(initial.get("label", "a0"))
+            round_launch_profile != B0_LAUNCH_PROFILE
             or initial.get("launch_profile") != B0_LAUNCH_PROFILE
             or state.get("official_source_defaults_reconciled")
         ):
@@ -3190,6 +3219,37 @@ class Controller:
         tail = text[-(max_chars - len(head)) :]
         return head + "\n[...truncated by controller...]\n" + tail
 
+    @staticmethod
+    def failure_signature_evidence(round_dir: Path, *, max_lines: int = 120) -> list[str]:
+        """Extract decisive error lines from complete logs before prompt truncation."""
+        patterns = re.compile(
+            r"Address already in use|EADDRINUSE|ZMQError|Traceback|"
+            r"out of memory|OutOfMemory|HCCL.*(?:error|failed)|"
+            r"Process ApiServer_\d+.*died|benchmark.*(?:error|failed)",
+            re.IGNORECASE,
+        )
+        evidence: list[str] = []
+        runtime_dir = round_dir / "04_runtime"
+        for name in (
+            "master.log",
+            "worker.log",
+            "benchmark_runner.log",
+            "warmup.log",
+            "formal.log",
+        ):
+            path = runtime_dir / name
+            if not path.is_file():
+                continue
+            for line_number, line in enumerate(
+                path.read_text(encoding="utf-8", errors="replace").splitlines(),
+                start=1,
+            ):
+                if patterns.search(line):
+                    evidence.append(f"{name}:{line_number}: {line[-4000:]}")
+                    if len(evidence) >= max_lines:
+                        return evidence
+        return evidence
+
     def build_analysis_evidence(
         self,
         round_dir: Path,
@@ -3573,6 +3633,9 @@ Embedded evidence:
                 round_dir / "04_runtime" / "benchmark_runner.log",
                 max_chars=30000,
             ),
+            "error_signatures_from_complete_logs": self.failure_signature_evidence(
+                round_dir
+            ),
             "parameter_portraits": self.evidence_text(
                 session_dir / "00_search_space" / "parameter_portraits.agent.yaml",
                 max_chars=120000,
@@ -3660,6 +3723,74 @@ Embedded evidence:
         )
         self.refresh_runtime_rules(session_dir, round_dir)
         return decision
+
+    @staticmethod
+    def round_launch_profile(round_dir: Path) -> str | None:
+        env_path = round_dir / "02_parameters" / "candidate.env"
+        if not env_path.is_file():
+            return None
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.startswith("LAUNCH_PROFILE="):
+                continue
+            values = shlex.split(line.split("=", 1)[1])
+            if len(values) != 1 or values[0] not in {
+                B0_LAUNCH_PROFILE,
+                "explicit_candidate",
+            }:
+                raise ValueError(f"Invalid archived LAUNCH_PROFILE line: {line!r}")
+            return values[0]
+        return None
+
+    def deterministic_startup_port_retry(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Retry an unchanged launch when vLLM's dynamic ZMQ port race is proven."""
+        runtime_dir = round_dir / "04_runtime"
+        if (runtime_dir / "SERVICE_READY").exists():
+            return None
+        master_path = runtime_dir / "master.log"
+        if not master_path.is_file():
+            return None
+        text = master_path.read_text(encoding="utf-8", errors="replace")
+        address_match = re.search(
+            r"(?:ZMQError|zmq\.error\.ZMQError).*?Address already in use.*?"
+            r"(?:addr=)?['\"]?(tcp://[^'\"\s)]+)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        api_server_died = re.search(
+            r"Process ApiServer_\d+.*?(?:died with exit code|exited)",
+            text,
+            re.IGNORECASE,
+        )
+        if not address_match or not api_server_died:
+            return None
+        address = address_match.group(1)
+        return {
+            "summary": (
+                "vLLM API startup hit a proven transient ZMQ port collision at "
+                f"{address}; retrying the identical launch profile and candidate."
+            ),
+            "classification": "transient_infrastructure",
+            "root_cause": (
+                "The multi-API-server launcher selected a TCP address that was no "
+                "longer free when the child process bound its ZMQ ROUTER socket."
+            ),
+            "evidence": [
+                f"master.log reports Address already in use at {address}.",
+                "An ApiServer child exited before SERVICE_READY was created.",
+                "No serving parameter change is required or permitted for this retry.",
+            ],
+            "action": "retry_same",
+            "safe_to_automate": True,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "candidate": current,
+        }
 
     def validate_failure_decision(
         self,
@@ -3946,6 +4077,7 @@ Embedded evidence:
         index: int,
         label: str,
         candidate: dict[str, Any],
+        launch_profile: str | None = None,
     ) -> tuple[Path, str | None, str]:
         next_dir = self.round_dir(session_dir, index, label)
         self.write_context(
@@ -3960,7 +4092,13 @@ Embedded evidence:
         )
         self.run_query(next_dir)
         save_yaml(next_dir / "02_parameters" / "candidate_params.yaml", candidate)
-        task_id, run_id = self.submit(next_dir, label, candidate, dry_run=False)
+        task_id, run_id = self.submit(
+            next_dir,
+            label,
+            candidate,
+            dry_run=False,
+            launch_profile=launch_profile,
+        )
         return next_dir, task_id, run_id
 
     def create_session(self) -> tuple[Path, dict[str, Any]]:
@@ -4124,6 +4262,7 @@ Embedded evidence:
             index=next_index,
             label=next_label,
             candidate=state["current_candidate"],
+            launch_profile=self.round_launch_profile(failed_round),
         )
         state.update(
             round_index=next_index,
@@ -4418,9 +4557,10 @@ Embedded evidence:
                 log(
                     f"Round {state['round_label']} failed; invoking Codex failure analysis."
                 )
-                failure = self.deterministic_benchmark_retry(
-                    round_dir,
-                    state["current_candidate"],
+                failure = self.deterministic_startup_port_retry(
+                    round_dir, state["current_candidate"]
+                ) or self.deterministic_benchmark_retry(
+                    round_dir, state["current_candidate"]
                 )
                 if failure is not None:
                     save_json(
@@ -4430,8 +4570,8 @@ Embedded evidence:
                         failure,
                     )
                     log(
-                        "Deterministic recovery classified a one-request benchmark "
-                        "shortfall as safe for bounded same-candidate retry."
+                        "Deterministic recovery classified the failure as safe for "
+                        "a bounded same-candidate retry: " + failure["summary"]
                     )
                 else:
                     failure = self.saved_failure_decision(
@@ -4567,6 +4707,11 @@ Embedded evidence:
                     index=next_index,
                     label=next_label,
                     candidate=next_candidate,
+                    launch_profile=(
+                        self.round_launch_profile(round_dir)
+                        if action == "retry_same"
+                        else None
+                    ),
                 )
                 state.update(
                     round_index=next_index,
