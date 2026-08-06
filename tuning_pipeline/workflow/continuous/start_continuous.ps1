@@ -10,13 +10,24 @@ param(
     [string]$SearchSpaceProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
     [string]$AgentProvider,
-    [string]$Config
+    [string]$Config,
+    [string]$RuntimeRoot
 )
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $downstreamRoot = Split-Path -Parent (Split-Path -Parent $root)
 $pipelineRoot = Split-Path -Parent $downstreamRoot
+$stateRoot = if ($RuntimeRoot) {
+    if ([System.IO.Path]::IsPathRooted($RuntimeRoot)) {
+        [System.IO.Path]::GetFullPath($RuntimeRoot)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $RuntimeRoot))
+    }
+} else {
+    $root
+}
+New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 
 if ((@($Resume, $RetryPausedCurrent, $NewSession) | Where-Object { $_ }).Count -gt 1) {
     throw "-Resume, -RetryPausedCurrent and -NewSession are mutually exclusive."
@@ -41,7 +52,7 @@ if ($Config) {
 function Get-ControllerProcess {
     $candidatePids = @()
     foreach ($pidName in @("controller.lock", "controller.pid")) {
-        $pidPath = Join-Path $root $pidName
+        $pidPath = Join-Path $stateRoot $pidName
         if (Test-Path -LiteralPath $pidPath) {
             $value = (Get-Content -Raw -LiteralPath $pidPath).Trim()
             if ($value -match '^\d+$') {
@@ -148,7 +159,7 @@ if ($RetryPausedCurrent) {
 } elseif ($Resume) {
     $mode = "--resume"
 } elseif (-not $NewSession) {
-    $statePath = Join-Path $root "state.json"
+    $statePath = Join-Path $stateRoot "state.json"
     if (Test-Path -LiteralPath $statePath) {
         $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
         $resumableStatuses = @(
@@ -172,6 +183,7 @@ Write-Host "Preflight: OK"
 Write-Host "Recommended launch mode: $mode"
 if ($CheckOnly) {
     $checkArguments = @((Join-Path $root "continuous_tuning.py"), "--check-only")
+    if ($RuntimeRoot) { $checkArguments += @("--runtime-root", $stateRoot) }
     if ($configPath) { $checkArguments += @("--config", $configPath) }
     $allowActiveLease = $false
     if ($StrategyProfile) { $checkArguments += @("--strategy-profile", $StrategyProfile) }
@@ -180,7 +192,7 @@ if ($CheckOnly) {
     if ($SearchSpaceProfile) { $checkArguments += @("--search-space-profile", $SearchSpaceProfile) }
     if ($mode -eq "--resume" -or $RetryPausedCurrent) {
         $checkArguments += "--use-frozen-session"
-        $checkStatePath = Join-Path $root "state.json"
+        $checkStatePath = Join-Path $stateRoot "state.json"
         if (Test-Path -LiteralPath $checkStatePath) {
             $checkState = Get-Content -Raw -LiteralPath $checkStatePath | ConvertFrom-Json
             if ($checkState.active_task_id) {
@@ -204,13 +216,14 @@ if ($CheckOnly) {
     exit 0
 }
 
-$stopFile = Join-Path $root "STOP_REQUESTED"
+$stopFile = Join-Path $stateRoot "STOP_REQUESTED"
 if (Test-Path -LiteralPath $stopFile) {
-    $archived = Join-Path $root ("STOP_REQUESTED." + (Get-Date -Format "yyyyMMdd_HHmmss"))
+    $archived = Join-Path $stateRoot ("STOP_REQUESTED." + (Get-Date -Format "yyyyMMdd_HHmmss"))
     Move-Item -LiteralPath $stopFile -Destination $archived
 }
 
 $arguments = @((Join-Path $root "continuous_tuning.py"), $mode)
+if ($RuntimeRoot) { $arguments += @("--runtime-root", $stateRoot) }
 if ($configPath) { $arguments += @("--config", $configPath) }
 if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
 if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
@@ -222,21 +235,21 @@ if ($Foreground) {
 }
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$processLogDir = Join-Path $root "logs\controller\process"
+$processLogDir = Join-Path $stateRoot "logs\controller\process"
 New-Item -ItemType Directory -Path $processLogDir -Force | Out-Null
 $stdout = Join-Path $processLogDir "controller_process_$timestamp.stdout.log"
 $stderr = Join-Path $processLogDir "controller_process_$timestamp.stderr.log"
 $process = Start-Process -FilePath $python -ArgumentList $arguments `
     -WorkingDirectory $root -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-$process.Id | Set-Content -LiteralPath (Join-Path $root "controller.pid") -Encoding ascii
+$process.Id | Set-Content -LiteralPath (Join-Path $stateRoot "controller.pid") -Encoding ascii
 @(
     "pid=$($process.Id)"
     "mode=$mode"
     "started_at=$(Get-Date -Format o)"
     "stdout=$stdout"
     "stderr=$stderr"
-) | Set-Content -LiteralPath (Join-Path $root "latest_controller_launch.txt") -Encoding utf8
+) | Set-Content -LiteralPath (Join-Path $stateRoot "latest_controller_launch.txt") -Encoding utf8
 
 Write-Host "Continuous controller started. PID=$($process.Id), mode=$mode"
-Write-Host "State: $(Join-Path $root 'state.json')"
+Write-Host "State: $(Join-Path $stateRoot 'state.json')"

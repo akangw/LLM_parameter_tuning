@@ -1,0 +1,93 @@
+# A0 reproduces the deployment owner's existing single-node W4A8C8 launch.
+schema_version: 1
+baseline_id: a0-glm52-w4a8c8-existing-tuned
+status: reference_ready_for_runtime_validation
+launch_profile: explicit_candidate
+
+purpose: >-
+  Use the existing start_service.sh configuration as the measured incumbent for
+  Agent V2. This is an expert-tuned reference, not an official-default B0.
+
+source:
+  script: /models/wangakang/liuxin-workspace/glm52-w4a8c8-max-throughput/glm52单节点部署调优/start_service.sh
+  verification: read_only_capture_required_before_first_session
+
+target_identity:
+  image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  image_digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+  reuse_policy: fail_closed_if_runtime_identity_differs
+
+deployment_invariants:
+  model: /models/share/GLM-5.2-w4a8c8
+  mtp_model: /models/share/GLM-5.2-w4a8c8-mtp-only-vllm0.25.1-image46d8bbb4
+  topology:
+    pods: 1
+    npu_per_pod: 16
+    data_parallel_size: 2
+    data_parallel_size_local: 2
+    tensor_parallel_size: 8
+  served_model_name: glm-52
+  service_port: 8077
+  quantization: ascend
+
+reference_parameters:
+  max_num_seqs: 40
+  max_model_len: 20480
+  max_num_batched_tokens: 8192
+  gpu_memory_utilization: 0.85
+  enable_prefix_caching: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  speculative_config__method: mtp
+  long_prefill_token_threshold: 0
+  enable_chunked_prefill: true
+  max_cudagraph_capture_size: 160
+  cudagraph_capture_sizes: [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160]
+  compilation_enable_sp: false
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  decode_context_parallel_size: 1
+  flashcomm1: true
+  mlapo: true
+  fused_mc2: 0
+  enable_balance_scheduling: true
+  enable_reduce_sample: true
+  speculative_config__enforce_eager: null
+  block_size: 128
+  additional_config__enable_dsa_cp: true
+  additional_config__multistream_overlap_shared_expert: true
+
+fixed_launch_contract:
+  cli_args:
+    - --api-server-count
+    - "1"
+    - --tool-call-parser
+    - glm47
+    - --reasoning-parser
+    - glm45
+    - --enable-auto-tool-choice
+    - --load-format
+    - safetensors
+    - --block-size
+    - "128"
+  additional_config:
+    enable_sparse_sfa_c8: false
+    enable_sparse_li_c8: false
+    scheduler_config:
+      enable_balance_scheduling: true
+  environment:
+    HCCL_OP_EXPANSION_MODE: AIV
+    OMP_PROC_BIND: "false"
+    OMP_NUM_THREADS: "1"
+    HCCL_BUFFSIZE: "320"
+    PYTORCH_NPU_ALLOC_CONF: expandable_segments:True
+
+acceptance_contract:
+  benchmark_profile: aligned_l1_glm52_w4a8c8_v1
+  repetitions: 3
+  use_as_initial_agent_incumbent_after_metrics_gate_passes: true
+  never_mix_history_with: glm52-w8a8-a3-dp2-tp16-aligned-l1

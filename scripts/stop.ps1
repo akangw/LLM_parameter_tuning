@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$StopActiveTask)
+param([switch]$StopActiveTask, [string]$RuntimeRoot)
 
 $ErrorActionPreference = "Stop"
 $entry = Join-Path $PSScriptRoot "..\tuning_pipeline\workflow\continuous\stop_continuous.ps1"

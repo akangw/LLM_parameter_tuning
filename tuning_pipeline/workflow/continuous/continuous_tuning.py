@@ -1413,6 +1413,10 @@ class Controller:
             "WORKER_DATA_PARALLEL_START_RANK": self.topology[
                 "worker_data_parallel_start_rank"
             ],
+            "WORKER_REPLICAS": self.topology["worker_replicas"],
+            "EXECUTOR_REMOTE_CONTRACT": self.topology["resolved_executor"][
+                "remote_contract"
+            ],
         }
         for env_name, value in topology_env.items():
             lines.append(f"{env_name}={shlex.quote(str(value))}")
@@ -1448,9 +1452,25 @@ class Controller:
             "VLLM_COMPAT_VERSION": self.deployment["vllm_compat_version"],
             "INIT_ENV_SCRIPT": self.deployment["init_env_script"],
             "CANN_ENV_SCRIPT": self.deployment["cann_env_script"],
+            "RUNTIME_CACHE_ROOT": self.deployment.get("cache_root", ""),
+            "FIXED_CLI_ARGS_JSON": json.dumps(
+                self.deployment.get("fixed_cli_args", []),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "FIXED_ADDITIONAL_CONFIG_JSON": json.dumps(
+                self.deployment.get("fixed_additional_config", {}),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "FIXED_ENVIRONMENT_JSON": json.dumps(
+                self.deployment.get("fixed_environment", {}),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         }
         for env_name, value in deployment_env.items():
-            lines.append(f"{env_name}={shlex.quote(value)}")
+            lines.append(f"{env_name}={shlex.quote(str(value))}")
         lab_output_root = str(
             self.lab.get("output_root", f"{self.remote_auto}/lab_runs")
         )
@@ -1781,6 +1801,7 @@ class Controller:
             document["image"] = repository
             document["image_tag"] = tag
         document["min_available"] = self.topology["nodes"]
+        rendered_tasks = []
         for task in document.get("tasks", []):
             task_name = str(task.get("name", "")).lower()
             if task_name not in {"master", "worker"}:
@@ -1793,10 +1814,14 @@ class Controller:
             task["command"] = f"bash {self.remote_auto}/{script}"
             task["npu"] = self.topology["npu_per_node"]
             if task_name == "worker":
+                if self.topology["worker_replicas"] == 0:
+                    continue
                 task["replicas"] = self.topology["worker_replicas"]
             if name == "experiment_loop.yaml":
                 task["image"] = repository
                 task["image_tag"] = tag
+            rendered_tasks.append(task)
+        document["tasks"] = rendered_tasks
         return document
 
     def sync_remote_scripts(self) -> None:

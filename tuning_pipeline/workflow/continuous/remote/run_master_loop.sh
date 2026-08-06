@@ -50,7 +50,7 @@ cat > "${RUN_DIR}/effective_config.yaml" <<EOF
 experiment_id: ${EXPERIMENT_RUN_ID}
 launch_profile: ${LAUNCH_PROFILE}
 model: ${MODEL_PATH}
-topology: {pods: 2, npu_per_pod: 16, data_parallel_size: 2, tensor_parallel_size: 16}
+topology: {pods: ${TOPOLOGY_NODES}, npu_per_pod: ${NPU_PER_NODE}, data_parallel_size: ${DATA_PARALLEL_SIZE}, data_parallel_size_local: ${DATA_PARALLEL_SIZE_LOCAL}, tensor_parallel_size: ${TENSOR_PARALLEL_SIZE}, worker_replicas: ${WORKER_REPLICAS}}
 service:
   port: ${SERVICE_PORT}
   runtime_injection_mode: ${RUNTIME_INJECTION_MODE}
@@ -103,7 +103,7 @@ authoritative_server_artifacts:
     - generated_environment.sh
   service_logs:
     - master.log
-    - worker.log
+    - worker.log  # present only when worker_replicas > 0
     - run_status.json
     - startup_timeline.jsonl
   benchmark_logs:
@@ -117,7 +117,7 @@ authoritative_server_artifacts:
     - BENCHMARK_DONE
     - BENCHMARK_FAILED
     - MASTER_DONE
-ktp_outer_logs: ${LAB_OUTPUT_ROOT}/${EXPERIMENT_RUN_ID}/service/rank-<000|001>.log
+ktp_outer_logs: ${LAB_OUTPUT_ROOT}/${EXPERIMENT_RUN_ID}/service/rank-*.log
 local_policy: core_logs_and_metrics_only
 EOF
 

@@ -11,3 +11,14 @@ executors:
       worker_replicas: [1]
       worker_data_parallel_start_rank: [1]
     remote_contract: legacy_two_role_v1
+  ktp_single_node_local_dp:
+    status: integrated
+    platform: ascend
+    purpose: One-master, no-worker ktp-lab executor with two local DP replicas.
+    constraints:
+      nodes: [1]
+      data_parallel_size: [2]
+      data_parallel_size_local: [2]
+      worker_replicas: [0]
+      worker_data_parallel_start_rank: [0]
+    remote_contract: single_node_local_dp_v1

@@ -1,5 +1,17 @@
+[CmdletBinding()]
+param([string]$RuntimeRoot)
+
 $root = $PSScriptRoot
-$lockPath = Join-Path $root "controller.lock"
+$stateRoot = if ($RuntimeRoot) {
+    if ([System.IO.Path]::IsPathRooted($RuntimeRoot)) {
+        [System.IO.Path]::GetFullPath($RuntimeRoot)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $RuntimeRoot))
+    }
+} else {
+    $root
+}
+$lockPath = Join-Path $stateRoot "controller.lock"
 $controllerPid = $null
 if (Test-Path -LiteralPath $lockPath) {
     $value = (Get-Content -Raw -LiteralPath $lockPath).Trim()
@@ -19,7 +31,7 @@ if ($null -ne $controllerPid) {
     Write-Host "Controller: not running"
 }
 
-$statePath = Join-Path $root "state.json"
+$statePath = Join-Path $stateRoot "state.json"
 if (Test-Path -LiteralPath $statePath) {
     Get-Content -Raw -LiteralPath $statePath
 } else {
@@ -27,7 +39,7 @@ if (Test-Path -LiteralPath $statePath) {
 }
 
 Write-Host "`nRecent controller log:"
-$logPath = Join-Path $root "logs\controller\controller.log"
+$logPath = Join-Path $stateRoot "logs\controller\controller.log"
 if (Test-Path -LiteralPath $logPath) {
     Get-Content -LiteralPath $logPath -Tail 20
 }

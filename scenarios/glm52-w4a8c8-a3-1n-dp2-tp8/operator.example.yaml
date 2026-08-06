@@ -1,0 +1,22 @@
+# This planned scenario cannot start until all adapter attestations are true.
+# Copy to operator.local.yaml with `scripts/scenario.ps1 -Action init`.
+base_config: ../../tuning_pipeline/workflow/continuous/launch_profiles/glm52_w4a8c8_a0_aligned_l1.example.yaml
+
+remote_host: CHANGE_ME_SSH_ALIAS
+remote_project: /CHANGE_ME/writable/glm52-w4a8c8-a3-1n-dp2-tp8
+
+deployment:
+  model_path: /CHANGE_ME/GLM-5.2-w4a8c8
+  served_model_name: CHANGE_ME_SERVED_MODEL
+  network_interface: CHANGE_ME_NETWORK_INTERFACE
+  init_env_script: /CHANGE_ME/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
+
+mtp_draft_model: /CHANGE_ME/mtp-only-checkpoint
+
+lab:
+  lease_name: CHANGE_ME_UNIQUE_VERSIONED_LEASE
+  output_root: /CHANGE_ME/writable/glm52-w4a8c8-a3-1n-dp2-tp8/workflow/auto/lab_runs
+
+agent:
+  provider: deepseek

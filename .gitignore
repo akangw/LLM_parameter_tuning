@@ -7,6 +7,7 @@ STOP_REQUESTED*
 .pytest_cache/
 .venv/
 .runtime/
+scenarios/*/operator.local.yaml
 
 # Local runtime state and high-volume experiment evidence.
 tuning_pipeline/workflow/continuous/state.json

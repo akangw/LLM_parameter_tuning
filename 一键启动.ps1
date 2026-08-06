@@ -10,7 +10,8 @@ param(
     [string]$SearchSpaceProfile,
     [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
     [string]$AgentProvider,
-    [string]$Config
+    [string]$Config,
+    [string]$RuntimeRoot
 )
 
 $ErrorActionPreference = "Stop"

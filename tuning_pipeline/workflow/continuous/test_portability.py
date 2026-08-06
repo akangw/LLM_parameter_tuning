@@ -60,6 +60,30 @@ class TopologyProfileTests(unittest.TestCase):
                 Path(__file__).resolve().parents[2],
             )
 
+    def test_single_node_local_dp_profile_has_no_worker_rank(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        resolved, profile = resolve_topology_profile(
+            {
+                "topology": {
+                    "profile": "a3_single_16npu_dp2local_tp8",
+                    "profiles_file": "workflow/continuous/topology_profiles.yaml",
+                }
+            },
+            root,
+        )
+        self.assertEqual(profile["nodes"], 1)
+        self.assertEqual(profile["data_parallel_size_local"], 2)
+        self.assertEqual(profile["tensor_parallel_size"], 8)
+        self.assertEqual(profile["worker_replicas"], 0)
+        self.assertEqual(profile["worker_data_parallel_start_rank"], 0)
+        self.assertEqual(
+            profile["resolved_executor"]["remote_contract"],
+            "single_node_local_dp_v1",
+        )
+        self.assertEqual(
+            resolved["topology"]["profile"], "a3_single_16npu_dp2local_tp8"
+        )
+
 
 class RuntimeProfileTests(unittest.TestCase):
     def setUp(self) -> None:

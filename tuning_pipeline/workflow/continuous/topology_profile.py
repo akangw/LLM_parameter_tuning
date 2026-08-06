@@ -65,27 +65,40 @@ def resolve_topology_profile(
 
     if profile.get("status") != "integrated":
         raise ValueError(f"Topology profile {profile_name!r} is not integrated")
-    integer_fields = (
+    positive_integer_fields = (
         "nodes",
         "npu_per_node",
         "data_parallel_size",
         "data_parallel_size_local",
         "tensor_parallel_size",
         "data_parallel_rpc_port",
+    )
+    non_negative_integer_fields = (
         "worker_replicas",
         "worker_data_parallel_start_rank",
     )
-    for field in integer_fields:
+    for field in positive_integer_fields + non_negative_integer_fields:
         try:
             profile[field] = int(profile[field])
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(
                 f"Topology profile {profile_name!r} has invalid {field}"
             ) from exc
-        if profile[field] < 1:
+        minimum = 0 if field in non_negative_integer_fields else 1
+        if profile[field] < minimum:
             raise ValueError(
-                f"Topology profile {profile_name!r} requires positive {field}"
+                f"Topology profile {profile_name!r} requires {field} >= {minimum}"
             )
+
+    if profile["worker_replicas"] == 0 and profile["worker_data_parallel_start_rank"] != 0:
+        raise ValueError(
+            f"Topology profile {profile_name!r} must use "
+            "worker_data_parallel_start_rank=0 without workers"
+        )
+    if profile["worker_replicas"] > 0 and profile["worker_data_parallel_start_rank"] < 1:
+        raise ValueError(
+            f"Topology profile {profile_name!r} requires a positive worker start rank"
+        )
 
     if profile["data_parallel_size"] * profile["tensor_parallel_size"] != (
         profile["nodes"] * profile["npu_per_node"]

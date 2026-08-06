@@ -1,5 +1,12 @@
 [CmdletBinding()]
-param([string]$Config)
+param(
+    [string]$Config,
+    [string]$StrategyProfile,
+    [string]$BenchmarkProfile,
+    [string]$SearchSpaceProfile,
+    [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
+    [string]$AgentProvider
+)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -23,5 +30,9 @@ if ($Config) {
         $arguments += @("--config", (Resolve-Path -LiteralPath $localConfig).Path)
     }
 }
+if ($StrategyProfile) { $arguments += @("--strategy-profile", $StrategyProfile) }
+if ($BenchmarkProfile) { $arguments += @("--benchmark-profile", $BenchmarkProfile) }
+if ($SearchSpaceProfile) { $arguments += @("--search-space-profile", $SearchSpaceProfile) }
+if ($AgentProvider) { $arguments += @("--agent-provider", $AgentProvider) }
 & $python @arguments
 exit $LASTEXITCODE

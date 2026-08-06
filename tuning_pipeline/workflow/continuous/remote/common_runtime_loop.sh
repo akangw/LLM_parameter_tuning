@@ -33,6 +33,7 @@ source "${PARAM_FILE}"
 : "${INIT_ENV_SCRIPT:?INIT_ENV_SCRIPT is required}"
 : "${CANN_ENV_SCRIPT:?CANN_ENV_SCRIPT is required}"
 : "${LAB_OUTPUT_ROOT:?LAB_OUTPUT_ROOT is required}"
+: "${EXECUTOR_REMOTE_CONTRACT:?EXECUTOR_REMOTE_CONTRACT is required}"
 [[ -f "${INIT_ENV_SCRIPT}" ]] || { echo "Missing ${INIT_ENV_SCRIPT}" >&2; exit 2; }
 [[ -f "${CANN_ENV_SCRIPT}" ]] || { echo "Missing ${CANN_ENV_SCRIPT}" >&2; exit 2; }
 LAUNCH_PROFILE="${LAUNCH_PROFILE:-explicit_candidate}"
@@ -59,11 +60,27 @@ ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE="${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE
 SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON="${SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON:-null}"
 RUNTIME_INJECTION_MODE="${RUNTIME_INJECTION_MODE:-native_v1}"
 RUNTIME_INJECTION_PAYLOAD_B64="${RUNTIME_INJECTION_PAYLOAD_B64:-}"
+RUNTIME_CACHE_ROOT="${RUNTIME_CACHE_ROOT:-}"
+FIXED_CLI_ARGS_JSON="${FIXED_CLI_ARGS_JSON:-[]}"
+FIXED_ADDITIONAL_CONFIG_JSON="${FIXED_ADDITIONAL_CONFIG_JSON:-}"
+[[ -n "${FIXED_ADDITIONAL_CONFIG_JSON}" ]] || FIXED_ADDITIONAL_CONFIG_JSON='{}'
+FIXED_ENVIRONMENT_JSON="${FIXED_ENVIRONMENT_JSON:-}"
+[[ -n "${FIXED_ENVIRONMENT_JSON}" ]] || FIXED_ENVIRONMENT_JSON='{}'
 SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
 SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
 source "${INIT_ENV_SCRIPT}"
 source "${CANN_ENV_SCRIPT}"
+
+if [[ -n "${RUNTIME_CACHE_ROOT}" ]]; then
+  export XDG_CACHE_HOME="${RUNTIME_CACHE_ROOT}/xdg"
+  export HF_HOME="${RUNTIME_CACHE_ROOT}/huggingface"
+  export TORCH_HOME="${RUNTIME_CACHE_ROOT}/torch"
+  export TRITON_CACHE_DIR="${RUNTIME_CACHE_ROOT}/triton"
+  export TORCH_EXTENSIONS_DIR="${RUNTIME_CACHE_ROOT}/torch-extensions"
+  mkdir -p "${XDG_CACHE_HOME}" "${HF_HOME}" "${TORCH_HOME}" \
+    "${TRITON_CACHE_DIR}" "${TORCH_EXTENSIONS_DIR}"
+fi
 
 unset LOCAL_RANK
 export PYTHONUNBUFFERED=1
@@ -107,19 +124,75 @@ else
   export ASCEND_LAUNCH_BLOCKING=0
 fi
 
+FIXED_ENVIRONMENT_FILE="${RUN_DIR}/fixed_environment.sh"
+python3 - "${FIXED_ENVIRONMENT_JSON}" "${FIXED_ENVIRONMENT_FILE}" <<'PY'
+import json
+import re
+import shlex
+import sys
+from pathlib import Path
+
+value = json.loads(sys.argv[1])
+if not isinstance(value, dict):
+    raise SystemExit("FIXED_ENVIRONMENT_JSON must be an object")
+lines = []
+for name, setting in value.items():
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
+        raise SystemExit(f"invalid fixed environment name: {name!r}")
+    if setting is None:
+        lines.append(f"unset {name}")
+    else:
+        lines.append(f"export {name}={shlex.quote(str(setting))}")
+Path(sys.argv[2]).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY
+source "${FIXED_ENVIRONMENT_FILE}"
+
 bool_flag() {
   [[ "${1}" == "true" ]]
 }
 
 VLLM_COMMON_ARGS=(
-  --data-parallel-size 2
-  --data-parallel-size-local 1
-  --data-parallel-address "${MASTER_IP}"
-  --data-parallel-rpc-port 12980
-  --tensor-parallel-size 16
+  --data-parallel-size "${DATA_PARALLEL_SIZE}"
+  --data-parallel-size-local "${DATA_PARALLEL_SIZE_LOCAL}"
+  --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}"
   --served-model-name "${SERVED_MODEL_NAME}"
   --trust-remote-code
   --quantization "${MODEL_QUANTIZATION}"
+)
+
+case "${EXECUTOR_REMOTE_CONTRACT}" in
+  legacy_two_role_v1)
+    VLLM_COMMON_ARGS+=(
+      --data-parallel-address "${MASTER_IP}"
+      --data-parallel-rpc-port "${DATA_PARALLEL_RPC_PORT}"
+    )
+    ;;
+  single_node_local_dp_v1)
+    if [[ "${WORKER_REPLICAS}" != 0 || "${DATA_PARALLEL_SIZE}" != "${DATA_PARALLEL_SIZE_LOCAL}" ]]; then
+      echo "Invalid single-node local-DP topology contract" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "Unsupported EXECUTOR_REMOTE_CONTRACT=${EXECUTOR_REMOTE_CONTRACT}" >&2
+    exit 2
+    ;;
+esac
+
+while IFS= read -r -d '' fixed_arg; do
+  VLLM_COMMON_ARGS+=("${fixed_arg}")
+done < <(python3 - "${FIXED_CLI_ARGS_JSON}" <<'PY'
+import json
+import sys
+
+value = json.loads(sys.argv[1])
+if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    raise SystemExit("FIXED_CLI_ARGS_JSON must be a JSON string array")
+for item in value:
+    if "\x00" in item:
+        raise SystemExit("fixed CLI arguments cannot contain NUL")
+    sys.stdout.buffer.write(item.encode("utf-8") + b"\0")
+PY
 )
 
 # DTFS loading is a deployment transport contract, not an Agent-tuned serving
@@ -247,11 +320,11 @@ PY
     "${ADDITIONAL_CONFIG_ENABLE_FUSED_MC2}" \
     "${ADDITIONAL_CONFIG_ENABLE_BALANCE_SCHEDULING}" \
     "${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE}" \
-    "${GENERATED_JSON_CONFIGS}" <<'PY'
+    "${GENERATED_JSON_CONFIGS}" "${FIXED_ADDITIONAL_CONFIG_JSON}" <<'PY'
 import json
 import sys
 
-flashcomm1, mlapo, fused_mc2, balance, reduce_sample, generated_path = sys.argv[1:]
+flashcomm1, mlapo, fused_mc2, balance, reduce_sample, generated_path, fixed_json = sys.argv[1:]
 config = {
     "enable_npugraph_ex": True,
     "fuse_muls_add": True,
@@ -262,6 +335,10 @@ config = {
     "enable_balance_scheduling": balance == "true",
     "enable_reduce_sample": reduce_sample == "true",
 }
+fixed = json.loads(fixed_json)
+if not isinstance(fixed, dict):
+    raise SystemExit("FIXED_ADDITIONAL_CONFIG_JSON must be an object")
+config.update(fixed)
 def merge(target, patch):
     for key, value in patch.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):

@@ -1,0 +1,56 @@
+schema_version: 1
+scenario:
+  id: glm52-w4a8c8-a3-1n-dp2-tp8
+  status: planned
+  summary: GLM-5.2 W4A8C8 on one Atlas A3 node with two local DP replicas.
+  model:
+    family: GLM-5.2
+    weight_format: W4A8C8
+    default_path: /models/share/GLM-5.2-w4a8c8
+  topology:
+    platform: Ascend Atlas A3
+    nodes: 1
+    npu_per_node: 16
+    data_parallel_size: 2
+    data_parallel_size_local: 2
+    tensor_parallel_size: 8
+    executor: ktp_single_node_local_dp
+  runtime:
+    selector: external_adapter
+    adapter_file: tuning_pipeline/workflow/continuous/adapters/glm52_w4a8c8_a3_single_dp2_tp8.yaml
+  benchmark:
+    default_profile: aligned_l1_glm52_w4a8c8_v1
+    portable_alternative: vllm_bench_public_v1
+    custom_alternative: custom_adapter_v1
+  search_space:
+    default_profile: automatic_registry_glm52_w4a8c8_v1
+    history_source: none
+  agent:
+    strategy: best_anchor_coverage_v2
+    providers: [codex, deepseek, anthropic, openai_compatible, command]
+  entry:
+    default_config: tuning_pipeline/workflow/continuous/launch_profiles/glm52_w4a8c8_a0_aligned_l1.example.yaml
+    operator_template: scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/operator.example.yaml
+    runtime_root: .runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8
+  required_inputs:
+    - read-only capture of the existing start_service.sh A0
+    - exact model and MTP checkpoint paths
+    - image identity approval for the target Lease
+    - one-node 16-NPU executor validation
+    - isolated A0 and Benchmark measurements
+    - newly compiled W4A8C8 Search Limits snapshot
+  artifacts:
+    baseline: tuning_pipeline/workflow/baselines/a0_glm52_w4a8c8_existing_tuned.yaml
+    search_scenario: tuning_pipeline/workflow/search_space_compiler/scenario.glm52-w4a8c8-a3-single-aligned-l1.yaml
+    runtime_adapter: tuning_pipeline/workflow/continuous/adapters/glm52_w4a8c8_a3_single_dp2_tp8.yaml
+    topology_registry: tuning_pipeline/workflow/continuous/topology_profiles.yaml
+    executor_registry: tuning_pipeline/workflow/continuous/executor_profiles.yaml
+    benchmark_registry: tuning_pipeline/workflow/continuous/benchmark_profiles.yaml
+    search_space_registry: tuning_pipeline/workflow/search_space_profiles.yaml
+    strategy_registry: tuning_pipeline/workflow/continuous/strategy_profiles.yaml
+    image_manifest: tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml
+    image_activation: tuning_pipeline/workflow/continuous/activation.approved.yaml
+  outputs:
+    local: .runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8
+    remote: <operator.remote_project>/workflow/auto/lab_runs
+    history_contract: Never inherit W8A8 candidates, anchors, metrics, or runtime rules.

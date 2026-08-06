@@ -1,0 +1,140 @@
+# Copy to a private config path if operator-specific values differ. This profile
+# uses a separate remote project, Lease, Session prefix, cache and artifact root.
+base_config: ../config.yaml
+
+runtime:
+  adapter_file: workflow/continuous/adapters/glm52_w4a8c8_a3_single_dp2_tp8.yaml
+
+remote_host: hetao-npu
+remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8
+
+deployment:
+  model_path: /models/share/GLM-5.2-w4a8c8
+  served_model_name: glm-52
+  service_port: 8077
+  quantization: ascend
+  network_interface: bond4.3000
+  vllm_compat_version: 0.21.0
+  init_env_script: /models/share/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
+  cache_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8/cache
+  fixed_cli_args:
+    - --api-server-count
+    - "1"
+    - --tool-call-parser
+    - glm47
+    - --reasoning-parser
+    - glm45
+    - --enable-auto-tool-choice
+    - --load-format
+    - safetensors
+    - --block-size
+    - "128"
+  fixed_additional_config:
+    enable_sparse_sfa_c8: false
+    enable_sparse_li_c8: false
+    scheduler_config:
+      enable_balance_scheduling: true
+  fixed_environment:
+    HCCL_OP_EXPANSION_MODE: AIV
+    OMP_PROC_BIND: "false"
+    OMP_NUM_THREADS: "1"
+    HCCL_BUFFSIZE: "320"
+    PYTORCH_NPU_ALLOC_CONF: expandable_segments:True
+    ASCEND_LAUNCH_BLOCKING: null
+
+mtp_draft_model: /models/share/GLM-5.2-w4a8c8-mtp-only-vllm0.25.1-image46d8bbb4
+
+lab:
+  lease_name: vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8-v1
+  lease_yaml: workflow/auto/lease_loop.yaml
+  output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8/workflow/auto/lab_runs
+
+benchmark:
+  profile: aligned_l1_glm52_w4a8c8_v1
+  aligned_l1_w4a8c8:
+    suite: 01_调优_结构化定长-v4.yaml
+    suite_id: tuning-fixed-glm52-w4a8c8
+    suite_version: v4
+    phase: all
+    repetitions: 3
+    case_retry_limit: 2
+    runtime_retry_limit: 2
+    metrics_retry_limit: 2
+    total_full_retry_limit: 2
+    served_model: glm-52
+    service_port: 8077
+    tokenizer: /models/share/GLM-5.2-w4a8c8
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    servebench_workspace: /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
+    servebench_version: 1.0.1
+    servebench_commit: 5f01dcafd9b4ce9c788d8f7c1a537d4b3ea83c73
+    docker_image: 10.1.30.201:31443/user-1-wangakang/vllm-ascend@sha256:46d8bbb49f90f0607a41f972b7d847b434e0cf0f86fce9164549a7fdf0033112
+    guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8/workflow/auto/vendor/benchmark-tuning-structured-v4/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-glm52-w4a8c8-a3-1n16-dp2tp8/workflow/auto/vendor/benchmark-tuning-structured-v4/datasets
+    suite_sha256: 5d7baacf92dbcff2b2972db0dd4649b78a88e1b9d099d0ff37552a232b48b353
+    schema_files_sha256:
+      schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
+    tokenizer_files_sha256:
+      tokenizer.json: 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+      tokenizer_config.json: 98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc
+    dataset_manifests_sha256:
+      tuning-structured-chat-1024-256-v1/manifest.json: d5f00196e77ad4bbfe139212ee611ace3e7374f80f0807403195abeb039ee49f
+      tuning-structured-prefill-8192-512-v1/manifest.json: 36b1f2ddb0a17d7321fe92425484b303ba79ae8d6b09b4204eb211dbf196b5d
+      tuning-structured-balanced-1024-1024-v1/manifest.json: 5521d58078bd8b5fc727c2749d2cb86df61326fd774d2c1b9f9b19606b04aaf8
+      tuning-structured-decode-256-2048-v1/manifest.json: d50b2c466153f74e0a0c00f7f94dd6d8baa9e780d3f5f3fed53a6dfcc02e76a0
+    primary_concurrency: 32
+    workloads:
+      chat-1024-256: {input_tokens: 1024, output_tokens: 256}
+      prefill-8192-512: {input_tokens: 8192, output_tokens: 512}
+      balanced-1024-1024: {input_tokens: 1024, output_tokens: 1024}
+      decode-256-2048: {input_tokens: 256, output_tokens: 2048}
+
+initial_baseline:
+  label: a0_existing_tuned
+  launch_profile: explicit_candidate
+  definition: workflow/baselines/a0_glm52_w4a8c8_existing_tuned.yaml
+
+baseline:
+  max_num_seqs: 40
+  max_model_len: 20480
+  max_num_batched_tokens: 8192
+  gpu_memory_utilization: 0.85
+  enable_prefix_caching: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  long_prefill_token_threshold: 0
+  enable_chunked_prefill: true
+  max_cudagraph_capture_size: 160
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  compilation_enable_sp: false
+  cudagraph_capture_sizes: [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160]
+  decode_context_parallel_size: 1
+  flashcomm1: true
+  mlapo: true
+  fused_mc2: 0
+  enable_balance_scheduling: true
+  enable_reduce_sample: true
+  speculative_config__enforce_eager: null
+
+# Keep the A0-only native runtime field in the schema even when the automatic
+# registry rotates it out of the active Agent dimensions.
+search_limits:
+  decode_context_parallel_size: [1]
+
+search_space:
+  profile: automatic_registry_glm52_w4a8c8_v1
+  history_source: none
+
+sidecars:
+  scenario: workflow/search_space_compiler/scenario.glm52-w4a8c8-a3-single-aligned-l1.yaml
+
+strategy:
+  profile: best_anchor_coverage_v2
+
+agent:
+  provider: codex

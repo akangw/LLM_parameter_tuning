@@ -1,0 +1,25 @@
+# Copy to operator.local.yaml with `scripts/scenario.ps1 -Action init`.
+# operator.local.yaml is ignored by Git.
+base_config: ../../tuning_pipeline/workflow/continuous/config.yaml
+
+runtime:
+  profile: glm52_w8a8_a3_dp2_tp16
+
+remote_host: CHANGE_ME_SSH_ALIAS
+remote_project: /CHANGE_ME/writable/glm52-w8a8-a3-2n-dp2-tp16
+
+deployment:
+  model_path: /CHANGE_ME/GLM-5.2-w8a8
+  served_model_name: CHANGE_ME_SERVED_MODEL
+  network_interface: CHANGE_ME_NETWORK_INTERFACE
+  init_env_script: /CHANGE_ME/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
+
+mtp_draft_model: /CHANGE_ME/mtp-only-checkpoint
+
+lab:
+  lease_name: CHANGE_ME_UNIQUE_VERSIONED_LEASE
+  output_root: /CHANGE_ME/writable/glm52-w8a8-a3-2n-dp2-tp16/workflow/auto/lab_runs
+
+agent:
+  provider: deepseek

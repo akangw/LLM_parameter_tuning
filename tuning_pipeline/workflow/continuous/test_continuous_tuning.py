@@ -594,6 +594,29 @@ class ControllerTests(unittest.TestCase):
             all(task["image"] == repository for task in experiment["tasks"])
         )
 
+    def test_single_node_executor_renders_master_only(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["topology"] = {
+            "profile": "a3_single_16npu_dp2local_tp8",
+            "profiles_file": "workflow/continuous/topology_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        for name in ("lease_loop.yaml", "experiment_loop.yaml"):
+            document = controller.render_remote_control_document(name)
+            self.assertEqual(document["min_available"], 1)
+            self.assertEqual(
+                [task["name"].lower() for task in document["tasks"]], ["master"]
+            )
+        env_text = controller.candidate_env(
+            configured["initial_baseline"]["label"], configured["baseline"]
+        )
+        self.assertIn("DATA_PARALLEL_SIZE_LOCAL=2", env_text)
+        self.assertIn("TENSOR_PARALLEL_SIZE=8", env_text)
+        self.assertIn("WORKER_REPLICAS=0", env_text)
+        self.assertIn(
+            "EXECUTOR_REMOTE_CONTRACT=single_node_local_dp_v1", env_text
+        )
+
     def test_deployment_identity_is_configuration_driven(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
         configured["deployment"].update(

@@ -24,6 +24,11 @@ Ascend 平台
 两节点 × 16 NPU、DP2/TP16、现有 ktp 两角色执行器、B0-deployable、人工审计
 Search Limits、策略 V2 和 Aligned-L1。
 
+新增的 `glm52_w4a8c8_a3_single_dp2_tp8` 为 planned 适配包：GLM-5.2-W4A8C8、
+单节点 × 16 NPU、DP2-local2/TP8、A0 专家基线和独立 Aligned-L1。单节点执行器代码
+已经独立于 `ktp_two_role`，但在一次真实镜像身份、A0 和 Benchmark 验证完成前不会
+升级为 runnable。操作说明见 [GLM-5.2-W4A8C8 单节点 A0](GLM52_W4A8C8_A0.md)。
+
 Controller 在创建 Session 前解析适配包，并把以下内容冻结到 `session_config.yaml`：
 
 - 适配包完整文档和 SHA-256；

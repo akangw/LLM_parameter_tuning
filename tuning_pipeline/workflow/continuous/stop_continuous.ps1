@@ -1,10 +1,20 @@
 [CmdletBinding()]
-param([switch]$StopActiveTask)
+param([switch]$StopActiveTask, [string]$RuntimeRoot)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$statePath = Join-Path $root "state.json"
-$stopPath = Join-Path $root "STOP_REQUESTED"
+$stateRoot = if ($RuntimeRoot) {
+    if ([System.IO.Path]::IsPathRooted($RuntimeRoot)) {
+        [System.IO.Path]::GetFullPath($RuntimeRoot)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $RuntimeRoot))
+    }
+} else {
+    $root
+}
+New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+$statePath = Join-Path $stateRoot "state.json"
+$stopPath = Join-Path $stateRoot "STOP_REQUESTED"
 "requested_at: $(Get-Date -Format o)" | Set-Content -LiteralPath $stopPath -Encoding utf8
 Write-Host "Graceful stop requested. No next experiment will be submitted."
 
@@ -17,7 +27,9 @@ if ($StopActiveTask -and (Test-Path -LiteralPath $statePath)) {
     } else {
         (Get-Command python -ErrorAction Stop).Source
     }
-    & $python (Join-Path $root "continuous_tuning.py") --stop-active-task
+    $arguments = @((Join-Path $root "continuous_tuning.py"), "--stop-active-task")
+    if ($RuntimeRoot) { $arguments += @("--runtime-root", $stateRoot) }
+    & $python @arguments
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

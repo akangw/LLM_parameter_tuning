@@ -9,6 +9,12 @@ profiles:
     definition_key: aligned_l1
     purpose: Frozen 4-workload, 12-case Aligned-L1 acceptance benchmark.
 
+  aligned_l1_glm52_w4a8c8_v1:
+    status: integrated
+    mode: aligned_l1
+    definition_key: aligned_l1_w4a8c8
+    purpose: Isolated Aligned-L1 identity for GLM-5.2-W4A8C8 single-node tuning.
+
   legacy_random_32k1k:
     status: integrated
     mode: legacy_random_32k1k

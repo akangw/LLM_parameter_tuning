@@ -2,6 +2,11 @@
 
 这份说明面向第一次拿到仓库、需要在自己的服务器上建立一条新实验链路的使用者。仓库中的参数知识、Search-Space Compiler、Agent Provider、Benchmark 适配器和 Controller 可以直接复用；服务器身份、模型、镜像、Lease 和凭据必须由使用者提供。
 
+如果只想按一个明确场景完成配置和启动，优先使用根目录
+[`scenarios/`](../scenarios/README.md) 和统一入口 `scripts/scenario.ps1`。它把 W8A8 与
+W4A8C8 作为同级独立场景展示，并为每个场景使用不同 Runtime Root；本文保留底层
+配置、版本迁移和手工接入细节。
+
 ## 1. 运行边界
 
 当前远端执行器已经验证的正式拓扑是 Atlas A3、两节点、每节点 16 NPU，以及 GLM-5.2 W8A8。更换 SSH 主机、可写目录、模型路径、API Provider 或 Benchmark 属于配置操作。更换模型家族、加速器类型或 DP/TP 拓扑时，还需要重新生成参数画像、场景、B0 和远端执行器配置，不能只替换一个路径后默认结果仍然有效。

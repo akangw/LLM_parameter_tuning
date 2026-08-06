@@ -1,0 +1,71 @@
+schema_version: 1
+adapter:
+  name: glm52_w4a8c8_a3_single_dp2_tp8
+  status: planned
+  platform: ascend
+  session_prefix: glm52_w4a8c8_a3_1n16_dp2tp8
+  model_contract:
+    family: glm
+    variant: glm-5.2
+    weight_format: w4a8c8
+    supports_mtp: true
+  artifacts:
+    scenario: workflow/search_space_compiler/scenario.glm52-w4a8c8-a3-single-aligned-l1.yaml
+    baseline: workflow/baselines/a0_glm52_w4a8c8_existing_tuned.yaml
+    image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+    image_activation: workflow/continuous/activation.approved.yaml
+    topology_profiles: workflow/continuous/topology_profiles.yaml
+    executor_profiles: workflow/continuous/executor_profiles.yaml
+  config:
+    topology:
+      profile: a3_single_16npu_dp2local_tp8
+      profiles_file: workflow/continuous/topology_profiles.yaml
+    image_identity:
+      manifest: workflow/continuous/remote/image_version_manifest.yaml
+      activation: workflow/continuous/activation.approved.yaml
+    search_space:
+      profile: automatic_registry_glm52_w4a8c8_v1
+      resolved_profile:
+        status: integrated
+        mode: automatic_registry
+        purpose: Independent automatic Search Limits for W4A8C8 A0 tuning.
+        knowledge_dir: tag_params/output/params
+        scenario: workflow/search_space_compiler/scenario.glm52-w4a8c8-a3-single-aligned-l1.yaml
+        policy: workflow/search_space_compiler/policy.yaml
+        compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
+        source_root: ../portrait_pipeline/sources
+        activation:
+          target_count: 24
+          maximum_count: 28
+          max_per_category: 7
+          additional_core_parameters:
+            - block_size
+            - additional_config__enable_dsa_cp
+            - additional_config__multistream_overlap_shared_expert
+            - fused_mc2
+            - enable_balance_scheduling
+            - enable_reduce_sample
+            - speculative_config__enforce_eager
+      history_source: none
+    strategy:
+      profile: best_anchor_coverage_v2
+    benchmark:
+      profile: aligned_l1_glm52_w4a8c8_v1
+    initial_baseline:
+      label: a0_existing_tuned
+      launch_profile: explicit_candidate
+      definition: workflow/baselines/a0_glm52_w4a8c8_existing_tuned.yaml
+  compatibility:
+    executor: ktp_single_node_local_dp
+    requires_new_session: true
+    history_isolation: strict_scenario_id
+  readiness:
+    attestations:
+      executor_validated: false
+      b0_validated: false
+      benchmark_validated: false
+      search_space_validated: false
+    blockers:
+      - Run a read-only image identity probe in the target Lease.
+      - Run and measure A0 once before promoting this adapter to integrated.
+      - Validate the isolated Aligned-L1 profile and compiled Search Limits.

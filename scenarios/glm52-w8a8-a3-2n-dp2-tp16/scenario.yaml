@@ -1,0 +1,55 @@
+schema_version: 1
+scenario:
+  id: glm52-w8a8-a3-2n-dp2-tp16
+  status: integrated
+  summary: GLM-5.2 W8A8 on two Atlas A3 nodes, using the deployable official-default B0.
+  model:
+    family: GLM-5.2
+    weight_format: W8A8
+    default_path: /models/share/GLM-5.2-w8a8
+  topology:
+    platform: Ascend Atlas A3
+    nodes: 2
+    npu_per_node: 16
+    data_parallel_size: 2
+    tensor_parallel_size: 16
+    executor: ktp_two_role
+  runtime:
+    selector: registry_profile
+    profile: glm52_w8a8_a3_dp2_tp16
+  benchmark:
+    default_profile: aligned_l1_v4
+    portable_alternative: vllm_bench_public_v1
+    custom_alternative: custom_adapter_v1
+  search_space:
+    default_profile: curated_registry_v1
+    automatic_alternative: automatic_registry_v1
+  agent:
+    strategy: best_anchor_coverage_v2
+    providers: [codex, deepseek, anthropic, openai_compatible, command]
+  entry:
+    default_config: tuning_pipeline/workflow/continuous/config.yaml
+    operator_template: scenarios/glm52-w8a8-a3-2n-dp2-tp16/operator.example.yaml
+    runtime_root: .runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16
+  required_inputs:
+    - SSH alias and writable remote project root
+    - model and optional MTP checkpoint paths
+    - approved image digest plus vLLM and vllm-ascend commits
+    - unique Lease name and network interface
+    - Agent credential or logged-in Codex CLI
+    - one available Benchmark profile
+  artifacts:
+    baseline: tuning_pipeline/workflow/baselines/b0_deployable_64k.yaml
+    search_scenario: tuning_pipeline/workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    runtime_registry: tuning_pipeline/workflow/continuous/runtime_profiles.yaml
+    topology_registry: tuning_pipeline/workflow/continuous/topology_profiles.yaml
+    executor_registry: tuning_pipeline/workflow/continuous/executor_profiles.yaml
+    benchmark_registry: tuning_pipeline/workflow/continuous/benchmark_profiles.yaml
+    search_space_registry: tuning_pipeline/workflow/search_space_profiles.yaml
+    strategy_registry: tuning_pipeline/workflow/continuous/strategy_profiles.yaml
+    image_manifest: tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml
+    image_activation: tuning_pipeline/workflow/continuous/activation.approved.yaml
+  outputs:
+    local: .runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16
+    remote: <operator.remote_project>/workflow/auto/lab_runs
+    history_contract: Never mix with another model, quantization, topology, or Benchmark identity.

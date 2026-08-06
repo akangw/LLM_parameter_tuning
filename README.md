@@ -1,6 +1,8 @@
 # Auto vLLM Parameter
 
-> 新使用者建议先阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置可以放在 Git 忽略的 `config.local.yaml`，无需修改仓库公共默认配置。更换 Ascend 模型、量化、镜像或 DP/TP/节点数时，使用 [Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md) 固定适配边界。
+> 新使用者先从 [场景目录](scenarios/README.md) 选择 W8A8/W4A8C8 路线，再阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。服务器、模型、镜像、Agent 和 Benchmark 的个人配置放在场景自己的 Git 忽略配置里，无需修改仓库公共默认配置。更换 Ascend 模型、量化、镜像或 DP/TP/节点数时，使用 [Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md) 固定适配边界。
+
+> GLM-5.2-W4A8C8 单节点 DP2-local2/TP8 已建立独立 planned 适配路线，现有调优脚本作为 A0，详见 [W4A8C8 A0 场景](docs/GLM52_W4A8C8_A0.md)。该路线使用独立本地 Runtime Root、远端项目、Lease、Session、缓存和实验产物，不改变 W8A8 默认链路。
 
 面向 GLM-5.2、Atlas A3 和 vLLM Ascend 的参数知识构建与连续自动调优项目。项目从 `vllmTKB0706` 的在线闭环迁移而来，但使用独立源码版本、知识产物、Controller 状态、远端目录和 ktp-lab Lease。
 
@@ -274,6 +276,9 @@ Auto_vllm_parameter/
 ├─ 框架.md                       三大板块的交接讲解
 ├─ docs/                         架构、运行、产物和交接文档
 ├─ scripts/                      面向操作者的稳定入口
+├─ scenarios/                    同级、隔离的模型/拓扑场景入口与个人配置模板
+│  ├─ glm52-w8a8-a3-2n-dp2-tp16/   integrated 正式路线
+│  └─ glm52-w4a8c8-a3-1n-dp2-tp8/  planned 独立验证路线
 ├─ portrait_pipeline/            离线参数画像构建
 │  ├─ build/                     提取、初筛、迁移和画像程序/证据
 │  ├─ outputs/ParameterYAML/     340 份正式参数画像
@@ -313,6 +318,7 @@ Benchmark 运行阶段仍以只读方式挂载：
 - [交接清单](docs/HANDOFF.md)
 - [外部依赖](docs/DEPENDENCIES.md)
 - [当前实验摘要](docs/CURRENT_SESSION.md)
+- [场景选择、迁移与统一启动](scenarios/README.md)
 - [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)
 - [Linux / Docker Controller](docs/LINUX_DOCKER_CONTROLLER.md)
 - [Ascend 模型、镜像与拓扑适配包](docs/ASCEND_RUNTIME_ADAPTERS.md)

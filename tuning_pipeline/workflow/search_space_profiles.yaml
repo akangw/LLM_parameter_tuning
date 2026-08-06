@@ -52,3 +52,27 @@ profiles:
         - enable_balance_scheduling
         - enable_reduce_sample
         - speculative_config__enforce_eager
+
+  automatic_registry_glm52_w4a8c8_v1:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      Independent automatic Search Limits for GLM-5.2-W4A8C8 on one A3 node,
+      anchored at the existing tuned A0 without inheriting W8A8 history.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-w4a8c8-a3-single-aligned-l1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
+    source_root: ../portrait_pipeline/sources
+    activation:
+      target_count: 24
+      maximum_count: 28
+      max_per_category: 7
+      additional_core_parameters:
+        - block_size
+        - additional_config__enable_dsa_cp
+        - additional_config__multistream_overlap_shared_expert
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager
