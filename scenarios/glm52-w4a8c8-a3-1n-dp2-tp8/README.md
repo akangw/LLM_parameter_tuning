@@ -4,6 +4,8 @@
 当前状态为 `planned`：目录和执行器封装已经存在，但真实镜像、A0、Benchmark 和
 Search Limits 四项证明完成前，统一入口会拒绝 `prepare/start/resume`。
 
+固定定义和“为什么现在还没有正式产物”见 [`ARTIFACTS.md`](ARTIFACTS.md)。
+
 默认本地 Runtime Root：
 
 ```text

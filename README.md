@@ -319,6 +319,7 @@ Benchmark 运行阶段仍以只读方式挂载：
 - [外部依赖](docs/DEPENDENCIES.md)
 - [当前实验摘要](docs/CURRENT_SESSION.md)
 - [场景选择、迁移与统一启动](scenarios/README.md)
+- [项目目录职责与产物边界](docs/PROJECT_STRUCTURE.md)
 - [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)
 - [Linux / Docker Controller](docs/LINUX_DOCKER_CONTROLLER.md)
 - [Ascend 模型、镜像与拓扑适配包](docs/ASCEND_RUNTIME_ADAPTERS.md)

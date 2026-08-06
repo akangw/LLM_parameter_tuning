@@ -9,10 +9,12 @@ scenarios/
 ├─ glm52-w8a8-a3-2n-dp2-tp16/    # integrated，可运行
 │  ├─ scenario.yaml               # 模型/拓扑/B0/Benchmark/产物索引
 │  ├─ operator.example.yaml       # 别人只需要填写的机器配置
+│  ├─ ARTIFACTS.md                # 固定定义与运行产物位置
 │  └─ README.md
 └─ glm52-w4a8c8-a3-1n-dp2-tp8/   # planned，独立验证中
    ├─ scenario.yaml
    ├─ operator.example.yaml
+   ├─ ARTIFACTS.md
    └─ README.md
 ```
 
@@ -48,6 +50,9 @@ Session 或 Git。
 ```powershell
 # 1. 查看两个同级场景及状态
 .\scripts\scenario.ps1 -Action list
+
+# 查看一个场景引用的全部固定文件、共享画像数量和已有 Session
+.\scripts\scenario.ps1 -Action artifacts -Name glm52-w8a8-a3-2n-dp2-tp16
 
 # 2. 生成 Git 忽略的个人配置
 .\scripts\scenario.ps1 -Action init -Name glm52-w8a8-a3-2n-dp2-tp16

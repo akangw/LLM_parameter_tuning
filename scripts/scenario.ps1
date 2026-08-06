@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("list", "show", "validate", "init", "check", "prepare", "start", "resume", "status", "stop")]
+    [ValidateSet("list", "show", "artifacts", "validate", "init", "check", "prepare", "start", "resume", "status", "stop")]
     [string]$Action = "list",
     [string]$Name,
     [string]$Config,
@@ -28,6 +28,10 @@ if (-not $Name) {
 }
 if ($Action -eq "show") {
     & $python $manager show $Name
+    exit $LASTEXITCODE
+}
+if ($Action -eq "artifacts") {
+    & $python $manager artifacts $Name
     exit $LASTEXITCODE
 }
 if ($Action -eq "validate") {

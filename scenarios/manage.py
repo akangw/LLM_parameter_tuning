@@ -51,6 +51,9 @@ def validate_one(package: Path, scenario: dict[str, Any]) -> list[str]:
         errors.append(f"package directory must match scenario.id ({scenario_id})")
     if scenario.get("status") not in VALID_STATUSES:
         errors.append(f"status must be one of {sorted(VALID_STATUSES)}")
+    for document in ("README.md", "ARTIFACTS.md"):
+        if not (package / document).is_file():
+            errors.append(f"missing scenario document: {document}")
     for field in (
         "summary",
         "model",
@@ -139,12 +142,57 @@ def resolved_record(
     }
 
 
+def artifact_report(
+    scenario_id: str, package: Path, scenario: dict[str, Any]
+) -> dict[str, Any]:
+    portrait_dir = REPO_ROOT / "portrait_pipeline/outputs/ParameterYAML"
+    tag_dir = REPO_ROOT / "tuning_pipeline/tag_params/output/params"
+    runtime_root = repo_path(scenario["entry"]["runtime_root"])
+    experiments_dir = runtime_root / "experiments"
+    sessions = (
+        sorted(path.name for path in experiments_dir.iterdir() if path.is_dir())
+        if experiments_dir.is_dir()
+        else []
+    )
+    return {
+        "scenario": scenario_id,
+        "status": scenario["status"],
+        "artifact_index": str((package / "ARTIFACTS.md").resolve()),
+        "shared_knowledge": {
+            "parameter_portraits": {
+                "path": str(portrait_dir.resolve()),
+                "yaml_count": len(list(portrait_dir.glob("*.yaml"))),
+            },
+            "parameter_tags": {
+                "path": str(tag_dir.resolve()),
+                "yaml_count": len(list(tag_dir.glob("*.yaml"))),
+            },
+        },
+        "fixed_artifacts": {
+            name: {
+                "declared": str(value),
+                "resolved": str(repo_path(value).resolve()),
+                "exists": repo_path(value).is_file(),
+            }
+            for name, value in scenario.get("artifacts", {}).items()
+        },
+        "runtime": {
+            "root": str(runtime_root.resolve()),
+            "exists": runtime_root.is_dir(),
+            "sessions": sessions,
+            "session_count": len(sessions),
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list")
     show = commands.add_parser("show")
     show.add_argument("name")
+    artifacts = commands.add_parser("artifacts")
+    artifacts.add_argument("name")
     validate = commands.add_parser("validate")
     validate.add_argument("name", nargs="?")
     resolve = commands.add_parser("resolve")
@@ -182,6 +230,15 @@ def main() -> int:
     package, scenario = scenarios[args.name]
     if args.command == "show":
         print(yaml.safe_dump({"scenario": scenario}, allow_unicode=True, sort_keys=False))
+        return 0
+    if args.command == "artifacts":
+        print(
+            json.dumps(
+                artifact_report(args.name, package, scenario),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     if args.command == "resolve":
         errors = validate_one(package, scenario)

@@ -20,6 +20,16 @@ class ScenarioCatalogTests(unittest.TestCase):
         self.assertEqual(w8["status"], "integrated")
         self.assertEqual(w4["status"], "planned")
 
+    def test_artifact_report_separates_shared_and_runtime_outputs(self) -> None:
+        discovered = manage.discover()
+        package, scenario = discovered["glm52-w8a8-a3-2n-dp2-tp16"]
+        report = manage.artifact_report(scenario["id"], package, scenario)
+        self.assertGreater(report["shared_knowledge"]["parameter_portraits"]["yaml_count"], 0)
+        self.assertGreater(report["shared_knowledge"]["parameter_tags"]["yaml_count"], 0)
+        self.assertIn("baseline", report["fixed_artifacts"])
+        self.assertIn("sessions", report["runtime"])
+        self.assertTrue(report["artifact_index"].endswith("ARTIFACTS.md"))
+
 
 if __name__ == "__main__":
     unittest.main()
