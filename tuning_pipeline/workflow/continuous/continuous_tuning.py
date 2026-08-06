@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Continuous GLM-5.2 tuning controller.
+"""Continuous vLLM-Ascend tuning controller.
 
 The default mode runs on Windows beside the local knowledge base.  An isolated
 server-autonomous mode can run the same deterministic controller on Linux with
@@ -35,6 +35,7 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
+    from .runtime_profile import resolve_runtime_profile
     from .topology_profile import resolve_topology_profile
     from .agent_provider import (
         resolve_agent_profile,
@@ -43,6 +44,7 @@ try:
     )
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
+    from runtime_profile import resolve_runtime_profile
     from topology_profile import resolve_topology_profile
     from agent_provider import (
         resolve_agent_profile,
@@ -214,15 +216,16 @@ def validate_activation_approval(
     image_manifest: dict[str, Any] | None = None,
     *,
     approval_path: Path = ACTIVATION_FILE,
+    approval: dict[str, Any] | None = None,
 ) -> None:
     """Require explicit approval for the exact runtime image and source pair."""
     manifest = image_manifest or load_yaml(IMAGE_MANIFEST_FILE)
-    if not approval_path.is_file():
+    if approval is None and not approval_path.is_file():
         raise RuntimeError(
             "Remote activation is locked. Copy activation.example.yaml to "
             "activation.approved.yaml only after verifying the real runtime image."
         )
-    approval = load_yaml(approval_path)
+    approval = approval or load_yaml(approval_path)
     if approval.get("approved") is not True:
         raise RuntimeError(f"Remote activation is not approved in {approval_path}")
     target = approval.get("target")
@@ -335,8 +338,28 @@ class Controller:
         offline_dry_run: bool = False,
         search_space_result: dict[str, Any] | None = None,
     ):
-        self.config, self.topology = resolve_topology_profile(config, KB_ROOT)
+        runtime_config, self.runtime_identity = resolve_runtime_profile(
+            config, KB_ROOT, apply_bindings=False
+        )
+        self.config, self.topology = resolve_topology_profile(runtime_config, KB_ROOT)
         config = self.config
+        effective_runtime = {
+            "topology_profile": self.config.get("topology", {}).get("profile"),
+            "search_space_profile": self.config.get("search_space", {}).get("profile"),
+            "strategy_profile": self.config.get("strategy", {}).get("profile"),
+            "benchmark_profile": self.config.get("benchmark", {}).get("profile"),
+            "baseline_definition": self.config.get("initial_baseline", {}).get(
+                "definition"
+            ),
+        }
+        effective_bytes = json.dumps(
+            effective_runtime, ensure_ascii=False, sort_keys=True
+        ).encode("utf-8")
+        self.runtime_identity["effective_selections"] = effective_runtime
+        self.runtime_identity["effective_sha256"] = hashlib.sha256(
+            effective_bytes
+        ).hexdigest()
+        self.config["runtime"]["identity"] = copy.deepcopy(self.runtime_identity)
         self.dry_run = dry_run
         self.offline_dry_run = offline_dry_run
         self.search_space_result = search_space_result
@@ -424,6 +447,17 @@ class Controller:
         self.deployment = {
             name: str(value).strip() for name, value in deployment.items()
         }
+        model_contract = self.runtime_identity.get("model_contract", {})
+        self.runtime_guardrail = (
+            f"platform=Ascend, model_family={model_contract.get('family')}, "
+            f"model_variant={model_contract.get('variant')}, "
+            f"weight_format={model_contract.get('weight_format')}, "
+            f"topology_profile={self.config['topology']['profile']}, "
+            f"DP={self.topology['data_parallel_size']}, "
+            f"TP={self.topology['tensor_parallel_size']}, "
+            f"nodes={self.topology['nodes']}, "
+            f"NPU_per_node={self.topology['npu_per_node']}"
+        )
         empty_deployment = [
             name for name, value in self.deployment.items() if not value
         ]
@@ -476,7 +510,37 @@ class Controller:
                 "model_loading.safetensors_prefetch_block_size must be between 1 MiB and 1 GiB"
             )
         self.lab = config.get("lab", {})
-        self.image_manifest = load_yaml(IMAGE_MANIFEST_FILE)
+        image_setting = self.config.get("image_identity", {})
+        if not isinstance(image_setting, dict):
+            raise ValueError("image_identity must be a mapping")
+        frozen_manifest = image_setting.get("resolved_manifest")
+        frozen_approval = image_setting.get("resolved_activation")
+        if isinstance(frozen_manifest, dict) and isinstance(frozen_approval, dict):
+            self.image_manifest = copy.deepcopy(frozen_manifest)
+            self.activation_approval = copy.deepcopy(frozen_approval)
+            self.image_manifest_path = str(image_setting.get("manifest", "frozen"))
+            self.activation_path = str(image_setting.get("activation", "frozen"))
+        else:
+            manifest_setting = Path(
+                str(image_setting.get("manifest", IMAGE_MANIFEST_FILE))
+            )
+            activation_setting = Path(
+                str(image_setting.get("activation", ACTIVATION_FILE))
+            )
+            if not manifest_setting.is_absolute():
+                manifest_setting = KB_ROOT / manifest_setting
+            if not activation_setting.is_absolute():
+                activation_setting = KB_ROOT / activation_setting
+            self.image_manifest = load_yaml(manifest_setting)
+            self.activation_approval = load_yaml(activation_setting)
+            self.image_manifest_path = str(manifest_setting)
+            self.activation_path = str(activation_setting)
+            self.config["image_identity"] = {
+                "manifest": str(image_setting.get("manifest", manifest_setting)),
+                "activation": str(image_setting.get("activation", activation_setting)),
+                "resolved_manifest": copy.deepcopy(self.image_manifest),
+                "resolved_activation": copy.deepcopy(self.activation_approval),
+            }
         target = self.image_manifest.get("target_image", {})
         versions = self.image_manifest.get("versions", {})
         self.image_identity = {
@@ -486,7 +550,7 @@ class Controller:
             "vllm_ascend_commit": versions.get("vllm_ascend", {}).get("commit"),
         }
         if not all(self.image_identity.values()):
-            raise ValueError(f"Incomplete image identity in {IMAGE_MANIFEST_FILE}")
+            raise ValueError(f"Incomplete image identity in {self.image_manifest_path}")
         self.measurement_policy = config.get("measurement_policy", {})
         benchmark_settings = dict(config.get("benchmark", {}))
         if not benchmark_settings:
@@ -1472,7 +1536,11 @@ class Controller:
             )
 
     def validate_deployment_configuration(self) -> None:
-        validate_activation_approval(self.image_manifest)
+        validate_activation_approval(
+            self.image_manifest,
+            approval_path=Path(self.activation_path),
+            approval=self.activation_approval,
+        )
         expected_repository, expected_tag = self.image_identity["reference"].rsplit(
             ":", 1
         )
@@ -1539,6 +1607,13 @@ class Controller:
             raise RuntimeError(
                 "Controller state image identity is missing or differs from the "
                 "current verified image. Start a new session; do not resume this state."
+            )
+        recorded_runtime = state.get("runtime_identity")
+        if recorded_runtime is not None and recorded_runtime != self.runtime_identity:
+            raise RuntimeError(
+                "Controller state runtime-adapter identity differs from the frozen "
+                "Session. Start a new Session; do not cross model/image/topology "
+                "boundaries during resume."
             )
 
     def validate_candidate_invariants(self, candidate: dict[str, Any]) -> None:
@@ -3503,7 +3578,7 @@ Treat this small legacy measurement as exploratory evidence."""
 {self.benchmark_profile_name} benchmark profile ({self.benchmark_mode}). Its complete definition
 is present in the evidence bundle. Successful/failed request counts, mean TTFT and mean TPOT are
 deterministic guardrails. Never compare this profile with a different benchmark identity."""
-        prompt = f"""You are the Codex tuning analyst for a measured GLM-5.2 vLLM-Ascend experiment.
+        prompt = f"""You are the tuning analyst for a measured vLLM-Ascend experiment.
 
 The controller has embedded all required read-only evidence below. Treat it as
 authoritative. If additional inspection is useful, you may execute local read-only
@@ -3552,7 +3627,8 @@ untested change remains, or further testing is not justified by the measurements
 Use only values allowed by this whitelist:
 {yaml.safe_dump(self.config['search_limits'], allow_unicode=True, sort_keys=False)}
 
-Do not change model, DP=2, TP=16, Pod/NPU topology, network, ports, image, benchmark,
+The frozen runtime contract is: {self.runtime_guardrail}.
+Do not change model, DP/TP, Pod/NPU topology, network, ports, image, benchmark,
 quantization, or fixed Ascend environment.
 Do not repeat any successful or failed configuration already present in
 attempted_history/history_input.json. Treat candidates classified parameter_invalid
@@ -3673,7 +3749,7 @@ Embedded evidence:
             round_dir / "06_agent_analysis" / "failure_evidence_bundle.json",
             failure_evidence,
         )
-        prompt = f"""You are the Codex failure analyst for a GLM-5.2 vLLM-Ascend experiment
+        prompt = f"""You are the failure analyst for a vLLM-Ascend experiment
 that ended without metrics.json.
 
 All required evidence is embedded below. You may execute local read-only commands for
@@ -4001,8 +4077,8 @@ Embedded evidence:
         }
         analysis_dir = failed_round_dir / "06_agent_analysis"
         save_json(analysis_dir / "recovery_evidence_bundle.json", evidence)
-        prompt = f"""You are the Codex tuning analyst recovering from a proven invalid
-GLM-5.2 vLLM-Ascend candidate.
+        prompt = f"""You are the tuning analyst recovering from a proven invalid
+vLLM-Ascend candidate. The frozen runtime contract is: {self.runtime_guardrail}.
 
 The failed candidate has already been rejected and must never be resubmitted. The
 failure analyst recommended a rollback to a previously measured, known-good candidate.
@@ -4013,7 +4089,7 @@ untested change remains.
 
 All successful and failed configurations are listed in attempted_history. Never repeat
 any of them. Treat parameter_invalid and parameter_oom configurations as excluded.
-Preserve the fixed model, image, DP=2, TP=16, Pod/NPU topology, network, paths,
+Preserve the fixed model, image, DP/TP, Pod/NPU topology, network, paths,
 benchmark (including temperature=0), quantization, and Ascend environment. Multiple
     changes require a real interaction or constraint coupling, not independent guesses.
 Explain at least one interaction per additional parameter and check every relevant
@@ -4133,7 +4209,14 @@ Embedded evidence:
                     )
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
-        session_id = "glm52_continuous_" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        runtime_profile = self.config.get("runtime", {}).get("resolved_profile", {})
+        session_prefix = str(
+            runtime_profile.get("session_prefix", "glm52_continuous")
+        )
+        session_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_prefix).strip("_.-")
+        if not session_prefix:
+            raise ValueError("Runtime adapter session_prefix is empty after sanitization")
+        session_id = session_prefix + "_" + dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         session_dir = ARCHIVE_ROOT / session_id
         session_dir.mkdir(parents=True, exist_ok=False)
         write_session_search_space(
@@ -4156,6 +4239,7 @@ Embedded evidence:
             "active_run_id": None,
             "execution_mode": self.execution_mode,
             "image_identity": self.image_identity,
+            "runtime_identity": self.runtime_identity,
             "search_limits_mode": self.config.get("resolved_search_space", {}).get(
                 "mode", "manual"
             ),
@@ -4929,6 +5013,21 @@ def main() -> int:
     else:
         config_path = Path(args.config).expanduser() if args.config else HERE / "config.yaml"
         raw_config = load_config(config_path)
+        external_runtime_adapter = bool(
+            isinstance(raw_config.get("runtime"), dict)
+            and raw_config["runtime"].get("adapter_file")
+        )
+        if external_runtime_adapter and (
+            args.strategy_profile
+            or args.benchmark_profile
+            or args.search_space_profile
+        ):
+            raise RuntimeError(
+                "An external runtime adapter owns Strategy, Benchmark and "
+                "Search-Space bindings; update and revalidate the adapter instead "
+                "of overriding those profiles on the command line"
+            )
+        raw_config, _ = resolve_runtime_profile(raw_config, KB_ROOT)
         if args.strategy_profile:
             raw_config.setdefault("strategy", {})["profile"] = args.strategy_profile
         if args.agent_provider:

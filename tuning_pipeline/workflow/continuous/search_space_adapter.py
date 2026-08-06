@@ -72,9 +72,7 @@ def _latest_history(
     project_root: Path,
 ) -> Path | None:
     candidates = sorted(
-        archive_root.glob(
-            "glm52_continuous_*/round_*/06_agent_analysis/history_input.json"
-        ),
+        archive_root.glob("*/round_*/06_agent_analysis/history_input.json"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
@@ -109,9 +107,7 @@ def _latest_previous_selection(
     project_root: Path,
 ) -> Path | None:
     candidates = sorted(
-        archive_root.glob(
-            "glm52_continuous_*/00_search_space/search_space.compiled.yaml"
-        ),
+        archive_root.glob("*/00_search_space/search_space.compiled.yaml"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )

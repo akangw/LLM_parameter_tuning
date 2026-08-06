@@ -17,6 +17,8 @@ REQUIRED = (
     "docker/controller/Dockerfile",
     "docker-compose.controller.yml",
     "tuning_pipeline/workflow/continuous/topology_profiles.yaml",
+    "tuning_pipeline/workflow/continuous/runtime_profiles.yaml",
+    "tuning_pipeline/workflow/continuous/executor_profiles.yaml",
     "tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml",
 )
 SECRET_PATTERNS = {
@@ -92,10 +94,12 @@ def main() -> int:
     sys.path.insert(0, str(ROOT / "tuning_pipeline"))
     try:
         from workflow.continuous.continuous_tuning import validate_activation_approval
+        from workflow.continuous.runtime_profile import resolve_runtime_profile
         from workflow.continuous.topology_profile import resolve_topology_profile
 
         continuous = ROOT / "tuning_pipeline" / "workflow" / "continuous"
         config = yaml.safe_load((continuous / "config.yaml").read_text(encoding="utf-8"))
+        config, _ = resolve_runtime_profile(config, ROOT / "tuning_pipeline")
         resolve_topology_profile(config, ROOT / "tuning_pipeline")
         manifest = yaml.safe_load(
             (continuous / "remote" / "image_version_manifest.yaml").read_text(encoding="utf-8")

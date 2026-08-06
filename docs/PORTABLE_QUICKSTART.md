@@ -79,6 +79,8 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 
 Linux、Docker、拓扑 Profile、Session 导入导出的完整说明见
 [`LINUX_DOCKER_CONTROLLER.md`](LINUX_DOCKER_CONTROLLER.md)。
+更换 Ascend 模型、镜像、量化或 DP/TP/节点数时，使用
+[`ASCEND_RUNTIME_ADAPTERS.md`](ASCEND_RUNTIME_ADAPTERS.md) 中的运行适配包流程。
 
 如果换了 vLLM 或 vllm-ascend 版本，先执行：
 

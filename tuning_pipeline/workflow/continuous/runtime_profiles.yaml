@@ -1,0 +1,39 @@
+schema_version: 1
+default_profile: glm52_w8a8_a3_dp2_tp16
+profiles:
+  glm52_w8a8_a3_dp2_tp16:
+    status: integrated
+    platform: ascend
+    session_prefix: glm52_continuous
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/b0_deployable_64k.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+    config:
+      topology:
+        profile: a3_dp2_tp16
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: curated_registry_v1
+      strategy:
+        profile: best_anchor_coverage_v2
+      benchmark:
+        profile: aligned_l1_v4
+      initial_baseline:
+        label: b0_deployable
+        launch_profile: official_source_defaults_deployable
+        definition: workflow/baselines/b0_deployable_64k.yaml
+    compatibility:
+      executor: ktp_two_role
+      requires_new_session: true

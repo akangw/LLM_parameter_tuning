@@ -3,6 +3,11 @@
 # the Windows start and prepare-remote entry points.
 base_config: config.yaml
 
+# Optional: select one integrated Ascend model/image/topology adapter. Its
+# topology, scenario, B0, Benchmark and Search-Space bindings take precedence.
+# runtime:
+#   adapter_file: workflow/continuous/adapters/CHANGE_ME.yaml
+
 remote_host: CHANGE_ME_SSH_ALIAS
 remote_project: /CHANGE_ME/writable/project-root
 

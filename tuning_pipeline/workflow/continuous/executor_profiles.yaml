@@ -1,0 +1,13 @@
+schema_version: 1
+executors:
+  ktp_two_role:
+    status: integrated
+    platform: ascend
+    purpose: Existing one-master/one-worker ktp-lab executor.
+    constraints:
+      nodes: [2]
+      data_parallel_size: [2]
+      data_parallel_size_local: [1]
+      worker_replicas: [1]
+      worker_data_parallel_start_rank: [1]
+    remote_contract: legacy_two_role_v1

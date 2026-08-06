@@ -87,32 +87,56 @@ def resolve_topology_profile(
                 f"Topology profile {profile_name!r} requires positive {field}"
             )
 
-    # The current executor has one master rank and one worker role. Profiles make
-    # the contract explicit without pretending arbitrary layouts are supported.
-    supported = {
-        "executor": "ktp_two_role",
-        "nodes": 2,
-        "data_parallel_size": 2,
-        "data_parallel_size_local": 1,
-        "worker_replicas": 1,
-        "worker_data_parallel_start_rank": 1,
-    }
-    mismatches = {
-        key: {"actual": profile.get(key), "supported": expected}
-        for key, expected in supported.items()
-        if profile.get(key) != expected
-    }
-    if mismatches:
-        raise ValueError(
-            f"Topology profile {profile_name!r} is not supported by ktp_two_role: "
-            f"{mismatches}"
-        )
     if profile["data_parallel_size"] * profile["tensor_parallel_size"] != (
         profile["nodes"] * profile["npu_per_node"]
     ):
         raise ValueError(
             f"Topology profile {profile_name!r} has inconsistent DP/TP/NPU capacity"
         )
+
+    executor_name = str(profile.get("executor", ""))
+    executor_file = Path(
+        str(
+            profile.get(
+                "executor_profiles_file",
+                "workflow/continuous/executor_profiles.yaml",
+            )
+        )
+    )
+    if not executor_file.is_absolute():
+        executor_file = project_root / executor_file
+    if not executor_file.is_file() and "executor_profiles_file" not in profile:
+        executor_file = Path(__file__).resolve().parent / "executor_profiles.yaml"
+    executor_document = _load_yaml(executor_file)
+    executors = executor_document.get("executors", {})
+    if not isinstance(executors, dict) or executor_name not in executors:
+        raise ValueError(
+            f"Unknown executor profile {executor_name!r}; "
+            f"available={sorted(executors) if isinstance(executors, dict) else []}"
+        )
+    executor = copy.deepcopy(executors[executor_name])
+    if executor.get("status") != "integrated":
+        raise ValueError(f"Executor profile {executor_name!r} is not integrated")
+    if executor.get("platform") != "ascend":
+        raise ValueError(f"Executor profile {executor_name!r} is not an Ascend executor")
+    constraints = executor.get("constraints", {})
+    if not isinstance(constraints, dict):
+        raise ValueError(f"Executor profile {executor_name!r} constraints must be a mapping")
+    mismatches = {
+        field: {"actual": profile.get(field), "allowed": allowed}
+        for field, allowed in constraints.items()
+        if not isinstance(allowed, list) or profile.get(field) not in allowed
+    }
+    if mismatches:
+        raise ValueError(
+            f"Topology profile {profile_name!r} is incompatible with "
+            f"executor {executor_name!r}: {mismatches}"
+        )
+    profile["resolved_executor"] = {
+        "name": executor_name,
+        "remote_contract": executor.get("remote_contract"),
+        "constraints": constraints,
+    }
 
     resolved_config["topology"] = {
         "profile": profile_name,

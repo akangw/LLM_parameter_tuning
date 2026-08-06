@@ -1,6 +1,11 @@
 remote_host: hetao-npu
 remote_transport: paramiko
 remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+# Compatibility-critical selections are grouped into one immutable Ascend
+# runtime adapter. A config.local overlay can select another integrated adapter.
+runtime:
+  profile: glm52_w8a8_a3_dp2_tp16
+  profiles_file: workflow/continuous/runtime_profiles.yaml
 deployment:
   # Server-specific launch identity. These values are frozen in every Session
   # and exported to both Lease workers; no operator path is hidden in Bash.

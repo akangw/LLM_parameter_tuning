@@ -13,6 +13,7 @@ from workflow.continuous.session_bundle import (
     import_session,
     inspect_bundle,
 )
+from workflow.continuous.runtime_profile import resolve_runtime_profile
 from workflow.continuous.topology_profile import resolve_topology_profile
 
 
@@ -38,6 +39,86 @@ class TopologyProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not integrated"):
                 resolve_topology_profile(
                     {"topology": {"profiles_file": "profiles.yaml"}}, root
+                )
+
+    def test_executor_constraints_reject_unsupported_topology(self) -> None:
+        profile = {
+            "status": "integrated",
+            "executor": "ktp_two_role",
+            "nodes": 4,
+            "npu_per_node": 8,
+            "data_parallel_size": 4,
+            "data_parallel_size_local": 1,
+            "tensor_parallel_size": 8,
+            "data_parallel_rpc_port": 12980,
+            "worker_replicas": 3,
+            "worker_data_parallel_start_rank": 1,
+        }
+        with self.assertRaisesRegex(ValueError, "incompatible with executor"):
+            resolve_topology_profile(
+                {"topology": {"profile": "future", "resolved_profile": profile}},
+                Path(__file__).resolve().parents[2],
+            )
+
+
+class RuntimeProfileTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.project_root = Path(__file__).resolve().parents[2]
+
+    def test_default_profile_groups_and_hashes_critical_artifacts(self) -> None:
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
+        )
+        resolved, identity = resolve_runtime_profile(config, self.project_root)
+        self.assertEqual(identity["profile"], "glm52_w8a8_a3_dp2_tp16")
+        self.assertEqual(resolved["topology"]["profile"], "a3_dp2_tp16")
+        self.assertIn("scenario", identity["artifacts"])
+        self.assertEqual(len(identity["artifacts"]["scenario"]["sha256"]), 64)
+
+    def test_controller_freeze_does_not_reapply_bindings_over_explicit_choice(self) -> None:
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
+        )
+        config["benchmark"]["profile"] = "vllm_bench_public_v1"
+        resolved, _ = resolve_runtime_profile(
+            config, self.project_root, apply_bindings=False
+        )
+        self.assertEqual(resolved["benchmark"]["profile"], "vllm_bench_public_v1")
+
+    def test_legacy_session_keeps_its_frozen_selections(self) -> None:
+        config = {
+            "benchmark": {"profile": "legacy_random_32k1k"},
+            "search_space": {"profile": "automatic_registry_v1"},
+        }
+        resolved, identity = resolve_runtime_profile(config, self.project_root)
+        self.assertEqual(identity["profile"], "legacy_implicit_ascend")
+        self.assertEqual(resolved["benchmark"]["profile"], "legacy_random_32k1k")
+
+    def test_planned_external_adapter_cannot_activate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            adapter = Path(temporary) / "adapter.yaml"
+            adapter.write_text(
+                yaml.safe_dump(
+                    {
+                        "adapter": {
+                            "name": "future",
+                            "status": "planned",
+                            "platform": "ascend",
+                            "model_contract": {
+                                "family": "glm",
+                                "variant": "future",
+                                "weight_format": "bf16",
+                            },
+                            "config": {},
+                            "readiness": {"blockers": ["executor not implemented"]},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "executor not implemented"):
+                resolve_runtime_profile(
+                    {"runtime": {"adapter_file": str(adapter)}}, self.project_root
                 )
 
 
