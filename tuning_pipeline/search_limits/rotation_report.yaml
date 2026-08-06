@@ -1,5 +1,0 @@
-rotation_audit:
-  enabled: false
-  reason: no_history_input
-  swaps: []
-parameter_history: {}

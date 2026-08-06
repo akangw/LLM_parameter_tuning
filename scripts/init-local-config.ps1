@@ -9,7 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$InitEnvScript,
     [ValidateSet("codex", "anthropic", "openai_compatible", "deepseek", "command")]
     [string]$AgentProvider = "deepseek",
-    [ValidateSet("aligned_l1_v4", "vllm_bench_public_v1", "custom_adapter_v1", "legacy_random_32k1k")]
+    [ValidateSet("aligned_l1_v4", "vllm_bench_public_v1", "custom_adapter_v1")]
     [string]$BenchmarkProfile = "vllm_bench_public_v1",
     [ValidateSet("automatic_registry_v1", "curated_registry_v1")]
     [string]$SearchSpaceProfile = "automatic_registry_v1",

@@ -21,11 +21,13 @@ from .search_space_adapter import (
 
 
 def config() -> dict:
+    production_benchmark = tuning.load_yaml(tuning.HERE / "config.yaml")["benchmark"]
     value = {
         "remote_host": "example",
         "remote_project": "/allowed/project",
         "poll_seconds": 1,
         "round_timeout_minutes": 10,
+        "benchmark": production_benchmark,
         "fixed_scenario": {
             "input_tokens": 32000,
             "output_tokens": 1000,
@@ -224,6 +226,10 @@ class ControllerTests(unittest.TestCase):
         controller = tuning.Controller(configured)
         self.assertEqual("best_anchor_coverage_v3", controller.strategy_profile_name)
         self.assertEqual(
+            "best_anchor_coverage_v3",
+            controller.effective_change_policy()["strategy_version"],
+        )
+        self.assertEqual(
             [2, 3],
             controller.change_policy["adaptive"]["exploration"][
                 "preferred_parameters_per_round"
@@ -277,25 +283,13 @@ class ControllerTests(unittest.TestCase):
 
     def test_benchmark_profile_selects_and_freezes_one_definition(self) -> None:
         configured = config()
-        configured["benchmark"] = {
-            "profile": "legacy_random_32k1k",
-            "profiles_file": "workflow/continuous/benchmark_profiles.yaml",
-            "legacy_random_32k1k": {
-                "model": "test-model",
-                "input_tokens": 32000,
-                "output_tokens": 1000,
-            },
-        }
         controller = tuning.Controller(configured)
-        self.assertEqual("legacy_random_32k1k", controller.benchmark_profile_name)
-        self.assertEqual("legacy_random_32k1k", controller.benchmark_mode)
-        self.assertEqual(
-            "test-model", controller.benchmark["legacy_random_32k1k"]["model"]
-        )
+        self.assertEqual("aligned_l1_v4", controller.benchmark_profile_name)
+        self.assertEqual("aligned_l1", controller.benchmark_mode)
         frozen = controller.config
         frozen["benchmark"]["profiles_file"] = "missing-after-session.yaml"
         self.assertEqual(
-            "legacy_random_32k1k",
+            "aligned_l1_v4",
             tuning.Controller(frozen).benchmark_profile_name,
         )
         configured["benchmark"]["profile"] = "missing"

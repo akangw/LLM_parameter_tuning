@@ -16,8 +16,8 @@ ParameterYAML
 - 参数画像 YAML：340 份。
 - Tagged YAML：`tag_params/output/params/`，340 份，标签审计错误为 0。
 - 当前场景高影响召回：109 份。
-- 人工路径参考快照：`search_limits/`，Active 12、Reserve 4、Fixed 6、Rejected 1；这是新 Session 的默认构建口径，实际权威结果仍冻结在该 Session 的 `00_search_space/`。
-- 自动注册表是可插拔替代选项：28 Tunable（Active 12、Reserve 16）、40 Fixed、0 Compiler Rejected。
+- 人工路径当前编译为 Active 15、Reserve 5、Fixed 5、Rejected 1；不再维护独立静态快照，实际权威结果只冻结在该 Session 的 `00_search_space/`。
+- 自动注册表是可插拔替代选项：102 Tunable（Active 22、Reserve 80）、40 Fixed、0 Compiler Rejected。
 - 当前固定镜像的上游 CLI 不支持动态 EPLB，因此本场景固定 `enable_eplb=false`、`eplb_num_redundant_experts=0`。
 - Controller：`workflow/continuous/continuous_tuning.py`。
 
@@ -50,6 +50,5 @@ python -m unittest workflow.search_space_compiler.test_compiler workflow.sidecar
 - `aligned_l1_v4`：现有内部 ServeBench/GuideLLM 严格矩阵。
 - `vllm_bench_public_v1`：无需内部 Benchmark 权限，只依赖服务镜像中的公开 `vllm bench serve`。
 - `custom_adapter_v1`：运行项目白名单目录中的自定义 Python 适配器，协议见 `workflow/benchmark_adapters/README.md`。
-- `legacy_random_32k1k`：仅用于复现历史探索口径。
 
 用 `-BenchmarkProfile vllm_bench_public_v1` 在新 Session 中选择公开路径。每个 Profile 的完整定义与 SHA-256 身份都会冻结到 Session 和 `metrics.json`，因此不同 Benchmark 或不同配置不会混合比较。

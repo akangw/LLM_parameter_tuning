@@ -154,21 +154,7 @@ done
 [[ "${READY}" == 1 ]] || { echo "Timed out waiting for vLLM API."; exit 1; }
 write_startup_event "api_ready"
 
-if [[ "${BENCHMARK_MODE}" == "legacy_random_32k1k" ]]; then
-  write_status "legacy_warmup"
-  vllm bench serve --served-model-name "${SERVED_MODEL_NAME}" --port "${SERVICE_PORT}" --backend vllm \
-    --dataset-name random --random-input-len 32000 --random-output-len 1000 \
-    --random-range-ratio 0.5 --request-rate 0.2 --num-prompts 8 --ignore-eos \
-    --temperature 0 --trust-remote-code --seed 24 2>&1 | tee "${RUN_DIR}/warmup.log"
-
-  write_status "legacy_formal_benchmark"
-  vllm bench serve --served-model-name "${SERVED_MODEL_NAME}" --port "${SERVICE_PORT}" --backend vllm \
-    --dataset-name random --random-input-len 32000 --random-output-len 1000 \
-    --random-range-ratio 0.5 --request-rate 0.2 --num-prompts 8 --ignore-eos \
-    --temperature 0 --trust-remote-code --seed 42 2>&1 | tee "${RUN_DIR}/formal.log"
-
-  python "${SCRIPT_DIR}/extract_metrics.py" "${RUN_DIR}/formal.log" "${RUN_DIR}/metrics.json"
-elif [[ "${BENCHMARK_MODE}" == "aligned_l1" ]]; then
+if [[ "${BENCHMARK_MODE}" == "aligned_l1" ]]; then
   write_status "waiting_for_aligned_l1"
   touch "${RUN_DIR}/SERVICE_READY"
   BENCHMARK_WAIT_SECONDS="${BENCHMARK_WAIT_SECONDS:-39600}"

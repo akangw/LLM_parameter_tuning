@@ -13,11 +13,12 @@
 | 跳过证据 | `portrait_pipeline/outputs/skipped/` | 105 份有理由跳过记录 |
 | Tags | `tuning_pipeline/tag_params/output/params/` | 340 份五维标签画像 |
 | Tags 审计 | `tuning_pipeline/tag_params/output/audit.json` | 数量、分布、召回与错误 |
-| Search Limits 参考快照 | `tuning_pipeline/search_limits/` | 人工注册表路径的独立审计快照，非在线权威 |
+| Session Search Limits | `tuning_pipeline/workflow/continuous/scenario_runs/<scenario-id>/experiments/<session-id>/00_search_space/` | 新 Session 现场编译并冻结的唯一在线权威 |
 | Search-Space Profiles | `tuning_pipeline/workflow/search_space_profiles.yaml` | 自动注册表与人工注册表两条可替换定义 |
 
 以上正式知识产物纳入版本控制并随 Git 克隆分发。当前仓库基线包含 340 份参数
-画像、105 份跳过说明、340 份 Tags，以及 Search Limits 的人工路径参考快照。
+画像、105 份跳过说明和 340 份 Tags。Search Limits 不再维护独立静态快照，
+而是在新 Session 创建时编译并冻结到该 Session 的 `00_search_space/`。
 计数变化时以仓库实际文件和各阶段 manifest/audit 为准。
 
 新版本试迁移不会覆盖上表正式产物；其完整镜像链位于

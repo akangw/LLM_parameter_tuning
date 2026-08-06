@@ -57,10 +57,8 @@ def main() -> int:
 
     payload = {
         "schema_version": "vllmtkb-benchmark-result/v1",
-        "benchmark_mode": os.environ.get("BENCHMARK_MODE", "legacy_random_32k1k"),
-        "benchmark_profile": os.environ.get(
-            "BENCHMARK_PROFILE", "legacy_random_32k1k"
-        ),
+        "benchmark_mode": os.environ.get("BENCHMARK_MODE", "aligned_l1"),
+        "benchmark_profile": os.environ.get("BENCHMARK_PROFILE", "aligned_l1_v4"),
         "source_log": str(source),
         "metrics": metrics,
         "parse_status": "ok" if metrics else "no_metrics_matched",

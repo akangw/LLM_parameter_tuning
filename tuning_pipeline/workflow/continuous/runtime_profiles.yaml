@@ -42,7 +42,6 @@ profiles:
         strategy: [best_anchor_coverage_v2, best_anchor_coverage_v3]
         benchmark:
           - aligned_l1_v4
-          - legacy_random_32k1k
           - vllm_bench_public_v1
           - custom_adapter_v1
         agent_provider: [codex, deepseek, anthropic, openai_compatible, command]

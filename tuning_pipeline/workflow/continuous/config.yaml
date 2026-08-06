@@ -126,15 +126,6 @@ benchmark:
       prefill-8192-512: {input_tokens: 8192, output_tokens: 512}
       balanced-1024-1024: {input_tokens: 1024, output_tokens: 1024}
       decode-256-2048: {input_tokens: 256, output_tokens: 2048}
-  legacy_random_32k1k:
-    model: GLM-5.2-w8a8
-    input_tokens: 32000
-    output_tokens: 1000
-    random_range_ratio: 0.5
-    num_prompts: 8
-    request_rate: 0.2
-    temperature: 0
-    primary_metric: output_throughput
   # Portable public option. Select with --benchmark-profile
   # vllm_bench_public_v1; it uses only the vllm CLI already in the serving image.
   vllm_bench_public:

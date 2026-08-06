@@ -11,7 +11,7 @@
 - 固定源码：vLLM `418bd6273c03bf48d5066733769e0a74bdc51694`，vllm-ascend `32c8cf190f596b47f0d0b965e64aea9f2b789ad4`。
 - 参数知识：1540 个结构化表面，340 份完整 ParameterYAML，105 份带依据跳过记录。
 - 五维标签：340 份，审计错误 0；当前场景召回 109 份高影响画像。
-- 新 Session 默认复用人工审计的 23 项注册表，经 Tags 召回和 Compiler 得到 12 Active、4 Reserve、6 Fixed、1 Rejected。独立自动注册表链路完整保留，可显式切换为 28 个当前场景可调维度（12 Active、16 Reserve、40 Fixed、0 Compiler Rejected）。
+- 新 Session 默认复用人工审计注册表，当前编译为 15 Active、5 Reserve、5 Fixed、1 Rejected。独立自动注册表链路可显式切换，当前编译为 102 个可调维度（22 Active、80 Reserve、40 Fixed、0 Compiler Rejected）。在线权威结果只保存在每个 Session 的 `00_search_space/`。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
 - 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
 - 唯一 B0 为 `B0-deployable`：模型原生 `max_model_len=1048576` 需要 `107.25 GiB` KV Cache，而当前拓扑仅有 `28.82 GiB`，因此只固定 `max_model_len=64000`，其余参数继续由目标版本源码解析。
@@ -89,7 +89,6 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\一键启动.ps1 -NewSession -AgentProvider anthropic
-.\一键启动.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
 .\一键启动.ps1 -NewSession -BenchmarkProfile vllm_bench_public_v1
 .\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 ```
@@ -101,7 +100,7 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
 | Search-Space 构建 | `-SearchSpaceProfile` | `curated_registry_v1`（默认）、`automatic_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
 | Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
-| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1`、`legacy_random_32k1k` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible`、`deepseek` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
 
@@ -111,7 +110,7 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 
 ### Git 克隆后可直接复用的知识产物
 
-仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因、Tags 与人工路径 Search Limits 参考快照；接手者无需先重新调用 Agent 就能阅读知识。默认人工审计路径会在新 Session 创建时重新编译并冻结权威 Search Limits；自动路径可通过 Profile 参数替换。源码 checkout、迁移运行目录、Session、临时队列和日志属于可再生产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
+仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因与 Tags；接手者无需先重新调用 Agent 就能阅读知识。人工或自动 Search Limits 都在新 Session 创建时重新编译，并只把该 Session 的冻结结果作为在线权威。源码 checkout、迁移运行目录、Session、临时队列和日志属于运行产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
 
 ## 从 GitHub 克隆后的启动流程
 

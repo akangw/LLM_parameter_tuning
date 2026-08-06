@@ -566,16 +566,8 @@ class Controller:
             raise ValueError(f"Incomplete image identity in {self.image_manifest_path}")
         self.measurement_policy = config.get("measurement_policy", {})
         benchmark_settings = dict(config.get("benchmark", {}))
-        if not benchmark_settings:
-            benchmark_settings = {
-                "profile": "legacy_random_32k1k",
-                "legacy_random_32k1k": dict(config.get("fixed_scenario", {})),
-            }
-        elif not benchmark_settings.get("profile") and benchmark_settings.get("mode"):
-            legacy_mode = str(benchmark_settings["mode"])
-            benchmark_settings["profile"] = (
-                "aligned_l1_v4" if legacy_mode == "aligned_l1" else legacy_mode
-            )
+        if not benchmark_settings.get("profile"):
+            raise ValueError("benchmark.profile is required")
         frozen_benchmark_profile = benchmark_settings.get("resolved_profile")
         if isinstance(frozen_benchmark_profile, dict):
             self.benchmark_profile_name = str(benchmark_settings["profile"])
@@ -609,7 +601,6 @@ class Controller:
         self.benchmark_mode = str(self.benchmark_profile.get("mode", ""))
         if self.benchmark_mode not in {
             "aligned_l1",
-            "legacy_random_32k1k",
             "vllm_bench_serve",
             "custom_adapter",
         }:
@@ -757,6 +748,10 @@ class Controller:
             )
         self.config.setdefault("strategy", {})["profile"] = self.strategy_profile_name
         self.config["strategy"]["resolved_profile"] = dict(self.strategy_profile)
+        # Keep the legacy policy label synchronized with the selected frozen
+        # Strategy Profile. It is still included in Agent context and audit
+        # records, so leaving the config default here would label V3 as V2.
+        self.change_policy["strategy_version"] = self.strategy_profile_name
         exploration_profile = dict(self.strategy_profile.get("exploration", {}))
         refinement_profile = dict(
             self.strategy_profile.get("local_refinement")
@@ -1379,12 +1374,6 @@ class Controller:
             "--format",
             "yaml",
         ]
-        if self.benchmark_mode == "legacy_random_32k1k":
-            insert_at = command.index("--where")
-            command[insert_at:insert_at] = [
-                "--tag",
-                "deploy_scenario=long_input",
-            ]
         result = run_process(command, cwd=KB_ROOT, timeout=120)
         if result.returncode != 0 or not result.stdout.strip():
             raise RuntimeError(
@@ -1672,12 +1661,14 @@ class Controller:
                 int(workload["input_tokens"]) + int(workload["output_tokens"])
                 for workload in workloads
             )
-        else:
-            legacy = self.benchmark.get(
-                "legacy_random_32k1k", self.config["fixed_scenario"]
+        elif self.benchmark_mode == "vllm_bench_serve":
+            public_benchmark = self.benchmark["vllm_bench_serve"]
+            required_tokens = int(public_benchmark["input_tokens"]) + int(
+                public_benchmark["output_tokens"]
             )
-            required_tokens = int(legacy["input_tokens"]) + int(legacy["output_tokens"])
-        if candidate["max_model_len"] < required_tokens:
+        else:
+            required_tokens = 0
+        if required_tokens and candidate["max_model_len"] < required_tokens:
             raise ValueError(
                 f"max_model_len={candidate['max_model_len']} is below the benchmark "
                 f"input+output requirement {required_tokens}"
@@ -3609,11 +3600,6 @@ fixed JSONL prompts, temperature=0, and {repetition_count} complete repetition(s
 The primary score is {repetition_aggregation} of the C32 workload geometric mean.
 TTFT/TPOT P50/P90, zero errors/incomplete requests, exact token shapes,
 per-workload throughput, and run-to-run CV are deterministic guardrails."""
-        elif self.benchmark_mode == "legacy_random_32k1k":
-            benchmark_goal = """Goal: improve measured output throughput under the historical
-random 32K-centered input / 1K-centered output / 8 prompts / 0.2 req/s /
-temperature=0 workload. TTFT, TPOT, success rate, and memory are guardrails.
-Treat this small legacy measurement as exploratory evidence."""
         else:
             definition = self.benchmark[self.benchmark_mode]
             benchmark_goal = f"""Goal: improve measured output-token throughput under the frozen

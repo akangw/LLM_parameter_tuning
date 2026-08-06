@@ -127,14 +127,14 @@ class RuntimeProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incompatible with runtime"):
             validate_runtime_selections(resolved)
 
-    def test_legacy_session_keeps_its_frozen_selections(self) -> None:
+    def test_implicit_runtime_keeps_its_frozen_selections(self) -> None:
         config = {
-            "benchmark": {"profile": "legacy_random_32k1k"},
+            "benchmark": {"profile": "aligned_l1_v4"},
             "search_space": {"profile": "automatic_registry_v1"},
         }
         resolved, identity = resolve_runtime_profile(config, self.project_root)
         self.assertEqual(identity["profile"], "legacy_implicit_ascend")
-        self.assertEqual(resolved["benchmark"]["profile"], "legacy_random_32k1k")
+        self.assertEqual(resolved["benchmark"]["profile"], "aligned_l1_v4")
 
     def test_planned_external_adapter_cannot_activate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

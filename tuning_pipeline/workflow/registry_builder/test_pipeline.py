@@ -101,10 +101,18 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         compiler_dir = MODULE_DIR.parent / "search_space_compiler"
+        profiles = yaml.safe_load(
+            (MODULE_DIR.parent / "search_space_profiles.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
         cls.pipeline = AutomaticRegistryPipeline(
             knowledge_dir=PROJECT_ROOT / "tag_params" / "output" / "params",
             scenario_path=compiler_dir / "scenario.glm52-a3-aligned-l1.yaml",
             policy_path=compiler_dir / "policy.yaml",
+            activation_override=profiles["profiles"]["automatic_registry_v1"][
+                "activation"
+            ],
         )
         cls.registry, cls.search_result = cls.pipeline.compile()
 
@@ -117,8 +125,7 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
         self.assertFalse(audit["connected_to_mainflow"])
         self.assertFalse(self.search_result["integration"]["connected_to_mainflow"])
         self.assertEqual("automatic_registry_v1", self.registry["mode"])
-        self.assertGreaterEqual(summary["active_parameters"], 10)
-        self.assertLessEqual(summary["active_parameters"], 15)
+        self.assertEqual(22, summary["active_parameters"])
         self.assertGreater(summary["reserve_parameters"], 0)
 
     def test_mismatched_source_identity_fails_closed(self) -> None:
@@ -131,8 +138,8 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
 
     def test_final_tunable_pool_excludes_known_non_executable_axes(self) -> None:
         summary = self.search_result["summary"]
-        self.assertGreaterEqual(summary["eligible_tunable_parameters"], 100)
-        self.assertEqual(12, summary["active_parameters"])
+        self.assertEqual(102, summary["eligible_tunable_parameters"])
+        self.assertEqual(22, summary["active_parameters"])
         self.assertEqual(
             summary["eligible_tunable_parameters"] - summary["active_parameters"],
             summary["reserve_parameters"],
@@ -203,6 +210,16 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
             "long_prefill_token_threshold",
             "enable_expert_parallel",
             "speculative_config__method",
+            "fused_mc2",
+            "enable_balance_scheduling",
+            "enable_reduce_sample",
+            "speculative_config__enforce_eager",
+            "enable_prefix_caching",
+            "flashcomm1",
+            "speculative_config__disable_padded_drafter_batch",
+            "additional_config__ascend_compilation_config__enable_npugraph_ex",
+            "additional_config__ascend_compilation_config__enable_static_kernel",
+            "disable_hybrid_kv_cache_manager",
         }
         self.assertEqual(expected, set(self.search_result["active_search_limits"]))
         self.assertNotIn("TORCH_COMPILE_DISABLE", expected)

@@ -107,10 +107,6 @@ This project uses the isolated persistent lease
 - `aligned_l1` (default): the read-only central
   `01_调优_固定矩阵-v3.yaml` / `tuning-fixed` standard, frozen JSONL datasets,
   C1/C16/C32, four workloads, and one complete repetition per tuning round.
-- `legacy_random_32k1k`: the former `vllm bench serve` random 16K-48K input /
-  500-1500 output, 8-prompt, 0.2-RPS path. It remains available only for
-  historical reproduction.
-
 The aligned runner reads the central ServeBench standard and datasets without
 modifying them. Every repetition and all generated evidence are written below:
 
@@ -188,8 +184,7 @@ reject overrides so an existing experiment cannot drift.
 
 Benchmark selection is an independent frozen axis. `benchmark_profiles.yaml`
 maps a stable profile name to one complete definition in `config.yaml`.
-`aligned_l1_v4` is the formal default and `legacy_random_32k1k` is retained for
-historical reproduction. A new Session may use `-BenchmarkProfile`; resume and
+`aligned_l1_v4` is the formal default. A new Session may use `-BenchmarkProfile`; resume and
 retry reject Benchmark overrides so measurements from different contracts are
 never silently mixed.
 
@@ -251,7 +246,6 @@ python .\continuous_tuning.py --dry-run
 # Optional new-Session selections
 .\start_continuous.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\start_continuous.ps1 -NewSession -AgentProvider anthropic
-.\start_continuous.ps1 -NewSession -BenchmarkProfile legacy_random_32k1k
 .\start_continuous.ps1 -NewSession -AgentProvider deepseek `
   -BenchmarkProfile vllm_bench_public_v1 -SearchSpaceProfile automatic_registry_v1
 ```

@@ -3,7 +3,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sys
 from pathlib import Path
+
+import yaml
+
+TUNING_ROOT = Path(__file__).resolve().parents[2]
+if str(TUNING_ROOT) not in sys.path:
+    sys.path.insert(0, str(TUNING_ROOT))
 
 from .builder import MODULE_DIR, PROJECT_ROOT
 from .compatibility import DEFAULT_POLICY_PATH
@@ -46,12 +53,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    profiles_path = MODULE_DIR.parent / "search_space_profiles.yaml"
+    profiles = yaml.safe_load(profiles_path.read_text(encoding="utf-8"))
+    activation = dict(
+        profiles["profiles"]["automatic_registry_v1"].get("activation", {})
+    )
     pipeline = AutomaticRegistryPipeline(
         knowledge_dir=args.knowledge_dir,
         scenario_path=args.scenario,
         policy_path=args.policy,
         compatibility_policy_path=args.compatibility_policy,
         source_root=args.source_root,
+        activation_override=activation,
     )
     registry, search_result = pipeline.compile()
     summary = {

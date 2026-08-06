@@ -15,12 +15,6 @@ profiles:
     definition_key: aligned_l1_w4a8c8
     purpose: Isolated Aligned-L1 identity for GLM-5.2-W4A8C8 single-node tuning.
 
-  legacy_random_32k1k:
-    status: integrated
-    mode: legacy_random_32k1k
-    definition_key: legacy_random_32k1k
-    purpose: Historical random 32K/1K exploratory benchmark reproduction only.
-
   vllm_bench_public_v1:
     status: integrated
     mode: vllm_bench_serve
