@@ -19,7 +19,7 @@
 ## 运行产物（Git 忽略）
 
 ```text
-.runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16/
+tuning_pipeline/workflow/continuous/scenario_runs/glm52-w8a8-a3-2n-dp2-tp16/
 ```
 
 正式 Session 中最重要的场景产物是：

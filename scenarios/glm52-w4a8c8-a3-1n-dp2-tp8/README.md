@@ -9,7 +9,7 @@ Search Limits 四项证明完成前，统一入口会拒绝 `prepare/start/resum
 默认本地 Runtime Root：
 
 ```text
-.runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/
+tuning_pipeline/workflow/continuous/scenario_runs/glm52-w4a8c8-a3-1n-dp2-tp8/
 ```
 
 可以先生成个人配置并做结构校验：

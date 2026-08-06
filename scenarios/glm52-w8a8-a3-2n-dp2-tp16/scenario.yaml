@@ -30,7 +30,7 @@ scenario:
   entry:
     default_config: tuning_pipeline/workflow/continuous/config.yaml
     operator_template: scenarios/glm52-w8a8-a3-2n-dp2-tp16/operator.example.yaml
-    runtime_root: .runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16
+    runtime_root: tuning_pipeline/workflow/continuous/scenario_runs/glm52-w8a8-a3-2n-dp2-tp16
   required_inputs:
     - SSH alias and writable remote project root
     - model and optional MTP checkpoint paths
@@ -50,6 +50,6 @@ scenario:
     image_manifest: tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml
     image_activation: tuning_pipeline/workflow/continuous/activation.approved.yaml
   outputs:
-    local: .runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16
+    local: tuning_pipeline/workflow/continuous/scenario_runs/glm52-w8a8-a3-2n-dp2-tp16
     remote: <operator.remote_project>/workflow/auto/lab_runs
     history_contract: Never mix with another model, quantization, topology, or Benchmark identity.

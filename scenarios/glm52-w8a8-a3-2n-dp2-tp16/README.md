@@ -8,7 +8,7 @@
 本场景的配置、状态和产物不得与 W4A8C8 或其他拓扑共用。默认本地 Runtime Root：
 
 ```text
-.runtime/scenarios/glm52-w8a8-a3-2n-dp2-tp16/
+tuning_pipeline/workflow/continuous/scenario_runs/glm52-w8a8-a3-2n-dp2-tp16/
 ```
 
 首次使用：

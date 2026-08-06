@@ -13,8 +13,9 @@ Auto_vllm_parameter/
 ├─ scenarios/                  选择运行身份
 ├─ scripts/                    执行操作
 ├─ portrait_pipeline/          参数知识内部实现
-├─ tuning_pipeline/            调优与 Benchmark 内部实现
-└─ .runtime/                   Session 产物，不进入 Git
+└─ tuning_pipeline/            调优与 Benchmark 内部实现
+   └─ workflow/continuous/scenario_runs/
+                              按场景隔离的 Session 产物，不进入 Git
 ```
 
 理解项目先进入 `pipeline/`；运行项目再进入 `scenarios/`。不应该从
@@ -33,7 +34,7 @@ Auto_vllm_parameter/
 | `tuning_pipeline/workflow/baselines/` | 场景输入 | B0/A0 定义 | 每个场景验证后维护 |
 | `tuning_pipeline/workflow/continuous/` | 公共引擎 | Controller、Profile 注册表、远端执行器 | 框架开发者维护 |
 | `tuning_pipeline/workflow/benchmark_adapters/` | 扩展接口 | 自定义 Benchmark result-v1 适配器 | Benchmark 接入者维护 |
-| `.runtime/scenarios/<id>/` | 本机运行产物 | state、Session、日志、PID | Controller 自动生成，不入 Git |
+| `tuning_pipeline/workflow/continuous/scenario_runs/<id>/` | 本机运行产物 | state、Session、日志、PID | Controller 自动生成，不入 Git |
 | `<remote_project>/workflow/auto/lab_runs/` | 服务器产物 | 完整服务和 Benchmark 原始证据 | 远端执行器自动生成 |
 
 `pipeline/` 不保存第二份配置或产物，只解释业务步骤并指向下表中的唯一实现位置，避免
@@ -77,7 +78,7 @@ Session/00_search_space/ 中冻结的场景参数画像子集
 使用 `scripts/scenario.ps1` 启动后：
 
 ```text
-.runtime/scenarios/<scenario-id>/
+tuning_pipeline/workflow/continuous/scenario_runs/<scenario-id>/
 ├─ state.json                         当前 Controller 状态
 ├─ logs/controller/                   Controller 和后台进程日志
 └─ experiments/<session-id>/

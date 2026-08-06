@@ -21,7 +21,7 @@ scenarios/
 运行时文件不进入源码树中的上述目录，而统一进入同级身份的忽略目录：
 
 ```text
-.runtime/scenarios/<scenario-id>/
+tuning_pipeline/workflow/continuous/scenario_runs/<scenario-id>/
 ├─ state.json
 ├─ experiments/<session-id>/
 ├─ logs/

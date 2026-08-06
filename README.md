@@ -280,9 +280,11 @@ Auto_vllm_parameter/
 ├─ scripts/                      初始化、预检、启动、恢复、状态和停止
 ├─ docs/                         操作手册和详细设计
 ├─ portrait_pipeline/            参数知识内部实现（普通使用者跳过）
-├─ tuning_pipeline/              调优与 Benchmark 内部实现（普通使用者跳过）
+├─ tuning_pipeline/              调优与 Benchmark 实现
+│  └─ workflow/continuous/scenario_runs/
+│                               按场景隔离的状态、Session 和日志（不进入 Git）
 ├─ docker/                       Linux/Docker Controller 封装
-└─ .runtime/                     本地状态、Session 和日志（不进入 Git）
+└─ .runtime/                     其他本地临时运行文件（不进入 Git）
 ```
 
 阅读项目使用 `pipeline → scenarios → scripts`；只有开发框架时才进入两个内部实现目录。

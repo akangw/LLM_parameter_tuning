@@ -31,7 +31,7 @@ scenario:
   entry:
     default_config: tuning_pipeline/workflow/continuous/launch_profiles/glm52_w4a8c8_a0_aligned_l1.example.yaml
     operator_template: scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/operator.example.yaml
-    runtime_root: .runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8
+    runtime_root: tuning_pipeline/workflow/continuous/scenario_runs/glm52-w4a8c8-a3-1n-dp2-tp8
   required_inputs:
     - read-only capture of the existing start_service.sh A0
     - exact model and MTP checkpoint paths
@@ -51,6 +51,6 @@ scenario:
     image_manifest: tuning_pipeline/workflow/continuous/remote/image_version_manifest.yaml
     image_activation: tuning_pipeline/workflow/continuous/activation.approved.yaml
   outputs:
-    local: .runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8
+    local: tuning_pipeline/workflow/continuous/scenario_runs/glm52-w4a8c8-a3-1n-dp2-tp8
     remote: <operator.remote_project>/workflow/auto/lab_runs
     history_contract: Never inherit W8A8 candidates, anchors, metrics, or runtime rules.

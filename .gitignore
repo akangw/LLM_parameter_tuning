@@ -17,6 +17,8 @@ tuning_pipeline/workflow/continuous/config.local.yaml
 tuning_pipeline/workflow/continuous/launch_profiles/automatic_v2_b0.yaml
 tuning_pipeline/workflow/continuous/experiments/*
 !tuning_pipeline/workflow/continuous/experiments/README.md
+tuning_pipeline/workflow/continuous/scenario_runs/*
+!tuning_pipeline/workflow/continuous/scenario_runs/README.md
 tuning_pipeline/artifacts/archive/
 
 # Reproducible but bulky build queues and duplicate audit workspaces.

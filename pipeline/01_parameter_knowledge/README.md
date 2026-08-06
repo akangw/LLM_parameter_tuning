@@ -48,5 +48,5 @@ tuning_pipeline/tag_params/output/params/
 某次实验真正采用的知识边界只看：
 
 ```text
-.runtime/scenarios/<scenario-id>/experiments/<session-id>/00_search_space/
+tuning_pipeline/workflow/continuous/scenario_runs/<scenario-id>/experiments/<session-id>/00_search_space/
 ```

@@ -21,7 +21,7 @@
 运行产物才会写入：
 
 ```text
-.runtime/scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/
+tuning_pipeline/workflow/continuous/scenario_runs/glm52-w4a8c8-a3-1n-dp2-tp8/
 ```
 
 不要把 W8A8 的 `00_search_space/` 或历史 Session 复制过来充当 W4A8C8 产物。
