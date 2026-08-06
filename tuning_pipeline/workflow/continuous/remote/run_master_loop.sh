@@ -15,8 +15,9 @@ write_status() {
 }
 write_startup_event() {
   local event="$1"
-  printf '{"event":"%s","at":"%s","safetensors_load_strategy":"%s","prefetch_threads":%s,"prefetch_block_size":%s}\n' \
+  printf '{"event":"%s","at":"%s","safetensors_load_strategy":"%s","vllm_load_strategy":"%s","prefetch_mode":"%s","prefetch_threads":%s,"prefetch_block_size":%s}\n' \
     "${event}" "$(date -Iseconds)" "${SAFETENSORS_LOAD_STRATEGY}" \
+    "${VLLM_SAFETENSORS_LOAD_STRATEGY}" "${SAFETENSORS_PREFETCH_MODE}" \
     "${SAFETENSORS_PREFETCH_NUM_THREADS}" "${SAFETENSORS_PREFETCH_BLOCK_SIZE}" \
     >> "${RUN_DIR}/startup_timeline.jsonl"
 }
@@ -35,6 +36,10 @@ trap finish_experiment EXIT TERM INT
 
 echo "EXPERIMENT_RUN_ID=${EXPERIMENT_RUN_ID}"
 echo "ROLE=master NODE_IP=${NODE_IP} MASTER_IP=${MASTER_IP} NIC_NAME=${NIC_NAME}"
+write_status "prefetching_checkpoints"
+write_startup_event "node_checkpoint_prefetch_start"
+prefetch_checkpoints_on_node
+write_startup_event "node_checkpoint_prefetch_complete"
 write_status "starting_vllm"
 
 case "${LAUNCH_PROFILE}" in
@@ -79,6 +84,8 @@ service:
   enable_reduce_sample: ${ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE}
   speculative_config__enforce_eager: ${SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON}
   safetensors_load_strategy: ${SAFETENSORS_LOAD_STRATEGY}
+  safetensors_vllm_load_strategy: ${VLLM_SAFETENSORS_LOAD_STRATEGY}
+  safetensors_prefetch_mode: ${SAFETENSORS_PREFETCH_MODE}
   safetensors_prefetch_num_threads: ${SAFETENSORS_PREFETCH_NUM_THREADS}
   safetensors_prefetch_block_size: ${SAFETENSORS_PREFETCH_BLOCK_SIZE}
 benchmark:

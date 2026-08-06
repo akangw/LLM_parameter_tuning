@@ -59,6 +59,14 @@ adapter:
     executor: ktp_single_node_local_dp
     requires_new_session: true
     history_isolation: strict_scenario_id
+    allowed_profiles:
+      search_space: [automatic_registry_glm52_w4a8c8_v1]
+      strategy: [best_anchor_coverage_v2, best_anchor_coverage_v3]
+      benchmark:
+        - aligned_l1_glm52_w4a8c8_v1
+        - vllm_bench_public_v1
+        - custom_adapter_v1
+      agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
   readiness:
     attestations:
       executor_validated: false
@@ -66,6 +74,7 @@ adapter:
       benchmark_validated: false
       search_space_validated: false
     blockers:
+      - The currently approved portrait/runtime image is W8A8-only; obtain and attest a W4A8C8-capable image first.
       - Run a read-only image identity probe in the target Lease.
       - Run and measure A0 once before promoting this adapter to integrated.
       - Validate the isolated Aligned-L1 profile and compiled Search Limits.

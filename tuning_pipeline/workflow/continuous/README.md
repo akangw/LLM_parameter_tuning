@@ -88,12 +88,13 @@ fields. A candidate that attempts to enable EPLB is rejected before submission.
 Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The two-node
 TP16/DP2 topology remains fixed across all tuning rounds.
 
-The model checkpoint is on DTFS. The pinned vLLM build auto-detects only
-NFS/Lustre for Safetensors prefetch, so the workflow explicitly freezes
-`--safetensors-load-strategy=prefetch`, 8 prefetch threads, and a 16 MiB read
-block. This replaces the observed 16-worker lazy-mmap access pattern without
-changing any post-startup serving or benchmark parameter. Each run archives a
-`startup_timeline.jsonl` so process-start-to-API-ready time can be compared.
+The model checkpoint is on DTFS. The pinned vLLM background prefetcher divides
+files by global DP*TP rank, which leaves each physical DP node with only part
+of the page cache it needs. The workflow therefore freezes a node-blocking
+transport: one process per node reads the complete checkpoint with 8 threads
+and 16 MiB blocks, waits for completion, and then launches vLLM with lazy mmap
+so the broken background prefetch cannot race model loading. Requested and
+effective strategies, files, bytes, seconds, shards/s, and GiB/s are archived.
 
 This project uses the isolated persistent lease
 `vllmtkb-418bd627-32c8cf190-glm52-a3-32npu`; it does not share the historical

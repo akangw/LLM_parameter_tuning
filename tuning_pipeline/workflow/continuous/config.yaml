@@ -56,12 +56,13 @@ topology:
 # The sliced MTP-only checkpoint made by the deployment owner. Set the exact
 # server path before preparing the lease; leaving it empty fails closed.
 mtp_draft_model: /models/share/GLM-5.2-w8a8-mtp-only-vllm0.25.1-image46d8bbb4
-# DTFS is a network filesystem, but the pinned vLLM build only auto-detects
-# NFS/Lustre. Force the supported page-cache prefetch path to avoid 16 TP
-# workers performing high-latency lazy mmap reads across 182 checkpoint shards.
-# Keep the upstream conservative defaults: each of the two lease nodes runs
-# one 8-thread prefetch, with 16 MiB sequential reads.
+# DTFS is a network filesystem, but the pinned vLLM prefetcher partitions files
+# by the global DP*TP world. That warms only half of the node-local page cache
+# for DP2*TP16 and starts loading before prefetch finishes. Warm the complete
+# checkpoint once per physical node, block until it is ready, and then launch
+# vLLM with lazy mmap so its broken global-rank background prefetch stays off.
 model_loading:
+  safetensors_prefetch_mode: node_blocking
   safetensors_load_strategy: prefetch
   safetensors_prefetch_num_threads: 8
   safetensors_prefetch_block_size: 16777216

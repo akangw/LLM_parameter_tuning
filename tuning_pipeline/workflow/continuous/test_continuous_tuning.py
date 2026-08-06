@@ -538,6 +538,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertIn('"schema_files_sha256"', env_text)
         self.assertIn("SAFETENSORS_LOAD_STRATEGY=prefetch", env_text)
+        self.assertIn("SAFETENSORS_PREFETCH_MODE=node_blocking", env_text)
         self.assertIn("SAFETENSORS_PREFETCH_NUM_THREADS=8", env_text)
         self.assertIn("SAFETENSORS_PREFETCH_BLOCK_SIZE=16777216", env_text)
         self.assertIn("MODEL_PATH=/models/share/GLM-5.2-w8a8", env_text)
@@ -554,15 +555,20 @@ class ControllerTests(unittest.TestCase):
         self.assertIn('source "${INIT_ENV_SCRIPT}"', runtime)
         self.assertIn('--served-model-name "${SERVED_MODEL_NAME}"', runtime)
         self.assertIn(
-            '--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"', runtime
+            '--safetensors-load-strategy "${VLLM_SAFETENSORS_LOAD_STRATEGY}"',
+            runtime,
         )
+        self.assertIn('VLLM_SAFETENSORS_LOAD_STRATEGY=lazy', runtime)
+        self.assertIn('prefetch_checkpoints_on_node()', runtime)
         self.assertIn(
             '--safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"',
             runtime,
         )
         self.assertIn('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]', runtime)
         self.assertLess(
-            runtime.index('--safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"'),
+            runtime.index(
+                '--safetensors-load-strategy "${VLLM_SAFETENSORS_LOAD_STRATEGY}"'
+            ),
             runtime.index('if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]'),
         )
         self.assertIn(
@@ -571,6 +577,22 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertIn(
             'VLLM_COMMON_ARGS+=(--max-model-len "${MAX_MODEL_LEN}")', runtime
+        )
+        master_runtime = (
+            tuning.HERE / "remote" / "run_master_loop.sh"
+        ).read_text(encoding="utf-8")
+        worker_runtime = (
+            tuning.HERE / "remote" / "run_worker_loop.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("node_checkpoint_prefetch.py", tuning.REMOTE_SCRIPT_NAMES)
+        self.assertTrue((tuning.HERE / "remote" / "node_checkpoint_prefetch.py").is_file())
+        self.assertLess(
+            master_runtime.index("prefetch_checkpoints_on_node"),
+            master_runtime.index('vllm serve "${MODEL_PATH}"'),
+        )
+        self.assertLess(
+            worker_runtime.index("prefetch_checkpoints_on_node"),
+            worker_runtime.index('vllm serve "${MODEL_PATH}"'),
         )
         launcher = (tuning.HERE / "start_continuous.ps1").read_text(encoding="utf-8")
         self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
@@ -715,6 +737,11 @@ class ControllerTests(unittest.TestCase):
         configured["model_loading"]["safetensors_load_strategy"] = "prefetch"
         configured["model_loading"]["safetensors_prefetch_num_threads"] = 64
         with self.assertRaisesRegex(ValueError, "prefetch_num_threads"):
+            tuning.Controller(configured)
+
+        configured["model_loading"]["safetensors_prefetch_num_threads"] = 8
+        configured["model_loading"]["safetensors_prefetch_mode"] = "global_rank"
+        with self.assertRaisesRegex(ValueError, "prefetch_mode"):
             tuning.Controller(configured)
 
     def test_b0_reconciles_source_resolved_values_before_agent_handoff(self) -> None:

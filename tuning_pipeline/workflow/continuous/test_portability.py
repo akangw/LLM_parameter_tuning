@@ -13,7 +13,10 @@ from workflow.continuous.session_bundle import (
     import_session,
     inspect_bundle,
 )
-from workflow.continuous.runtime_profile import resolve_runtime_profile
+from workflow.continuous.runtime_profile import (
+    resolve_runtime_profile,
+    validate_runtime_selections,
+)
 from workflow.continuous.topology_profile import resolve_topology_profile
 
 
@@ -108,6 +111,21 @@ class RuntimeProfileTests(unittest.TestCase):
             config, self.project_root, apply_bindings=False
         )
         self.assertEqual(resolved["benchmark"]["profile"], "vllm_bench_public_v1")
+        validate_runtime_selections(resolved)
+
+    def test_w8_runtime_rejects_w4_profiles_before_session_creation(self) -> None:
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
+        )
+        resolved, _ = resolve_runtime_profile(config, self.project_root)
+        resolved["search_space"]["profile"] = "automatic_registry_glm52_w4a8c8_v1"
+        with self.assertRaisesRegex(ValueError, "incompatible with runtime"):
+            validate_runtime_selections(resolved)
+
+        resolved, _ = resolve_runtime_profile(config, self.project_root)
+        resolved["benchmark"]["profile"] = "aligned_l1_glm52_w4a8c8_v1"
+        with self.assertRaisesRegex(ValueError, "incompatible with runtime"):
+            validate_runtime_selections(resolved)
 
     def test_legacy_session_keeps_its_frozen_selections(self) -> None:
         config = {

@@ -35,7 +35,7 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
-    from .runtime_profile import resolve_runtime_profile
+    from .runtime_profile import resolve_runtime_profile, validate_runtime_selections
     from .topology_profile import resolve_topology_profile
     from .agent_provider import (
         resolve_agent_profile,
@@ -44,7 +44,7 @@ try:
     )
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
-    from runtime_profile import resolve_runtime_profile
+    from runtime_profile import resolve_runtime_profile, validate_runtime_selections
     from topology_profile import resolve_topology_profile
     from agent_provider import (
         resolve_agent_profile,
@@ -108,6 +108,7 @@ REMOTE_SCRIPT_NAMES = (
     "WORKSPACE_MANIFEST.md",
     "ARTIFACT_LAYOUT.md",
     "common_runtime_loop.sh",
+    "node_checkpoint_prefetch.py",
     "run_master_loop.sh",
     "run_worker_loop.sh",
     "submit_candidate.sh",
@@ -342,6 +343,7 @@ class Controller:
             config, KB_ROOT, apply_bindings=False
         )
         self.config, self.topology = resolve_topology_profile(runtime_config, KB_ROOT)
+        validate_runtime_selections(self.config)
         config = self.config
         effective_runtime = {
             "topology_profile": self.config.get("topology", {}).get("profile"),
@@ -497,6 +499,9 @@ class Controller:
         self.safetensors_prefetch_block_size = int(
             self.model_loading.get("safetensors_prefetch_block_size", 16 * 1024 * 1024)
         )
+        self.safetensors_prefetch_mode = str(
+            self.model_loading.get("safetensors_prefetch_mode", "node_blocking")
+        ).strip()
         if self.safetensors_load_strategy not in {"prefetch", "eager", "lazy"}:
             raise ValueError(
                 "model_loading.safetensors_load_strategy must be prefetch, eager, or lazy"
@@ -508,6 +513,14 @@ class Controller:
         if not 1024 * 1024 <= self.safetensors_prefetch_block_size <= 1024**3:
             raise ValueError(
                 "model_loading.safetensors_prefetch_block_size must be between 1 MiB and 1 GiB"
+            )
+        if self.safetensors_prefetch_mode not in {
+            "node_blocking",
+            "vllm_background",
+        }:
+            raise ValueError(
+                "model_loading.safetensors_prefetch_mode must be node_blocking "
+                "or vllm_background"
             )
         self.lab = config.get("lab", {})
         image_setting = self.config.get("image_identity", {})
@@ -1485,6 +1498,10 @@ class Controller:
         lines.append(
             "SAFETENSORS_PREFETCH_BLOCK_SIZE="
             + str(self.safetensors_prefetch_block_size)
+        )
+        lines.append(
+            "SAFETENSORS_PREFETCH_MODE="
+            + shlex.quote(self.safetensors_prefetch_mode)
         )
         lines.append(f"BENCHMARK_MODE={shlex.quote(self.benchmark_mode)}")
         lines.append(f"BENCHMARK_PROFILE={shlex.quote(self.benchmark_profile_name)}")
@@ -5063,6 +5080,7 @@ def main() -> int:
             raw_config.setdefault("search_space", {})[
                 "profile"
             ] = args.search_space_profile
+        validate_runtime_selections(raw_config)
         config, search_space_result = resolve_search_limits(
             raw_config,
             project_root=KB_ROOT,

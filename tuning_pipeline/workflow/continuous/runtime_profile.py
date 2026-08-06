@@ -82,6 +82,40 @@ def _artifact_identities(profile: dict[str, Any], project_root: Path) -> dict[st
     return identities
 
 
+def validate_runtime_selections(config: dict[str, Any]) -> None:
+    """Reject a Profile that is integrated globally but invalid for this runtime."""
+    runtime = config.get("runtime", {})
+    profile = runtime.get("resolved_profile", {}) if isinstance(runtime, dict) else {}
+    compatibility = profile.get("compatibility", {}) if isinstance(profile, dict) else {}
+    allowed = (
+        compatibility.get("allowed_profiles", {})
+        if isinstance(compatibility, dict)
+        else {}
+    )
+    if not isinstance(allowed, dict) or not allowed:
+        # Legacy frozen Sessions predate this contract and retain their exact
+        # already-frozen selections instead of inheriting a new allowlist.
+        return
+    selected = {
+        "search_space": config.get("search_space", {}).get("profile"),
+        "strategy": config.get("strategy", {}).get("profile"),
+        "benchmark": config.get("benchmark", {}).get("profile"),
+        "agent_provider": config.get("agent", {}).get("provider", "codex"),
+    }
+    runtime_name = str(runtime.get("profile", "unknown"))
+    for kind, value in selected.items():
+        choices = allowed.get(kind)
+        if not isinstance(choices, list) or not choices:
+            raise ValueError(
+                f"Runtime profile {runtime_name!r} lacks an allowlist for {kind}"
+            )
+        if value not in choices:
+            raise ValueError(
+                f"{kind} profile {value!r} is incompatible with runtime "
+                f"{runtime_name!r}; allowed={choices}"
+            )
+
+
 def resolve_runtime_profile(
     config: dict[str, Any], project_root: Path, *, apply_bindings: bool = True
 ) -> tuple[dict[str, Any], dict[str, Any]]:

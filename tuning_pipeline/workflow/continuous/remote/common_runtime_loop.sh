@@ -69,6 +69,22 @@ FIXED_ENVIRONMENT_JSON="${FIXED_ENVIRONMENT_JSON:-}"
 SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
 SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
+SAFETENSORS_PREFETCH_MODE="${SAFETENSORS_PREFETCH_MODE:-node_blocking}"
+case "${SAFETENSORS_PREFETCH_MODE}" in
+  node_blocking)
+    # The node-local warmup below owns prefetching. Keep vLLM's global-rank
+    # background prefetch disabled so it cannot split one DP replica's files
+    # across physical nodes or race the actual model loader.
+    VLLM_SAFETENSORS_LOAD_STRATEGY=lazy
+    ;;
+  vllm_background)
+    VLLM_SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY}"
+    ;;
+  *)
+    echo "Unsupported SAFETENSORS_PREFETCH_MODE=${SAFETENSORS_PREFETCH_MODE}" >&2
+    exit 2
+    ;;
+esac
 source "${INIT_ENV_SCRIPT}"
 source "${CANN_ENV_SCRIPT}"
 
@@ -151,6 +167,20 @@ bool_flag() {
   [[ "${1}" == "true" ]]
 }
 
+prefetch_checkpoints_on_node() {
+  [[ "${SAFETENSORS_PREFETCH_MODE}" == "node_blocking" ]] || return 0
+
+  local roots=("${MODEL_PATH}")
+  if [[ "${NUM_SPECULATIVE_TOKENS:-0}" -gt 0 && -n "${MTP_DRAFT_MODEL_PATH:-}" ]]; then
+    roots+=("${MTP_DRAFT_MODEL_PATH}")
+  fi
+  echo "NODE_CHECKPOINT_PREFETCH_STARTED mode=node_blocking roots=${roots[*]} threads=${SAFETENSORS_PREFETCH_NUM_THREADS} block_size=${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
+  python3 "${AUTO_DIR}/node_checkpoint_prefetch.py" \
+    --threads "${SAFETENSORS_PREFETCH_NUM_THREADS}" \
+    --block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}" \
+    "${roots[@]}"
+}
+
 VLLM_COMMON_ARGS=(
   --data-parallel-size "${DATA_PARALLEL_SIZE}"
   --data-parallel-size-local "${DATA_PARALLEL_SIZE_LOCAL}"
@@ -199,7 +229,7 @@ PY
 # parameter. Apply it equally to B0 and later candidates so the source-default
 # baseline does not fall back to high-latency lazy mmap across all TP workers.
 VLLM_COMMON_ARGS+=(
-  --safetensors-load-strategy "${SAFETENSORS_LOAD_STRATEGY}"
+  --safetensors-load-strategy "${VLLM_SAFETENSORS_LOAD_STRATEGY}"
   --safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"
   --safetensors-prefetch-block-size "${SAFETENSORS_PREFETCH_BLOCK_SIZE}"
 )

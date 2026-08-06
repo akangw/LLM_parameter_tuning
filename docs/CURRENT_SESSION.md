@@ -1,21 +1,39 @@
 # 当前实验摘要
 
-Session：`glm52_continuous_20260804_112130`
+## 当前目标
 
-当前状态：`stopped_after_failed_round`。A3 在服务初始化期间收到人工停止请求，没有形成 Benchmark 指标；它不是已证明的参数 OOM。
+- 场景：`glm52-w8a8-a3-2n-dp2-tp16`
+- 模型：GLM-5.2 W8A8
+- 拓扑：2 节点 × 16 NPU，DP=2、TP=16
+- Benchmark：`aligned_l1_v4`
+- Agent 策略：`best_anchor_coverage_v2`
+- 默认 Search Limits：`curated_registry_v1`；如需自动生成路线，新 Session 必须显式选择 `automatic_registry_v1`
 
-| 轮次 | 主要变化 | 主分数 | 验收 |
-|---|---|---:|---|
-| A0 | 基线 | 602.5576 | 正式锚点 |
-| A1 | batch tokens 8192、显存 0.95 | 无 | 8192 prefill OOM |
-| A1F1 | batch tokens 回退 4096、显存 0.95 | 628.9742 | 吞吐 +4.38%，延迟门禁失败 |
-| A2 | MTP K=1、图上限 128 | 508.7708 | 吞吐 -15.56%，拒绝 |
-| A3 | seqs 64、显存 0.95、K=3、图上限 256 | 无 | 人工停止，未评价 |
+W4A8C8 场景仍为 `planned`，当前参数画像对应的运行镜像不支持该量化方式，因此不得启动。
 
-当前唯一正式接受的最佳锚点仍是 A0。`max_num_batched_tokens=8192` 已按当前镜像、模型和拓扑精确隔离。
+## B0 状态
 
-继续该 Session 前，先复制本机未入库的 `state.json` 和完整 Session 目录，并执行：
+B0 的参数定义和一次真实启动后解析出的有效参数已经留存，但当前 B0 **尚未通过 Benchmark 验收，不能称为正式基线锚点**。
 
-```powershell
-.\一键启动.ps1 -Resume
-```
+- 定义：`tuning_pipeline/workflow/baselines/b0_deployable_64k.yaml`
+- 最近有效参数：`tuning_pipeline/workflow/continuous/experiments/glm52_continuous_20260806_140358/round_000_b0_deployable/02_parameters/effective_config.yaml`
+- 最近 Session：`glm52_continuous_20260806_140358`
+- Session 状态：`stopped_after_failed_round`
+
+最近三次 B0 尝试均未生成可验收的 `metrics.json`：
+
+| 尝试 | 结果 |
+|---|---|
+| `round_000_b0_deployable` | 启动阶段发生端口占用，未形成指标 |
+| `a0r1` | 节点驱逐/部分失败，未形成指标 |
+| `a0r2` | 服务成功 Ready，Benchmark 已开始；在 `balanced-1024-1024/c16-warmup` 阶段服务连接被拒绝，Benchmark 未完成 |
+
+因此准确结论是：B0 参数已经固定并有真实 Ready 证据；当前官方 B0 分数仍为空。
+
+## 历史数据边界
+
+旧 Session `glm52_continuous_20260804_112130` 的 A0 分数 `602.5576` 只能作为历史参考。它与当前 B0 的验收合同、运行身份和重复次数不完全相同，不能直接升级成当前官方 B0。
+
+## 下一步
+
+当前 Lease `vllmtkb-418bd627-32c8cf190-glm52-a3-32npu` 已终止（0/2 Ready）。开始新实验前应先重新准备 W8A8 2×16 Lease，再创建全新 Session，从 B0 完整 Benchmark 开始。B0 通过指标门禁后，流程才会进入 Agent 提案和后续参数轮次。

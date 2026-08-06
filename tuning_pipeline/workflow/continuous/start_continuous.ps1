@@ -105,7 +105,8 @@ $requiredFiles = @(
     "..\search_space_profiles.yaml",
     "agent_decision.schema.json",
     "failure_decision.schema.json",
-    "remote\image_version_manifest.yaml"
+    "remote\image_version_manifest.yaml",
+    "remote\node_checkpoint_prefetch.py"
 )
 foreach ($relativePath in $requiredFiles) {
     $fullPath = Join-Path $root $relativePath

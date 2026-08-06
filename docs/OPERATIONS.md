@@ -76,18 +76,25 @@ Agent Provider。发现可续跑状态时优先使用 `--resume`。
 
 ```yaml
 model_loading:
+  safetensors_prefetch_mode: node_blocking
   safetensors_load_strategy: prefetch
   safetensors_prefetch_num_threads: 8
   safetensors_prefetch_block_size: 16777216
 ```
 
-这三个参数会同时应用于 B0 和后续 Agent 候选轮次。它们只改变权重读取策略和启动耗时，不属于 Search Limits，也不改变 B0 对吞吐/延迟相关 vLLM 参数采用官方源码默认值的定义。
+这些参数会同时应用于 B0 和后续 Agent 候选轮次。`node_blocking` 会在每个
+物理节点上由单个进程完整预热全部 checkpoint，等待完成后再用
+`--safetensors-load-strategy=lazy` 启动 vLLM，避免上游实现按全局 DP*TP rank
+把文件错误分散到两个互不共享 page cache 的节点。它们只改变权重读取策略和
+启动耗时，不属于 Search Limits，也不改变 B0 对吞吐/延迟相关 vLLM 参数采用
+官方源码默认值的定义。
 
 每轮的 `candidate.env`、`effective_config.yaml`、`vllm_common_command.txt` 和
-`startup_timeline.jsonl` 都会记录实际设置。若日志仍出现
-`Auto-prefetch is disabled`，说明远端脚本或 Session 配置未同步，应停止提交
-新轮次并先执行脚本哈希核对。不要直接提高线程数：两个节点会同时读取 DTFS，
-过高并发可能反而放大共享存储抖动。
+`startup_timeline.jsonl` 都会记录实际设置；节点日志还会记录预热的文件数、
+字节数、秒数、片/s 和 GiB/s。`node_blocking` 模式下 vLLM 日志不应出现
+`Prefetching checkpoint files into page cache started`；若仍出现，说明远端脚本
+或 Session 配置未同步，应停止提交新轮次并先执行脚本哈希核对。不要直接提高
+线程数：两个节点会同时读取 DTFS，过高并发可能放大共享存储抖动。
 
 镜像拉取和模型权重读取是两件事。当前使用持久 Lease，普通
 `ktp-lab run` 不会重建 Pod；只有创建新 Lease 或改变镜像身份时才应出现
