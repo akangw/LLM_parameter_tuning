@@ -84,6 +84,44 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual("deepseek", config["agent"]["provider"])
             self.assertTrue(config["agent"]["keep"])
 
+    def test_explicit_a0_definition_is_the_only_candidate_parameter_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = root / "a0.yaml"
+            definition.write_text(
+                "baseline_id: a0-test\n"
+                "launch_profile: explicit_candidate\n"
+                "reference_parameters:\n"
+                "  max_num_seqs: 48\n"
+                "  compilation_enable_sp: null\n",
+                encoding="utf-8",
+            )
+            raw = {
+                "initial_baseline": {
+                    "label": "a0",
+                    "launch_profile": "explicit_candidate",
+                    "definition": "a0.yaml",
+                },
+                "baseline": {"max_num_seqs": 999},
+            }
+            resolved = tuning.resolve_initial_baseline_definition(raw, root)
+            self.assertEqual(
+                {"max_num_seqs": 48, "compilation_enable_sp": None},
+                resolved["baseline"],
+            )
+            self.assertEqual(
+                "a0-test",
+                resolved["initial_baseline"]["resolved_definition"]["baseline_id"],
+            )
+            self.assertEqual(
+                "a0.yaml",
+                resolved["initial_baseline"]["resolved_definition"]["path"],
+            )
+            self.assertEqual(
+                64,
+                len(resolved["initial_baseline"]["resolved_definition"]["sha256"]),
+            )
+
     def test_automatic_history_reuse_requires_benchmark_and_image_identity(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
         project_root = tuning.KB_ROOT
@@ -1660,6 +1698,139 @@ SLOT  service
                     failed_retry,
                     dict(self.baseline, num_speculative_tokens=1),
                 )
+
+    def test_failure_recovery_allows_proven_runtime_bug_parameter_bypass(
+        self,
+    ) -> None:
+        configured = config()
+        configured["search_limits"]["num_speculative_tokens"] = [1, 2, 3]
+        controller = tuning.Controller(configured)
+        current = dict(self.baseline, num_speculative_tokens=2)
+        candidate = dict(current, num_speculative_tokens=1)
+        decision = {
+            "action": "adjust_parameters",
+            "classification": "model_or_runtime_bug",
+            "safe_to_automate": True,
+            "change_strategy": "single_parameter",
+            "evidence": [
+                "Two identical startup failures occurred in the fused MLAPO path."
+            ],
+            "interaction_analysis": [
+                "Reducing speculative tokens bypasses only the proven failing path."
+            ],
+            "constraint_checks": [
+                "num_speculative_tokens=1 is allowed by the frozen search limits."
+            ],
+            "candidate": candidate,
+            "changes": [
+                {
+                    "parameter": "num_speculative_tokens",
+                    "before": 2,
+                    "after": 1,
+                    "rationale": "Bypass the reproducibly failing runtime path.",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertIsNone(
+                controller.validate_failure_decision(
+                    Path(temp_dir), decision, current
+                )
+            )
+
+    def test_failure_recovery_enforces_classification_action_contract(self) -> None:
+        controller = tuning.Controller(config())
+        current = dict(self.baseline)
+
+        def no_change_decision(
+            classification: str,
+            action: str,
+            safe_to_automate: bool,
+        ) -> dict[str, object]:
+            return {
+                "action": action,
+                "classification": classification,
+                "safe_to_automate": safe_to_automate,
+                "change_strategy": "none",
+                "evidence": ["The archived logs provide concrete failure evidence."],
+                "interaction_analysis": [],
+                "constraint_checks": [],
+                "candidate": current,
+                "changes": [],
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = Path(temp_dir)
+            self.assertIsNone(
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision(
+                        "transient_infrastructure", "retry_same", True
+                    ),
+                    current,
+                )
+            )
+            self.assertIsNone(
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision("image_or_dependency", "pause_for_human", False),
+                    current,
+                )
+            )
+            with self.assertRaisesRegex(ValueError, "cannot use action"):
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision("image_or_dependency", "retry_same", True),
+                    current,
+                )
+            with self.assertRaisesRegex(ValueError, "requires safe_to_automate=true"):
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision(
+                        "transient_infrastructure", "retry_same", False
+                    ),
+                    current,
+                )
+            with self.assertRaisesRegex(ValueError, "requires safe_to_automate=false"):
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision("unknown", "pause_for_human", True),
+                    current,
+                )
+
+    def test_failure_schema_matches_controller_action_contract(self) -> None:
+        schema = json.loads(
+            (tuning.HERE / "failure_decision.schema.json").read_text(encoding="utf-8")
+        )
+        branches = {
+            branch["if"]["properties"]["action"]["const"]: branch["then"]
+            for branch in schema["allOf"]
+        }
+        self.assertEqual(
+            set(
+                branches["adjust_parameters"]["properties"]["classification"][
+                    "enum"
+                ]
+            ),
+            set(tuning.FAILURE_ADJUSTABLE_CLASSIFICATIONS),
+        )
+        self.assertEqual(
+            set(
+                branches["retry_same"]["properties"]["classification"]["enum"]
+            ),
+            set(tuning.FAILURE_RETRYABLE_CLASSIFICATIONS),
+        )
+        self.assertTrue(
+            branches["adjust_parameters"]["properties"]["safe_to_automate"][
+                "const"
+            ]
+        )
+        self.assertFalse(
+            branches["pause_for_human"]["properties"]["safe_to_automate"][
+                "const"
+            ]
+        )
 
     def test_structured_one_request_shortfall_gets_bounded_retry(self) -> None:
         self.controller.benchmark_mode = "aligned_l1"

@@ -8,19 +8,24 @@ remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vl
 autonomous:
   allowed_write_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
 
+runtime:
+  profile: glm52_w8a8_a3_dp2_tp16_a0
+  profiles_file: workflow/continuous/runtime_profiles.yaml
+
 # Freeze the autonomous experiment choices independently from the default
-# Windows-to-server chain. A new Session starts from the reviewed B0 and only
-# enters Agent proposals after the B0 Benchmark acceptance gate passes.
+# Windows-to-server chain. This autonomous Session starts from the previously
+# successful W8A8 expert A0; the default chain remains anchored to B0.
 search_space:
   profile: automatic_registry_v1
+  history_source: none
 
 strategy:
   profile: best_anchor_coverage_v2
 
 initial_baseline:
-  label: b0_deployable
-  launch_profile: official_source_defaults_deployable
-  definition: workflow/baselines/b0_deployable_64k.yaml
+  label: a0_existing_tuned
+  launch_profile: explicit_candidate
+  definition: workflow/baselines/a0_glm52_w8a8_existing_tuned.yaml
 
 agent:
   provider: deepseek
@@ -36,11 +41,12 @@ agent:
       max_api_retries: 3
 
 lab:
-  lease_name: vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu
+  lease_name: vllmtkb-auto-a0-20260807-dp2tp16
   lease_yaml: workflow/auto/lease_loop.yaml
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/lab_runs
   # Autonomous mode fails closed while either existing chain owns resources.
   blocked_lease_names:
+    - vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu
     - vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
     - vllmtkb-senior-migrated-w8a8-dp2tp16-20260806
 

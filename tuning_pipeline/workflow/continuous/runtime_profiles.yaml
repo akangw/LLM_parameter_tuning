@@ -45,3 +45,50 @@ profiles:
           - vllm_bench_public_v1
           - custom_adapter_v1
         agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Opt-in expert A0 anchor for the same image, model and 2x16-NPU topology.
+  # The default profile above remains the official B0 route.
+  glm52_w8a8_a3_dp2_tp16_a0:
+    status: integrated
+    platform: ascend
+    session_prefix: glm52_continuous
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a0_glm52_w8a8_existing_tuned.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+    config:
+      topology:
+        profile: a3_dp2_tp16
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_v1
+      strategy:
+        profile: best_anchor_coverage_v2
+      benchmark:
+        profile: aligned_l1_v4
+      initial_baseline:
+        label: a0_existing_tuned
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a0_glm52_w8a8_existing_tuned.yaml
+    compatibility:
+      executor: ktp_two_role
+      requires_new_session: true
+      allowed_profiles:
+        search_space: [curated_registry_v1, automatic_registry_v1]
+        strategy: [best_anchor_coverage_v2, best_anchor_coverage_v3]
+        benchmark:
+          - aligned_l1_v4
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]

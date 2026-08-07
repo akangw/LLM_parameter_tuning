@@ -1,0 +1,69 @@
+# A0 reproduces the deployment owner's previously successful W8A8 launch.
+schema_version: 1
+baseline_id: a0-glm52-w8a8-existing-tuned
+status: approved_for_online_session_start
+launch_profile: explicit_candidate
+
+purpose: >-
+  Use the successful 0706 expert-tuned W8A8 configuration as the initial
+  incumbent for an autonomous Agent V2 Session. This is A0, not an
+  official-default B0.
+
+source:
+  scenario_snapshot: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+  evidence: successful_0706_a0_runtime_effective_parameters
+
+target_identity:
+  image: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  image_digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+  reuse_policy: fail_closed_if_runtime_identity_differs
+
+deployment_invariants:
+  model: /models/share/GLM-5.2-w8a8
+  topology:
+    pods: 2
+    npu_per_pod: 16
+    data_parallel_size: 2
+    tensor_parallel_size: 16
+    decode_context_parallel_size: 1
+  block_size: null
+  safetensors_load_strategy: prefetch
+  safetensors_prefetch_num_threads: 8
+  safetensors_prefetch_block_size: 16777216
+
+reference_parameters:
+  max_num_seqs: 48
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.93
+  enable_prefix_caching: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  speculative_config__method: mtp
+  speculative_config__disable_padded_drafter_batch: false
+  long_prefill_token_threshold: 0
+  enable_chunked_prefill: true
+  cudagraph_capture_sizes: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
+  max_cudagraph_capture_size: 192
+  compilation_enable_sp: null
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  flashcomm1: true
+  mlapo: true
+  fused_mc2: 0
+  enable_balance_scheduling: false
+  enable_reduce_sample: false
+  speculative_config__enforce_eager: null
+  disable_hybrid_kv_cache_manager: null
+  additional_config__ascend_compilation_config__enable_npugraph_ex: true
+  additional_config__ascend_compilation_config__enable_static_kernel: false
+
+acceptance_contract:
+  benchmark_profile: aligned_l1_v4
+  repetitions: 1
+  use_as_initial_agent_incumbent_after_metrics_gate_passes: true
+  never_mix_history_with: glm52-w4a8c8-a3-single-dp2-tp8-aligned-l1

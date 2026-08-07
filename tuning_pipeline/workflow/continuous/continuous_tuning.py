@@ -158,6 +158,34 @@ ALL_PARAM_TO_ENV = {
 
 B0_LAUNCH_PROFILE = "official_source_defaults_deployable"
 
+# This is the controller's authoritative failure-action contract.  Keep the
+# Agent prompt and deterministic validator derived from these sets so a model
+# cannot propose an action that the controller later rejects because the two
+# layers silently drifted apart.
+FAILURE_ADJUSTABLE_CLASSIFICATIONS = frozenset(
+    {"parameter_invalid", "parameter_oom", "model_or_runtime_bug"}
+)
+FAILURE_RETRYABLE_CLASSIFICATIONS = frozenset(
+    {"transient_infrastructure", "network_or_hccl", "benchmark_failure"}
+)
+FAILURE_ALL_CLASSIFICATIONS = frozenset(
+    {
+        "parameter_invalid",
+        "parameter_oom",
+        "transient_infrastructure",
+        "network_or_hccl",
+        "image_or_dependency",
+        "model_or_runtime_bug",
+        "benchmark_failure",
+        "unknown",
+    }
+)
+FAILURE_ACTION_CLASSIFICATIONS = {
+    "adjust_parameters": FAILURE_ADJUSTABLE_CLASSIFICATIONS,
+    "retry_same": FAILURE_RETRYABLE_CLASSIFICATIONS,
+    "pause_for_human": FAILURE_ALL_CLASSIFICATIONS,
+}
+
 
 def now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -196,6 +224,61 @@ def load_config(path: Path) -> dict[str, Any]:
     if base_path == path:
         raise RuntimeError("Configuration cannot extend itself")
     return deep_merge(load_config(base_path), value)
+
+
+def resolve_initial_baseline_definition(
+    config: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    """Materialize an explicit candidate from its sole baseline definition.
+
+    B0 intentionally keeps typed source-default estimates in ``config.yaml`` and
+    has no ``reference_parameters`` section.  Expert A0 definitions do carry
+    that section; when present it replaces any inherited/overlaid ``baseline``
+    mapping so autonomous and Windows controllers cannot maintain a second,
+    drifting copy of the same candidate.
+    """
+    resolved = copy.deepcopy(config)
+    initial = resolved.get("initial_baseline", {})
+    if not isinstance(initial, dict):
+        raise ValueError("initial_baseline must be a mapping")
+    definition = initial.get("definition")
+    if not definition:
+        return resolved
+    definition_path = Path(str(definition))
+    if not definition_path.is_absolute():
+        definition_path = project_root / definition_path
+    definition_path = definition_path.resolve()
+    if not definition_path.is_file():
+        raise FileNotFoundError(f"Initial baseline definition does not exist: {definition_path}")
+    document = load_yaml(definition_path)
+    if not isinstance(document, dict):
+        raise ValueError(f"Initial baseline definition must be a mapping: {definition_path}")
+    reference = document.get("reference_parameters")
+    if reference is None:
+        return resolved
+    if not isinstance(reference, dict) or not reference:
+        raise ValueError(
+            f"reference_parameters must be a non-empty mapping: {definition_path}"
+        )
+    declared_profile = document.get("launch_profile")
+    configured_profile = initial.get("launch_profile")
+    if declared_profile and configured_profile != declared_profile:
+        raise ValueError(
+            "Initial baseline launch_profile differs from its definition: "
+            f"config={configured_profile!r}, definition={declared_profile!r}"
+        )
+    resolved["baseline"] = copy.deepcopy(reference)
+    data = definition_path.read_bytes()
+    resolved.setdefault("initial_baseline", {})["resolved_definition"] = {
+        "baseline_id": document.get("baseline_id"),
+        "path": (
+            definition_path.relative_to(project_root.resolve()).as_posix()
+            if definition_path.is_relative_to(project_root.resolve())
+            else str(definition_path)
+        ),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    return resolved
 
 
 def configure_runtime_root(path: Path | None) -> None:
@@ -3785,19 +3868,28 @@ additional inspection. Never write or edit files, run remote commands, access th
 network, submit jobs, stop jobs, or change external state.
 
 Classify the root cause using only log evidence:
-- parameter_invalid or parameter_oom: a launch parameter is invalid or causes resource failure.
-- transient_infrastructure/network_or_hccl: platform, Pod, network, HCCL, timeout,
-  or another transient condition; normally retry the identical candidate.
-- image_or_dependency/model_or_runtime_bug/benchmark_failure: not safely repairable by
-  changing the tuning whitelist; pause for human unless the evidence clearly proves a
-  safe parameter correction.
-- unknown: pause for human.
+- parameter_invalid or parameter_oom: adjust_parameters only when the evidence proves
+  a safe correction inside the tuning whitelist; otherwise pause_for_human.
+- model_or_runtime_bug: adjust_parameters only when the evidence proves that a minimal
+  whitelist parameter change safely bypasses the exact failing runtime path; otherwise
+  pause_for_human.
+- transient_infrastructure or network_or_hccl: retry_same only when an identical retry is
+  safe; otherwise pause_for_human.
+- benchmark_failure: retry_same only for a clean retryable benchmark failure; otherwise
+  pause_for_human. Deterministic benchmark recovery is evaluated before this Agent call.
+- image_or_dependency or unknown: pause_for_human.
 
-For parameter_invalid/parameter_oom, choose action=adjust_parameters and use the
-smallest directly corrective change set, up to {self.max_parameters_per_round}
-parameters. Multiple changes are allowed only when the logs prove that the correction
-is coupled. Explain the interaction and give an explicit constraint check for every
-changed parameter. Grid-step budgets are:
+The controller enforces this exact action contract:
+- adjust_parameters classifications: {sorted(FAILURE_ADJUSTABLE_CLASSIFICATIONS)}
+- retry_same classifications: {sorted(FAILURE_RETRYABLE_CLASSIFICATIONS)}
+- pause_for_human: any classification.
+Set safe_to_automate=true for adjust_parameters or retry_same. Set it to false for
+pause_for_human.
+
+When choosing adjust_parameters, use the smallest directly corrective change set, up
+to {self.max_parameters_per_round} parameters. Multiple changes are allowed only when
+the logs prove that the correction is coupled. Explain the interaction and give an
+explicit constraint check for every changed parameter. Grid-step budgets are:
 {yaml.safe_dump(self.change_policy, allow_unicode=True, sort_keys=False)}
 For retry_same or pause_for_human, return the current candidate unchanged, an empty
 changes array, change_strategy=none, and empty interaction_analysis and
@@ -3923,15 +4015,28 @@ Embedded evidence:
     ) -> dict[str, Any] | None:
         """Validate a failure decision and return its known-success rollback, if any."""
         action = decision["action"]
+        classification = decision["classification"]
         candidate = decision["candidate"]
         changes = decision["changes"]
-        if action == "adjust_parameters":
-            if decision["classification"] not in {"parameter_invalid", "parameter_oom"}:
+        allowed_classifications = FAILURE_ACTION_CLASSIFICATIONS.get(action)
+        if allowed_classifications is None:
+            raise ValueError(f"Unsupported failure recovery action: {action!r}")
+        if classification not in allowed_classifications:
+            allowed = ", ".join(sorted(allowed_classifications))
+            raise ValueError(
+                f"Failure classification {classification!r} cannot use action "
+                f"{action!r}; allowed classifications: {allowed}"
+            )
+        if action == "pause_for_human":
+            if decision["safe_to_automate"]:
                 raise ValueError(
-                    "Only a proven parameter failure may adjust parameters"
+                    "pause_for_human requires safe_to_automate=false"
                 )
-            if not decision["safe_to_automate"]:
-                raise ValueError("Agent marked parameter adjustment unsafe")
+        elif not decision["safe_to_automate"]:
+            raise ValueError(
+                f"{action} requires safe_to_automate=true"
+            )
+        if action == "adjust_parameters":
             self.validate_candidate(current, candidate, changes, decision)
             known_success = self.successful_candidate(session_dir, candidate)
             if (
@@ -5069,6 +5174,7 @@ def main() -> int:
             raw_config.setdefault("search_space", {})[
                 "profile"
             ] = args.search_space_profile
+        raw_config = resolve_initial_baseline_definition(raw_config, KB_ROOT)
         validate_runtime_selections(raw_config)
         config, search_space_result = resolve_search_limits(
             raw_config,

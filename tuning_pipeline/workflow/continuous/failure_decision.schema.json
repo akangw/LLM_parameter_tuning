@@ -15,6 +15,59 @@
     "changes",
     "candidate"
   ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"action": {"const": "adjust_parameters"}},
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "classification": {
+            "enum": ["parameter_invalid", "parameter_oom", "model_or_runtime_bug"]
+          },
+          "safe_to_automate": {"const": true},
+          "change_strategy": {
+            "enum": ["single_parameter", "coupled_parameters"]
+          },
+          "changes": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"action": {"const": "retry_same"}},
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "classification": {
+            "enum": ["transient_infrastructure", "network_or_hccl", "benchmark_failure"]
+          },
+          "safe_to_automate": {"const": true},
+          "change_strategy": {"const": "none"},
+          "interaction_analysis": {"maxItems": 0},
+          "constraint_checks": {"maxItems": 0},
+          "changes": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"action": {"const": "pause_for_human"}},
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "safe_to_automate": {"const": false},
+          "change_strategy": {"const": "none"},
+          "interaction_analysis": {"maxItems": 0},
+          "constraint_checks": {"maxItems": 0},
+          "changes": {"maxItems": 0}
+        }
+      }
+    }
+  ],
   "properties": {
     "summary": {"type": "string"},
     "classification": {
