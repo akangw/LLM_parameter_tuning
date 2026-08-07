@@ -179,12 +179,13 @@ commands or submit ktp-lab tasks. The same Search Limits, compatibility rules,
 candidate invariants, retry budgets, and measurement gates used by the existing
 Controller remain authoritative.
 
-## Optional Codex Agent over DeepSeek
+## Codex Agent over DeepSeek (current default)
 
-The autonomous default remains the direct, schema-constrained DeepSeek API
-provider. A future **new Session** may instead run the same decision prompt
-through Codex while a named Codex profile selects a DeepSeek V4 Flash-compatible
-backend:
+The autonomous default runs the schema-constrained decision prompt through
+Codex while its server-managed configuration routes model inference to DeepSeek
+V4 Flash. This is one Agent path (Codex execution framework plus DeepSeek model),
+not two independent Agents. A named-profile installation may express the same
+route as:
 
 ```yaml
 agent:
@@ -232,6 +233,11 @@ Flash endpoint documents OpenAI Chat Completions and Anthropic compatibility.
 Therefore every installation requires a zero-NPU smoke test rather than relying
 on documentation alone. This server's existing `https://api.deepseek.com`
 Responses configuration passed that test with Codex CLI 0.147.0 on 2026-08-07.
+
+The direct `agent.provider: deepseek` HTTP adapter remains available as a
+lighter fallback for a **new Session**. It receives the same Controller-built
+evidence and is subject to the same output schema and candidate validation, but
+does not provide the Codex execution loop.
 
 Run `preflight.sh` before creating the new Session. It verifies the DeepSeek key
 and model, then Controller startup validation verifies the configured Codex
