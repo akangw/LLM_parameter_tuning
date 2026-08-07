@@ -13,12 +13,57 @@ import json
 import os
 from pathlib import Path
 
+import yaml
+
 BLOCKED_EXIT = 78
 COMPLETED_STATUSES = {"completed_by_agent", "tuning_complete", "dry_run_complete"}
 ARCHIVED_RESUME_STATUSES = {
     "stopped_after_current_round",
     "stopped_after_failed_round",
 }
+
+
+def _merge(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
+    result = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_config(path: Path, seen: set[Path] | None = None) -> dict[str, object]:
+    resolved = path.resolve()
+    visited = set() if seen is None else seen
+    if resolved in visited:
+        raise ValueError(f"Recursive base_config reference: {resolved}")
+    visited.add(resolved)
+    value = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Configuration must be a mapping: {resolved}")
+    base_setting = value.pop("base_config", None)
+    if not base_setting:
+        return value
+    base_path = Path(str(base_setting))
+    if not base_path.is_absolute():
+        base_path = resolved.parent / base_path
+    return _merge(_load_config(base_path, visited), value)
+
+
+def resolve_lease_name(runtime_root: Path, config_path: Path) -> str:
+    """Prefer the frozen Session lease, then use the merged configuration."""
+    state_path = runtime_root / "state.json"
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        lease_name = str(state.get("lease_name", "")).strip()
+        if lease_name:
+            return lease_name
+    config = _load_config(config_path)
+    lab = config.get("lab", {})
+    if not isinstance(lab, dict) or not str(lab.get("lease_name", "")).strip():
+        raise ValueError("No Lease name exists in Session state or merged configuration")
+    return str(lab["lease_name"]).strip()
 
 
 def process_is_running(pid: int) -> bool:
@@ -132,6 +177,9 @@ def main() -> int:
     renderer.add_argument("--repo-root", type=Path, required=True)
     renderer.add_argument("--env-file", type=Path, required=True)
     renderer.add_argument("--output-root", type=Path, required=True)
+    lease = sub.add_parser("lease-name")
+    lease.add_argument("--runtime-root", type=Path, required=True)
+    lease.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "decide":
@@ -139,7 +187,12 @@ def main() -> int:
         print(action)
         print(reason, file=os.sys.stderr)
         return BLOCKED_EXIT if action == "blocked" else 0
-    for path in render(args.repo_root.resolve(), args.env_file.resolve(), args.output_root.resolve()):
+    if args.command == "lease-name":
+        print(resolve_lease_name(args.runtime_root, args.config))
+        return 0
+    for path in render(
+        args.repo_root.resolve(), args.env_file.resolve(), args.output_root.resolve()
+    ):
         print(path)
     return 0
 

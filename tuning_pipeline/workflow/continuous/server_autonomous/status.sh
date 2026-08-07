@@ -23,12 +23,22 @@ if command -v systemctl >/dev/null 2>&1; then
   SYSTEMD_STATE=$(systemctl --user is-active vllmtkb-server-autonomous.service 2>/dev/null || true)
   echo "systemd user service: ${SYSTEMD_STATE:-unavailable}"
 fi
-if [[ -f "${SERVICE_ROOT}/supervisord.conf" ]] && command -v supervisorctl >/dev/null 2>&1; then
-  SUPERVISOR_STATE=$(supervisorctl -c "${SERVICE_ROOT}/supervisord.conf" status \
-    vllmtkb-server-autonomous 2>/dev/null || true)
+SUPERVISORCTL=""
+if [[ -x "${SERVICE_ROOT}/supervisor-venv/bin/supervisorctl" ]]; then
+  SUPERVISORCTL="${SERVICE_ROOT}/supervisor-venv/bin/supervisorctl"
+elif command -v supervisorctl >/dev/null 2>&1; then
+  SUPERVISORCTL=$(command -v supervisorctl)
+fi
+if [[ -f "${SERVICE_ROOT}/supervisord.conf" && -n "${SUPERVISORCTL}" ]]; then
+  SUPERVISOR_STATE=$(cd "${SERVICE_ROOT}" && \
+    "${SUPERVISORCTL}" -c "${SERVICE_ROOT}/supervisord.conf" status \
+      vllmtkb-server-autonomous 2>/dev/null || true)
   echo "Supervisor service: ${SUPERVISOR_STATE:-not running}"
 fi
 
 controller --status
 echo
-ktp-lab status --lease vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu 2>&1 || true
+LEASE_NAME=$("${PYTHON_BIN}" "${SCRIPT_DIR}/service_runtime.py" lease-name \
+  --runtime-root "${RUNTIME_ROOT}" --config "${CONFIG}")
+echo "Lease selected from Session/config: ${LEASE_NAME}"
+ktp-lab status --lease "${LEASE_NAME}" 2>&1 || true

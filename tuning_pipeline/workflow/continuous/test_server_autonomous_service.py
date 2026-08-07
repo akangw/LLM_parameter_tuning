@@ -83,6 +83,40 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             action, _ = service_runtime.decide(runtime, "auto")
             self.assertEqual(action, "blocked")
 
+    def test_status_lease_prefers_frozen_session_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (root / "base.yaml").write_text(
+                "lab:\n  lease_name: base-lease\n", encoding="utf-8"
+            )
+            config = root / "config.yaml"
+            config.write_text("base_config: base.yaml\n", encoding="utf-8")
+            self.write_state(runtime, lease_name="session-lease")
+            self.assertEqual(
+                "session-lease",
+                service_runtime.resolve_lease_name(runtime, config),
+            )
+
+    def test_status_lease_falls_back_to_merged_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (root / "base.yaml").write_text(
+                "lab:\n  lease_name: base-lease\n", encoding="utf-8"
+            )
+            config = root / "config.yaml"
+            config.write_text(
+                "base_config: base.yaml\nlab:\n  lease_name: configured-lease\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                "configured-lease",
+                service_runtime.resolve_lease_name(runtime, config),
+            )
+
 
 class ServiceRenderTests(unittest.TestCase):
     def test_rendered_configs_have_no_placeholders(self) -> None:
