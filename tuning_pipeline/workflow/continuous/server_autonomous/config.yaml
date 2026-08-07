@@ -20,7 +20,7 @@ search_space:
   history_source: none
 
 strategy:
-  profile: best_anchor_coverage_v2
+  profile: hierarchical_throughput_v1
 
 initial_baseline:
   label: b0_deployable
@@ -28,8 +28,19 @@ initial_baseline:
   definition: workflow/baselines/b0_deployable_64k.yaml
 
 agent:
-  provider: deepseek
+  # Codex supplies the agent loop and structured tool discipline; its frozen
+  # server-managed CODEX_HOME routes model inference to DeepSeek V4 Flash.
+  provider: codex
   providers:
+    # Optional NEW-Session route. It remains inactive while provider=deepseek.
+    # This server-managed Codex installation and CODEX_HOME were verified with
+    # a zero-NPU DeepSeek V4 Flash smoke test; no secret belongs in this YAML.
+    codex:
+      command: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/releases/0.147.0/codex
+      codex_home: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/home
+      tmp_dir: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/tmp
+      use_user_config: true
+      ephemeral: true
     deepseek:
       base_url: https://api.deepseek.com
       model: deepseek-v4-flash

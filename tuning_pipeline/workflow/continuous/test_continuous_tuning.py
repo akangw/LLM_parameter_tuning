@@ -312,6 +312,116 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown strategy profile"):
             tuning.Controller(configured)
 
+    def test_hierarchical_throughput_strategy_is_session_local_and_ordered(self) -> None:
+        configured = config()
+        configured["measurement_policy"] = {
+            "latency_guardrail_mode": "hard",
+            "aligned_l1": {"latency_guardrail_mode": "hard"},
+        }
+        configured["strategy"] = {
+            "profile": "hierarchical_throughput_v1",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        first = controller.effective_change_policy(
+            [{"metrics": {"benchmark_mode": "aligned_l1"}}],
+            [{"outcome": "success"}],
+        )
+        self.assertEqual("mtp_enablement", first["hierarchical_probe"]["name"])
+        self.assertEqual([1, 1], first["preferred_parameters_per_round"])
+        self.assertEqual(1, first["max_parameters_per_round"])
+        self.assertEqual("advisory", controller.measurement_policy["latency_guardrail_mode"])
+        self.assertEqual(
+            "advisory",
+            controller.measurement_policy["aligned_l1"]["latency_guardrail_mode"],
+        )
+        self.assertNotIn("reference_parameters", controller.strategy_profile)
+
+        second = controller.effective_change_policy(
+            [
+                {"metrics": {"benchmark_mode": "aligned_l1"}},
+                {"metrics": {"benchmark_mode": "aligned_l1"}},
+            ],
+            [{"outcome": "success"}, {"outcome": "success"}],
+        )
+        self.assertEqual("moe_communication", second["hierarchical_probe"]["name"])
+        self.assertEqual("exploration", second["phase"])
+        failed_attempt = controller.effective_change_policy(
+            [{"metrics": {"benchmark_mode": "aligned_l1"}}],
+            [{"outcome": "success"}, {"outcome": "failed"}],
+        )
+        self.assertEqual(
+            "mtp_enablement", failed_attempt["hierarchical_probe"]["name"]
+        )
+
+        default = tuning.Controller(config())
+        self.assertEqual("best_anchor_coverage_v2", default.strategy_profile_name)
+        self.assertNotIn("hierarchical_probe", default.effective_change_policy())
+
+    def test_hierarchical_layer_stays_for_promising_result_and_exits_at_budget(self) -> None:
+        configured = config()
+        configured["strategy"] = {
+            "profile": "hierarchical_throughput_v1",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        probes = controller.strategy_profile["hierarchy"]["ordered_probes"]
+        history = [{"round": "b0"}, {"round": "a1"}]
+        scores = {"b0": 100.0, "a1": 102.0, "a2": 104.0, "bad": 90.0}
+        with (
+            patch.object(
+                controller,
+                "primary_performance_score",
+                side_effect=lambda item: scores[item["round"]],
+            ),
+            patch.object(
+                controller,
+                "best_accepted_anchor",
+                return_value={"round": "b0"},
+            ),
+        ):
+            promising = controller.hierarchical_search_state(
+                history, probes, controller.strategy_profile["hierarchy"]
+            )
+            exhausted = controller.hierarchical_search_state(
+                [*history, {"round": "a2"}],
+                probes,
+                controller.strategy_profile["hierarchy"],
+            )
+            negative = controller.hierarchical_search_state(
+                [{"round": "b0"}, {"round": "bad"}],
+                probes,
+                controller.strategy_profile["hierarchy"],
+            )
+        self.assertEqual(0, promising["probe_index"])
+        self.assertEqual(1, promising["measurements_in_probe"])
+        self.assertEqual(1, exhausted["probe_index"])
+        self.assertEqual(1, negative["probe_index"])
+
+    def test_mtp_method_is_a_portrait_exempt_mechanical_companion(self) -> None:
+        controller = self.controller
+        controller.portrait_retriever = SimpleNamespace(
+            retrieve=lambda *args, **kwargs: {
+                "changed_parameters": [
+                    {"canonical_name": "num_speculative_tokens", "variant_count": 1},
+                    {"canonical_name": "speculative_config__method", "variant_count": 0},
+                ]
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "06_agent_analysis").mkdir()
+            controller.write_selected_portrait_evidence(
+                round_dir,
+                [
+                    {"parameter": "num_speculative_tokens"},
+                    {"parameter": "speculative_config__method"},
+                ],
+            )
+            self.assertTrue(
+                (round_dir / "06_agent_analysis" / "selected_parameter_portraits.yaml").is_file()
+            )
+
     def test_agent_provider_selects_its_named_settings_profile(self) -> None:
         configured = config()
         configured["agent"] = {
@@ -638,6 +748,9 @@ class ControllerTests(unittest.TestCase):
             worker_runtime.index("prefetch_checkpoints_on_node"),
             worker_runtime.index('vllm serve "${MODEL_PATH}"'),
         )
+        self.assertIn('${RUN_DIR}/MASTER_DONE', worker_runtime)
+        self.assertIn('${RUN_DIR}/BENCHMARK_DONE', worker_runtime)
+        self.assertIn('${RUN_DIR}/BENCHMARK_FAILED', worker_runtime)
         launcher = (tuning.HERE / "start_continuous.ps1").read_text(encoding="utf-8")
         self.assertIn("portrait_pipeline\\outputs\\ParameterYAML", launcher)
         self.assertIn("Test-Path -LiteralPath $portraitIndexPath", launcher)
@@ -1292,6 +1405,113 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertFalse(noisy["eligible_as_improvement"])
         self.assertEqual(noisy["noise_adjusted_required_gain_percent"], 6.0)
+
+    def test_hierarchical_strategy_treats_aligned_latency_as_advisory(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["strategy"]["profile"] = "hierarchical_throughput_v1"
+        controller = tuning.Controller(configured)
+        workloads = list(configured["benchmark"]["aligned_l1"]["workloads"])
+
+        def payload(score: float, throughput: float, latency: float) -> dict:
+            cases = []
+            for workload in workloads:
+                for concurrency in (1, 16, 32):
+                    cases.append(
+                        {
+                            "workload": workload,
+                            "concurrency": concurrency,
+                            "aggregate_output_tps": throughput,
+                            "ttft_p50_ms": 100.0 * latency,
+                            "ttft_p90_ms": 120.0 * latency,
+                            "tpot_p50_ms": 10.0 * latency,
+                            "tpot_p90_ms": 12.0 * latency,
+                        }
+                    )
+            return {
+                "benchmark_mode": "aligned_l1",
+                "l1": {
+                    "all_repetitions_gate_passed": True,
+                    "repetition_count": configured["benchmark"]["aligned_l1"][
+                        "repetitions"
+                    ],
+                    "primary_concurrency": 32,
+                    "primary_aggregate_output_tps_geomean": score,
+                    "primary_score_cv_percent": 0.1,
+                    "cases": cases,
+                },
+            }
+
+        assessment = controller.assess_aligned_l1(
+            [
+                {"metrics": payload(100.0, 100.0, 1.0)},
+                {"metrics": payload(105.0, 105.0, 2.0)},
+            ]
+        )
+        self.assertTrue(assessment["eligible_as_improvement"])
+        self.assertEqual([], assessment["violations"])
+        self.assertTrue(assessment["advisories"])
+        self.assertEqual("advisory", assessment["latency_guardrail_mode"])
+
+    def test_new_session_can_import_only_identity_matched_baseline_evidence(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["strategy"]["profile"] = "hierarchical_throughput_v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "experiments"
+            archive.mkdir()
+            source = archive / "source"
+            source_round = source / "round_000_b0_deployable"
+            for child in (
+                "02_parameters",
+                "03_submission",
+                "04_runtime",
+                "05_results",
+                "06_agent_analysis",
+            ):
+                (source_round / child).mkdir(parents=True)
+            target = archive / "target"
+            target.mkdir()
+            configured["baseline_reuse"] = {"source_session": str(source)}
+            controller = tuning.Controller(configured)
+            tuning.save_yaml(source / "session_config.yaml", controller.config)
+            tuning.save_yaml(
+                source_round / "02_parameters" / "candidate_params.yaml",
+                controller.config["baseline"],
+            )
+            (source_round / "05_results" / "metrics.json").write_text(
+                json.dumps({"benchmark_mode": controller.benchmark_mode}),
+                encoding="utf-8",
+            )
+            (source_round / "06_agent_analysis" / "old_decision.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+            state = {
+                "session_id": "target",
+                "session_dir": str(target),
+                "current_candidate": controller.config["baseline"],
+            }
+            with (
+                patch.object(tuning, "ARCHIVE_ROOT", archive),
+                patch.object(tuning, "STATE_FILE", Path(temporary) / "state.json"),
+                patch.object(controller, "write_context"),
+                patch.object(controller, "run_query"),
+                patch.object(controller, "reconcile_official_source_default_baseline"),
+            ):
+                target_round, imported = controller.import_completed_baseline(
+                    target, state
+                )
+            self.assertTrue((target_round / "05_results" / "metrics.json").is_file())
+            self.assertFalse(
+                (target_round / "06_agent_analysis" / "old_decision.json").exists()
+            )
+            self.assertEqual(str(source), imported["baseline_reuse"]["source_session"])
+            self.assertTrue(all(imported["baseline_reuse"]["identity_checks"].values()))
+
+            mismatched = tuning.load_yaml(source / "session_config.yaml")
+            mismatched["deployment"]["served_model_name"] = "different"
+            tuning.save_yaml(source / "session_config.yaml", mismatched)
+            with patch.object(tuning, "ARCHIVE_ROOT", archive):
+                with self.assertRaisesRegex(ValueError, "deployment"):
+                    controller.import_completed_baseline(target, state)
 
     def test_aligned_l1_rejects_one_workload_regression(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")

@@ -39,7 +39,10 @@ profiles:
       requires_new_session: true
       allowed_profiles:
         search_space: [curated_registry_v1, automatic_registry_v1]
-        strategy: [best_anchor_coverage_v2, best_anchor_coverage_v3]
+        strategy:
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
         benchmark:
           - aligned_l1_v4
           - vllm_bench_public_v1
@@ -86,7 +89,10 @@ profiles:
       requires_new_session: true
       allowed_profiles:
         search_space: [curated_registry_v1, automatic_registry_v1]
-        strategy: [best_anchor_coverage_v2, best_anchor_coverage_v3]
+        strategy:
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
         benchmark:
           - aligned_l1_v4
           - vllm_bench_public_v1

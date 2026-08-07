@@ -40,6 +40,20 @@ if [[ "${ACTION}" == "complete" ]]; then
   exit 0
 fi
 
+EXTRA_ARGS=()
+BASELINE_REUSE_REQUEST="${RUNTIME_ROOT}/BASELINE_REUSE_REQUEST"
+if [[ "${ACTION}" == "--start" && -f "${BASELINE_REUSE_REQUEST}" ]]; then
+  REUSE_SOURCE=$(head -n 1 "${BASELINE_REUSE_REQUEST}")
+  [[ -n "${REUSE_SOURCE}" ]] || {
+    echo "Baseline reuse request is empty: ${BASELINE_REUSE_REQUEST}" >&2
+    exit 78
+  }
+  CONSUMED_REQUEST="${BASELINE_REUSE_REQUEST}.consumed-$(date +%Y%m%d_%H%M%S)-$$"
+  mv "${BASELINE_REUSE_REQUEST}" "${CONSUMED_REQUEST}"
+  EXTRA_ARGS+=(--reuse-baseline-session "${REUSE_SOURCE}")
+  echo "Consumed baseline reuse request: ${CONSUMED_REQUEST}"
+fi
+
 CHILD_PID=""
 request_graceful_stop() {
   touch "${RUNTIME_ROOT}/STOP_REQUESTED"
@@ -50,7 +64,7 @@ trap request_graceful_stop TERM INT
 "${PYTHON_BIN}" "${CONTROLLER}" \
   --config "${CONFIG}" \
   --runtime-root "${RUNTIME_ROOT}" \
-  "${ACTION}" &
+  "${ACTION}" "${EXTRA_ARGS[@]}" &
 CHILD_PID=$!
 printf '%s\n' "$$" > "${PROCESS_ROOT}/service-wrapper.pid"
 printf '%s\n' "${CHILD_PID}" > "${PROCESS_ROOT}/controller.pid"

@@ -23,6 +23,14 @@ while kill -0 "${VLLM_PID}" 2>/dev/null; do
     echo "Master finished; stopping worker."
     exit 0
   fi
+  if [[ -f "${RUN_DIR}/BENCHMARK_DONE" ]]; then
+    echo "Benchmark completed; stopping worker even if the master completion marker is unavailable."
+    exit 0
+  fi
+  if [[ -f "${RUN_DIR}/BENCHMARK_FAILED" ]]; then
+    echo "Benchmark failed; stopping worker even if the master completion marker is unavailable."
+    exit 0
+  fi
   sleep 10
 done
 wait "${VLLM_PID}"

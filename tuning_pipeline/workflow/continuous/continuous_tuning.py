@@ -34,6 +34,11 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 try:
+    from .executor_adapter import (
+        EXECUTOR_ADAPTER_API_VERSION,
+        resolve_executor_adapter,
+        validate_snapshot as validate_executor_snapshot,
+    )
     from .search_space_adapter import resolve_search_limits, write_session_search_space
     from .model_loading_profile import resolve_model_loading_profile
     from .runtime_profile import resolve_runtime_profile, validate_runtime_selections
@@ -44,6 +49,11 @@ try:
         validate_agent_credentials,
     )
 except ImportError:  # Direct script execution.
+    from executor_adapter import (
+        EXECUTOR_ADAPTER_API_VERSION,
+        resolve_executor_adapter,
+        validate_snapshot as validate_executor_snapshot,
+    )
     from search_space_adapter import resolve_search_limits, write_session_search_space
     from model_loading_profile import resolve_model_loading_profile
     from runtime_profile import resolve_runtime_profile, validate_runtime_selections
@@ -854,6 +864,19 @@ class Controller:
             raise ValueError(
                 f"Strategy {self.strategy_profile_name!r} is not integrated"
             )
+        strategy_measurement_policy = self.strategy_profile.get("measurement_policy")
+        if strategy_measurement_policy is not None:
+            if not isinstance(strategy_measurement_policy, dict):
+                raise ValueError("strategy measurement_policy must be a mapping")
+            self.measurement_policy = deep_merge(
+                self.measurement_policy,
+                strategy_measurement_policy,
+            )
+            # Freeze the effective policy into the Session. A later edit to the
+            # profile registry cannot silently change an in-flight experiment.
+            self.config["measurement_policy"] = copy.deepcopy(
+                self.measurement_policy
+            )
         self.config.setdefault("strategy", {})["profile"] = self.strategy_profile_name
         self.config["strategy"]["resolved_profile"] = dict(self.strategy_profile)
         # Keep the legacy policy label synchronized with the selected frozen
@@ -897,7 +920,17 @@ class Controller:
             self.change_policy.get("max_total_grid_steps", 4)
         )
         self.adaptive_change_policy = self.change_policy.get("adaptive", {})
-        self.derived_parameter_rules = self.change_policy.get("derived_parameters", {})
+        self.derived_parameter_rules = deep_merge(
+            {
+                # A positive MTP depth cannot launch without its method. This
+                # field is a mechanical runtime companion, not an independent
+                # optimization axis with its own portrait.
+                "speculative_config__method": {
+                    "drivers": ["num_speculative_tokens"]
+                }
+            },
+            self.change_policy.get("derived_parameters", {}),
+        )
         self.max_candidate_reselections = int(
             self.change_policy.get("max_candidate_reselections", 2)
         )
@@ -907,10 +940,23 @@ class Controller:
             raise ValueError("max_parameters_per_round is outside the candidate schema")
         if self.max_grid_steps_per_parameter < 1 or self.max_total_grid_steps < 1:
             raise ValueError("change-policy grid step budgets must be positive")
-        if self.execution_mode not in {"ktp", "ktp_lab"}:
+        if self.execution_mode not in {"ktp", "ktp_lab", "executor_adapter"}:
             raise ValueError(f"Unsupported execution_mode={self.execution_mode!r}")
         if self.execution_mode == "ktp_lab" and not self.lab.get("lease_name"):
             raise ValueError("lab.lease_name is required in ktp_lab mode")
+        self.executor_adapter, self.executor_identity = resolve_executor_adapter(
+            self.config, KB_ROOT
+        )
+        if (
+            self.execution_mode == "executor_adapter"
+            and self.benchmark_mode == "aligned_l1"
+            and self.executor_adapter is not None
+            and not self.executor_adapter.supports("start_benchmark")
+        ):
+            raise ValueError(
+                "aligned_l1 requires executor_adapter.capabilities.start_benchmark=true"
+            )
+        self.config["executor_identity"] = copy.deepcopy(self.executor_identity)
         self.sidecar_settings = config.get("sidecars", {})
         self.sidecars_enabled = bool(self.sidecar_settings.get("enabled", False))
         self.portrait_retriever: PortraitRetriever | None = None
@@ -1292,6 +1338,23 @@ class Controller:
             for group in result["changed_parameters"]
             if group.get("variant_count", 0) == 0
         ]
+        changed_names = {
+            str(item["parameter"]).removeprefix("--").replace("-", "_")
+            for item in changes
+        }
+        unresolved_changed = [
+            name
+            for name in unresolved_changed
+            if not (
+                name in self.derived_parameter_rules
+                and any(
+                    driver in changed_names
+                    for driver in self.derived_parameter_rules[name].get(
+                        "drivers", []
+                    )
+                )
+            )
+        ]
         if unresolved_changed:
             raise ValueError(
                 "No parameter portrait evidence for changed parameters: "
@@ -1455,6 +1518,9 @@ class Controller:
                 "remote_run_id": state.get("active_run_id"),
                 "task_id": state.get("active_task_id"),
                 "execution_mode": state.get("execution_mode", self.execution_mode),
+                "executor_identity": state.get(
+                    "executor_identity", self.executor_identity
+                ),
                 "benchmark_profile": state.get(
                     "benchmark_profile", self.benchmark_profile_name
                 ),
@@ -1715,6 +1781,12 @@ class Controller:
                     "benchmark.aligned_l1.service_port must match "
                     "deployment.service_port"
                 )
+        # External schedulers receive the same frozen image/topology identity
+        # through the v1 adapter context. Their own manifests are validated by
+        # check_ready/submit; ktp YAML rendering remains untouched for legacy
+        # modes and is deliberately not imposed on another scheduler.
+        if self.execution_mode == "executor_adapter":
+            return
         lease = self.render_remote_control_document("lease_loop.yaml")
         if self.execution_mode == "ktp_lab":
             output_root = str(self.lab.get("output_root", ""))
@@ -1765,6 +1837,45 @@ class Controller:
                 "Session. Start a new Session; do not cross model/image/topology "
                 "boundaries during resume."
             )
+        recorded_executor = state.get("executor_identity")
+        if self.execution_mode == "executor_adapter" and recorded_executor is None:
+            raise RuntimeError(
+                "Controller state is missing the frozen executor-adapter identity. "
+                "Start a new Session; do not resume without scheduler identity."
+            )
+        if recorded_executor is not None and recorded_executor != self.executor_identity:
+            raise RuntimeError(
+                "Controller state executor-adapter identity differs from the frozen "
+                "Session. Start a new Session; do not change scheduler bridges "
+                "during resume."
+            )
+
+    def executor_context(self) -> dict[str, Any]:
+        """Return the non-secret, frozen contract visible to an external executor."""
+
+        return {
+            "api_version": EXECUTOR_ADAPTER_API_VERSION,
+            "operation_mode": self.operation_mode,
+            "remote_host": self.remote_host,
+            "remote_transport": self.remote_transport,
+            "remote_project": self.remote_project,
+            "remote_auto": self.remote_auto,
+            "topology": copy.deepcopy(self.topology),
+            "deployment": copy.deepcopy(self.deployment),
+            "image_identity": copy.deepcopy(self.image_identity),
+            "runtime_identity": copy.deepcopy(self.runtime_identity),
+            "benchmark": {
+                "profile": self.benchmark_profile_name,
+                "mode": self.benchmark_mode,
+                "identity": copy.deepcopy(self.benchmark_identity),
+            },
+            "artifact_contract": {
+                "remote_run_template": self.remote_auto + "/runs/{run_id}",
+                "artifacts": list(REMOTE_ARTIFACTS),
+            },
+            "round_timeout_minutes": self.round_timeout_minutes,
+            "poll_seconds": self.poll_seconds,
+        }
 
     def validate_candidate_invariants(self, candidate: dict[str, Any]) -> None:
         if set(candidate) != self.candidate_schema:
@@ -1908,6 +2019,14 @@ class Controller:
     def prepare_lab(self, *, submit: bool) -> str:
         self.validate_deployment_configuration()
         self.validate_runtime_configuration(self.config["baseline"])
+        if self.execution_mode == "executor_adapter":
+            assert self.executor_adapter is not None
+            result = self.executor_adapter.invoke(
+                "prepare",
+                context=self.executor_context(),
+                payload={"submit": submit},
+            )
+            return str(result.get("message", "External executor prepare completed."))
         self.ensure_no_blocked_leases()
         self.sync_remote_scripts()
         lease_name = str(self.lab["lease_name"])
@@ -1962,6 +2081,11 @@ class Controller:
         with tempfile.TemporaryDirectory(prefix="vllmtkb-remote-control-") as temporary:
             rendered_root = Path(temporary)
             for name in REMOTE_SCRIPT_NAMES:
+                if (
+                    self.execution_mode == "executor_adapter"
+                    and name in {"lease_loop.yaml", "experiment_loop.yaml"}
+                ):
+                    continue
                 source = remote_source / name
                 if not source.is_file():
                     raise RuntimeError(
@@ -2041,6 +2165,14 @@ class Controller:
         """Run a read-only end-to-end launch preflight."""
         self.validate_deployment_configuration()
         self.validate_runtime_configuration(self.config["baseline"])
+        if self.execution_mode == "executor_adapter":
+            assert self.executor_adapter is not None
+            result = self.executor_adapter.invoke(
+                "check_ready",
+                context=self.executor_context(),
+                payload={"require_idle": require_idle_lease},
+            )
+            return str(result.get("message", "External executor is ready."))
         if require_idle_lease:
             return self.ensure_lab_available()
         self.ensure_no_blocked_leases()
@@ -2239,9 +2371,122 @@ class Controller:
         ordered = cls.grid_step_order(grid)
         return abs(ordered.index(after) - ordered.index(before))
 
+    @staticmethod
+    def hierarchical_probe_measurement_budget(probe: dict[str, Any]) -> tuple[int, int]:
+        defaults = {
+            "mtp_enablement": (1, 2),
+            "moe_communication": (1, 2),
+            "scheduler_capacity": (2, 3),
+            "compilation_graph": (1, 2),
+            "ascend_communication_refinement": (1, 2),
+        }
+        default_minimum, default_maximum = defaults.get(
+            str(probe.get("name")), (1, 2)
+        )
+        minimum = int(probe.get("minimum_successful_measurements", default_minimum))
+        maximum = int(probe.get("maximum_successful_measurements", default_maximum))
+        if not 1 <= minimum <= maximum <= 5:
+            raise ValueError("hierarchical probe measurement budget is invalid")
+        return minimum, maximum
+
+    def hierarchical_search_state(
+        self,
+        history: list[dict[str, Any]],
+        ordered_probes: list[dict[str, Any]],
+        hierarchy: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replay measured rounds through adaptive layers, then rank revisits."""
+        floor = float(hierarchy.get("promising_incremental_gain_percent", -3.0))
+        probe_index = 0
+        measurements_in_probe = 0
+        observations: list[dict[str, Any]] = []
+        cross_layer_rounds = 0
+        for position, item in enumerate(history[1:], start=1):
+            if probe_index >= len(ordered_probes):
+                cross_layer_rounds += 1
+                continue
+            probe = ordered_probes[probe_index]
+            measurements_in_probe += 1
+            current_score = self.primary_performance_score(item)
+            prior_history = history[:position]
+            anchor = self.best_accepted_anchor(prior_history)
+            anchor_item = next(
+                (
+                    prior
+                    for prior in prior_history
+                    if prior.get("round") == (anchor or {}).get("round")
+                ),
+                prior_history[0] if prior_history else None,
+            )
+            anchor_score = (
+                self.primary_performance_score(anchor_item)
+                if anchor_item is not None
+                else None
+            )
+            incremental_gain = (
+                (current_score / anchor_score - 1.0) * 100.0
+                if current_score is not None
+                and anchor_score is not None
+                and anchor_score > 0
+                else None
+            )
+            observations.append(
+                {
+                    "probe_index": probe_index,
+                    "probe": probe.get("name"),
+                    "round": item.get("round"),
+                    "measurement_number": measurements_in_probe,
+                    "incremental_gain_vs_entry_anchor_percent": incremental_gain,
+                }
+            )
+            minimum, maximum = self.hierarchical_probe_measurement_budget(probe)
+            should_exit = measurements_in_probe >= maximum or (
+                measurements_in_probe >= minimum
+                and (incremental_gain is None or incremental_gain < floor)
+            )
+            if should_exit:
+                probe_index += 1
+                measurements_in_probe = 0
+
+        layer_scores: list[dict[str, Any]] = []
+        for index, probe in enumerate(ordered_probes):
+            gains = [
+                item["incremental_gain_vs_entry_anchor_percent"]
+                for item in observations
+                if item["probe_index"] == index
+                and item["incremental_gain_vs_entry_anchor_percent"] is not None
+            ]
+            if gains:
+                layer_scores.append(
+                    {
+                        "probe_index": index,
+                        "probe": probe.get("name"),
+                        "best_incremental_gain_percent": max(gains),
+                    }
+                )
+        ranked_revisits = sorted(
+            layer_scores,
+            key=lambda item: item["best_incremental_gain_percent"],
+            reverse=True,
+        )
+        promising_revisits = [
+            item
+            for item in ranked_revisits
+            if item["best_incremental_gain_percent"] >= floor
+        ] or ranked_revisits[:1]
+        return {
+            "probe_index": probe_index,
+            "measurements_in_probe": measurements_in_probe,
+            "promising_incremental_gain_percent": floor,
+            "observations": observations,
+            "ranked_cross_layer_revisits": promising_revisits,
+            "cross_layer_rounds": cross_layer_rounds,
+        }
+
     def effective_change_policy(
         self,
         history: list[dict[str, Any]] | None = None,
+        attempted_history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Resolve exploration/refinement limits for the next Agent decision."""
         phase = "exploration"
@@ -2263,8 +2508,26 @@ class Controller:
                     phase = "refinement"
                     break
 
+        hierarchy = self.strategy_profile.get("hierarchy", {})
+        ordered_probes = (
+            hierarchy.get("ordered_probes", [])
+            if isinstance(hierarchy, dict)
+            else []
+        )
+        hierarchy_state = self.hierarchical_search_state(
+            history or [], ordered_probes, hierarchy
+        ) if ordered_probes else {}
+        probe_index = int(hierarchy_state.get("probe_index", 0))
+        # A successful early feature probe is an anchor, not a reason to skip
+        # the remaining high-impact families. Refinement starts after the
+        # ordered probe curriculum has terminal evidence for every stage.
+        if ordered_probes and probe_index < len(ordered_probes):
+            phase = "exploration"
+        elif ordered_probes:
+            phase = "refinement"
+
         phase_config = adaptive.get(phase, {}) if adaptive.get("enabled") else {}
-        return {
+        effective = {
             "strategy_version": self.change_policy.get("strategy_version", "legacy"),
             "phase": phase,
             "max_parameters_per_round": int(
@@ -2292,6 +2555,77 @@ class Controller:
             "parameter_groups": self.change_policy.get("parameter_groups", {}),
             "high_risk_parameters": self.change_policy.get("high_risk_parameters", []),
         }
+        if phase == "exploration" and ordered_probes:
+            if probe_index < len(ordered_probes):
+                probe = ordered_probes[probe_index]
+                if isinstance(probe, dict):
+                    effective.update(
+                        hierarchical_stage="ordered_probe",
+                        hierarchical_probe_index=probe_index,
+                        hierarchical_probe=copy.deepcopy(probe),
+                    )
+                    default_probe_budgets = {
+                        "mtp_enablement": [1, 1],
+                        "moe_communication": [1, 2],
+                        "scheduler_capacity": [2, 3],
+                        "compilation_graph": [1, 2],
+                        "ascend_communication_refinement": [1, 2],
+                    }
+                    preferred = probe.get(
+                        "independent_parameters_per_round",
+                        default_probe_budgets.get(str(probe.get("name"))),
+                    )
+                    if (
+                        isinstance(preferred, list)
+                        and len(preferred) == 2
+                        and all(isinstance(value, int) for value in preferred)
+                    ):
+                        minimum, maximum = preferred
+                        if not 1 <= minimum <= maximum:
+                            raise ValueError(
+                                "hierarchical probe independent parameter range is invalid"
+                            )
+                        effective.update(
+                            preferred_parameters_per_round=preferred,
+                            minimum_parameters_per_round=minimum,
+                            max_parameters_per_round=maximum,
+                        )
+                    minimum_measurements, maximum_measurements = (
+                        self.hierarchical_probe_measurement_budget(probe)
+                    )
+                    effective.update(
+                        successful_measurements_in_probe=hierarchy_state.get(
+                            "measurements_in_probe", 0
+                        ),
+                        minimum_successful_measurements=minimum_measurements,
+                        maximum_successful_measurements=maximum_measurements,
+                        probe_exit_policy={
+                            "exit_at_maximum": True,
+                            "early_exit_after_minimum_when_incremental_gain_below_percent":
+                                hierarchy_state.get(
+                                    "promising_incremental_gain_percent", -3.0
+                                ),
+                            "failed_or_incomplete_rounds_do_not_consume_budget": True,
+                        },
+                        hierarchical_observations=hierarchy_state.get(
+                            "observations", []
+                        ),
+                    )
+        elif ordered_probes:
+            revisits = hierarchy_state.get("ranked_cross_layer_revisits", [])
+            revisit_probe = None
+            if revisits:
+                revisit = revisits[
+                    int(hierarchy_state.get("cross_layer_rounds", 0)) % len(revisits)
+                ]
+                revisit_probe = ordered_probes[int(revisit["probe_index"])]
+            effective.update(
+                hierarchical_stage="cross_layer_refinement",
+                cross_layer_revisit=copy.deepcopy(revisit_probe),
+                ranked_cross_layer_revisits=revisits,
+                hierarchical_observations=hierarchy_state.get("observations", []),
+            )
+        return effective
 
     def derived_changes(
         self,
@@ -2398,6 +2732,14 @@ class Controller:
                 )
         self.validate_runtime_configuration(candidate)
         self.sync_remote_scripts()
+        if self.execution_mode == "executor_adapter":
+            return self.submit_executor_adapter(
+                round_dir,
+                label,
+                candidate,
+                dry_run=dry_run,
+                launch_profile=launch_profile,
+            )
         if self.execution_mode == "ktp_lab":
             return self.submit_lab(
                 round_dir,
@@ -2450,6 +2792,68 @@ class Controller:
         )
         return task_id, run_id
 
+    def submit_executor_adapter(
+        self,
+        round_dir: Path,
+        label: str,
+        candidate: dict[str, Any],
+        *,
+        dry_run: bool,
+        launch_profile: str | None = None,
+    ) -> tuple[str | None, str]:
+        """Submit through the frozen v1 bridge without exposing Controller authority."""
+
+        assert self.executor_adapter is not None
+        env_path = round_dir / "02_parameters" / "candidate.env"
+        env_path.write_text(
+            self.candidate_env(label, candidate, launch_profile=launch_profile),
+            encoding="utf-8",
+            newline="\n",
+        )
+        result = self.executor_adapter.invoke(
+            "submit",
+            context=self.executor_context(),
+            payload={
+                "label": label,
+                "dry_run": dry_run,
+                "launch_profile": launch_profile,
+                "candidate_env_path": str(env_path.resolve()),
+                "round_dir": str(round_dir.resolve()),
+            },
+        )
+        run_id = str(result.get("run_id", "")).strip()
+        if not run_id or not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+            raise RuntimeError(
+                "Executor submit response must contain a filesystem-safe run_id"
+            )
+        raw_task_id = result.get("task_id")
+        task_id = None if raw_task_id is None else str(raw_task_id).strip()
+        if not dry_run and not task_id:
+            raise RuntimeError(
+                "Executor submit response must contain task_id for a real submission"
+            )
+        output = str(result.get("message") or result.get("submit_output") or "")
+        (round_dir / "03_submission" / "submit_output.txt").write_text(
+            output + ("\n" if output else ""), encoding="utf-8"
+        )
+        task_document = result.get("task")
+        if task_document is not None:
+            if not isinstance(task_document, dict):
+                raise RuntimeError("Executor submit task must be a mapping")
+            save_yaml(round_dir / "03_submission" / "task.yaml", task_document)
+        save_json(
+            round_dir / "03_submission" / "submission.json",
+            {
+                "execution_mode": "executor_adapter",
+                "executor_identity": self.executor_identity,
+                "task_id": task_id,
+                "run_id": run_id,
+                "submitted_at": now(),
+                "dry_run": dry_run,
+            },
+        )
+        return task_id, run_id
+
     def collect(self, run_id: str, round_dir: Path) -> dict[str, bool]:
         remote_run = f"{self.remote_auto}/runs/{run_id}"
         found: dict[str, bool] = {}
@@ -2475,6 +2879,19 @@ class Controller:
 
     def start_aligned_benchmark(self, run_id: str, task_id: str | None) -> None:
         if self.benchmark_mode != "aligned_l1":
+            return
+        if self.execution_mode == "executor_adapter":
+            assert self.executor_adapter is not None
+            if not self.executor_adapter.supports("start_benchmark"):
+                raise RuntimeError(
+                    "aligned_l1 requires executor_adapter capability start_benchmark"
+                )
+            self.executor_adapter.invoke(
+                "start_benchmark",
+                context=self.executor_context(),
+                payload={"run_id": run_id, "task_id": task_id},
+            )
+            log(f"Started aligned L1 benchmark through executor adapter for run={run_id}")
             return
         if not task_id or str(task_id).isdigit():
             raise RuntimeError(
@@ -2524,6 +2941,14 @@ class Controller:
                 "terminal": False,
                 "partial_failure": False,
             }
+        if self.execution_mode == "executor_adapter":
+            assert self.executor_adapter is not None
+            result = self.executor_adapter.invoke(
+                "snapshot",
+                context=self.executor_context(),
+                payload={"task_id": str(task_id)},
+            )
+            return validate_executor_snapshot(result)
         if not str(task_id).isdigit():
             try:
                 output = self.ssh(
@@ -2661,6 +3086,23 @@ class Controller:
         return elapsed.total_seconds() >= self.partial_exit_grace_seconds
 
     def stop_partial_lab_processes(self, task_id: str | None) -> None:
+        if self.execution_mode == "executor_adapter":
+            if not task_id:
+                return
+            assert self.executor_adapter is not None
+            if self.executor_adapter.supports("stop_partial"):
+                self.executor_adapter.invoke(
+                    "stop_partial",
+                    context=self.executor_context(),
+                    payload={"task_id": str(task_id)},
+                )
+            else:
+                self.executor_adapter.invoke(
+                    "stop",
+                    context=self.executor_context(),
+                    payload={"task_id": str(task_id), "reason": "partial_failure"},
+                )
+            return
         if not task_id or str(task_id).isdigit():
             return
         log(
@@ -2679,6 +3121,17 @@ class Controller:
         if not task_id:
             return "No active task is recorded; only the local stop request was saved."
         execution_mode = str(state.get("execution_mode", self.execution_mode))
+        if execution_mode == "executor_adapter":
+            if self.execution_mode != "executor_adapter" or self.executor_adapter is None:
+                raise RuntimeError(
+                    "Frozen Session requires its executor adapter configuration"
+                )
+            result = self.executor_adapter.invoke(
+                "stop",
+                context=self.executor_context(),
+                payload={"task_id": str(task_id), "reason": "operator_stop"},
+            )
+            return str(result.get("message", "External executor task stopped."))
         if execution_mode == "ktp_lab":
             lease_name = str(state.get("lease_name") or self.lab.get("lease_name"))
             if not lease_name:
@@ -3266,6 +3719,7 @@ class Controller:
             "failed_requests": failed,
             "policy": policy,
             "eligible_as_improvement": False,
+            "advisories": [],
         }
         if len(history) == 1:
             return assessment
@@ -3278,17 +3732,55 @@ class Controller:
             mean_ttft_change_percent=ttft_change,
             mean_tpot_change_percent=tpot_change,
         )
-        if any(value is None for value in (throughput_gain, ttft_change, tpot_change)):
+        latency_guardrail_mode = str(
+            selected_definition.get(
+                "latency_guardrail_mode",
+                policy.get("latency_guardrail_mode", "hard"),
+            )
+        )
+        if latency_guardrail_mode not in {"hard", "advisory"}:
+            raise ValueError(
+                "measurement latency_guardrail_mode must be hard or advisory"
+            )
+        assessment["latency_guardrail_mode"] = latency_guardrail_mode
+        if throughput_gain is None or (
+            latency_guardrail_mode == "hard"
+            and (ttft_change is None or tpot_change is None)
+        ):
             assessment["classification"] = "insufficient_comparison"
             return assessment
+        minimum_gain = float(
+            selected_definition.get(
+                "minimum_throughput_gain_percent",
+                policy.get("minimum_throughput_gain_percent", 3.0),
+            )
+        )
+        maximum_ttft = float(
+            selected_definition.get(
+                "maximum_ttft_regression_percent",
+                policy.get("maximum_ttft_regression_percent", 10.0),
+            )
+        )
+        maximum_tpot = float(
+            selected_definition.get(
+                "maximum_tpot_regression_percent",
+                policy.get("maximum_tpot_regression_percent", 10.0),
+            )
+        )
+        latency_passes = bool(
+            ttft_change is not None
+            and tpot_change is not None
+            and ttft_change <= maximum_ttft
+            and tpot_change <= maximum_tpot
+        )
+        if latency_guardrail_mode == "advisory" and not latency_passes:
+            assessment["advisories"].append(
+                "latency regression exceeded the configured reference threshold"
+            )
         assessment["eligible_as_improvement"] = bool(
             passes_guardrails
-            and throughput_gain
-            >= float(selected_definition.get("minimum_throughput_gain_percent", policy.get("minimum_throughput_gain_percent", 3.0)))
-            and ttft_change
-            <= float(selected_definition.get("maximum_ttft_regression_percent", policy.get("maximum_ttft_regression_percent", 10.0)))
-            and tpot_change
-            <= float(selected_definition.get("maximum_tpot_regression_percent", policy.get("maximum_tpot_regression_percent", 10.0)))
+            and throughput_gain >= minimum_gain
+            and (latency_guardrail_mode == "advisory" or latency_passes)
         )
         return assessment
 
@@ -3297,6 +3789,11 @@ class Controller:
         history: list[dict[str, Any]],
     ) -> dict[str, Any]:
         policy = self.measurement_policy.get("aligned_l1", {})
+        latency_guardrail_mode = str(policy.get("latency_guardrail_mode", "hard"))
+        if latency_guardrail_mode not in {"hard", "advisory"}:
+            raise ValueError(
+                "aligned_l1 latency_guardrail_mode must be hard or advisory"
+            )
         current_payload = history[-1]["metrics"]
         current_l1 = current_payload.get("l1", {})
         repetitions = int(current_l1.get("repetition_count", 0) or 0)
@@ -3312,6 +3809,8 @@ class Controller:
             "repetition_count": repetitions,
             "policy": policy,
             "violations": [],
+            "advisories": [],
+            "latency_guardrail_mode": latency_guardrail_mode,
         }
         if not absolute_gate:
             assessment["classification"] = "absolute_gate_failed"
@@ -3388,7 +3887,12 @@ class Controller:
                 )
                 latency_ratios[case_name][metric] = ratio
                 if ratio > limit:
-                    assessment["violations"].append(
+                    destination = (
+                        assessment["violations"]
+                        if latency_guardrail_mode == "hard"
+                        else assessment["advisories"]
+                    )
+                    destination.append(
                         f"{case_name} {metric} ratio={ratio:.4f} > {limit:.4f}"
                     )
             if key[1] == primary_concurrency:
@@ -3433,6 +3937,21 @@ class Controller:
 
     def wait_for_task_release(self, task_id: str | None) -> None:
         if not task_id:
+            return
+        if self.execution_mode == "executor_adapter":
+            assert self.executor_adapter is not None
+            result = self.executor_adapter.invoke(
+                "wait_for_release",
+                context=self.executor_context(),
+                payload={
+                    "task_id": str(task_id),
+                    "timeout_seconds": min(self.round_timeout_minutes * 60, 3600),
+                },
+            )
+            if result.get("released") is not True:
+                raise RuntimeError(
+                    f"Executor task {task_id!r} did not release; refusing overlap"
+                )
             return
         if not str(task_id).isdigit():
             # MASTER_DONE is written immediately before the master exits. Wait
@@ -3704,7 +4223,7 @@ the exact violations while preserving the measured evidence and Search Limits:
             previous,
             attempted_history,
         )
-        selection_policy = self.effective_change_policy(history)
+        selection_policy = self.effective_change_policy(history, attempted_history)
         evidence["selection_policy"] = selection_policy
         save_json(
             round_dir / "06_agent_analysis" / "evidence_bundle.json",
@@ -3717,19 +4236,78 @@ the exact violations while preserving the measured evidence and Search Limits:
                 if repetition_count == 1
                 else f"the median across {repetition_count} complete repetitions"
             )
+            latency_is_advisory = (
+                str(
+                    self.measurement_policy.get("aligned_l1", {}).get(
+                        "latency_guardrail_mode", "hard"
+                    )
+                )
+                == "advisory"
+            )
+            latency_role = (
+                "TTFT/TPOT P50/P90 are advisory diagnostics: report and reason "
+                "about them, but they cannot veto a valid output-throughput gain. "
+                "Zero errors/incomplete requests, exact token shapes, per-workload "
+                "output throughput, and run-to-run CV remain deterministic guardrails."
+                if latency_is_advisory
+                else "TTFT/TPOT P50/P90, zero errors/incomplete requests, exact "
+                "token shapes, per-workload throughput, and run-to-run CV are "
+                "deterministic guardrails."
+            )
             benchmark_goal = f"""Goal: improve the strict aggregate output-token throughput score for the
 frozen ServeBench tuning-fixed v3 L1 matrix. The matrix has four workloads
 (1024/256, 8192/512, 1024/1024, 256/2048), fixed C1/C16/C32 concurrency,
 fixed JSONL prompts, temperature=0, and {repetition_count} complete repetition(s).
 The primary score is {repetition_aggregation} of the C32 workload geometric mean.
-TTFT/TPOT P50/P90, zero errors/incomplete requests, exact token shapes,
-per-workload throughput, and run-to-run CV are deterministic guardrails."""
+{latency_role}"""
         else:
             definition = self.benchmark[self.benchmark_mode]
+            latency_is_advisory = (
+                str(
+                    definition.get(
+                        "latency_guardrail_mode",
+                        self.measurement_policy.get(
+                            "latency_guardrail_mode", "hard"
+                        ),
+                    )
+                )
+                == "advisory"
+            )
+            latency_role = (
+                "Mean TTFT and mean TPOT are advisory diagnostics and cannot "
+                "veto a valid output-throughput gain. Request completeness and "
+                "error requirements remain deterministic guardrails."
+                if latency_is_advisory
+                else "Successful/failed request counts, mean TTFT and mean TPOT "
+                "are deterministic guardrails."
+            )
             benchmark_goal = f"""Goal: improve measured output-token throughput under the frozen
 {self.benchmark_profile_name} benchmark profile ({self.benchmark_mode}). Its complete definition
-is present in the evidence bundle. Successful/failed request counts, mean TTFT and mean TPOT are
-deterministic guardrails. Never compare this profile with a different benchmark identity."""
+is present in the evidence bundle. {latency_role} Never compare this profile with a different
+benchmark identity."""
+        hierarchical_probe = selection_policy.get("hierarchical_probe")
+        hierarchy_instruction = ""
+        if isinstance(hierarchical_probe, dict):
+            hierarchy_instruction = f"""
+This strategy is in an ordered high-impact probe stage. Center the next experiment
+on the active probe below; choose a valid untested value from this parameter family
+before substituting a lower-impact local tweak. You may skip the probe only when
+the frozen constraints or attempted history make it invalid, unsafe, or exhausted,
+and then you must cite the exact evidence for skipping it. The probe is a general
+strategy prior, not a hidden historical candidate:
+{yaml.safe_dump(hierarchical_probe, allow_unicode=True, sort_keys=False)}
+"""
+        cross_layer_revisit = selection_policy.get("cross_layer_revisit")
+        if isinstance(cross_layer_revisit, dict):
+            hierarchy_instruction = f"""
+The ordered coverage stage is complete. This is cross-layer refinement, ranked
+from measured incremental output-throughput evidence. Revisit the selected
+parameter family below and test an untried value or a defensible 1-2 parameter
+interaction around best_accepted_anchor. Derived runtime companions do not count
+as independent parameters. Skip this family only if its useful whitelist values
+are exhausted or a hard constraint blocks them, and cite the exact evidence:
+{yaml.safe_dump(cross_layer_revisit, allow_unicode=True, sort_keys=False)}
+"""
         prompt = f"""You are the tuning analyst for a measured vLLM-Ascend experiment.
 
 The controller has embedded all required read-only evidence below. Treat it as
@@ -3756,8 +4334,9 @@ The frozen Agent strategy profile is {self.strategy_profile_name}:
 {yaml.safe_dump(self.strategy_profile, allow_unicode=True, sort_keys=False)}
 The active selection phase and limits are:
 {yaml.safe_dump(selection_policy, allow_unicode=True, sort_keys=False)}
-In exploration, prefer the configured 2-3 active parameters when evidence supports
-a coherent faster probe; in refinement, prefer 1-2 active parameters. A derived
+{hierarchy_instruction}
+In exploration, use the configured preferred active-parameter range when evidence
+supports a coherent faster probe; in refinement, prefer a small local change. A derived
 parameter changed together with one of its declared drivers does not consume an
 active-parameter slot or grid-step budget, but it must still be declared in changes
 and satisfy every hard invariant. Treat listed high-risk parameters conservatively:
@@ -4412,6 +4991,7 @@ Embedded evidence:
             "active_task_id": None,
             "active_run_id": None,
             "execution_mode": self.execution_mode,
+            "executor_identity": self.executor_identity,
             "image_identity": self.image_identity,
             "runtime_identity": self.runtime_identity,
             "search_limits_mode": self.config.get("resolved_search_space", {}).get(
@@ -4448,6 +5028,114 @@ Embedded evidence:
         save_yaml(session_dir / "image_version_manifest.yaml", self.image_manifest)
         return session_dir, state
 
+    def import_completed_baseline(
+        self,
+        session_dir: Path,
+        state: dict[str, Any],
+    ) -> tuple[Path, dict[str, Any]]:
+        """Seed a new Session from one identity-matched completed B0 round."""
+        setting = self.config.get("baseline_reuse", {})
+        source_value = setting.get("source_session") if isinstance(setting, dict) else None
+        if not source_value:
+            raise ValueError("baseline_reuse.source_session is required")
+        source_session = Path(str(source_value)).expanduser().resolve()
+        archive_root = ARCHIVE_ROOT.resolve()
+        if not source_session.is_relative_to(archive_root) or source_session == session_dir:
+            raise ValueError(
+                "Reusable baseline Session must be a different directory below the "
+                "current runtime experiments root"
+            )
+        source_config_path = source_session / "session_config.yaml"
+        if not source_config_path.is_file():
+            raise ValueError(f"Reusable baseline Session config is missing: {source_config_path}")
+        source_config = load_yaml(source_config_path)
+
+        source_profile = source_config.get("benchmark", {}).get("resolved_profile", {})
+        source_mode = str(source_profile.get("mode", ""))
+        source_definition_key = str(source_profile.get("definition_key", source_mode))
+        source_definition = source_config.get("benchmark", {}).get(source_definition_key)
+        source_identity = {
+            "schema_version": "vllmtkb-benchmark-identity/v1",
+            "profile": source_config.get("benchmark", {}).get("profile"),
+            "mode": source_mode,
+            "definition": source_definition,
+        }
+        identity_bytes = json.dumps(
+            source_identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        source_identity["sha256"] = hashlib.sha256(identity_bytes).hexdigest()
+        checks = {
+            "benchmark_identity": source_identity == self.benchmark_identity,
+            "image_manifest": source_config.get("image_identity", {}).get(
+                "resolved_manifest"
+            )
+            == self.image_manifest,
+            "topology_profile": source_config.get("topology", {}).get("profile")
+            == self.config.get("topology", {}).get("profile"),
+            "deployment": source_config.get("deployment")
+            == self.config.get("deployment"),
+            "baseline_definition": source_config.get("initial_baseline", {})
+            .get("resolved_definition", {})
+            .get("sha256")
+            == self.config.get("initial_baseline", {})
+            .get("resolved_definition", {})
+            .get("sha256"),
+        }
+        failed_checks = [name for name, passed in checks.items() if not passed]
+        if failed_checks:
+            raise ValueError(
+                "Reusable baseline identity mismatch: " + ", ".join(failed_checks)
+            )
+
+        source_rounds = sorted(source_session.glob("round_000_*"))
+        if len(source_rounds) != 1:
+            raise ValueError("Reusable baseline Session must contain exactly one round_000")
+        source_round = source_rounds[0]
+        source_metrics = source_round / "05_results" / "metrics.json"
+        source_candidate = source_round / "02_parameters" / "candidate_params.yaml"
+        if not source_metrics.is_file() or not source_candidate.is_file():
+            raise ValueError("Reusable baseline round must contain metrics and candidate parameters")
+        metrics = json.loads(source_metrics.read_text(encoding="utf-8"))
+        candidate = load_yaml(source_candidate)
+        if metrics.get("benchmark_mode") != self.benchmark_mode:
+            raise ValueError("Reusable baseline metrics use a different benchmark mode")
+        if set(candidate) != self.candidate_schema:
+            raise ValueError("Reusable baseline candidate schema differs from this Session")
+
+        label = str(self.config.get("initial_baseline", {}).get("label", "b0"))
+        target_round = self.round_dir(session_dir, 0, label)
+        self.write_context(target_round, state)
+        self.run_query(target_round)
+        # Import measured evidence only. Old Agent analysis/context is excluded
+        # so the new strategy sees B0, never the old Session's decisions.
+        for child in ("02_parameters", "03_submission", "04_runtime", "05_results"):
+            shutil.copytree(
+                source_round / child,
+                target_round / child,
+                dirs_exist_ok=True,
+                copy_function=shutil.copy2,
+            )
+        state["current_candidate"] = candidate
+        state["baseline_reuse"] = {
+            "source_session": str(source_session),
+            "source_round": source_round.name,
+            "source_metrics_sha256": hashlib.sha256(
+                source_metrics.read_bytes()
+            ).hexdigest(),
+            "benchmark_identity_sha256": self.benchmark_identity["sha256"],
+            "identity_checks": checks,
+            "imported_at": now(),
+        }
+        save_yaml(session_dir / "baseline_reuse.yaml", state["baseline_reuse"])
+        self.reconcile_official_source_default_baseline(
+            session_dir, target_round, state
+        )
+        self.save_state(state)
+        return target_round, state
+
     def save_state(self, state: dict[str, Any]) -> None:
         state["updated_at"] = now()
         save_json(STATE_FILE, state)
@@ -4473,6 +5161,11 @@ Embedded evidence:
             round_dir / "06_agent_analysis" / "decision.json"
         )
         state["analysis_action"] = decision["action"]
+        if not state.get("active_task_id") and not state.get("active_run_id"):
+            # A paused Controller may be repaired and reanalyzed from already
+            # archived metrics. Mark that round resumable so the validated
+            # decision can enter the normal submit loop without rerunning it.
+            state["status"] = "stopped_after_current_round"
         self.save_state(state)
         log(
             f"Reanalyzed saved round {state['round_label']}; "
@@ -4576,7 +5269,8 @@ Embedded evidence:
                 self.validate_no_change_metadata(decision)
             else:
                 selection_policy = self.effective_change_policy(
-                    self.history_summary(session_dir)
+                    self.history_summary(session_dir),
+                    self.attempted_history_summary(session_dir),
                 )
                 self.validate_candidate(
                     previous,
@@ -4639,10 +5333,14 @@ Embedded evidence:
                 has_terminal_artifact = (
                     archived_round / "05_results" / "metrics.json"
                 ).exists() or (archived_round / "05_results" / "failure.yaml").exists()
-                if (
-                    state.get("status") not in resumable_statuses
-                    or not has_terminal_artifact
-                ):
+                status_is_resumable = (
+                    state.get("status") in resumable_statuses
+                    or (
+                        state.get("status") == "running"
+                        and state.get("analysis_status") == "ready"
+                    )
+                )
+                if not status_is_resumable or not has_terminal_artifact:
                     raise RuntimeError(
                         "Controller state has no active task/run or resumable "
                         "archived round"
@@ -4674,24 +5372,62 @@ Embedded evidence:
             initial_label = str(
                 self.config.get("initial_baseline", {}).get("label", "a0")
             )
-            round_dir = self.round_dir(session_dir, 0, initial_label)
-            self.write_context(round_dir, state)
-            self.run_query(round_dir)
-            save_yaml(
-                round_dir / "02_parameters" / "candidate_params.yaml",
-                state["current_candidate"],
-            )
-            task_id, run_id = self.submit(
-                round_dir, initial_label, state["current_candidate"], dry_run=False
-            )
-            state.update(
-                status="running",
-                active_task_id=task_id,
-                active_run_id=run_id,
-                round_submitted_at=now(),
-            )
-            self.save_state(state)
-            log(f"Submitted {initial_label.upper()} task={task_id} run={run_id}")
+            if self.config.get("baseline_reuse", {}).get("source_session"):
+                round_dir, state = self.import_completed_baseline(session_dir, state)
+                log(
+                    f"Imported identity-matched {initial_label.upper()} evidence; "
+                    "invoking Agent analysis without a baseline submission."
+                )
+                decision = self.analyze(
+                    session_dir, round_dir, state["current_candidate"]
+                )
+                if decision["action"] == "stop_complete":
+                    state.update(
+                        status="completed_by_agent",
+                        completion_summary=decision["summary"],
+                    )
+                    self.save_state(state)
+                    return
+                next_label = "a1"
+                next_candidate = decision["candidate"]
+                _, task_id, run_id = self.prepare_and_submit_round(
+                    session_dir,
+                    state,
+                    index=1,
+                    label=next_label,
+                    candidate=next_candidate,
+                )
+                state.update(
+                    round_index=1,
+                    candidate_index=1,
+                    round_label=next_label,
+                    active_task_id=task_id,
+                    active_run_id=run_id,
+                    current_candidate=next_candidate,
+                    status="running",
+                    round_submitted_at=now(),
+                )
+                self.save_state(state)
+                log(f"Submitted {next_label} task={task_id} run={run_id}")
+            else:
+                round_dir = self.round_dir(session_dir, 0, initial_label)
+                self.write_context(round_dir, state)
+                self.run_query(round_dir)
+                save_yaml(
+                    round_dir / "02_parameters" / "candidate_params.yaml",
+                    state["current_candidate"],
+                )
+                task_id, run_id = self.submit(
+                    round_dir, initial_label, state["current_candidate"], dry_run=False
+                )
+                state.update(
+                    status="running",
+                    active_task_id=task_id,
+                    active_run_id=run_id,
+                    round_submitted_at=now(),
+                )
+                self.save_state(state)
+                log(f"Submitted {initial_label.upper()} task={task_id} run={run_id}")
 
         while True:
             stop_requested = STOP_FILE.exists()
@@ -4706,7 +5442,12 @@ Embedded evidence:
             round_dir = self.round_dir(
                 session_dir, state["round_index"], state["round_label"]
             )
-            found = self.collect(state["active_run_id"], round_dir)
+            local_metrics = round_dir / "05_results" / "metrics.json"
+            if not state.get("active_run_id") and local_metrics.is_file():
+                found = {name: False for name in REMOTE_ARTIFACTS}
+                found["metrics.json"] = True
+            else:
+                found = self.collect(state["active_run_id"], round_dir)
             task = None
             if (
                 self.benchmark_mode == "aligned_l1"
@@ -5135,6 +5876,13 @@ def parse_args() -> argparse.Namespace:
         help="search-space profile for a new Session; resume uses the frozen Session value",
     )
     parser.add_argument(
+        "--reuse-baseline-session",
+        help=(
+            "new Session only: import an identity-matched completed round_000 "
+            "and start Agent analysis at A1 without rerunning B0"
+        ),
+    )
+    parser.add_argument(
         "--use-frozen-session",
         action="store_true",
         help="with --check-only, validate the Session config referenced by state.json",
@@ -5174,6 +5922,7 @@ def main() -> int:
             or args.agent_provider
             or args.benchmark_profile
             or args.search_space_profile
+            or args.reuse_baseline_session
         ):
             raise RuntimeError(
                 "Search-space, Strategy, Agent provider, and Benchmark profiles are frozen in "
@@ -5215,6 +5964,10 @@ def main() -> int:
             raw_config.setdefault("search_space", {})[
                 "profile"
             ] = args.search_space_profile
+        if args.reuse_baseline_session:
+            raw_config["baseline_reuse"] = {
+                "source_session": args.reuse_baseline_session
+            }
         raw_config = resolve_initial_baseline_definition(raw_config, KB_ROOT)
         validate_runtime_selections(raw_config)
         config, search_space_result = resolve_search_limits(

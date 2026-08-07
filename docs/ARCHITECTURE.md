@@ -78,6 +78,12 @@ flashcomm1
 - 指标必须通过请求完整性、Token 形状、吞吐和 TTFT/TPOT 门禁。
 - 参数 OOM/非法值可以最小化修正；基础设施故障只允许同候选有限重试；未知问题暂停人工处理。
 
+资源执行层通过独立边界接入。默认 `ktp_lab` 继续走已验证的内置路径；新 Session
+可以显式加载 Executor Adapter v1，将 `prepare/check_ready/submit/snapshot/stop/
+wait_for_release` 映射到其他调度器。外部适配器不能修改候选、Session 或指标判定，
+其文件与配置身份随 Session 冻结。拓扑 Executor Profile 约束 rank/进程布局，
+Executor Adapter 负责资源管理；两者不能互相冒充。
+
 ## 本地与远端隔离
 
 新项目使用：

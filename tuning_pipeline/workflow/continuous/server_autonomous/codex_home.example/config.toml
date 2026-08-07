@@ -1,0 +1,15 @@
+# Copy this directory to a private, writable server location and point
+# agent.providers.codex.codex_home at it. No credential value belongs here.
+model = "deepseek-v4-flash"
+model_provider = "deepseek"
+model_reasoning_effort = "high"
+model_context_window = 1000000
+
+[model_providers.deepseek]
+name = "DeepSeek V4 Flash"
+base_url = "https://api.deepseek.com/"
+wire_api = "responses"
+env_key = "DEEPSEEK_API_KEY"
+request_max_retries = 4
+stream_max_retries = 5
+stream_idle_timeout_ms = 300000

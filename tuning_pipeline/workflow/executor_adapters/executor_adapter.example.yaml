@@ -1,0 +1,30 @@
+# Overlay this on config.yaml only for a NEW Session. The production default
+# remains execution_mode: ktp_lab.
+base_config: ../continuous/config.yaml
+
+execution_mode: executor_adapter
+executor_adapter:
+  kind: command_v1
+  name: replace-with-scheduler-name
+  bridge_path: workflow/executor_adapters/template_executor_bridge.py
+  allowlisted_roots:
+    - workflow/executor_adapters
+  python_command: python3
+  timeout_seconds: 3600
+  capabilities:
+    prepare: true
+    check_ready: true
+    submit: true
+    snapshot: true
+    stop: true
+    wait_for_release: true
+    # aligned_l1 requires this. Public/custom benchmarks may run inside the
+    # submitted job and leave it false.
+    start_benchmark: false
+    stop_partial: false
+  config:
+    # Non-secret scheduler settings only. Reference credentials through an
+    # environment-variable name if the bridge needs them.
+    namespace: replace-me
+    queue: replace-me
+    credential_env: REPLACE_ME_TOKEN

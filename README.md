@@ -82,6 +82,18 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 
 只有执行器、B0、Benchmark 和 Search-Space 四项真实验证完成，且镜像批准、Scenario 的 Digest/commit、DP×TP 与总 NPU、worker rank 契约全部一致，适配包才能成为 `integrated`。`planned` 包不能提交任务。新拓扑若超出现有 `ktp_two_role` 能力，需要增加对应 Executor Profile 和 rank/Lease 实现；上层 Session、Agent、Benchmark、失败恢复和验收状态机无需重写。完整流程见 [Ascend Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md)。
 
+### 更换 ktp-lab 或资源调度系统
+
+默认 `execution_mode: ktp_lab` 及其命令路径保持不变。新 Session 可以显式选择
+`execution_mode: executor_adapter`，通过版本化 JSON Bridge 接入普通 SSH、Slurm、
+Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检、提交、状态、停止和
+释放；B0、候选、Search Limits、Session、指标判定与失败恢复仍由通用 Controller
+掌握。适配器源码、非敏感配置和能力声明会计算 SHA-256 并冻结，Resume 禁止更换。
+
+入口、配置样例和返回 Schema 见
+[`workflow/executor_adapters/README.md`](tuning_pipeline/workflow/executor_adapters/README.md)。
+现有任务不会读取这条扩展路径；只有新建 Session 并显式选择时才加载外部适配器。
+
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
 在线闭环默认使用 `curated_registry_v1 + codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择 Search-Space、策略、Provider 或 Benchmark：
@@ -101,6 +113,9 @@ python -m workflow.registry_builder.full_pipeline --dry-run
 | Search-Space 构建 | `-SearchSpaceProfile` | `curated_registry_v1`（默认）、`automatic_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
 | Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+
+资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是
+Runtime Adapter 的执行后端，不改变上述四个调优接口。
 
 Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`、`openai_compatible`、`deepseek` 和 `command`。API Key 只通过环境变量配置。以上 Profile 仅允许在新建 Session 时选择；续跑使用该 Session 已保存的配置。
 

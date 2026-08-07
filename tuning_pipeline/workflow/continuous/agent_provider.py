@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 
+_CODEX_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
 @dataclass
 class AgentResult:
     provider: str
@@ -96,11 +99,110 @@ def _required_secret(settings: dict[str, Any]) -> str:
     return value
 
 
+def _codex_profile(settings: dict[str, Any]) -> str:
+    """Return one safe, explicit Codex profile name or an empty string.
+
+    An explicit profile is the opt-in boundary for loading Codex user config.
+    The ordinary ``codex`` route keeps its historical deterministic behavior
+    and continues to pass ``--ignore-user-config``.
+    """
+    profile = os.environ.get("VLLMTKB_CODEX_PROFILE", "").strip() or str(
+        settings.get("profile", "")
+    ).strip()
+    if profile and not _CODEX_PROFILE_RE.fullmatch(profile):
+        raise RuntimeError(
+            "Codex profile must contain only letters, digits, '.', '_' or '-'"
+        )
+    return profile
+
+
+def _codex_environment(settings: dict[str, Any]) -> dict[str, str]:
+    """Build the Codex subprocess environment without copying any secret value."""
+    environment = os.environ.copy()
+    for setting_name, environment_name in (
+        ("codex_home", "CODEX_HOME"),
+        ("tmp_dir", "TMPDIR"),
+    ):
+        configured = str(settings.get(setting_name, "")).strip()
+        if not configured:
+            continue
+        directory = Path(configured).expanduser()
+        if not directory.is_absolute() or not directory.is_dir():
+            raise RuntimeError(
+                f"Codex {setting_name} must be an existing absolute directory"
+            )
+        environment[environment_name] = str(directory)
+    return environment
+
+
+def _codex_output_wait_seconds(settings: dict[str, Any]) -> int:
+    wait_seconds = int(settings.get("output_wait_seconds", 60))
+    if not 1 <= wait_seconds <= 300:
+        raise RuntimeError("Codex output_wait_seconds must be between 1 and 300")
+    return wait_seconds
+
+
+def _output_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _normalize_codex_output(
+    *,
+    output_path: Path,
+    schema_path: Path,
+    previous_signature: tuple[int, int] | None,
+    wait_seconds: int,
+) -> None:
+    """Wait for Codex's last-message file and normalize it to schema-valid JSON.
+
+    Some Codex model providers finish the CLI process before the last-message
+    writer has made its final non-empty update.  Other providers wrap an
+    otherwise valid JSON value in prose or a Markdown fence.  Do not let either
+    transport detail surface as a Controller JSONDecodeError.
+    """
+    deadline = time.monotonic() + wait_seconds
+    last_error: Exception | None = None
+    while True:
+        signature = _output_signature(output_path)
+        if signature is not None and signature != previous_signature:
+            raw = output_path.read_text(encoding="utf-8", errors="replace")
+            if raw.strip():
+                try:
+                    value = _extract_json(raw)
+                    # Keep the provider's exact response for diagnosis while
+                    # making the documented decision path machine-readable.
+                    output_path.with_name(output_path.name + ".raw.txt").write_text(
+                        raw, encoding="utf-8"
+                    )
+                    _validate_and_write(value, schema_path, output_path)
+                    return
+                except Exception as exc:  # Schema/format may still be mid-write.
+                    last_error = exc
+        if time.monotonic() >= deadline:
+            detail = (
+                f"{type(last_error).__name__}: {last_error}"
+                if last_error is not None
+                else "last-message file was missing, unchanged, or empty"
+            )
+            raise RuntimeError(
+                f"Codex did not produce schema-valid JSON within {wait_seconds}s: "
+                + detail
+            )
+        time.sleep(0.25)
+
+
 def validate_agent_credentials(agent: dict[str, Any]) -> None:
     """Fail at Controller startup instead of after a costly benchmark round."""
     provider = str(agent.get("provider", "codex")).lower()
     settings = dict(agent.get("settings", {}))
     if provider == "codex":
+        _codex_profile(settings)
+        _codex_environment(settings)
+        _codex_output_wait_seconds(settings)
         requested = os.environ.get("VLLMTKB_CODEX_COMMAND", "").strip() or str(
             settings.get("command", "auto")
         )
@@ -221,6 +323,10 @@ def run_structured_agent(
     provider = str(agent.get("provider", "codex")).lower()
     settings = dict(agent.get("settings", {}))
     if provider == "codex":
+        profile = _codex_profile(settings)
+        codex_environment = _codex_environment(settings)
+        output_wait_seconds = _codex_output_wait_seconds(settings)
+        use_user_config = bool(settings.get("use_user_config", False))
         requested = os.environ.get("VLLMTKB_CODEX_COMMAND", "").strip() or str(
             settings.get("command", "auto")
         )
@@ -237,21 +343,39 @@ def run_structured_agent(
         command = [
             executable,
             "exec",
-            "--ignore-user-config",
-            "-C",
-            str(cwd),
-            "--add-dir",
-            str(allowed_dir),
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "--output-schema",
-            str(schema_path),
-            "--output-last-message",
-            str(output_path),
-            "--json",
-            "-",
         ]
+        if profile:
+            # Profiles live in CODEX_HOME and may select a custom model
+            # provider (for example a DeepSeek-compatible gateway). Loading
+            # user config is allowed only through this explicit opt-in.
+            command.extend(["--profile", profile])
+        elif use_user_config:
+            # Explicitly load the base config from CODEX_HOME. This supports a
+            # server-managed Codex installation whose tested model provider is
+            # selected at the top level rather than in a named profile.
+            pass
+        else:
+            command.append("--ignore-user-config")
+        if bool(settings.get("ephemeral", False)):
+            command.append("--ephemeral")
+        command.extend(
+            [
+                "-C",
+                str(cwd),
+                "--add-dir",
+                str(allowed_dir),
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--output-schema",
+                str(schema_path),
+                "--output-last-message",
+                str(output_path),
+                "--json",
+                "-",
+            ]
+        )
+        previous_signature = _output_signature(output_path)
         completed = subprocess.run(
             command,
             cwd=str(cwd),
@@ -260,9 +384,25 @@ def run_structured_agent(
             encoding="utf-8",
             errors="replace",
             capture_output=True,
+            env=codex_environment,
             timeout=timeout,
             check=False,
         )
+        if completed.returncode == 0:
+            try:
+                _normalize_codex_output(
+                    output_path=output_path,
+                    schema_path=schema_path,
+                    previous_signature=previous_signature,
+                    wait_seconds=output_wait_seconds,
+                )
+            except Exception as exc:
+                return AgentResult(
+                    provider,
+                    1,
+                    completed.stdout,
+                    (completed.stderr + "\n" + f"Structured output error: {exc}").strip(),
+                )
         return AgentResult(provider, completed.returncode, completed.stdout, completed.stderr)
 
     schema = json.loads(schema_path.read_text(encoding="utf-8"))

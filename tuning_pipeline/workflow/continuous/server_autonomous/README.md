@@ -178,3 +178,65 @@ DeepSeek can only return schema-constrained decisions. It cannot execute shell
 commands or submit ktp-lab tasks. The same Search Limits, compatibility rules,
 candidate invariants, retry budgets, and measurement gates used by the existing
 Controller remain authoritative.
+
+## Optional Codex Agent over DeepSeek
+
+The autonomous default remains the direct, schema-constrained DeepSeek API
+provider. A future **new Session** may instead run the same decision prompt
+through Codex while a named Codex profile selects a DeepSeek V4 Flash-compatible
+backend:
+
+```yaml
+agent:
+  provider: codex
+  providers:
+    codex:
+      command: auto
+      profile: deepseek-v4-flash
+      ephemeral: true
+```
+
+The currently verified server installation uses an explicit binary and a
+server-managed base config instead of a named profile:
+
+```yaml
+agent:
+  provider: codex
+  providers:
+    codex:
+      command: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/releases/0.147.0/codex
+      codex_home: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/home
+      tmp_dir: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/tools/codex/tmp
+      use_user_config: true
+      ephemeral: true
+```
+
+This opt-in is required: without `profile` or `use_user_config: true`, the
+Controller continues to pass `--ignore-user-config`. The server-managed config
+was smoke-tested with Codex CLI 0.147.0 and `deepseek-v4-flash` on 2026-08-07.
+The versioned, secret-free template is
+`server_autonomous/codex_home.example/config.toml`; install it as
+`$CODEX_HOME/config.toml`. It references `DEEPSEEK_API_KEY` by environment
+variable name and never stores the credential value.
+
+For a named-profile deployment, the service account must expose the configured
+Codex command and provide `$CODEX_HOME/deepseek-v4-flash.config.toml`. For the
+verified server-managed-base deployment above, `codex_home` supplies the base
+config explicitly and the binary need not be in `PATH`. In both cases credentials
+stay outside YAML. The Controller invokes Codex with a read-only sandbox, the
+existing JSON output schema, and `--ephemeral`.
+
+Protocol compatibility must be proven before use. Current upstream Codex custom
+providers use the OpenAI Responses wire protocol, while DeepSeek's public V4
+Flash endpoint documents OpenAI Chat Completions and Anthropic compatibility.
+Therefore every installation requires a zero-NPU smoke test rather than relying
+on documentation alone. This server's existing `https://api.deepseek.com`
+Responses configuration passed that test with Codex CLI 0.147.0 on 2026-08-07.
+
+Run `preflight.sh` before creating the new Session. It verifies the DeepSeek key
+and model, then Controller startup validation verifies the configured Codex
+executable and CODEX_HOME. Before allocating a Lease, also run a zero-NPU
+structured-output smoke test using the selected profile or server-managed base
+config. A missing executable, missing CODEX_HOME, or invalid profile name fails
+before any NPU experiment is submitted. Existing Sessions freeze their provider
+and cannot be switched or resumed under this alternate route.

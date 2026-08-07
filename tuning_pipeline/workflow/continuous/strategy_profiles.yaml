@@ -58,3 +58,80 @@ strategies:
       independent_parameters_per_round: [1, 2]
       max_grid_steps_per_parameter: 1
       max_total_grid_steps: 2
+
+  hierarchical_throughput_v1:
+    status: integrated
+    purpose: >-
+      Session-local, throughput-first hierarchical search. It contains only
+      general parameter-family priors and never imports candidates or metrics
+      from another Session. High-impact feature families are tested before
+      low-impact local refinement.
+    measurement_policy:
+      # Latency is still measured, compared, and reported, but it cannot veto
+      # an otherwise valid output-throughput improvement in this profile.
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+    exploration:
+      independent_parameters_per_round: [1, 4]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 10
+    hierarchy:
+      promising_incremental_gain_percent: -3.0
+      ordered_probes:
+        - name: mtp_enablement
+          independent_parameters_per_round: [1, 1]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - num_speculative_tokens
+            - async_scheduling
+            - max_cudagraph_capture_size
+            - cudagraph_capture_sizes
+          intent: >-
+            Test speculative decoding/MTP first, including only the scheduler
+            and graph-shape companions required by the runtime constraints.
+        - name: moe_communication
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters: [enable_expert_parallel, flashcomm1]
+          intent: >-
+            Test expert-parallel execution and its Ascend communication path
+            before spending rounds on small scheduler changes.
+        - name: scheduler_capacity
+          independent_parameters_per_round: [2, 3]
+          minimum_successful_measurements: 2
+          maximum_successful_measurements: 3
+          parameters: [max_num_seqs, max_num_batched_tokens, gpu_memory_utilization]
+          intent: >-
+            Right-size concurrency, token batching, and memory headroom as one
+            throughput-capacity hypothesis.
+        - name: compilation_graph
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - compilation_mode
+            - compilation_enable_sp
+            - max_cudagraph_capture_size
+            - cudagraph_capture_sizes
+          intent: >-
+            Tune compilation and graph capture after the execution features
+            and scheduler operating region have been established.
+        - name: ascend_communication_refinement
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - mlapo
+            - fused_mc2
+            - enable_balance_scheduling
+            - enable_reduce_sample
+          intent: >-
+            Refine Ascend-specific communication and balancing only after the
+            larger execution-path questions have measurements.
+    local_refinement:
+      independent_parameters_per_round: [1, 2]
+      max_grid_steps_per_parameter: 1
+      max_total_grid_steps: 2

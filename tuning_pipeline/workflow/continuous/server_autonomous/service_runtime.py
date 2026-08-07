@@ -131,6 +131,12 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
         return "blocked", "state contains only one of active_task_id/active_run_id"
     if status in ARCHIVED_RESUME_STATUSES and terminal_artifact_exists(state):
         return "--resume", f"resuming archived terminal round from status {status}"
+    if (
+        status == "running"
+        and state.get("analysis_status") == "ready"
+        and terminal_artifact_exists(state)
+    ):
+        return "--resume", "recovering validated analysis before candidate submission"
     return "blocked", f"state is not safely auto-resumable: status={status or 'missing'}"
 
 

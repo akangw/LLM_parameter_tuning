@@ -31,6 +31,22 @@ Independent guesses must remain separate experiments.
 The Agent may return `stop_complete` when no useful, safe, untested change remains;
 the controller then archives the decision without submitting another task.
 
+## Executor adapters
+
+The production default remains the built-in `ktp_lab` implementation. A new
+Session may explicitly select `execution_mode: executor_adapter` and a
+project-allowlisted JSON bridge. The bridge implements resource preparation,
+readiness, submission, status, stop, and release for another scheduler while
+the Controller retains candidate, Session, Benchmark, and failure authority.
+
+The adapter source hash, non-secret configuration, capabilities, and API
+version are frozen as `executor_identity`. Resume fails closed if that identity
+changes. Existing Sessions and the current default never load an external
+bridge. See `workflow/executor_adapters/README.md` and its separate overlay
+example. Replacing the scheduler does not automatically validate a different
+rank layout; that still requires an integrated Topology/Executor Profile and
+Runtime Adapter.
+
 ## Search-Space profiles
 
 New Sessions default to `curated_registry_v1`: the controller compiles the
@@ -127,9 +143,9 @@ least 98% completion (64 -> 63; 32 and 2 remain exact) and records the ratio.
 It additionally computes strict aggregate output TPS as successful output
 tokens divided by the formal measurement window.
 
-Candidate acceptance requires all repetitions, a noise-adjusted primary gain,
-TTFT/TPOT P50/P90 limits, and no more than 5% C32 throughput regression in any
-single workload. Small-sample P99 is not used.
+Under the default strategy, candidate acceptance requires all repetitions, a
+noise-adjusted primary gain, TTFT/TPOT P50/P90 limits, and no more than 5% C32
+throughput regression in any single workload. Small-sample P99 is not used.
 
 The one-repetition policy is a continuous-search policy, not a reduced matrix:
 each round still executes all 12 formal cases and their 12 warmups. It is based
@@ -174,6 +190,33 @@ independent changes during exploration and narrows local refinement to one grid
 step. Both strategies still run the complete aligned-L1 matrix for every candidate;
 the screening helpers in `hierarchical_strategy.py` are reserved for a future
 reviewed Screen-to-Full state machine and cannot accept an improvement today.
+
+`hierarchical_throughput_v1` is an opt-in strategy for new Sessions whose primary
+objective is output-token throughput. It does **not** read A0 or any other Session's
+candidates or metrics. Instead, it applies a general ordered curriculum: MTP and
+its required scheduler/graph companions, expert-parallel communication, scheduler
+capacity, compilation/graph capture, then Ascend communication refinement. This
+prevents early rounds from being consumed by isolated low-impact tweaks.
+
+The curriculum is a two-stage state machine, not a one-round-per-layer list. During
+layered search, each family has an independent minimum/maximum successful-measurement
+budget and an early-exit rule. MTP, MoE/communication, compilation, and Ascend
+communication receive 1-2 measurements; scheduler/capacity receives 2-3. Failed or
+incomplete runs do not consume those budgets. Once the minimum is met, a family exits
+early when its best incremental output-throughput gain against the accepted entry
+anchor is below -3%; otherwise it continues until its maximum budget. After all
+families have been visited, cross-layer refinement ranks the observed families by
+their best incremental gain, revisits the most promising family, and tests remaining
+values or interactions with 1-2 independent parameter changes. Derived companion
+fields required by a valid configuration do not count against that change budget.
+
+In this profile TTFT/TPOT are still measured, archived, compared with the baseline,
+and shown to the Agent, but threshold violations are advisory rather than an
+acceptance veto. Output-throughput gain, the per-workload output-throughput floor,
+benchmark completeness, exact token evidence, zero-error requirements, and the
+noise/repetition checks remain hard gates. Because the profile and effective
+measurement policy are frozen into `session_config.yaml`, selecting it for a new
+Session cannot change an already-running Session or the default V2 behavior.
 
 The provider and strategy are selected in `config.yaml` and frozen into each new
 Session. `codex` is the default provider; `anthropic`, `openai_compatible`,
@@ -245,10 +288,20 @@ python .\continuous_tuning.py --dry-run
 
 # Optional new-Session selections
 .\start_continuous.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
+.\start_continuous.ps1 -NewSession -StrategyProfile hierarchical_throughput_v1
 .\start_continuous.ps1 -NewSession -AgentProvider anthropic
 .\start_continuous.ps1 -NewSession -AgentProvider deepseek `
   -BenchmarkProfile vllm_bench_public_v1 -SearchSpaceProfile automatic_registry_v1
 ```
+
+To start a new Session from a previously completed B0 without rerunning the
+baseline, pass `--reuse-baseline-session <session-directory>` to the Python
+Controller. The import is accepted only when the Benchmark identity, image
+manifest, topology, deployment contract, baseline definition, candidate schema,
+and benchmark mode match. It copies round-000 parameters/runtime/metrics evidence,
+but deliberately excludes the source Session's Agent analysis. The new Session
+therefore analyzes the measured B0 with its newly frozen Strategy/Agent and submits
+A1 directly. The source Session is never modified.
 
 For a portable installation, create the Git-ignored `config.local.yaml` from
 `config.local.example.yaml`; the start and prepare scripts auto-detect it. An

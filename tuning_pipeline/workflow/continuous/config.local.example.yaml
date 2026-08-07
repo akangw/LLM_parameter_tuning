@@ -3,6 +3,10 @@
 # the Windows start and prepare-remote entry points.
 base_config: config.yaml
 
+# To replace ktp-lab for a NEW Session, copy and merge the separate example:
+# workflow/executor_adapters/executor_adapter.example.yaml
+# The production default remains execution_mode: ktp_lab.
+
 # Optional: select one integrated Ascend model/image/topology adapter. Its
 # topology, scenario, B0, Benchmark and Search-Space bindings take precedence.
 # runtime:
@@ -30,6 +34,22 @@ lab:
 # Portable defaults: no Codex installation and no private ServeBench required.
 agent:
   provider: deepseek
+
+# Optional Codex-Agent-over-DeepSeek route for a NEW Session. The server must
+# expose `codex` in the service PATH and provide
+# $CODEX_HOME/deepseek-v4-flash.config.toml. Keep provider=deepseek for the
+# direct API route; select provider=codex only after preflight succeeds.
+# agent:
+#   provider: codex
+#   providers:
+#     codex:
+#       command: auto
+#       profile: deepseek-v4-flash
+#       ephemeral: true
+# A server-managed base config may be selected instead of a named profile:
+#       command: /ABSOLUTE/PATH/TO/codex
+#       codex_home: /ABSOLUTE/PATH/TO/.codex
+#       use_user_config: true
 
 benchmark:
   profile: vllm_bench_public_v1
