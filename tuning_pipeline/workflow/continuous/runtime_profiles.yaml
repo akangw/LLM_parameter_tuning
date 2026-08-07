@@ -4,7 +4,7 @@ profiles:
   glm52_w8a8_a3_dp2_tp16:
     status: integrated
     platform: ascend
-    session_prefix: glm52_continuous
+    session_prefix: cjx_glm52_continuous
     model_contract:
       family: glm
       variant: glm-5.2
@@ -51,7 +51,7 @@ profiles:
   glm52_w8a8_a3_dp2_tp16_a0:
     status: integrated
     platform: ascend
-    session_prefix: glm52_continuous
+    session_prefix: cjx_glm52_continuous
     model_contract:
       family: glm
       variant: glm-5.2

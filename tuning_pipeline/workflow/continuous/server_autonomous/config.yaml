@@ -9,12 +9,12 @@ autonomous:
   allowed_write_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
 
 runtime:
-  profile: glm52_w8a8_a3_dp2_tp16_a0
+  profile: glm52_w8a8_a3_dp2_tp16
   profiles_file: workflow/continuous/runtime_profiles.yaml
 
 # Freeze the autonomous experiment choices independently from the default
-# Windows-to-server chain. This autonomous Session starts from the previously
-# successful W8A8 expert A0; the default chain remains anchored to B0.
+# Windows-to-server chain. This autonomous Session starts from the deployable
+# official-source B0 and uses automatic Search Limits after reconciliation.
 search_space:
   profile: automatic_registry_v1
   history_source: none
@@ -23,9 +23,9 @@ strategy:
   profile: best_anchor_coverage_v2
 
 initial_baseline:
-  label: a0_existing_tuned
-  launch_profile: explicit_candidate
-  definition: workflow/baselines/a0_glm52_w8a8_existing_tuned.yaml
+  label: b0_deployable
+  launch_profile: official_source_defaults_deployable
+  definition: workflow/baselines/b0_deployable_64k.yaml
 
 agent:
   provider: deepseek

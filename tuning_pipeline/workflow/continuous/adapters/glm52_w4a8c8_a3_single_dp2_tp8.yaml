@@ -3,7 +3,7 @@ adapter:
   name: glm52_w4a8c8_a3_single_dp2_tp8
   status: planned
   platform: ascend
-  session_prefix: glm52_w4a8c8_a3_1n16_dp2tp8
+  session_prefix: cjx_glm52_w4a8c8_a3_1n16_dp2tp8
   model_contract:
     family: glm
     variant: glm-5.2
