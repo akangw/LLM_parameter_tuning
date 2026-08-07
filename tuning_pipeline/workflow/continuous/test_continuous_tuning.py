@@ -18,6 +18,7 @@ from .search_space_adapter import (
     resolve_search_limits,
     write_session_search_space,
 )
+from .model_loading_profile import resolve_model_loading_profile
 
 
 def config() -> dict:
@@ -85,6 +86,17 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(config["agent"]["keep"])
 
     def test_explicit_a0_definition_is_the_only_candidate_parameter_source(self) -> None:
+        scenario = tuning.load_yaml(
+            tuning.KB_ROOT
+            / "workflow"
+            / "search_space_compiler"
+            / "scenario.glm52-a3-aligned-l1.yaml"
+        )
+        self.assertNotIn("baseline", scenario)
+        self.assertEqual(
+            "../baselines/a0_glm52_w8a8_existing_tuned.yaml",
+            scenario["baseline_definition"],
+        )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             definition = root / "a0.yaml"
@@ -776,6 +788,35 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "prefetch_mode"):
             tuning.Controller(configured)
 
+    def test_rfork_profile_requires_scheduler_and_is_frozen_fail_closed(self) -> None:
+        configured = config()
+        configured["model_loading"] = {
+            "profile": "rfork_external_seed_v1",
+            "profiles_file": "workflow/continuous/model_loading_profiles.yaml",
+        }
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "VLLMTKB_RFORK_SCHEDULER_URL"):
+                resolve_model_loading_profile(configured, tuning.KB_ROOT)
+        with patch.dict(
+            "os.environ",
+            {"VLLMTKB_RFORK_SCHEDULER_URL": "http://planner.example:1223"},
+            clear=True,
+        ):
+            controller = tuning.Controller(configured)
+        self.assertEqual("rfork", controller.model_load_format)
+        self.assertTrue(controller.require_rfork_transfer)
+        self.assertEqual(
+            "http://planner.example:1223",
+            controller.model_loader_extra_config["rfork_scheduler_url"],
+        )
+        environment = controller.candidate_env(
+            "rfork-test", controller.config["baseline"]
+        )
+        self.assertIn("MODEL_LOADING_BACKEND=rfork", environment)
+        self.assertIn("MODEL_LOAD_FORMAT=rfork", environment)
+        self.assertIn("REQUIRE_RFORK_TRANSFER=true", environment)
+        self.assertIn("planner.example:1223", environment)
+
     def test_b0_reconciles_source_resolved_values_before_agent_handoff(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
         controller = tuning.Controller(configured)
@@ -868,8 +909,8 @@ class ControllerTests(unittest.TestCase):
             )
             self.assertEqual(
                 [
-                    [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192],
                     None,
+                    [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192],
                 ],
                 resolved["search_limits"]["cudagraph_capture_sizes"],
             )
@@ -956,12 +997,12 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(5, result["summary"]["fixed_parameters"])
         self.assertEqual(1, result["summary"]["rejected_parameters"])
         self.assertEqual(
-            ["async_scheduling"],
+            ["async_scheduling", "cudagraph_capture_sizes"],
             resolved["resolved_search_space"]["derived_runtime_parameters"],
         )
         self.assertEqual([False, True], resolved["search_limits"]["async_scheduling"])
         self.assertEqual(
-            ["async_scheduling"],
+            ["async_scheduling", "cudagraph_capture_sizes"],
             result["integration"]["derived_runtime_parameters"],
         )
         self.assertEqual(
@@ -1120,14 +1161,17 @@ class ControllerTests(unittest.TestCase):
             # This is the first post-B0 transition the automatic profile must
             # support; before async_scheduling became Active it was impossible.
             controller.validate_candidate_invariants(mtp_candidate)
-            graph_parameter = next(
-                item
+            active_names = {
+                item["canonical_name"]
                 for item in controller.automatic_registry_validation["compiled"][
                     "active_parameters"
                 ]
-                if item["canonical_name"] == "cudagraph_capture_sizes"
+            }
+            self.assertNotIn("cudagraph_capture_sizes", active_names)
+            self.assertIn(
+                [16, 32, 64, 128, 256],
+                controller.config["search_limits"]["cudagraph_capture_sizes"],
             )
-            self.assertIn([16, 32, 64, 128, 256], graph_parameter["values"])
             self.assertEqual(
                 [256, 32, 64, 128, 192],
                 controller.config["search_limits"]["max_num_seqs"],

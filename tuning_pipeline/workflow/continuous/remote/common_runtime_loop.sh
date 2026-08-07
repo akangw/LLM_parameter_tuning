@@ -70,6 +70,10 @@ SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY:-prefetch}"
 SAFETENSORS_PREFETCH_NUM_THREADS="${SAFETENSORS_PREFETCH_NUM_THREADS:-8}"
 SAFETENSORS_PREFETCH_BLOCK_SIZE="${SAFETENSORS_PREFETCH_BLOCK_SIZE:-16777216}"
 SAFETENSORS_PREFETCH_MODE="${SAFETENSORS_PREFETCH_MODE:-node_blocking}"
+MODEL_LOADING_BACKEND="${MODEL_LOADING_BACKEND:-dtfs_page_cache}"
+MODEL_LOAD_FORMAT="${MODEL_LOAD_FORMAT:-auto}"
+MODEL_LOADER_EXTRA_CONFIG_JSON="${MODEL_LOADER_EXTRA_CONFIG_JSON:-{}}"
+REQUIRE_RFORK_TRANSFER="${REQUIRE_RFORK_TRANSFER:-false}"
 case "${SAFETENSORS_PREFETCH_MODE}" in
   node_blocking)
     # The node-local warmup below owns prefetching. Keep vLLM's global-rank
@@ -78,6 +82,9 @@ case "${SAFETENSORS_PREFETCH_MODE}" in
     VLLM_SAFETENSORS_LOAD_STRATEGY=lazy
     ;;
   vllm_background)
+    VLLM_SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY}"
+    ;;
+  disabled)
     VLLM_SAFETENSORS_LOAD_STRATEGY="${SAFETENSORS_LOAD_STRATEGY}"
     ;;
   *)
@@ -189,6 +196,33 @@ VLLM_COMMON_ARGS=(
   --trust-remote-code
   --quantization "${MODEL_QUANTIZATION}"
 )
+
+case "${MODEL_LOADING_BACKEND}" in
+  dtfs_page_cache)
+    [[ "${MODEL_LOAD_FORMAT}" == "auto" ]] || {
+      echo "DTFS page-cache loading requires MODEL_LOAD_FORMAT=auto" >&2
+      exit 2
+    }
+    ;;
+  rfork)
+    [[ "${MODEL_LOAD_FORMAT}" == "rfork" ]] || {
+      echo "RFork loading requires MODEL_LOAD_FORMAT=rfork" >&2
+      exit 2
+    }
+    [[ "${SAFETENSORS_PREFETCH_MODE}" == "disabled" ]] || {
+      echo "RFork loading requires disabled checkpoint prefetch" >&2
+      exit 2
+    }
+    VLLM_COMMON_ARGS+=(
+      --load-format rfork
+      --model-loader-extra-config "${MODEL_LOADER_EXTRA_CONFIG_JSON}"
+    )
+    ;;
+  *)
+    echo "Unsupported MODEL_LOADING_BACKEND=${MODEL_LOADING_BACKEND}" >&2
+    exit 2
+    ;;
+esac
 
 case "${EXECUTOR_REMOTE_CONTRACT}" in
   legacy_two_role_v1)

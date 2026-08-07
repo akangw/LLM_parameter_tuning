@@ -35,6 +35,7 @@ if str(Path(__file__).resolve().parent.parent.parent) not in sys.path:
 
 try:
     from .search_space_adapter import resolve_search_limits, write_session_search_space
+    from .model_loading_profile import resolve_model_loading_profile
     from .runtime_profile import resolve_runtime_profile, validate_runtime_selections
     from .topology_profile import resolve_topology_profile
     from .agent_provider import (
@@ -44,6 +45,7 @@ try:
     )
 except ImportError:  # Direct script execution.
     from search_space_adapter import resolve_search_limits, write_session_search_space
+    from model_loading_profile import resolve_model_loading_profile
     from runtime_profile import resolve_runtime_profile, validate_runtime_selections
     from topology_profile import resolve_topology_profile
     from agent_provider import (
@@ -98,6 +100,7 @@ REMOTE_ARTIFACTS = (
     "BENCHMARK_WATCHDOG_STARTED",
     "BENCHMARK_WATCHDOG_TIMEOUT",
     "SERVICE_READY",
+    "RFORK_TRANSFER_VERIFIED",
     "BENCHMARK_STARTED",
     "BENCHMARK_DONE",
     "BENCHMARK_FAILED",
@@ -425,7 +428,10 @@ class Controller:
         runtime_config, self.runtime_identity = resolve_runtime_profile(
             config, KB_ROOT, apply_bindings=False
         )
-        self.config, self.topology = resolve_topology_profile(runtime_config, KB_ROOT)
+        loading_config, self.model_loading_profile = resolve_model_loading_profile(
+            runtime_config, KB_ROOT
+        )
+        self.config, self.topology = resolve_topology_profile(loading_config, KB_ROOT)
         validate_runtime_selections(self.config)
         config = self.config
         effective_runtime = {
@@ -572,7 +578,12 @@ class Controller:
             legacy_command=str(config.get("codex_command", "auto")),
         )
         self.mtp_draft_model = str(config.get("mtp_draft_model", "")).strip()
-        self.model_loading = dict(config.get("model_loading", {}))
+        self.model_loading = copy.deepcopy(self.model_loading_profile)
+        self.model_loading_backend = str(self.model_loading.get("backend", "dtfs_page_cache"))
+        self.model_load_format = str(self.model_loading.get("load_format", "auto"))
+        self.require_rfork_transfer = bool(
+            self.model_loading.get("require_transfer_hit", False)
+        )
         self.safetensors_load_strategy = str(
             self.model_loading.get("safetensors_load_strategy", "prefetch")
         ).strip()
@@ -600,11 +611,25 @@ class Controller:
         if self.safetensors_prefetch_mode not in {
             "node_blocking",
             "vllm_background",
+            "disabled",
         }:
             raise ValueError(
                 "model_loading.safetensors_prefetch_mode must be node_blocking "
-                "or vllm_background"
+                "vllm_background, or disabled"
             )
+        self.model_loader_extra_config: dict[str, Any] = {}
+        if self.model_loading_backend == "rfork":
+            self.model_loader_extra_config = {
+                name: self.model_loading[name]
+                for name in (
+                    "model_url",
+                    "model_deploy_strategy_name",
+                    "rfork_scheduler_url",
+                    "rfork_seed_timeout_sec",
+                    "rfork_seed_key_separator",
+                )
+                if name in self.model_loading
+            }
         self.lab = config.get("lab", {})
         image_setting = self.config.get("image_identity", {})
         if not isinstance(image_setting, dict):
@@ -1574,6 +1599,22 @@ class Controller:
         lines.append(
             "SAFETENSORS_PREFETCH_MODE="
             + shlex.quote(self.safetensors_prefetch_mode)
+        )
+        lines.append("MODEL_LOADING_BACKEND=" + shlex.quote(self.model_loading_backend))
+        lines.append("MODEL_LOAD_FORMAT=" + shlex.quote(self.model_load_format))
+        lines.append(
+            "MODEL_LOADER_EXTRA_CONFIG_JSON="
+            + shlex.quote(
+                json.dumps(
+                    self.model_loader_extra_config,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        )
+        lines.append(
+            "REQUIRE_RFORK_TRANSFER="
+            + ("true" if self.require_rfork_transfer else "false")
         )
         lines.append(f"BENCHMARK_MODE={shlex.quote(self.benchmark_mode)}")
         lines.append(f"BENCHMARK_PROFILE={shlex.quote(self.benchmark_profile_name)}")

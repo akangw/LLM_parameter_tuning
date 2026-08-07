@@ -15,8 +15,10 @@ write_status() {
 }
 write_startup_event() {
   local event="$1"
-  printf '{"event":"%s","at":"%s","safetensors_load_strategy":"%s","vllm_load_strategy":"%s","prefetch_mode":"%s","prefetch_threads":%s,"prefetch_block_size":%s}\n' \
-    "${event}" "$(date -Iseconds)" "${SAFETENSORS_LOAD_STRATEGY}" \
+  printf '{"event":"%s","at":"%s","model_loading_backend":"%s","model_load_format":"%s","require_rfork_transfer":%s,"safetensors_load_strategy":"%s","vllm_load_strategy":"%s","prefetch_mode":"%s","prefetch_threads":%s,"prefetch_block_size":%s}\n' \
+    "${event}" "$(date -Iseconds)" "${MODEL_LOADING_BACKEND}" \
+    "${MODEL_LOAD_FORMAT}" "${REQUIRE_RFORK_TRANSFER}" \
+    "${SAFETENSORS_LOAD_STRATEGY}" \
     "${VLLM_SAFETENSORS_LOAD_STRATEGY}" "${SAFETENSORS_PREFETCH_MODE}" \
     "${SAFETENSORS_PREFETCH_NUM_THREADS}" "${SAFETENSORS_PREFETCH_BLOCK_SIZE}" \
     >> "${RUN_DIR}/startup_timeline.jsonl"
@@ -88,6 +90,10 @@ service:
   safetensors_prefetch_mode: ${SAFETENSORS_PREFETCH_MODE}
   safetensors_prefetch_num_threads: ${SAFETENSORS_PREFETCH_NUM_THREADS}
   safetensors_prefetch_block_size: ${SAFETENSORS_PREFETCH_BLOCK_SIZE}
+model_loading:
+  backend: ${MODEL_LOADING_BACKEND}
+  load_format: ${MODEL_LOAD_FORMAT}
+  require_rfork_transfer: ${REQUIRE_RFORK_TRANSFER}
 benchmark:
   mode: ${BENCHMARK_MODE}
   temperature: 0
@@ -120,6 +126,7 @@ authoritative_server_artifacts:
   result:
     - metrics.json
     - SERVICE_READY
+    - RFORK_TRANSFER_VERIFIED  # present only after a required RFork hit is proven
     - BENCHMARK_STARTED
     - BENCHMARK_DONE
     - BENCHMARK_FAILED
@@ -135,7 +142,15 @@ VLLM_PID=$!
 write_status "waiting_for_api"
 READY=0
 READY_MAX_ATTEMPTS=1080
+rfork_fell_back() {
+  grep -Fq 'RFork transfer failed:' "${RUN_DIR}/master.log" 2>/dev/null || \
+    grep -Fq 'RFork transfer failed:' "${RUN_DIR}/worker.log" 2>/dev/null
+}
 for attempt in $(seq 1 "${READY_MAX_ATTEMPTS}"); do
+  if bool_flag "${REQUIRE_RFORK_TRANSFER}" && rfork_fell_back; then
+    echo "Required RFork transfer fell back to storage loading; refusing benchmark." >&2
+    exit 1
+  fi
   if curl --fail --silent "http://127.0.0.1:${SERVICE_PORT}/v1/models" > "${RUN_DIR}/models_response.json"; then
     READY=1
     echo "vLLM API is ready."
@@ -152,6 +167,23 @@ for attempt in $(seq 1 "${READY_MAX_ATTEMPTS}"); do
   sleep 10
 done
 [[ "${READY}" == 1 ]] || { echo "Timed out waiting for vLLM API."; exit 1; }
+if bool_flag "${REQUIRE_RFORK_TRANSFER}"; then
+  rfork_fell_back && {
+    echo "Required RFork transfer fell back to storage loading; refusing benchmark." >&2
+    exit 1
+  }
+  grep -Fq 'RFork worker initialized, load_format=rfork' "${RUN_DIR}/master.log" || {
+    echo "Master produced no RFork initialization evidence; refusing benchmark." >&2
+    exit 1
+  }
+  if (( WORKER_REPLICAS > 0 )); then
+    grep -Fq 'RFork worker initialized, load_format=rfork' "${RUN_DIR}/worker.log" || {
+      echo "Worker produced no RFork initialization evidence; refusing benchmark." >&2
+      exit 1
+    }
+  fi
+  touch "${RUN_DIR}/RFORK_TRANSFER_VERIFIED"
+fi
 write_startup_event "api_ready"
 
 if [[ "${BENCHMARK_MODE}" == "aligned_l1" ]]; then

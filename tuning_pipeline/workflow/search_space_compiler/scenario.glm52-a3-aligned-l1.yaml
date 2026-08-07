@@ -73,36 +73,7 @@ benchmark:
   maximum_input_tokens: 8192
   maximum_output_tokens: 2048
 
-# This snapshot is input evidence only. The compiler never writes it back to
-# workflow/continuous/config.yaml.
-baseline:
-  max_num_seqs: 48
-  max_model_len: 64000
-  max_num_batched_tokens: 4096
-  gpu_memory_utilization: 0.93
-  enable_prefix_caching: true
-  async_scheduling: true
-  enable_expert_parallel: true
-  compilation_mode: FULL_DECODE_ONLY
-  num_speculative_tokens: 3
-  long_prefill_token_threshold: 0
-  # The pinned vLLM commit rejects max_num_batched_tokens < max_model_len when
-  # chunked prefill is disabled. Keep it enabled for the 64k context baseline.
-  enable_chunked_prefill: true
-  # Effective list captured from the successful 0706 A0 runtime.  This is
-  # deliberately explicit: null delegates list construction to the runtime
-  # and has produced a different effective profile on the new pipeline.
-  cudagraph_capture_sizes: [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
-  max_cudagraph_capture_size: 192
-  compilation_enable_sp: null
-  enable_eplb: false
-  eplb_num_redundant_experts: 0
-  block_size: null
-  flashcomm1: true
-  mlapo: true
-  fused_mc2: 0
-  enable_balance_scheduling: false
-  enable_reduce_sample: false
-  # null is the source default and is falsey in the Ascend draft proposer.
-  speculative_config__enforce_eager: null
-  decode_context_parallel_size: 1
+# A relative reference keeps standalone compiler tooling useful without
+# duplicating A0 values here. The Controller overrides it with the Session's
+# selected immutable definition (A0 or B0).
+baseline_definition: ../baselines/a0_glm52_w8a8_existing_tuned.yaml

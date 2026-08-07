@@ -381,6 +381,7 @@ class SearchSpaceCompiler:
         history_path: Path | None = None,
         previous_selection_path: Path | None = None,
         activation_override: dict[str, Any] | None = None,
+        baseline_override: dict[str, Any] | None = None,
     ):
         self.knowledge_dir = knowledge_dir.resolve()
         self.scenario_path = scenario_path.resolve()
@@ -391,6 +392,20 @@ class SearchSpaceCompiler:
             previous_selection_path.resolve() if previous_selection_path else None
         )
         self.scenario = read_yaml(self.scenario_path)
+        if baseline_override is not None:
+            self.scenario["baseline"] = copy.deepcopy(baseline_override)
+        elif self.scenario.get("baseline_definition"):
+            baseline_path = (
+                self.scenario_path.parent
+                / str(self.scenario["baseline_definition"])
+            ).resolve()
+            definition = read_yaml(baseline_path)
+            baseline = definition.get("reference_parameters")
+            if not isinstance(baseline, dict) or not baseline:
+                raise ValueError(
+                    f"Scenario baseline definition has no reference_parameters: {baseline_path}"
+                )
+            self.scenario["baseline"] = copy.deepcopy(baseline)
         self.registry = read_yaml(self.registry_path)
         self.policy = read_yaml(self.policy_path)
         self.activation_override = copy.deepcopy(activation_override or {})
@@ -423,7 +438,7 @@ class SearchSpaceCompiler:
         raw: list[Any] = []
         if baseline is not None:
             raw.append(baseline)
-            sources.append({"source": "scenario_baseline", "values": [baseline]})
+            sources.append({"source": "authoritative_baseline", "values": [baseline]})
         if configured:
             raw.extend(configured)
             sources.append({"source": "registry_policy", "values": configured})

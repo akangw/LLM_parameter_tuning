@@ -214,6 +214,11 @@ def resolve_search_limits(
     else:
         profile_name, profile, settings = profile_resolution
     mode = str(profile["mode"])
+    authoritative_baseline = config.get("baseline")
+    if not isinstance(authoritative_baseline, dict) or not authoritative_baseline:
+        raise ValueError(
+            "Resolved Session baseline is required before compiling Search Limits"
+        )
     scenario_path = _project_path(
         project_root,
         str(
@@ -277,6 +282,7 @@ def resolve_search_limits(
             history_path=history_path,
             previous_selection_path=previous_selection,
             activation_override=dict(profile.get("activation", {})),
+            baseline_override=authoritative_baseline,
         )
         result = compiler.compile()
         compiler_scenario = compiler.scenario
@@ -301,6 +307,7 @@ def resolve_search_limits(
             compatibility_policy_path=compatibility_policy_path,
             source_root=source_root,
             activation_override=dict(profile.get("activation", {})),
+            baseline_override=authoritative_baseline,
         )
         automatic_registry, result = automatic_pipeline.compile()
         compiler_scenario = automatic_pipeline.scenario

@@ -33,6 +33,7 @@ Auto_vllm_parameter/
 | `tuning_pipeline/workflow/search_space_compiler/` | 场景编译 | Scenario、策略、Registry → Search Limits | 编译器维护 |
 | `tuning_pipeline/workflow/baselines/` | 场景输入 | B0/A0 定义 | 每个场景验证后维护 |
 | `tuning_pipeline/workflow/continuous/` | 公共引擎 | Controller、Profile 注册表、远端执行器 | 框架开发者维护 |
+| `tuning_pipeline/workflow/continuous/model_loading_profiles.yaml` | 加载适配 | DTFS 页缓存与 RFork seed/client Profile | 模型加载路线变化时维护 |
 | `tuning_pipeline/workflow/benchmark_adapters/` | 扩展接口 | 自定义 Benchmark result-v1 适配器 | Benchmark 接入者维护 |
 | `tuning_pipeline/workflow/continuous/scenario_runs/<id>/` | 本机运行产物 | state、Session、日志、PID | Controller 自动生成，不入 Git |
 | `<remote_project>/workflow/auto/lab_runs/` | 服务器产物 | 完整服务和 Benchmark 原始证据 | 远端执行器自动生成 |
