@@ -148,10 +148,10 @@ noise-adjusted primary gain, TTFT/TPOT P50/P90 limits, and no more than 5% C32
 throughput regression in any single workload. Small-sample P99 is not used.
 
 The one-repetition policy is a continuous-search policy, not a reduced matrix:
-each round still executes all 12 formal cases and their 12 warmups. It is based
-on the archived A0 calibration whose first two complete repetitions produced
-535.26 and 527.32 output tok/s (1.06% primary-score CV). The 3% minimum gain,
-zero-error gate, per-workload throughput floor, and latency guardrails remain.
+each round still executes the complete formal case and warmup definition. It is
+based on archived calibration evidence retained in the private Session artifacts;
+specific experimental measurements are intentionally not published in repository
+documentation. The configured gain, error, per-workload, and latency checks remain.
 
 If a round ends without metrics, Codex performs a separate failure analysis:
 

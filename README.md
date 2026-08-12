@@ -8,13 +8,14 @@
 
 ## 当前状态
 
-- 固定源码：vLLM `418bd6273c03bf48d5066733769e0a74bdc51694`，vllm-ascend `32c8cf190f596b47f0d0b965e64aea9f2b789ad4`。
-- 参数知识：1540 个结构化表面，340 份完整 ParameterYAML，105 份带依据跳过记录。
-- 五维标签：340 份，审计错误 0；当前场景召回 109 份高影响画像。
-- 新 Session 默认复用人工审计注册表，当前编译为 15 Active、5 Reserve、5 Fixed、1 Rejected。独立自动注册表链路可显式切换，当前编译为 102 个可调维度（22 Active、80 Reserve、40 Fixed、0 Compiler Rejected）。在线权威结果只保存在每个 Session 的 `00_search_space/`。
+- vLLM 与 vllm-ascend 源码身份已固定，具体 commit 由版本清单和镜像身份文件校验。
+- 参数画像、Tags、场景召回、人工注册表和自动注册表知识产物均已建立。
+- 新 Session 会重新编译并冻结自己的 Search Limits；在线权威结果只保存在该 Session 的 `00_search_space/`。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
-- 当前正式锚点：A0，主分数 `602.5576 output tok/s`；尚未产生通过全部延迟门禁的新赢家。
-- 唯一 B0 为 `B0-deployable`：模型原生 `max_model_len=1048576` 需要 `107.25 GiB` KV Cache，而当前拓扑仅有 `28.82 GiB`，因此只固定 `max_model_len=64000`，其余参数继续由目标版本源码解析。
+- `B0-deployable` 是正式默认基线定义；必要的部署兼容覆盖由版本化基线文件记录，其余参数继续从目标源码解析。
+
+README 不公开具体实验分数、吞吐、延迟、逐轮候选或当前 Session
+状态；这些数据只保存在对应 Session 的受管产物中，并通过状态和导出命令按需查看。
 
 ## 可选扩展接口与 Ascend Runtime Adapter
 
