@@ -40,12 +40,13 @@ agent:
       api_key_env: DEEPSEEK_API_KEY
       thinking: enabled
       reasoning_effort: high
+      response_format: json_object
       max_tokens: 16384
       max_api_retries: 3
     command:
       command: configure-structured-json-command
 strategy:
-  profile: best_anchor_coverage_v2
+  profile: hierarchical_throughput_v1
   profiles_file: workflow/continuous/strategy_profiles.yaml
 execution_mode: ktp_lab
 # Execution layout is named and frozen into each Session. The only integrated
@@ -209,12 +210,14 @@ baseline:
   # null and false are both falsey for the draft proposer; null preserves B0.
   speculative_config__enforce_eager: null
 # Search-space construction is selected and frozen exactly like Agent and
-# Search-Space profiles. curated_registry_v1 is the default reviewed path;
-# automatic_registry_v1 remains an independently generated replacement option.
+# Search-Space profiles. The server-authoritative default is the independently
+# generated automatic registry; the reviewed curated registry remains opt-in.
 search_space:
-  profile: curated_registry_v1
+  profile: automatic_registry_v1
   profiles_file: workflow/search_space_profiles.yaml
-  history_source: latest_completed_session
+  # Keep each new Session independent. Historical metrics or candidates are
+  # reused only through an explicit baseline/session import.
+  history_source: none
   # Used by curated_registry_v1 for entries marked planned. Automatic registry
   # entries are admitted by source, compatibility and runtime checks instead.
   approved_planned_parameters:

@@ -22,10 +22,10 @@ scenario:
     portable_alternative: vllm_bench_public_v1
     custom_alternative: custom_adapter_v1
   search_space:
-    default_profile: curated_registry_v1
-    automatic_alternative: automatic_registry_v1
+    default_profile: automatic_registry_v1
+    curated_alternative: curated_registry_v1
   agent:
-    strategy: best_anchor_coverage_v2
+    strategy: hierarchical_throughput_v1
     providers: [codex, deepseek, anthropic, openai_compatible, command]
   entry:
     default_config: tuning_pipeline/workflow/continuous/config.yaml

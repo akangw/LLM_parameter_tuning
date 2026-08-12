@@ -25,9 +25,9 @@ profiles:
         manifest: workflow/continuous/remote/image_version_manifest.yaml
         activation: workflow/continuous/activation.approved.yaml
       search_space:
-        profile: curated_registry_v1
+        profile: automatic_registry_v1
       strategy:
-        profile: best_anchor_coverage_v2
+        profile: hierarchical_throughput_v1
       benchmark:
         profile: aligned_l1_v4
       initial_baseline:

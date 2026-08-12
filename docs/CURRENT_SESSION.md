@@ -7,7 +7,8 @@
 - 拓扑：2 节点 × 16 NPU，DP=2、TP=16
 - Benchmark：`aligned_l1_v4`
 - Agent 策略：`best_anchor_coverage_v2`
-- 默认 Search Limits：`curated_registry_v1`；如需自动生成路线，新 Session 必须显式选择 `automatic_registry_v1`
+- 项目统一默认 Search Limits：`automatic_registry_v1`；人工审计路线需在新 Session 显式选择 `curated_registry_v1`
+- 项目统一默认 Agent Strategy：`hierarchical_throughput_v1`
 
 W4A8C8 场景仍为 `planned`，当前参数画像对应的运行镜像不支持该量化方式，因此不得启动。
 

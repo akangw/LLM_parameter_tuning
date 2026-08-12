@@ -1,6 +1,6 @@
 # Strategy profiles are deliberately separate from config.yaml. The live
 # controller freezes the selected profile into each Session.
-default_strategy: best_anchor_coverage_v2
+default_strategy: hierarchical_throughput_v1
 
 strategies:
   best_anchor_coverage_v2:

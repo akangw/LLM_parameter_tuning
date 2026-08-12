@@ -59,7 +59,7 @@ mlapo
 flashcomm1
 ```
 
-`curated_registry_v1` 是默认值，复用人工审计的 `registry.yaml`；`automatic_registry_v1` 是可插拔替代选项，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表。两条路径在新 Session 创建时选择并冻结。当前人工路径为 15 Active，自动路径为 22 Active。人工路径在 MTP tokens 从 0 变为正数时，把 `async_scheduling=true` 作为派生配套变化，由 Controller 强制校验，不额外计作独立调参轴。
+`automatic_registry_v1` 是本地和服务器自治的统一默认，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。两条路径在新 Session 创建时选择并冻结。当前人工路径为 15 Active，自动路径为 22 Active。人工路径在 MTP tokens 从 0 变为正数时，把 `async_scheduling=true` 作为派生配套变化，由 Controller 强制校验，不额外计作独立调参轴。
 
 自动替代路径当前 Controller 编译结果为：102 Tunable（22 Active + 80 Reserve）→ 40 Fixed + 0 Compiler Rejected。
 

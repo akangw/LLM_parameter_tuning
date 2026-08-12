@@ -1,6 +1,6 @@
 # Search-space construction is a Session-level choice, just like Agent and
 # Benchmark profiles. The selected definition is frozen into session_config.yaml.
-default_profile: curated_registry_v1
+default_profile: automatic_registry_v1
 
 profiles:
   curated_registry_v1:

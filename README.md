@@ -59,7 +59,7 @@ cd .\tuning_pipeline
 python -m workflow.registry_builder.full_pipeline --dry-run
 ```
 
-它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_v1` 已完整接入 Controller，作为可插拔替代选项；生成的注册表、兼容策略、注入契约和 Search Limits 会冻结到 Session。默认 `curated_registry_v1` 使用人工审计的 23 项注册表。独立命令仍只写指定审计目录、不提交服务器任务。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_v1` 已完整接入 Controller，并作为 W8A8 统一默认；生成的注册表、兼容策略、注入契约和 Search Limits 会冻结到 Session。人工审计的 23 项 `curated_registry_v1` 保留为显式可选路线。独立命令仍只写指定审计目录、不提交服务器任务。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
 
 ### 更换 Ascend 模型、镜像、量化或拓扑
 
@@ -96,7 +96,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
-在线闭环默认使用 `curated_registry_v1 + codex + best_anchor_coverage_v2 + aligned_l1_v4`。新建 Session 时可显式选择 Search-Space、策略、Provider 或 Benchmark：
+本地与服务器自治在线闭环统一默认使用 `automatic_registry_v1 + codex + hierarchical_throughput_v1 + aligned_l1_v4`，且 `history_source: none`，不会把其他 Session 的候选或指标静默带入新实验。需要复用 B0 时必须显式导入并通过身份校验。新建 Session 时仍可显式选择 Search-Space、策略、Provider 或 Benchmark：
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -110,7 +110,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 | 接口 | 启动参数 | 当前选项 | 定义位置 |
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
-| Search-Space 构建 | `-SearchSpaceProfile` | `curated_registry_v1`（默认）、`automatic_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
+| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_v1`（默认）、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
 | Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3`、`hierarchical_throughput_v1` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 

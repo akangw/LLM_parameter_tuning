@@ -13,7 +13,7 @@ class HierarchicalStrategyTests(unittest.TestCase):
         profiles_path = Path(__file__).with_name("strategy_profiles.yaml")
         with profiles_path.open(encoding="utf-8") as handle:
             profiles = yaml.safe_load(handle)
-        self.assertEqual(profiles["default_strategy"], "best_anchor_coverage_v2")
+        self.assertEqual(profiles["default_strategy"], "hierarchical_throughput_v1")
         self.profile = profiles["strategies"]["best_anchor_coverage_v3"]
         self.assertEqual(self.profile["status"], "integrated")
         self.anchor = [

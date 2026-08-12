@@ -39,6 +39,13 @@ def config() -> dict:
             "max_grid_steps_per_parameter": 2,
             "max_total_grid_steps": 4,
         },
+        # Most Controller unit tests exercise the legacy generic policy in
+        # isolation. Production config.yaml explicitly selects the unified
+        # hierarchical_throughput_v1 default.
+        "strategy": {
+            "profile": "best_anchor_coverage_v2",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        },
         "search_limits": {
             "max_num_seqs": [48, 64],
             "max_model_len": [64000],
@@ -1084,7 +1091,7 @@ class ControllerTests(unittest.TestCase):
             self.assertIsNone(manual_result)
             self.assertEqual(22, len(manual["search_limits"]))
 
-    def test_default_search_space_is_reviewed_curated_registry(self) -> None:
+    def test_default_search_space_is_automatic_registry(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
         profile_document = tuning.load_yaml(
             tuning.KB_ROOT / "workflow" / "search_space_profiles.yaml"
@@ -1099,63 +1106,60 @@ class ControllerTests(unittest.TestCase):
                 archive_root=Path(temporary),
             )
         self.assertEqual(
-            "curated_registry_v1", resolved["resolved_search_space"]["profile"]
+            "automatic_registry_v1", resolved["resolved_search_space"]["profile"]
         )
         self.assertEqual(
-            "curated_registry", resolved["resolved_search_space"]["mode"]
+            "automatic_registry", resolved["resolved_search_space"]["mode"]
         )
-        self.assertEqual(26, result["summary"]["registry_parameters"])
-        self.assertEqual(15, result["summary"]["active_parameters"])
-        self.assertEqual(5, result["summary"]["reserve_parameters"])
-        self.assertEqual(5, result["summary"]["fixed_parameters"])
-        self.assertEqual(1, result["summary"]["rejected_parameters"])
+        self.assertEqual(142, result["summary"]["registry_parameters"])
+        self.assertEqual(22, result["summary"]["active_parameters"])
+        self.assertEqual(80, result["summary"]["reserve_parameters"])
+        self.assertEqual(40, result["summary"]["fixed_parameters"])
+        self.assertEqual(0, result["summary"]["rejected_parameters"])
         self.assertEqual(
-            ["async_scheduling", "cudagraph_capture_sizes"],
+            ["cudagraph_capture_sizes"],
             resolved["resolved_search_space"]["derived_runtime_parameters"],
-        )
-        self.assertEqual([False, True], resolved["search_limits"]["async_scheduling"])
-        self.assertEqual(
-            ["async_scheduling", "cudagraph_capture_sizes"],
-            result["integration"]["derived_runtime_parameters"],
         )
         self.assertEqual(
             resolved["search_limits"], result["integration"]["effective_search_limits"]
         )
-        for name in {
-            "enable_expert_parallel",
-            "fused_mc2",
-            "enable_balance_scheduling",
-            "enable_reduce_sample",
-            "speculative_config__enforce_eager",
-        }:
+        for name in {"num_speculative_tokens", "async_scheduling", "fused_mc2"}:
             self.assertIn(name, result["active_search_limits"])
-        controller = tuning.Controller(resolved, search_space_result=result)
-        mtp_candidate = {
-            **resolved["baseline"],
-            "async_scheduling": True,
-            "num_speculative_tokens": 1,
-        }
-        controller.validate_candidate_invariants(mtp_candidate)
-        controller.validate_candidate(
-            resolved["baseline"],
-            mtp_candidate,
-            [
-                {
-                    "parameter": "num_speculative_tokens",
-                    "before": 0,
-                    "after": 1,
-                    "rationale": "Enable one-token MTP exploration after B0.",
-                },
-                {
-                    "parameter": "async_scheduling",
-                    "before": False,
-                    "after": True,
-                    "rationale": "Required derived companion for MTP scheduling.",
-                },
-            ],
+
+    def test_local_and_server_experiment_defaults_are_aligned(self) -> None:
+        local = tuning.load_config(tuning.HERE / "config.yaml")
+        server = tuning.load_config(
+            tuning.HERE / "server_autonomous" / "config.yaml"
         )
-        environment = controller.candidate_env("curated-mtp", mtp_candidate)
-        self.assertIn("RUNTIME_INJECTION_MODE=native_v1", environment)
+        for section, field in (
+            ("runtime", "profile"),
+            ("topology", "profile"),
+            ("search_space", "profile"),
+            ("strategy", "profile"),
+            ("benchmark", "profile"),
+            ("agent", "provider"),
+            ("initial_baseline", "definition"),
+        ):
+            self.assertEqual(local[section][field], server[section][field])
+        self.assertEqual(
+            local["search_space"]["history_source"],
+            server["search_space"]["history_source"],
+        )
+        self.assertEqual(local["model_loading"], server["model_loading"])
+        for field in (
+            "model",
+            "thinking",
+            "reasoning_effort",
+            "response_format",
+            "max_tokens",
+            "max_api_retries",
+        ):
+            self.assertEqual(
+                local["agent"]["providers"]["deepseek"][field],
+                server["agent"]["providers"]["deepseek"][field],
+            )
+        self.assertNotEqual(local["remote_transport"], server["remote_transport"])
+        self.assertNotEqual(local["lab"]["lease_name"], server["lab"]["lease_name"])
 
     def test_migration_parameters_are_validated_and_rendered_end_to_end(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -1196,6 +1200,7 @@ class ControllerTests(unittest.TestCase):
                 raw, project_root=tuning.KB_ROOT, archive_root=archive
             )
             curated_raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+            curated_raw["search_space"]["profile"] = "curated_registry_v1"
             curated, curated_result = resolve_search_limits(
                 curated_raw, project_root=tuning.KB_ROOT, archive_root=archive
             )
@@ -1947,8 +1952,9 @@ SLOT  service
             ],
         )
 
-    def test_best_anchor_coverage_strategy_is_exposed_to_agent(self) -> None:
+    def test_optional_best_anchor_coverage_strategy_is_exposed_to_agent(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured["strategy"]["profile"] = "best_anchor_coverage_v2"
         controller = tuning.Controller(configured)
         policy = controller.effective_change_policy([])
         self.assertEqual(policy["strategy_version"], "best_anchor_coverage_v2")
