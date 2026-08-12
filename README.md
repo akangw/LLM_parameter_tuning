@@ -142,7 +142,109 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 
 仓库会跟踪并随 Git 一起分发当前正式的参数画像、跳过原因与 Tags；接手者无需先重新调用 Agent 就能阅读知识。人工或自动 Search Limits 都在新 Session 创建时重新编译，并只把该 Session 的冻结结果作为在线权威。源码 checkout、迁移运行目录、Session、临时队列和日志属于运行产物，不提交 Git。当前正式知识产物及其入口见 [产物与日志目录](docs/ARTIFACTS.md)。
 
-## 从 GitHub 克隆后的启动流程
+## 两种自动化运行模式
+
+仓库不是“本地版”和“服务器版”两套代码。GitHub 分发同一套参数知识、Controller、Agent/Benchmark 接口和远端运行脚本；区别只是 **Controller 运行在哪里**。Session、日志、API Key 和完整 Benchmark 原始产物属于运行态，不进入 Git。
+
+| 模式 | Controller 位置 | vLLM / Benchmark 位置 | 本地关机 | 推荐场景 |
+|---|---|---|---|---|
+| 本地 → 服务器 | Windows 本地电脑 | NPU 计算节点 | 自动闭环不能继续推进 | 开发、调试、需要本地 Codex 登录态 |
+| 服务器自治 | Linux 开发/调度节点，由 systemd 或 Supervisor 托管 | NPU 计算节点 | 不受影响 | 长时间无人值守实验 |
+
+两条模式共用相同的核心闭环：
+
+```text
+B0/显式导入基线
+  → 编译并冻结 Search Limits
+  → Agent 生成候选
+  → Controller 确定性校验
+  → 资源执行器拉起 vLLM
+  → Benchmark（一轮）
+  → 指标归档与下一轮候选
+```
+
+同一 Lease 同一时间只能由一个 Controller 管理。不要让本地模式和服务器自治模式同时控制同一个 Lease 或 Session。
+
+### 模式 A：本地 → 服务器
+
+本地负责知识查询、候选生成、状态机和结果归档；服务器只负责资源调度、vLLM 与 Benchmark。第一次使用依次执行本 README 后面的“启动前配置”到“新建 Session 实验”：
+
+```powershell
+# 生成私有服务器配置
+.\scripts\init-local-config.ps1 <所需参数>
+
+# 只读预检
+.\一键启动.ps1 -CheckOnly -NewSession
+
+# Lease 不存在时仅执行一次
+.\scripts\prepare-remote.ps1
+
+# 从 B0 启动自动闭环
+.\一键启动.ps1 -NewSession
+```
+
+本地电脑退出或关机后，已经提交的远端进程不等于完整闭环仍在运行；下一轮分析和提交需要本地 Controller 存活。
+
+### 模式 B：服务器自治
+
+代码、Controller、Session 和日志都位于 Linux 开发/调度节点；NPU 计算节点仍只运行本轮服务和 Benchmark。服务器不安装 Codex 时，使用 `agent.provider: deepseek`；没有内部 ServeBench 权限时，使用 `benchmark.profile: vllm_bench_public_v1`。
+
+```bash
+git clone https://github.com/chenasir/Auto_vllm_parameter.git
+cd Auto_vllm_parameter
+python3 -m pip install -r tuning_pipeline/requirements-server-autonomous.txt
+
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+cp "$AUTO/config.local.example.yaml" "$AUTO/config.local.yaml"
+# 编辑 config.local.yaml：项目根目录、模型、网卡、环境脚本和唯一 Lease
+
+bash "$AUTO/service.sh" prepare-env
+# 编辑 $AUTO/.secrets/controller.env，填入 API Key；该文件必须保持 600 权限
+chmod 600 "$AUTO/.secrets/controller.env"
+
+bash "$AUTO/dry_run.sh"       # 不提交 NPU 任务
+# dry-run 会留下终态审计文件，显式授权创建真实新 Session
+bash "$AUTO/service.sh" authorize-new-session
+bash "$AUTO/prepare_lease.sh" # Lease 不存在时仅执行一次
+bash "$AUTO/preflight.sh"
+
+# 无系统权限时使用 Supervisor
+bash "$AUTO/service.sh" supervisor-install
+bash "$AUTO/service.sh" supervisor-start
+bash "$AUTO/service.sh" supervisor-status
+```
+
+只有选择内部 `aligned_l1_v4` 且拥有对应只读资产时才需要先运行
+`bash "$AUTO/seed_assets.sh"`；选择公开 `vllm_bench_public_v1` 或自有
+Benchmark 时不要依赖该私有资产复制脚本。
+
+`config.local.yaml` 被 Git 忽略并由所有服务器自治入口自动识别；也可以用绝对路径环境变量 `VLLMTKB_CONFIG` 显式指定另一份配置。需要服务器重启后自动恢复时，优先使用 systemd user service，并由管理员为服务账号启用 lingering。完整命令、恢复边界和日志位置见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
+
+## 适配其他 Ascend/NPU 服务器
+
+“服务器有 NPU”只是资源前提，并不代表现有镜像、模型命令、DP/TP 拓扑和调度器可以直接复用。按变化范围选择适配路线：
+
+| 目标环境 | 需要做什么 | 是否需要改 Controller |
+|---|---|---|
+| 同为 Atlas A3、GLM-5.2 W8A8、2 节点 × 16 NPU、相同 ktp-lab 契约 | 生成私有配置，替换 SSH/项目/模型/网卡/Lease 路径，重新核验镜像身份 | 不需要 |
+| 仍为 Ascend，但更换模型、量化、镜像、DP/TP 或节点数 | 建立 Runtime Adapter，重新绑定 Scenario、B0、镜像身份、Topology Profile 和 Executor Profile，并完成真实启动与 Benchmark 验证 | 通常不需要改通用 Controller |
+| 有 ktp-lab 以外的 Slurm、Kubernetes、SSH 或内部调度器 | 实现 `executor_adapter/v1` 的 prepare/check/submit/status/stop/release 接口，同时保留远端产物协议 | 不需要改调参状态机；需要实现执行器桥接 |
+| 普通单机 Ascend/NPU 服务器、没有任何调度器 | 可实现 local/SSH Executor Adapter，直接管理本机 vLLM 进程、端口、健康检查和产物；仓库当前提供接口模板，但尚未宣称任意裸机零配置可运行 | 需要新增并验证执行器，不需要重写 Agent/Search/Benchmark 主链路 |
+| NVIDIA/CUDA | 当前 Runtime Adapter 和参数知识以 Ascend 为边界，不属于已支持迁移 | 需要新的平台适配与完整验证 |
+
+新服务器的最小交付信息是：
+
+1. 登录或本机执行方式，以及一个独立可写项目目录；
+2. NPU 型号、节点数、每节点卡数、DP/TP 和 rank 布局；
+3. 服务镜像 digest、vLLM/vllm-ascend commit、CANN 版本；
+4. 主模型与可选 MTP 权重路径、served-model 名称、网卡和环境脚本；
+5. 资源调度器的准备、提交、状态、停止和释放命令；
+6. Agent Provider/API Key 环境变量；
+7. `aligned_l1_v4`、`vllm_bench_public_v1` 或自定义 Benchmark 三选一。
+
+适配顺序必须是：先只读预检和镜像身份核验，再完成 B0，最后才允许 Agent 搜索。`planned` Runtime Adapter 不能提交真实任务；只有模型、镜像、拓扑、执行器、B0 和 Benchmark 全部验证后才能标记为 `integrated`。详细接口见 [Ascend Runtime Adapter](docs/ASCEND_RUNTIME_ADAPTERS.md) 和 [Executor Adapter](tuning_pipeline/workflow/executor_adapters/README.md)。
+
+## 本地 → 服务器模式：从 GitHub 克隆后的启动流程
 
 ### 1. 启动前配置
 
@@ -320,13 +422,13 @@ Auto_vllm_parameter/
 
 ## 经批准保留的外部依赖
 
-Benchmark 运行阶段仍以只读方式挂载：
+当前已验证的 `ktp_lab + aligned_l1_v4` 集成在 Benchmark 运行阶段仍以只读方式挂载：
 
 ```text
 /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
 ```
 
-该目录提供 ktp-lab Lease 控制文件和 GuideLLM 激活脚本。项目不会修改它；依赖范围、替换条件和风险见 [依赖说明](docs/DEPENDENCIES.md)。除该已声明依赖外，新项目不读取或修改 `vllmTKB0706` 的代码、状态、Lease 或实验目录。
+该目录提供 ktp-lab Lease 控制文件和 GuideLLM 激活脚本。项目不会修改它；依赖范围、替换条件和风险见 [依赖说明](docs/DEPENDENCIES.md)。选择 `vllm_bench_public_v1` 并接入自己的 Executor 时不要求复用这套私有 Benchmark 路径。除已声明依赖外，新项目不读取或修改 `vllmTKB0706` 的代码、状态、Lease 或实验目录。
 
 ## 文档
 
@@ -347,8 +449,8 @@ Benchmark 运行阶段仍以只读方式挂载：
 
 ## 安全边界
 
-- 本地保存知识、决策、状态和实验归档；远端只执行服务与 Benchmark。
-- 远端项目目录固定为 `/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190`。
+- 本地模式由本地保存决策、状态和 Session；服务器自治模式将这些运行态隔离保存在服务器部署目录。两种模式都不把运行态提交 Git。
+- README 中的 `/mnt/host-model/.../cjx-workspace/...` 是当前集成环境示例，不是框架硬性根目录；实际写入必须受使用者配置的可写根目录约束。
 - 服务镜像和 Benchmark 容器均使用 Digest 固定身份。
 - Runtime Adapter、Scenario、B0、镜像、Topology 和 Executor 文件均记录 SHA-256；同一 Session 禁止跨适配身份续跑。
 - `planned` Runtime Adapter 和未集成 Executor 一律失败关闭，不能提交远端任务。

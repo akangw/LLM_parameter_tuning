@@ -1,0 +1,40 @@
+# Copy this file to config.local.yaml on the Linux controller host.  The copy
+# is ignored by Git and is auto-detected by every server-autonomous entrypoint.
+base_config: config.yaml
+
+# Both paths must be the absolute root of this deployed repository and must be
+# writable by the service account.
+remote_project: /CHANGE_ME/writable/vllmtkb-server-autonomous
+autonomous:
+  allowed_write_root: /CHANGE_ME/writable/vllmtkb-server-autonomous
+
+# Keep the integrated profile only when its model, image, topology and
+# executor identity all match the target environment.  Otherwise create and
+# validate a new Runtime Adapter before starting a Session.
+runtime:
+  profile: glm52_w8a8_a3_dp2_tp16
+
+deployment:
+  model_path: /CHANGE_ME/models/GLM-5.2-w8a8
+  served_model_name: glm-5
+  network_interface: CHANGE_ME_NETWORK_INTERFACE
+  init_env_script: /CHANGE_ME/init_env.sh
+  cann_env_script: /usr/local/Ascend/cann/set_env.sh
+
+# Leave empty when MTP is disabled.  A positive num_speculative_tokens value
+# requires a compatible MTP-only checkpoint here.
+mtp_draft_model: /CHANGE_ME/models/GLM-5.2-w8a8-mtp-only
+
+# The direct API provider is the portable default when Codex is unavailable on
+# the server.  Keep DEEPSEEK_API_KEY only in .secrets/controller.env.
+agent:
+  provider: deepseek
+
+# This public profile does not require the private ServeBench installation.
+benchmark:
+  profile: vllm_bench_public_v1
+
+lab:
+  lease_name: CHANGE_ME_UNIQUE_VERSIONED_LEASE
+  output_root: /CHANGE_ME/writable/vllmtkb-server-autonomous/workflow/auto/lab_runs
+  blocked_lease_names: []

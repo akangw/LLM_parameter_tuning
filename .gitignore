@@ -14,6 +14,7 @@ tuning_pipeline/workflow/continuous/state.json
 tuning_pipeline/workflow/continuous/latest_controller_launch.txt
 tuning_pipeline/workflow/continuous/controller.lock.stale-*
 tuning_pipeline/workflow/continuous/config.local.yaml
+tuning_pipeline/workflow/continuous/server_autonomous/config.local.yaml
 tuning_pipeline/workflow/continuous/launch_profiles/automatic_v2_b0.yaml
 tuning_pipeline/workflow/continuous/experiments/*
 !tuning_pipeline/workflow/continuous/experiments/README.md

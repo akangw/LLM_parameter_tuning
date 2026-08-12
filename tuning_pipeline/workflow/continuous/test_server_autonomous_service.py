@@ -119,6 +119,25 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
 
 
 class ServiceRenderTests(unittest.TestCase):
+    def test_entrypoints_prefer_private_config_without_changing_default(self) -> None:
+        autonomous = HERE / "server_autonomous"
+        common = (autonomous / "common.sh").read_text(encoding="utf-8")
+        self.assertIn('LOCAL_CONFIG="${SCRIPT_DIR}/config.local.yaml"', common)
+        self.assertIn('[[ -f "${LOCAL_CONFIG}" ]]', common)
+        self.assertIn('CONFIG="${DEFAULT_CONFIG}"', common)
+        self.assertIn('CONFIG="${VLLMTKB_CONFIG}"', common)
+
+        example = autonomous / "config.local.example.yaml"
+        merged = service_runtime._load_config(example)
+        self.assertEqual("server_autonomous", merged["operation_mode"])
+        self.assertEqual("deepseek", merged["agent"]["provider"])
+        self.assertEqual(
+            "vllm_bench_public_v1", merged["benchmark"]["profile"]
+        )
+        self.assertEqual(
+            "automatic_registry_v1", merged["search_space"]["profile"]
+        )
+
     def test_rendered_configs_have_no_placeholders(self) -> None:
         repo_root = HERE.parents[2]
         with tempfile.TemporaryDirectory() as temp_dir:

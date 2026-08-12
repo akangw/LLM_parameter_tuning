@@ -27,6 +27,21 @@ server.  It is isolated from the default Windows-to-server chain.
 
 ## First deployment
 
+For a different server or writable root, create the private overlay before any
+preflight or service command.  It is ignored by Git and auto-detected by all
+server-autonomous entrypoints:
+
+```bash
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+cp "$AUTO/config.local.example.yaml" "$AUTO/config.local.yaml"
+vi "$AUTO/config.local.yaml"
+```
+
+An absolute alternate file may instead be selected with
+`VLLMTKB_CONFIG=/absolute/path/config.yaml`.  The checked-in `config.yaml`
+remains the verified reference environment and should not be edited just to
+store an operator's paths.
+
 From Windows, deploy the repository snapshot with:
 
 ```powershell
@@ -40,12 +55,16 @@ cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-
 export DEEPSEEK_API_KEY='...'
 
 python3 -m pip install -r tuning_pipeline/requirements-server-autonomous.txt
+# Required only by the verified private aligned_l1_v4 profile.  Public
+# vllm_bench_public_v1 and custom Benchmark adapters do not use this source.
 bash tuning_pipeline/workflow/continuous/server_autonomous/seed_assets.sh
 bash tuning_pipeline/workflow/continuous/server_autonomous/dry_run.sh
+bash tuning_pipeline/workflow/continuous/server_autonomous/service.sh authorize-new-session
 ```
 
 `dry_run.sh` performs local generation and validation only. It does not query,
-create, or submit work to any Lease.
+create, or submit work to any Lease.  It deliberately leaves terminal audit
+state, so `authorize-new-session` archives that evidence before a real Session.
 
 After the operator has confirmed that every `blocked_lease_names` entry is no
 longer active, create the isolated persistent Lease:
