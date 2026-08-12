@@ -278,9 +278,14 @@ if [[ "${LAUNCH_PROFILE}" == "official_source_defaults_deployable" ]]; then
 fi
 
 if [[ "${LAUNCH_PROFILE}" == "explicit_candidate" ]]; then
-  GENERATED_JSON_CONFIGS="${RUN_DIR}/generated_json_configs.json"
-  GENERATED_ARGS_FILE="${RUN_DIR}/generated_cli_args.nul"
-  GENERATED_ENV_FILE="${RUN_DIR}/generated_environment.sh"
+  # Every DP node executes this script against the same shared RUN_DIR.  Keep
+  # the runtime inputs node-private so one node cannot truncate a generated
+  # JSON document while another node is validating it.  This previously made
+  # valid MTP candidates fail nondeterministically with a missing-method error.
+  RUNTIME_INSTANCE_ID="${NODE_IP//[^A-Za-z0-9_.-]/_}"
+  GENERATED_JSON_CONFIGS="${RUN_DIR}/generated_json_configs.${RUNTIME_INSTANCE_ID}.json"
+  GENERATED_ARGS_FILE="${RUN_DIR}/generated_cli_args.${RUNTIME_INSTANCE_ID}.nul"
+  GENERATED_ENV_FILE="${RUN_DIR}/generated_environment.${RUNTIME_INSTANCE_ID}.sh"
   : > "${GENERATED_ARGS_FILE}"
   printf '{}\n' > "${GENERATED_JSON_CONFIGS}"
   : > "${GENERATED_ENV_FILE}"
@@ -326,6 +331,13 @@ for name, value in payload.get("environment", {}).items():
         lines.append(f"export {name}={shlex.quote(str(value))}")
 Path(env_path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 PY
+    # Preserve the stable artifact names used by run inspection/export.  The
+    # node-private files above remain the only inputs consumed at runtime; the
+    # canonical copies are therefore safe even when identical nodes publish
+    # them concurrently.
+    cp "${GENERATED_JSON_CONFIGS}" "${RUN_DIR}/generated_json_configs.json"
+    cp "${GENERATED_ARGS_FILE}" "${RUN_DIR}/generated_cli_args.nul"
+    cp "${GENERATED_ENV_FILE}" "${RUN_DIR}/generated_environment.sh"
     source "${GENERATED_ENV_FILE}"
   elif [[ "${RUNTIME_INJECTION_MODE}" != "native_v1" ]]; then
     echo "Unsupported RUNTIME_INJECTION_MODE=${RUNTIME_INJECTION_MODE}" >&2

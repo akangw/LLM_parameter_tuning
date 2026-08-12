@@ -722,6 +722,16 @@ class ControllerTests(unittest.TestCase):
         self.assertIn('VLLM_SAFETENSORS_LOAD_STRATEGY=lazy', runtime)
         self.assertIn('prefetch_checkpoints_on_node()', runtime)
         self.assertIn(
+            'RUNTIME_INSTANCE_ID="${NODE_IP//[^A-Za-z0-9_.-]/_}"', runtime
+        )
+        self.assertIn(
+            'generated_json_configs.${RUNTIME_INSTANCE_ID}.json', runtime
+        )
+        self.assertNotIn(
+            'GENERATED_JSON_CONFIGS="${RUN_DIR}/generated_json_configs.json"',
+            runtime,
+        )
+        self.assertIn(
             '--safetensors-prefetch-num-threads "${SAFETENSORS_PREFETCH_NUM_THREADS}"',
             runtime,
         )
