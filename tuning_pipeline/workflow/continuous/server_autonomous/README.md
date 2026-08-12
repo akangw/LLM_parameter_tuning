@@ -126,6 +126,14 @@ Both managers apply the same recovery policy:
 - TERM from either manager is converted into `STOP_REQUESTED`, then the wrapper
   waits up to 24 hours for the active round to archive before forced shutdown.
 
+The Controller treats a missing Lease heartbeat as a transient platform
+condition, not proof of an old worker protocol. Before each real submission it
+waits up to `lab.readiness_wait_seconds` for the declared topology to return to
+`2/2 Ready`. If readiness changes between the status check and `ktp-lab run`,
+the specific pre-admission protocol-v2 error is retried with the same pending
+candidate and run ID. It never retries arbitrary submission errors, never
+overlaps a running slot, and safely pauses after the bounded deadline expires.
+
 After an intentional stop, explicitly authorize a later start by archiving the
 retained marker (the command moves it; it does not delete evidence):
 

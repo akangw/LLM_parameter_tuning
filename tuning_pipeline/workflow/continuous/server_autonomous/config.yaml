@@ -55,6 +55,11 @@ lab:
   lease_name: vllmtkb-auto-a0-20260807-dp2tp16
   lease_yaml: workflow/auto/lease_loop.yaml
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/lab_runs
+  # Platform rescheduling can temporarily remove both worker heartbeats between
+  # rounds. Wait for 2/2 Ready instead of treating missing heartbeats as v1.
+  readiness_wait_seconds: 1800
+  readiness_poll_seconds: 30
+  submission_readiness_retry_limit: 6
   # Autonomous mode fails closed while either existing chain owns resources.
   blocked_lease_names:
     - vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu

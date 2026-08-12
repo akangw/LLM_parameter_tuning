@@ -111,7 +111,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
 | Search-Space 构建 | `-SearchSpaceProfile` | `curated_registry_v1`（默认）、`automatic_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3`、`hierarchical_throughput_v1` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是
@@ -122,6 +122,21 @@ Agent Provider 另通过 `-AgentProvider` 选择，支持 `codex`、`anthropic`�
 Benchmark 与 Agent Provider、选参策略相互独立。没有 ServeBench/GuideLLM 权限时，推荐选择 `vllm_bench_public_v1`：它只调用服务镜像内已有的公开 `vllm bench serve`，参数在 `config.yaml` 的 `benchmark.vllm_bench_public` 中配置。需要接入自有测试时，选择 `custom_adapter_v1`，并将 `benchmark.custom_benchmark.adapter_path` 指向 `workflow/benchmark_adapters/` 白名单目录内的 Python 适配器；接口与示例见 [`benchmark_adapters/README.md`](tuning_pipeline/workflow/benchmark_adapters/README.md)。不同 Profile/配置会生成不同的 Benchmark 身份摘要，Controller 不会跨口径比较历史结果。
 
 Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统一见 [框架总览的“核心控制策略”](框架.md#核心控制策略)。
+
+### 运行兜底与服务器自治
+
+所有自动恢复均由 Controller 的确定性规则执行，Agent 只能提供结构化建议，不能登录服务器、绕过 Search Limits 或直接提交任务。主要兜底如下：
+
+| 层级 | 触发条件 | 自动动作与上限 | 超限行为 |
+|---|---|---|---|
+| Lease 准入（仅服务器自治默认启用） | 双节点暂时不是 `2/2 Ready`、心跳缺失或平台正在重调度 | 最多等待 1800 秒，每 30 秒检查；状态检查与提交之间出现 protocol-v2 心跳竞态时，同一候选和 run ID 最多重试 6 次 | 不提交新一轮，保存证据并安全暂停 |
+| 资源隔离 | 任一 `blocked_lease_names` 仍占用资源，或当前槽位未空闲 | 不等待、不抢占、不重叠提交 | 立即失败关闭 |
+| 候选生成 | Agent 候选越过白名单、网格距离、组合约束或证据要求 | 最多重新选参 2 次 | 暂停，禁止提交非法候选 |
+| Benchmark | 单 Case、完整运行或指标编译发生已知可恢复错误 | 各层最多重试 2 次；完整矩阵恢复共享最多 2 次完整重跑 | 保存失败产物并交给失败分类 |
+| Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变，最多额外提交 2 次 | 暂停人工处理，避免无限消耗 NPU |
+| 服务守护 | Controller 进程意外退出 | systemd/Supervisor 按服务策略重启；已有运行轮次从冻结状态恢复 | `paused_*`、终态、状态不一致或保留 STOP 标记时退出码 78，禁止盲目重启 |
+
+默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
 
 ### Git 克隆后可直接复用的知识产物
 

@@ -143,6 +143,10 @@ class RepeatedCandidateRejection(RuntimeError):
     """Raised after the Agent repeatedly fails deterministic candidate validation."""
 
 
+class LeaseNotReadyError(RuntimeError):
+    """The persistent Lease may recover without changing experiment state."""
+
+
 ALL_PARAM_TO_ENV = {
     "max_num_seqs": "MAX_NUM_SEQS",
     "max_model_len": "MAX_MODEL_LEN",
@@ -641,6 +645,34 @@ class Controller:
                 if name in self.model_loading
             }
         self.lab = config.get("lab", {})
+        autonomous_lease_wait = (
+            1800 if self.operation_mode == "server_autonomous" else 0
+        )
+        autonomous_submission_retries = (
+            6 if self.operation_mode == "server_autonomous" else 0
+        )
+        self.lease_readiness_wait_seconds = int(
+            self.lab.get("readiness_wait_seconds", autonomous_lease_wait)
+        )
+        self.lease_readiness_poll_seconds = int(
+            self.lab.get("readiness_poll_seconds", 30)
+        )
+        self.lease_submission_retry_limit = int(
+            self.lab.get(
+                "submission_readiness_retry_limit",
+                autonomous_submission_retries,
+            )
+        )
+        if self.lease_readiness_wait_seconds < 0:
+            raise ValueError("lab.readiness_wait_seconds cannot be negative")
+        if not 1 <= self.lease_readiness_poll_seconds <= 300:
+            raise ValueError(
+                "lab.readiness_poll_seconds must be between 1 and 300"
+            )
+        if not 0 <= self.lease_submission_retry_limit <= 60:
+            raise ValueError(
+                "lab.submission_readiness_retry_limit must be between 0 and 60"
+            )
         image_setting = self.config.get("image_identity", {})
         if not isinstance(image_setting, dict):
             raise ValueError("image_identity must be a mapping")
@@ -2138,10 +2170,88 @@ class Controller:
         if not (
             resource_active and nodes_ready and (service_idle or fresh_without_slots)
         ):
-            raise RuntimeError(
+            raise LeaseNotReadyError(
                 f"Persistent lease {lease_name!r} is not idle and ready:\n{output}"
             )
         return output
+
+    def lease_readiness_deadline(self) -> float | None:
+        if self.lease_readiness_wait_seconds <= 0:
+            return None
+        return time.monotonic() + self.lease_readiness_wait_seconds
+
+    def wait_for_lab_available(self, *, deadline: float | None = None) -> str:
+        """Wait for a transient Lease outage without hiding hard safety errors."""
+        if deadline is None:
+            deadline = self.lease_readiness_deadline()
+        first_failure: str | None = None
+        attempts = 0
+        while True:
+            try:
+                output = self.ensure_lab_available()
+                if attempts:
+                    log(
+                        f"Persistent Lease recovered after {attempts} readiness "
+                        "checks; continuing the pending round."
+                    )
+                return output
+            except LeaseNotReadyError as exc:
+                attempts += 1
+                first_failure = first_failure or str(exc)
+                if deadline is None:
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LeaseNotReadyError(
+                        "Persistent Lease did not recover within "
+                        f"{self.lease_readiness_wait_seconds} seconds. "
+                        "The pending round was not submitted. First status:\n"
+                        f"{first_failure}\nLast status:\n{exc}"
+                    ) from exc
+                if attempts == 1 or attempts % 10 == 0:
+                    log(
+                        "Persistent Lease is temporarily not Ready; waiting up to "
+                        f"{math.ceil(remaining)} more seconds before safely pausing."
+                    )
+                time.sleep(min(self.lease_readiness_poll_seconds, remaining))
+
+    @staticmethod
+    def is_transient_protocol_readiness_error(exc: BaseException) -> bool:
+        return "resource admission requires control protocol v2 workers" in str(exc)
+
+    def run_lab_submission_with_readiness_retry(
+        self,
+        command: str,
+        *,
+        deadline: float | None,
+    ) -> str:
+        """Retry only the pre-admission protocol error caused by a heartbeat race."""
+        retries = 0
+        while True:
+            try:
+                return self.ssh(command, timeout=180)
+            except RuntimeError as exc:
+                if (
+                    not self.is_transient_protocol_readiness_error(exc)
+                    or retries >= self.lease_submission_retry_limit
+                ):
+                    raise
+                retries += 1
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise LeaseNotReadyError(
+                            "Lease readiness deadline expired while ktp-lab was "
+                            "waiting for control protocol v2 worker heartbeats. "
+                            "The pending round was not admitted."
+                        ) from exc
+                    time.sleep(min(self.lease_readiness_poll_seconds, remaining))
+                log(
+                    "ktp-lab could not see fresh control protocol v2 worker "
+                    f"heartbeats during admission; readiness retry {retries}/"
+                    f"{self.lease_submission_retry_limit}."
+                )
+                self.wait_for_lab_available(deadline=deadline)
 
     def ensure_no_blocked_leases(self) -> None:
         """Prevent the autonomous mode from overlapping declared main-chain leases."""
@@ -2235,7 +2345,8 @@ class Controller:
             )
             return None, run_id
 
-        self.ensure_lab_available()
+        readiness_deadline = self.lease_readiness_deadline()
+        self.wait_for_lab_available(deadline=readiness_deadline)
         run_id = f"{label}_{dt.datetime.now():%Y%m%d_%H%M%S}"
         remote_run = f"{self.remote_auto}/runs/{run_id}"
         self.ssh(f"mkdir -p {shlex.quote(remote_run)}")
@@ -2270,12 +2381,15 @@ class Controller:
 
         lease_name = str(self.lab["lease_name"])
         output_root = str(self.lab.get("output_root", "workflow/auto/lab_runs"))
-        output = self.ssh(
+        submission_command = (
             f"cd {shlex.quote(self.remote_project)} && "
             f"ktp-lab run --lease {shlex.quote(lease_name)} "
             f"--run-id {shlex.quote(run_id)} "
-            f"--output-root {shlex.quote(output_root)}",
-            timeout=180,
+            f"--output-root {shlex.quote(output_root)}"
+        )
+        output = self.run_lab_submission_with_readiness_retry(
+            submission_command,
+            deadline=readiness_deadline,
         )
         (round_dir / "03_submission" / "submit_output.txt").write_text(
             output + "\n", encoding="utf-8"

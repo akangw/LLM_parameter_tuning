@@ -1665,6 +1665,84 @@ SLOTS  none
         with patch.object(self.controller, "ssh", return_value=output):
             self.assertEqual(output, self.controller.ensure_lab_available())
 
+    def test_transient_lease_not_ready_waits_until_recovered(self) -> None:
+        unavailable = """\
+LEASE  example
+RESOURCE  status=active  nodes=0/2 Ready  npu=32/32
+SLOT  service
+  status   idle=2
+"""
+        ready = """\
+LEASE  example
+RESOURCE  status=active  nodes=2/2 Ready  npu=32/32
+SLOT  service
+  status   idle=2
+"""
+        self.controller.lab = {"lease_name": "example"}
+        self.controller.lease_readiness_wait_seconds = 60
+        self.controller.lease_readiness_poll_seconds = 1
+        with (
+            patch.object(
+                self.controller,
+                "lease_status",
+                side_effect=[unavailable, unavailable, ready],
+            ) as status,
+            patch.object(tuning.time, "sleep") as sleep,
+        ):
+            self.assertEqual(
+                ready,
+                self.controller.wait_for_lab_available(deadline=10**12),
+            )
+        self.assertEqual(3, status.call_count)
+        self.assertEqual(2, sleep.call_count)
+
+    def test_submission_retries_protocol_error_after_readiness_race(self) -> None:
+        protocol_error = RuntimeError(
+            "resource admission requires control protocol v2 workers"
+        )
+        self.controller.lease_submission_retry_limit = 2
+        self.controller.lease_readiness_poll_seconds = 1
+        with (
+            patch.object(
+                self.controller,
+                "ssh",
+                side_effect=[protocol_error, "submitted"],
+            ) as remote,
+            patch.object(
+                self.controller,
+                "wait_for_lab_available",
+                return_value="ready",
+            ) as wait_ready,
+            patch.object(tuning.time, "sleep") as sleep,
+        ):
+            output = self.controller.run_lab_submission_with_readiness_retry(
+                "ktp-lab run", deadline=10**12
+            )
+        self.assertEqual("submitted", output)
+        self.assertEqual(2, remote.call_count)
+        wait_ready.assert_called_once_with(deadline=10**12)
+        sleep.assert_called_once()
+
+    def test_submission_does_not_retry_unrelated_error(self) -> None:
+        self.controller.lease_submission_retry_limit = 6
+        with (
+            patch.object(
+                self.controller,
+                "ssh",
+                side_effect=RuntimeError("invalid candidate"),
+            ) as remote,
+            patch.object(
+                self.controller,
+                "wait_for_lab_available",
+            ) as wait_ready,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "invalid candidate"):
+                self.controller.run_lab_submission_with_readiness_retry(
+                    "ktp-lab run", deadline=10**12
+                )
+        remote.assert_called_once()
+        wait_ready.assert_not_called()
+
     def test_lab_dry_run_reuses_idle_persistent_lease(self) -> None:
         self.controller.lab = {"lease_name": "example"}
         with tempfile.TemporaryDirectory() as temporary:
