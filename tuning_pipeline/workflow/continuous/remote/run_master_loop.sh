@@ -2,6 +2,7 @@
 set -eo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export VLLMTKB_ROLE=master
 source "${SCRIPT_DIR}/common_runtime_loop.sh"
 exec > >(tee -a "${RUN_DIR}/master.log") 2>&1
 

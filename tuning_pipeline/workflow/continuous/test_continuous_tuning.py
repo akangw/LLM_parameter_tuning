@@ -754,6 +754,9 @@ class ControllerTests(unittest.TestCase):
             runtime,
         )
         self.assertIn('VLLM_SAFETENSORS_LOAD_STRATEGY=lazy', runtime)
+        self.assertIn('MASTER_ENDPOINT_FILE="${RUN_DIR}/master_endpoint.env"', runtime)
+        self.assertIn('MASTER_IP="${NODE_IP}"', runtime)
+        self.assertIn('MASTER_ENDPOINT_RESOLVED role=${VLLMTKB_ROLE}', runtime)
         self.assertIn('prefetch_checkpoints_on_node()', runtime)
         self.assertIn(
             'RUNTIME_INSTANCE_ID="${NODE_IP//[^A-Za-z0-9_.-]/_}"', runtime
@@ -789,6 +792,8 @@ class ControllerTests(unittest.TestCase):
         worker_runtime = (
             tuning.HERE / "remote" / "run_worker_loop.sh"
         ).read_text(encoding="utf-8")
+        self.assertIn('export VLLMTKB_ROLE=master', master_runtime)
+        self.assertIn('export VLLMTKB_ROLE=worker', worker_runtime)
         self.assertIn("node_checkpoint_prefetch.py", tuning.REMOTE_SCRIPT_NAMES)
         self.assertTrue((tuning.HERE / "remote" / "node_checkpoint_prefetch.py").is_file())
         self.assertLess(

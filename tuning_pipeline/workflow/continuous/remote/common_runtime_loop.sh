@@ -95,6 +95,53 @@ esac
 source "${INIT_ENV_SCRIPT}"
 source "${CANN_ENV_SCRIPT}"
 
+# A persistent Lease may be rescheduled onto new physical nodes while retaining
+# an old MASTER_IP in the process environment. Resolve the endpoint anew inside
+# every unique Run directory before constructing any vLLM DP arguments.
+case "${VLLMTKB_ROLE:-}" in
+  master)
+    python3 - "${NODE_IP}" "${RUN_DIR}/master_endpoint.env" <<'PY'
+import ipaddress
+import os
+import sys
+from pathlib import Path
+
+address = str(ipaddress.ip_address(sys.argv[1]))
+target = Path(sys.argv[2])
+temporary = target.with_name(f".{target.name}.write-{os.getpid()}")
+with temporary.open("w", encoding="utf-8") as stream:
+    stream.write(f"MASTER_IP={address}\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, target)
+PY
+    MASTER_IP="${NODE_IP}"
+    ;;
+  worker)
+    MASTER_ENDPOINT_FILE="${RUN_DIR}/master_endpoint.env"
+    for _endpoint_attempt in $(seq 1 120); do
+      [[ -s "${MASTER_ENDPOINT_FILE}" ]] && break
+      sleep 2
+    done
+    [[ -s "${MASTER_ENDPOINT_FILE}" ]] || {
+      echo "Timed out waiting for current Run master endpoint: ${MASTER_ENDPOINT_FILE}" >&2
+      exit 2
+    }
+    source "${MASTER_ENDPOINT_FILE}"
+    python3 - "${MASTER_IP}" <<'PY'
+import ipaddress
+import sys
+ipaddress.ip_address(sys.argv[1])
+PY
+    ;;
+  *)
+    echo "Missing or invalid VLLMTKB_ROLE=${VLLMTKB_ROLE:-}" >&2
+    exit 2
+    ;;
+esac
+export MASTER_IP
+echo "MASTER_ENDPOINT_RESOLVED role=${VLLMTKB_ROLE} node_ip=${NODE_IP} master_ip=${MASTER_IP} run_id=${EXPERIMENT_RUN_ID}"
+
 if [[ -n "${RUNTIME_CACHE_ROOT}" ]]; then
   export XDG_CACHE_HOME="${RUNTIME_CACHE_ROOT}/xdg"
   export HF_HOME="${RUNTIME_CACHE_ROOT}/huggingface"
