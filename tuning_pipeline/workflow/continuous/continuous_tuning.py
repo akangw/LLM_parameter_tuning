@@ -5928,6 +5928,117 @@ Embedded evidence:
         )
         return decision
 
+    def upgrade_frozen_recovery_policy(self, source_path: Path) -> dict[str, Any]:
+        """Auditably widen only unattended-recovery settings for an idle Session."""
+        state = load_controller_state()
+        retained_audit_run = (
+            state.get("status") == "stopped_after_failed_round"
+            and state.get("last_failure_classification") == "operator_stop_before_metrics"
+            and not state.get("active_task_id")
+        )
+        if state.get("active_task_id") or (
+            state.get("active_run_id") and not retained_audit_run
+        ):
+            raise RuntimeError("Recovery-policy upgrade requires an archived idle round")
+        session_dir = Path(state["session_dir"])
+        frozen_path = session_dir / "session_config.yaml"
+        frozen = load_yaml(frozen_path)
+        source = load_config(source_path)
+        before = copy.deepcopy(frozen)
+
+        def copy_if_higher(target: dict[str, Any], origin: dict[str, Any], key: str) -> None:
+            if key not in origin:
+                return
+            old = int(target.get(key, 0))
+            new = int(origin[key])
+            if new < old:
+                raise RuntimeError(f"Recovery upgrade cannot lower {key}: {old} -> {new}")
+            target[key] = new
+
+        frozen.setdefault("failure_recovery", {})
+        for key in (
+            "same_candidate_retries",
+            "agent_diagnostic_retries",
+            "parameter_adjustments",
+            "total_recovery_rounds",
+        ):
+            copy_if_higher(
+                frozen["failure_recovery"], source.get("failure_recovery", {}), key
+            )
+        copy_if_higher(frozen, source, "max_controller_recovery_attempts")
+        frozen.setdefault("agent", {}).setdefault("settings", {})
+        copy_if_higher(
+            frozen["agent"]["settings"],
+            source.get("agent", {}).get("settings", {}),
+            "max_protocol_retries",
+        )
+        frozen.setdefault("lab", {})
+        for key in (
+            "readiness_wait_seconds",
+            "submission_readiness_retry_limit",
+        ):
+            copy_if_higher(frozen["lab"], source.get("lab", {}), key)
+        frozen.setdefault("benchmark", {}).setdefault("aligned_l1", {})
+        for key in (
+            "case_retry_limit",
+            "runtime_retry_limit",
+            "metrics_retry_limit",
+            "total_full_retry_limit",
+        ):
+            copy_if_higher(
+                frozen["benchmark"]["aligned_l1"],
+                source.get("benchmark", {}).get("aligned_l1", {}),
+                key,
+            )
+        frozen.setdefault("change_policy", {})
+        copy_if_higher(
+            frozen["change_policy"],
+            source.get("change_policy", {}),
+            "max_candidate_reselections",
+        )
+        changed = {
+            "failure_recovery": frozen.get("failure_recovery"),
+            "max_controller_recovery_attempts": frozen.get(
+                "max_controller_recovery_attempts"
+            ),
+            "agent_protocol_retries": frozen.get("agent", {})
+            .get("settings", {})
+            .get("max_protocol_retries"),
+            "lab_recovery": {
+                key: frozen.get("lab", {}).get(key)
+                for key in ("readiness_wait_seconds", "submission_readiness_retry_limit")
+            },
+            "benchmark_retries": {
+                key: frozen.get("benchmark", {}).get("aligned_l1", {}).get(key)
+                for key in (
+                    "case_retry_limit",
+                    "runtime_retry_limit",
+                    "metrics_retry_limit",
+                    "total_full_retry_limit",
+                )
+            },
+            "max_candidate_reselections": frozen.get("change_policy", {}).get(
+                "max_candidate_reselections"
+            ),
+        }
+        audit = {
+            "schema_version": "vllmtkb-recovery-policy-upgrade/v1",
+            "upgraded_at": now(),
+            "source": str(source_path.resolve()),
+            "session": state.get("session_id"),
+            "round": state.get("round_label"),
+            "immutable_scope": (
+                "model/image/topology/executor/search_limits/strategy/agent provider/"
+                "benchmark identity and candidate remain frozen"
+            ),
+            "settings": changed,
+        }
+        snapshot = session_dir / f"session_config.before_recovery_upgrade.{dt.datetime.now():%Y%m%d_%H%M%S}.yaml"
+        save_yaml(snapshot, before)
+        save_yaml(frozen_path, frozen)
+        save_json(session_dir / "recovery_policy_upgrade.audit.json", audit)
+        return audit
+
     def retry_paused_current(self) -> dict[str, Any]:
         """Operator-authorized same-candidate diagnostic retry."""
         if not STATE_FILE.exists():
@@ -6919,6 +7030,11 @@ def parse_args() -> argparse.Namespace:
             "attributed to the candidate parameters"
         ),
     )
+    group.add_argument(
+        "--upgrade-recovery-policy-from",
+        metavar="CONFIG",
+        help="idle Session only: auditably raise recovery budgets from this config",
+    )
     group.add_argument("--status", action="store_true", help="print controller state")
     parser.add_argument(
         "--strategy-profile",
@@ -6982,6 +7098,7 @@ def main() -> int:
         or args.auto_retry_paused_current
         or args.stop_active_task
         or args.replay_unmeasured_candidate
+        or args.upgrade_recovery_policy_from
         or (args.check_only and args.use_frozen_session)
     )
     if (args.use_frozen_session or args.allow_active_lease) and not args.check_only:
@@ -7076,6 +7193,16 @@ def main() -> int:
             print(
                 json.dumps(
                     controller.reanalyze_current(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif args.upgrade_recovery_policy_from:
+            print(
+                json.dumps(
+                    controller.upgrade_frozen_recovery_policy(
+                        Path(args.upgrade_recovery_policy_from).expanduser()
+                    ),
                     ensure_ascii=False,
                     indent=2,
                 )
