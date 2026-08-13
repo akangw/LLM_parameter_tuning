@@ -204,6 +204,66 @@ class AgentProviderTests(unittest.TestCase):
             self.assertEqual({"ok": True}, json.loads(output.read_text(encoding="utf-8")))
             self.assertEqual(raw, (root / "decision.json.raw.txt").read_text(encoding="utf-8"))
 
+    def test_schema_forbidden_agent_metadata_is_pruned_and_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "decision.json"
+            schema = root / "schema.json"
+            schema.write_text(
+                json.dumps(
+                    {
+                        "type": "object",
+                        "required": ["changes"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "changes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["parameter"],
+                                    "additionalProperties": False,
+                                    "properties": {"parameter": {"type": "string"}},
+                                },
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            agent_provider._validate_and_write(
+                {"changes": [{"parameter": "x", "candidate": "annotation"}]},
+                schema,
+                output,
+            )
+            self.assertEqual(
+                {"changes": [{"parameter": "x"}]},
+                json.loads(output.read_text(encoding="utf-8")),
+            )
+            audit = json.loads(
+                (root / "decision.json.normalization.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(["$.changes[0].candidate"], audit["removed_paths"])
+
+    def test_normalization_does_not_coerce_invalid_required_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            schema = root / "schema.json"
+            schema.write_text(
+                json.dumps(
+                    {
+                        "type": "object",
+                        "required": ["ok"],
+                        "properties": {"ok": {"type": "boolean"}},
+                        "additionalProperties": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(Exception):
+                agent_provider._validate_and_write(
+                    {"ok": "true", "note": "drop me"}, schema, root / "output.json"
+                )
+
     def test_codex_rejects_unchanged_stale_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

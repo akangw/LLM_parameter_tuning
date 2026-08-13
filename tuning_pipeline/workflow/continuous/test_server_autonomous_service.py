@@ -51,6 +51,52 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             action, _ = service_runtime.decide(runtime, "auto")
             self.assertEqual(action, "blocked")
 
+    def test_recoverable_controller_error_resumes_terminal_round(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            session = runtime / "sessions" / "s1"
+            results = session / "round_008_a8" / "05_results"
+            results.mkdir(parents=True)
+            (results / "metrics.json").write_text("{}", encoding="utf-8")
+            self.write_state(
+                runtime,
+                status="recovering_controller_error",
+                round_index=8,
+                round_label="a8",
+                active_task_id="task-1",
+                active_run_id="run-1",
+            )
+            action, _ = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+
+    def test_legacy_agent_protocol_pause_is_migrated_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            session = runtime / "sessions" / "s1"
+            results = session / "round_008_a8" / "05_results"
+            results.mkdir(parents=True)
+            (results / "metrics.json").write_text("{}", encoding="utf-8")
+            self.write_state(
+                runtime,
+                status="paused_controller_error",
+                round_index=8,
+                round_label="a8",
+                controller_error="RuntimeError: codex Agent analysis failed: schema-valid JSON",
+            )
+            action, _ = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+
+    def test_unclassified_controller_pause_still_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(
+                runtime,
+                status="paused_controller_error",
+                controller_error="RuntimeError: unknown invariant violation",
+            )
+            action, _ = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "blocked")
+
     def test_stop_marker_blocks_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime = Path(temp_dir)

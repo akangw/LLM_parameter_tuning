@@ -143,6 +143,10 @@ class RepeatedCandidateRejection(RuntimeError):
     """Raised after the Agent repeatedly fails deterministic candidate validation."""
 
 
+class AgentProtocolError(RuntimeError):
+    """The Agent transport/structured-output contract may succeed on retry."""
+
+
 class LeaseNotReadyError(RuntimeError):
     """The persistent Lease may recover without changing experiment state."""
 
@@ -185,6 +189,9 @@ FAILURE_ADJUSTABLE_CLASSIFICATIONS = frozenset(
 FAILURE_RETRYABLE_CLASSIFICATIONS = frozenset(
     {"transient_infrastructure", "network_or_hccl", "benchmark_failure"}
 )
+FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS = frozenset(
+    {"image_or_dependency", "model_or_runtime_bug", "unknown"}
+)
 FAILURE_ALL_CLASSIFICATIONS = frozenset(
     {
         "parameter_invalid",
@@ -200,6 +207,7 @@ FAILURE_ALL_CLASSIFICATIONS = frozenset(
 FAILURE_ACTION_CLASSIFICATIONS = {
     "adjust_parameters": FAILURE_ADJUSTABLE_CLASSIFICATIONS,
     "retry_same": FAILURE_RETRYABLE_CLASSIFICATIONS,
+    "diagnostic_retry_same": FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS,
     "pause_for_human": FAILURE_ALL_CLASSIFICATIONS,
 }
 
@@ -591,6 +599,38 @@ class Controller:
             config.get("agent", {}),
             legacy_command=str(config.get("codex_command", "auto")),
         )
+        agent_settings = dict(self.agent_config.get("settings", {}))
+        self.max_agent_protocol_retries = int(
+            agent_settings.get("max_protocol_retries", 2)
+        )
+        if not 0 <= self.max_agent_protocol_retries <= 5:
+            raise ValueError("Agent max_protocol_retries must be between 0 and 5")
+        self.max_controller_recovery_attempts = int(
+            config.get("max_controller_recovery_attempts", 3)
+        )
+        if not 1 <= self.max_controller_recovery_attempts <= 10:
+            raise ValueError("max_controller_recovery_attempts must be between 1 and 10")
+        recovery_policy = dict(config.get("failure_recovery", {}))
+        self.max_same_candidate_retries = int(
+            recovery_policy.get("same_candidate_retries", 4)
+        )
+        self.max_agent_diagnostic_retries = int(
+            recovery_policy.get("agent_diagnostic_retries", 1)
+        )
+        self.max_parameter_failure_adjustments = int(
+            recovery_policy.get("parameter_adjustments", 3)
+        )
+        self.max_total_failure_recovery_rounds = int(
+            recovery_policy.get("total_recovery_rounds", 6)
+        )
+        for name, value, upper in (
+            ("same_candidate_retries", self.max_same_candidate_retries, 8),
+            ("agent_diagnostic_retries", self.max_agent_diagnostic_retries, 3),
+            ("parameter_adjustments", self.max_parameter_failure_adjustments, 6),
+            ("total_recovery_rounds", self.max_total_failure_recovery_rounds, 12),
+        ):
+            if not 0 <= value <= upper:
+                raise ValueError(f"failure_recovery.{name} must be between 0 and {upper}")
         self.mtp_draft_model = str(config.get("mtp_draft_model", "")).strip()
         self.model_loading = copy.deepcopy(self.model_loading_profile)
         self.model_loading_backend = str(self.model_loading.get("backend", "dtfs_page_cache"))
@@ -1417,6 +1457,39 @@ class Controller:
         if not path.is_file():
             raise RuntimeError(f"Frozen Session decision schema is missing: {path}")
         return path
+
+    def failure_schema_path(self, session_dir: Path) -> Path:
+        """Add recovery actions to an older Session without widening candidates.
+
+        The candidate schema remains the Session-frozen authority. Only the
+        Controller recovery action contract is migrated, into a separate
+        audited runtime schema, so an in-flight Session can gain safer recovery
+        without silently changing its Search Limits.
+        """
+        frozen = self.decision_schema_path(session_dir, "failure_decision.schema.json")
+        frozen_schema = json.loads(frozen.read_text(encoding="utf-8"))
+        actions = set(frozen_schema["properties"]["action"]["enum"])
+        if "diagnostic_retry_same" in actions:
+            return frozen
+        current_schema = json.loads(
+            (HERE / "failure_decision.schema.json").read_text(encoding="utf-8")
+        )
+        current_schema["properties"]["candidate"] = frozen_schema["properties"][
+            "candidate"
+        ]
+        migrated = frozen.with_name("failure_decision.runtime.schema.json")
+        save_json(migrated, current_schema)
+        save_json(
+            migrated.with_name("failure_schema_migration.audit.json"),
+            {
+                "migrated_at": now(),
+                "policy": "recovery_actions_only_v1",
+                "source": str(frozen),
+                "candidate_schema_preserved": True,
+                "added_actions": ["diagnostic_retry_same"],
+            },
+        )
+        return migrated
 
     def scp_to(self, source: Path, destination: str) -> None:
         if self.remote_transport == "local":
@@ -4235,16 +4308,47 @@ the exact violations while preserving the measured evidence and Search Limits:
                 prompt,
                 encoding="utf-8",
             )
-            result = run_structured_agent(
-                self.agent_config,
-                prompt=prompt,
-                schema_path=self.decision_schema_path(
-                    session_dir, "agent_decision.schema.json"
-                ),
-                output_path=decision_path,
-                cwd=KB_ROOT,
-                allowed_dir=round_dir,
-            )
+            protocol_failures: list[str] = []
+            result = None
+            protocol_attempts = self.max_agent_protocol_retries + 1
+            for protocol_attempt in range(1, protocol_attempts + 1):
+                protocol_prompt = prompt
+                if protocol_failures:
+                    protocol_prompt += f"""
+
+The previous provider call failed its transport or structured-output contract.
+Return a fresh, complete JSON decision conforming exactly to the supplied schema.
+Failure detail: {protocol_failures[-1][-2000:]}
+"""
+                result = run_structured_agent(
+                    self.agent_config,
+                    prompt=protocol_prompt,
+                    schema_path=self.decision_schema_path(
+                        session_dir, "agent_decision.schema.json"
+                    ),
+                    output_path=decision_path,
+                    cwd=KB_ROOT,
+                    allowed_dir=round_dir,
+                )
+                suffix = f"attempt_{attempt:02d}.protocol_{protocol_attempt:02d}"
+                (analysis_dir / f"agent_events.{suffix}.jsonl").write_text(
+                    result.stdout, encoding="utf-8"
+                )
+                (analysis_dir / f"agent_stderr.{suffix}.log").write_text(
+                    result.stderr, encoding="utf-8"
+                )
+                if result.returncode == 0 and decision_path.exists():
+                    break
+                protocol_failures.append(
+                    f"attempt {protocol_attempt}/{protocol_attempts}: "
+                    f"{result.provider}: {result.stderr[-2000:]}"
+                )
+                log(
+                    "Agent protocol attempt failed "
+                    f"({protocol_attempt}/{protocol_attempts}); retrying within "
+                    "the same experiment round."
+                )
+            assert result is not None
             events_path = analysis_dir / f"agent_events.attempt_{attempt:02d}.jsonl"
             stderr_path = analysis_dir / f"agent_stderr.attempt_{attempt:02d}.log"
             events_path.write_text(result.stdout, encoding="utf-8")
@@ -4258,8 +4362,18 @@ the exact violations while preserving the measured evidence and Search Limits:
                 encoding="utf-8",
             )
             if result.returncode != 0 or not decision_path.exists():
-                raise RuntimeError(
-                    f"{result.provider} Agent analysis failed: {result.stderr[-2000:]}"
+                save_json(
+                    analysis_dir / "agent_protocol_recovery_audit.json",
+                    {
+                        "failed_at": now(),
+                        "max_protocol_retries": self.max_agent_protocol_retries,
+                        "failures": protocol_failures,
+                        "final_status": "controller_restart_required",
+                    },
+                )
+                raise AgentProtocolError(
+                    f"{result.provider} Agent analysis failed after "
+                    f"{protocol_attempts} protocol attempts: {result.stderr[-2000:]}"
                 )
 
             decision = json.loads(decision_path.read_text(encoding="utf-8"))
@@ -4611,11 +4725,16 @@ Classify the root cause using only log evidence:
   safe; otherwise pause_for_human.
 - benchmark_failure: retry_same only for a clean retryable benchmark failure; otherwise
   pause_for_human. Deterministic benchmark recovery is evaluated before this Agent call.
-- image_or_dependency or unknown: pause_for_human.
+- image_or_dependency, model_or_runtime_bug or unknown: when the evidence cannot
+  prove a parameter correction but an unchanged rerun is non-destructive and may
+  collect decisive evidence or absorb a transient condition, use
+  diagnostic_retry_same. This action has a separate one-run budget. Otherwise use
+  pause_for_human.
 
 The controller enforces this exact action contract:
 - adjust_parameters classifications: {sorted(FAILURE_ADJUSTABLE_CLASSIFICATIONS)}
 - retry_same classifications: {sorted(FAILURE_RETRYABLE_CLASSIFICATIONS)}
+- diagnostic_retry_same classifications: {sorted(FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS)}
 - pause_for_human: any classification.
 Set safe_to_automate=true for adjust_parameters or retry_same. Set it to false for
 pause_for_human.
@@ -4625,7 +4744,7 @@ to {self.max_parameters_per_round} parameters. Multiple changes are allowed only
 the logs prove that the correction is coupled. Explain the interaction and give an
 explicit constraint check for every changed parameter. Grid-step budgets are:
 {yaml.safe_dump(self.change_policy, allow_unicode=True, sort_keys=False)}
-For retry_same or pause_for_human, return the current candidate unchanged, an empty
+For retry_same, diagnostic_retry_same or pause_for_human, return the current candidate unchanged, an empty
 changes array, change_strategy=none, and empty interaction_analysis and
 constraint_checks.
 
@@ -4643,16 +4762,39 @@ Embedded evidence:
         prompt_path = analysis_dir / "failure_agent_prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         decision_path = analysis_dir / "failure_decision.json"
-        result = run_structured_agent(
-            self.agent_config,
-            prompt=prompt,
-            schema_path=self.decision_schema_path(
-                session_dir, "failure_decision.schema.json"
-            ),
-            output_path=decision_path,
-            cwd=KB_ROOT,
-            allowed_dir=round_dir,
-        )
+        result = None
+        protocol_failures: list[str] = []
+        protocol_attempts = self.max_agent_protocol_retries + 1
+        for protocol_attempt in range(1, protocol_attempts + 1):
+            retry_prompt = prompt
+            if protocol_failures:
+                retry_prompt += (
+                    "\n\nThe prior failure-analysis provider call did not satisfy "
+                    "the structured-output contract. Return one fresh complete JSON "
+                    "decision. Failure detail: " + protocol_failures[-1][-2000:]
+                )
+            result = run_structured_agent(
+                self.agent_config,
+                prompt=retry_prompt,
+                schema_path=self.failure_schema_path(session_dir),
+                output_path=decision_path,
+                cwd=KB_ROOT,
+                allowed_dir=round_dir,
+            )
+            suffix = f"failure_agent.protocol_{protocol_attempt:02d}"
+            (analysis_dir / f"{suffix}.events.jsonl").write_text(
+                result.stdout, encoding="utf-8"
+            )
+            (analysis_dir / f"{suffix}.stderr.log").write_text(
+                result.stderr, encoding="utf-8"
+            )
+            if result.returncode == 0 and decision_path.exists():
+                break
+            protocol_failures.append(
+                f"attempt {protocol_attempt}/{protocol_attempts}: "
+                f"{result.provider}: {result.stderr[-2000:]}"
+            )
+        assert result is not None
         (analysis_dir / "failure_agent_events.jsonl").write_text(
             result.stdout, encoding="utf-8"
         )
@@ -4660,8 +4802,9 @@ Embedded evidence:
             result.stderr, encoding="utf-8"
         )
         if result.returncode != 0 or not decision_path.exists():
-            raise RuntimeError(
-                f"{result.provider} failure analysis failed: {result.stderr[-2000:]}"
+            raise AgentProtocolError(
+                f"{result.provider} failure analysis failed after "
+                f"{protocol_attempts} protocol attempts: {result.stderr[-2000:]}"
             )
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
         self.validate_failure_decision(session_dir, decision, current)
@@ -5133,6 +5276,8 @@ Embedded evidence:
             "current_candidate": self.config["baseline"],
             "failure_retries": 0,
             "failure_adjustments": 0,
+            "failure_diagnostic_retries": 0,
+            "total_failure_recovery_rounds": 0,
             "round_submitted_at": None,
             "created_at": now(),
             "updated_at": now(),
@@ -5633,8 +5778,12 @@ Embedded evidence:
                     current_candidate=next_candidate,
                     failure_retries=0,
                     failure_adjustments=0,
+                    failure_diagnostic_retries=0,
+                    total_failure_recovery_rounds=0,
                     round_submitted_at=now(),
                     status="running",
+                    controller_recovery_attempts=0,
+                    controller_error=None,
                 )
                 self.save_state(state)
                 log(f"Submitted {next_label} task={task_id} run={run_id}")
@@ -5811,24 +5960,71 @@ Embedded evidence:
                     continue
 
                 next_index = state["round_index"] + 1
+                total_recovery_rounds = int(
+                    state.get("total_failure_recovery_rounds", 0)
+                ) + 1
+                if total_recovery_rounds > self.max_total_failure_recovery_rounds:
+                    state.update(
+                        status="paused_after_total_recovery_budget",
+                        last_failure_classification=failure["classification"],
+                        last_failure_summary=failure["summary"],
+                    )
+                    self.save_state(state)
+                    log("Paused after exhausting the total failure-recovery budget.")
+                    return
+                state["total_failure_recovery_rounds"] = total_recovery_rounds
                 if action == "adjust_parameters":
                     state["failure_retries"] = 0
                     state["failure_adjustments"] += 1
+                    if (
+                        state["failure_adjustments"]
+                        > self.max_parameter_failure_adjustments
+                    ):
+                        state.update(
+                            status="paused_after_parameter_recovery_budget",
+                            last_failure_classification=failure["classification"],
+                            last_failure_summary=failure["summary"],
+                        )
+                        self.save_state(state)
+                        log("Paused after exhausting the parameter-recovery budget.")
+                        return
                     next_candidate = failure["candidate"]
                     next_label = (
                         f"a{state['candidate_index']}f{state['failure_adjustments']}"
                     )
                     next_status = "recovering_parameter_failure"
+                elif action == "diagnostic_retry_same":
+                    state["failure_diagnostic_retries"] = int(
+                        state.get("failure_diagnostic_retries", 0)
+                    ) + 1
+                    if (
+                        state["failure_diagnostic_retries"]
+                        > self.max_agent_diagnostic_retries
+                    ):
+                        state.update(
+                            status="paused_after_diagnostic_recovery_budget",
+                            last_failure_classification=failure["classification"],
+                            last_failure_summary=failure["summary"],
+                        )
+                        self.save_state(state)
+                        log("Paused after exhausting the Agent diagnostic-retry budget.")
+                        return
+                    next_candidate = state["current_candidate"]
+                    next_label = (
+                        f"a{state['candidate_index']}d"
+                        f"{state['failure_diagnostic_retries']}"
+                    )
+                    next_status = "retrying_agent_diagnosed_failure"
                 else:
                     state["failure_retries"] += 1
-                    if state["failure_retries"] > 2:
+                    if state["failure_retries"] > self.max_same_candidate_retries:
                         state.update(
                             status="paused_after_repeated_infrastructure_failure",
                             last_failure_classification=failure["classification"],
                             last_failure_summary=failure["summary"],
                         )
                         self.save_state(state)
-                        log("Paused after three identical infrastructure retries.")
+                        log("Paused after exhausting identical infrastructure retries.")
                         return
                     next_candidate = state["current_candidate"]
                     next_label = (
@@ -6150,11 +6346,21 @@ def main() -> int:
                         failed_state = json.loads(
                             STATE_FILE.read_text(encoding="utf-8")
                         )
-                        paused_status = (
-                            "paused_after_repeated_candidate_rejection"
-                            if isinstance(exc, RepeatedCandidateRejection)
-                            else "paused_controller_error"
-                        )
+                        if isinstance(exc, RepeatedCandidateRejection):
+                            paused_status = "paused_after_repeated_candidate_rejection"
+                        elif isinstance(exc, AgentProtocolError):
+                            recovery_attempts = int(
+                                failed_state.get("controller_recovery_attempts", 0)
+                            ) + 1
+                            failed_state["controller_recovery_attempts"] = recovery_attempts
+                            paused_status = (
+                                "recovering_controller_error"
+                                if recovery_attempts
+                                <= controller.max_controller_recovery_attempts
+                                else "paused_after_repeated_controller_error"
+                            )
+                        else:
+                            paused_status = "paused_controller_error"
                         failed_state.update(
                             status=paused_status,
                             controller_error=f"{type(exc).__name__}: {exc}",

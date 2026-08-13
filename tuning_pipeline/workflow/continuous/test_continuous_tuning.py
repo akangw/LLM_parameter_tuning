@@ -2124,6 +2124,15 @@ SLOT  service
                 controller.validate_failure_decision(
                     session,
                     no_change_decision(
+                        "unknown", "diagnostic_retry_same", True
+                    ),
+                    current,
+                )
+            )
+            self.assertIsNone(
+                controller.validate_failure_decision(
+                    session,
+                    no_change_decision(
                         "transient_infrastructure", "retry_same", True
                     ),
                     current,
@@ -2178,6 +2187,14 @@ SLOT  service
                 branches["retry_same"]["properties"]["classification"]["enum"]
             ),
             set(tuning.FAILURE_RETRYABLE_CLASSIFICATIONS),
+        )
+        self.assertEqual(
+            set(
+                branches["diagnostic_retry_same"]["properties"]["classification"][
+                    "enum"
+                ]
+            ),
+            set(tuning.FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS),
         )
         self.assertTrue(
             branches["adjust_parameters"]["properties"]["safe_to_automate"][

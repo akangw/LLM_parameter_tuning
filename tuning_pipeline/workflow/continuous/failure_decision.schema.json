@@ -66,6 +66,24 @@
           "changes": {"maxItems": 0}
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"action": {"const": "diagnostic_retry_same"}},
+        "required": ["action"]
+      },
+      "then": {
+        "properties": {
+          "classification": {
+            "enum": ["image_or_dependency", "model_or_runtime_bug", "unknown"]
+          },
+          "safe_to_automate": {"const": true},
+          "change_strategy": {"const": "none"},
+          "interaction_analysis": {"maxItems": 0},
+          "constraint_checks": {"maxItems": 0},
+          "changes": {"maxItems": 0}
+        }
+      }
     }
   ],
   "properties": {
@@ -90,7 +108,12 @@
     },
     "action": {
       "type": "string",
-      "enum": ["adjust_parameters", "retry_same", "pause_for_human"]
+      "enum": [
+        "adjust_parameters",
+        "retry_same",
+        "diagnostic_retry_same",
+        "pause_for_human"
+      ]
     },
     "safe_to_automate": {"type": "boolean"},
     "change_strategy": {

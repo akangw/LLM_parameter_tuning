@@ -20,6 +20,14 @@ deployment:
 poll_seconds: 60
 round_timeout_minutes: 750
 partial_exit_grace_seconds: 120
+# Unattended recovery uses per-class budgets plus one total cap. Deterministic
+# invalid states still fail closed instead of burning NPU time indefinitely.
+failure_recovery:
+  same_candidate_retries: 4
+  agent_diagnostic_retries: 1
+  parameter_adjustments: 3
+  total_recovery_rounds: 6
+max_controller_recovery_attempts: 3
 # Codex is the default. Alternate providers reference credential environment
 # variable names; secrets are never stored in this file or Session artifacts.
 agent:

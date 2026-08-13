@@ -21,6 +21,12 @@ ARCHIVED_RESUME_STATUSES = {
     "stopped_after_current_round",
     "stopped_after_failed_round",
 }
+RECOVERABLE_CONTROLLER_STATUSES = {"recovering_controller_error"}
+LEGACY_RECOVERABLE_AGENT_MARKERS = (
+    "Agent analysis failed",
+    "Structured output error",
+    "schema-valid JSON",
+)
 
 
 def _merge(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
@@ -120,6 +126,17 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
     status = str(state.get("status", ""))
     if status in COMPLETED_STATUSES:
         return "complete", f"Session is already terminal: {status}"
+    if status in RECOVERABLE_CONTROLLER_STATUSES and terminal_artifact_exists(state):
+        return "--resume", f"retrying bounded recoverable Controller error: {status}"
+    if (
+        status == "paused_controller_error"
+        and terminal_artifact_exists(state)
+        and any(
+            marker in str(state.get("controller_error", ""))
+            for marker in LEGACY_RECOVERABLE_AGENT_MARKERS
+        )
+    ):
+        return "--resume", "migrating legacy Agent protocol pause into recovery"
     if status.startswith("paused_"):
         return "blocked", f"Session requires operator review: {status}"
 

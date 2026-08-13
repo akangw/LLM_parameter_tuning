@@ -76,17 +76,74 @@ def _extract_json(text: str) -> Any:
         raise
 
 
+def _prune_disallowed_metadata(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    path: str = "$",
+) -> tuple[Any, list[str]]:
+    """Remove only object keys explicitly forbidden by a JSON Schema.
+
+    Agent providers occasionally attach explanatory metadata next to an
+    otherwise valid structured decision.  Values, required fields and types
+    are never coerced here; ordinary schema validation remains authoritative.
+    """
+    removed: list[str] = []
+    if isinstance(value, dict) and (
+        schema.get("type") == "object" or isinstance(schema.get("properties"), dict)
+    ):
+        properties = schema.get("properties", {})
+        additional = schema.get("additionalProperties", True)
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            child_path = f"{path}.{key}"
+            if key in properties:
+                normalized[key], child_removed = _prune_disallowed_metadata(
+                    item, properties[key], path=child_path
+                )
+                removed.extend(child_removed)
+            elif additional is False:
+                removed.append(child_path)
+            else:
+                normalized[key] = item
+        return normalized, removed
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        normalized_items: list[Any] = []
+        for index, item in enumerate(value):
+            normalized, child_removed = _prune_disallowed_metadata(
+                item, schema["items"], path=f"{path}[{index}]"
+            )
+            normalized_items.append(normalized)
+            removed.extend(child_removed)
+        return normalized_items, removed
+    return value, removed
+
+
 def _validate_and_write(value: Any, schema_path: Path, output_path: Path) -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    normalized, removed = _prune_disallowed_metadata(value, schema)
     try:
         import jsonschema
 
-        jsonschema.validate(value, schema)
+        jsonschema.validate(normalized, schema)
     except ImportError:
         pass
     output_path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    if removed:
+        output_path.with_name(output_path.name + ".normalization.json").write_text(
+            json.dumps(
+                {
+                    "policy": "prune_schema_forbidden_metadata_v1",
+                    "removed_paths": removed,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
 
 def _required_secret(settings: dict[str, Any]) -> str:

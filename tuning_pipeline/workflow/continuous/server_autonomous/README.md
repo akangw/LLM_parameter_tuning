@@ -139,9 +139,23 @@ simpler supported route.
 Both managers apply the same recovery policy:
 
 - an active task/run is resumed after a process crash or reboot;
+- Agent transport/structured-output failures are retried twice within the same
+  experiment round; schema-forbidden explanatory metadata is pruned with an
+  adjacent audit, while parameter values, required fields and Search Limits
+  remain strict;
+- after protocol retries are exhausted, a completed round may be resumed by
+  the service manager up to three times without rerunning its Benchmark;
+- experiment failures not solved by deterministic rules are passed to the
+  frozen Codex+DeepSeek Agent with complete archived evidence. It may request
+  one unchanged diagnostic rerun or a Search-Limits-constrained parameter
+  correction; the Controller revalidates every action and never gives the
+  Agent shell, image, topology, benchmark, path, or Lease mutation authority;
+- one failure chain is capped at four transient retries, one Agent diagnostic
+  retry, three parameter corrections, and six total recovery rounds;
 - a completed Session exits cleanly and stays stopped;
-- `paused_*`, inconsistent state, an already running Controller, or a retained
-  `STOP_REQUESTED` marker exits with code 78 and is not restarted;
+- unknown invariant failures, exhausted recovery, other `paused_*`, inconsistent
+  state, an already running Controller, or a retained `STOP_REQUESTED` marker
+  exits with code 78 and is not restarted;
 - TERM from either manager is converted into `STOP_REQUESTED`, then the wrapper
   waits up to 24 hours for the active round to archive before forced shutdown.
 
