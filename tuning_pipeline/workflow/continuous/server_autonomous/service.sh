@@ -84,6 +84,21 @@ case "${1:-}" in
   authorize-resume)
     archive_stop_marker
     ;;
+  replay-unmeasured)
+    [[ "${2:-}" =~ ^round_[0-9]+_a[0-9]+([a-z][0-9]+)?$ ]] || {
+      echo "usage: $0 replay-unmeasured round_NNN_aN[rN]" >&2
+      exit 2
+    }
+    request="${RUNTIME_ROOT}/REPLAY_UNMEASURED_REQUEST"
+    [[ ! -e "${request}" ]] || {
+      echo "A replay request already exists: ${request}" >&2
+      exit 2
+    }
+    temporary="${request}.tmp-$$"
+    printf '%s\n' "$2" > "${temporary}"
+    mv "${temporary}" "${request}"
+    echo "Authorized audited replay of: $2"
+    ;;
   authorize-new-session)
     archive_terminal_state
     ;;
@@ -142,7 +157,7 @@ case "${1:-}" in
     (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" shutdown)
     ;;
   *)
-    echo "usage: $0 {prepare-env|render|authorize-resume|authorize-new-session|systemd-install|systemd-start|systemd-stop|systemd-restart|systemd-status|systemd-logs [N]|supervisor-install|supervisor-start|supervisor-stop|supervisor-restart|supervisor-status|supervisor-shutdown}" >&2
+    echo "usage: $0 {prepare-env|render|authorize-resume|replay-unmeasured ROUND|authorize-new-session|systemd-install|systemd-start|systemd-stop|systemd-restart|systemd-status|systemd-logs [N]|supervisor-install|supervisor-start|supervisor-stop|supervisor-restart|supervisor-status|supervisor-shutdown}" >&2
     exit 2
     ;;
 esac
