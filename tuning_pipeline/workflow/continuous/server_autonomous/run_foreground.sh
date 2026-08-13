@@ -26,6 +26,21 @@ PYTHON_BIN="${VLLMTKB_PYTHON:-${PYTHON_BIN}}"
   exit 78
 }
 
+EXTRA_ARGS=()
+REPLAY_UNMEASURED_REQUEST="${RUNTIME_ROOT}/REPLAY_UNMEASURED_REQUEST"
+if [[ -f "${REPLAY_UNMEASURED_REQUEST}" ]]; then
+  REPLAY_ROUND=$(head -n 1 "${REPLAY_UNMEASURED_REQUEST}")
+  [[ "${REPLAY_ROUND}" =~ ^round_[0-9]+_a[0-9]+([a-z][0-9]+)?$ ]] || {
+    echo "Invalid unmeasured-candidate replay round: ${REPLAY_ROUND}" >&2
+    exit 78
+  }
+  CONSUMED_REPLAY="${REPLAY_UNMEASURED_REQUEST}.consumed-$(date +%Y%m%d_%H%M%S)-$$"
+  mv "${REPLAY_UNMEASURED_REQUEST}" "${CONSUMED_REPLAY}"
+  ACTION="--replay-unmeasured-candidate"
+  EXTRA_ARGS=("${REPLAY_ROUND}")
+  echo "Consumed unmeasured-candidate replay request: ${CONSUMED_REPLAY}"
+else
+
 set +e
 DECISION_OUTPUT=$("${PYTHON_BIN}" "${SCRIPT_DIR}/service_runtime.py" decide \
   --runtime-root "${RUNTIME_ROOT}" --mode "${MODE}")
@@ -40,9 +55,9 @@ if [[ "${ACTION}" == "complete" ]]; then
   exit 0
 fi
 
-EXTRA_ARGS=()
+fi
+
 BASELINE_REUSE_REQUEST="${RUNTIME_ROOT}/BASELINE_REUSE_REQUEST"
-REPLAY_UNMEASURED_REQUEST="${RUNTIME_ROOT}/REPLAY_UNMEASURED_REQUEST"
 if [[ "${ACTION}" == "--start" && -f "${BASELINE_REUSE_REQUEST}" ]]; then
   REUSE_SOURCE=$(head -n 1 "${BASELINE_REUSE_REQUEST}")
   [[ -n "${REUSE_SOURCE}" ]] || {
@@ -53,19 +68,6 @@ if [[ "${ACTION}" == "--start" && -f "${BASELINE_REUSE_REQUEST}" ]]; then
   mv "${BASELINE_REUSE_REQUEST}" "${CONSUMED_REQUEST}"
   EXTRA_ARGS+=(--reuse-baseline-session "${REUSE_SOURCE}")
   echo "Consumed baseline reuse request: ${CONSUMED_REQUEST}"
-fi
-
-if [[ "${ACTION}" == "--resume" && -f "${REPLAY_UNMEASURED_REQUEST}" ]]; then
-  REPLAY_ROUND=$(head -n 1 "${REPLAY_UNMEASURED_REQUEST}")
-  [[ "${REPLAY_ROUND}" =~ ^round_[0-9]+_a[0-9]+([a-z][0-9]+)?$ ]] || {
-    echo "Invalid unmeasured-candidate replay round: ${REPLAY_ROUND}" >&2
-    exit 78
-  }
-  CONSUMED_REPLAY="${REPLAY_UNMEASURED_REQUEST}.consumed-$(date +%Y%m%d_%H%M%S)-$$"
-  mv "${REPLAY_UNMEASURED_REQUEST}" "${CONSUMED_REPLAY}"
-  ACTION="--replay-unmeasured-candidate"
-  EXTRA_ARGS=("${REPLAY_ROUND}")
-  echo "Consumed unmeasured-candidate replay request: ${CONSUMED_REPLAY}"
 fi
 
 CHILD_PID=""
