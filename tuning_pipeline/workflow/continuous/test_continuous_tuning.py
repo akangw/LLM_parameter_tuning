@@ -275,6 +275,93 @@ class ControllerTests(unittest.TestCase):
             1,
             self.controller.grid_step_distance([48, 8, 16, 32, 64], 48, 64),
         )
+
+    def test_infrastructure_failure_does_not_consume_candidate_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            failed = session / "round_001_a1"
+            (failed / "02_parameters").mkdir(parents=True)
+            (failed / "05_results").mkdir()
+            (failed / "06_agent_analysis").mkdir()
+            tuning.save_yaml(
+                failed / "02_parameters" / "candidate_params.yaml", self.baseline
+            )
+            tuning.save_yaml(
+                failed / "05_results" / "failure.yaml", {"reason": "stale master ip"}
+            )
+            tuning.save_json(
+                failed / "06_agent_analysis" / "failure_decision.json",
+                {
+                    "classification": "transient_infrastructure",
+                    "action": "retry_same",
+                },
+            )
+            attempts = self.controller.attempted_history_summary(session)
+            self.assertFalse(attempts[0]["counts_as_parameter_experiment"])
+            self.assertFalse(
+                self.controller.candidate_was_attempted(session, self.baseline)
+            )
+
+    def test_parameter_attributed_startup_failure_consumes_candidate_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            failed = session / "round_001_a1"
+            (failed / "02_parameters").mkdir(parents=True)
+            (failed / "05_results").mkdir()
+            (failed / "06_agent_analysis").mkdir()
+            tuning.save_yaml(
+                failed / "02_parameters" / "candidate_params.yaml", self.baseline
+            )
+            tuning.save_yaml(
+                failed / "05_results" / "failure.yaml",
+                {"reason": "parameter-exclusive runtime path crashed"},
+            )
+            tuning.save_json(
+                failed / "06_agent_analysis" / "failure_decision.json",
+                {
+                    "classification": "model_or_runtime_bug",
+                    "action": "adjust_parameters",
+                },
+            )
+            attempts = self.controller.attempted_history_summary(session)
+            self.assertTrue(attempts[0]["counts_as_parameter_experiment"])
+            self.assertTrue(
+                self.controller.candidate_was_attempted(session, self.baseline)
+            )
+
+    def test_audited_reclassification_can_restore_unmeasured_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            failed = session / "round_001_a1"
+            (failed / "02_parameters").mkdir(parents=True)
+            (failed / "05_results").mkdir()
+            (failed / "06_agent_analysis").mkdir()
+            tuning.save_yaml(
+                failed / "02_parameters" / "candidate_params.yaml", self.baseline
+            )
+            tuning.save_yaml(
+                failed / "05_results" / "failure.yaml", {"reason": "startup failed"}
+            )
+            tuning.save_json(
+                failed / "06_agent_analysis" / "failure_decision.json",
+                {
+                    "classification": "model_or_runtime_bug",
+                    "action": "adjust_parameters",
+                },
+            )
+            tuning.save_json(
+                failed / "06_agent_analysis" / "failure_reclassification.json",
+                {
+                    "classification": "transient_infrastructure",
+                    "counts_as_parameter_experiment": False,
+                    "evidence": ["worker used a stale master address"],
+                },
+            )
+            attempts = self.controller.attempted_history_summary(session)
+            self.assertFalse(attempts[0]["counts_as_parameter_experiment"])
+            self.assertFalse(
+                self.controller.candidate_was_attempted(session, self.baseline)
+            )
         self.assertEqual(
             4,
             self.controller.grid_step_distance([48, 8, 16, 32, 64], 8, 64),
@@ -1914,6 +2001,7 @@ SLOT  service
                 failed / "06_agent_analysis" / "failure_decision.json",
                 {
                     "classification": "parameter_invalid",
+                    "action": "adjust_parameters",
                     "candidate": self.baseline,
                 },
             )
@@ -2036,6 +2124,14 @@ SLOT  service
             tuning.save_yaml(
                 failed / "05_results" / "failure.yaml",
                 {"reason": "invalid parameter"},
+            )
+            tuning.save_json(
+                failed / "06_agent_analysis" / "failure_decision.json",
+                {
+                    "classification": "parameter_invalid",
+                    "action": "adjust_parameters",
+                    "candidate": self.baseline,
+                },
             )
 
             rollback = {

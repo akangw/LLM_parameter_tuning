@@ -143,6 +143,14 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 | 控制面读故障 | SSH/本地传输暂断、远端产物查询失败 | 单轮原地重试 3 次，仍失败则标为可恢复 Controller I/O 错误，由 Supervisor 走有上限恢复 | 不修改候选、不重跑已完成 Benchmark |
 | DP 前端握手超时 | `SERVICE_READY` 前出现精确的五分钟 front-end response timeout，且 Lease 为一活跃一退出、没有 OOM/参数非法/HCCL 证据 | 归类为瞬态进程协调故障，保持候选走基础设施重试预算 | 任一危险签名存在时不套用该规则，转完整失败分析 |
 
+失败目录不等于参数已经完成实验。搜索覆盖只认可两种证据：完整
+Benchmark，或日志已把启动失败明确归因到候选参数/组合并经 Controller
+校验为 `parameter_invalid`、`parameter_oom` 或可受限绕行的
+`model_or_runtime_bug`。Lease、节点地址、网络、抢占和残留进程等失败不消费
+候选覆盖，外部问题修复后必须保持原候选重试；需要回放较早的未测候选时用
+`--replay-unmeasured-candidate round_NNN_label`，命令会保留原轮和被替代轮的审计
+文件，且拒绝回放已经 Benchmark 或已被参数证据淘汰的候选。
+
 默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
 
 ### Git 克隆后可直接复用的知识产物

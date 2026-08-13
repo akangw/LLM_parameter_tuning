@@ -3459,7 +3459,13 @@ class Controller:
         return [item for item in history if item["benchmark_regime"] == latest_regime]
 
     def attempted_history_summary(self, session_dir: Path) -> list[dict[str, Any]]:
-        """Return every terminal candidate, including failed/invalid attempts."""
+        """Return terminal candidates without conflating infra and experiments.
+
+        A candidate is experimentally covered only after it produced metrics or a
+        structured failure decision attributed startup failure to that candidate.
+        Lease/address/network/process failures remain visible for diagnosis, but
+        must not consume search coverage or allow the Agent to skip the value.
+        """
         attempts: list[dict[str, Any]] = []
         for round_dir in sorted(session_dir.glob("round_*")):
             params_path = round_dir / "02_parameters" / "candidate_params.yaml"
@@ -3475,6 +3481,10 @@ class Controller:
                     "round": round_dir.name,
                     "params": params,
                     "outcome": "success" if metrics_path.exists() else "failed",
+                    "counts_as_parameter_experiment": metrics_path.exists(),
+                    "experiment_evidence_status": (
+                        "benchmarked" if metrics_path.exists() else "unattributed_failure"
+                    ),
                 }
                 if metrics_path.exists():
                     item["metrics"] = json.loads(
@@ -3485,10 +3495,41 @@ class Controller:
                     failure_decision_path = (
                         round_dir / "06_agent_analysis" / "failure_decision.json"
                     )
+                    reclassification_path = (
+                        round_dir
+                        / "06_agent_analysis"
+                        / "failure_reclassification.json"
+                    )
                     if failure_decision_path.exists():
-                        item["failure_decision"] = json.loads(
+                        decision = json.loads(
                             failure_decision_path.read_text(encoding="utf-8")
                         )
+                        item["failure_decision"] = decision
+                        classification = str(decision.get("classification", ""))
+                        action = str(decision.get("action", ""))
+                        parameter_attributed = (
+                            action == "adjust_parameters"
+                            and classification in FAILURE_ADJUSTABLE_CLASSIFICATIONS
+                        )
+                        if parameter_attributed:
+                            item["counts_as_parameter_experiment"] = True
+                            item["experiment_evidence_status"] = (
+                                "parameter_attributed_startup_failure"
+                            )
+                        else:
+                            item["experiment_evidence_status"] = (
+                                "infrastructure_or_unattributed_failure"
+                            )
+                    if reclassification_path.exists():
+                        reclassification = json.loads(
+                            reclassification_path.read_text(encoding="utf-8")
+                        )
+                        item["failure_reclassification"] = reclassification
+                        if reclassification.get("counts_as_parameter_experiment") is False:
+                            item["counts_as_parameter_experiment"] = False
+                            item["experiment_evidence_status"] = (
+                                "superseded_as_infrastructure_or_unattributed_failure"
+                            )
                 attempts.append(item)
             except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError):
                 continue
@@ -3589,6 +3630,8 @@ class Controller:
         for parameter, allowed_values in self.config["search_limits"].items():
             attempted_values: list[Any] = []
             for item in attempted_history:
+                if not item.get("counts_as_parameter_experiment", False):
+                    continue
                 params = item.get("params", {})
                 if parameter in params and params[parameter] not in attempted_values:
                     attempted_values.append(params[parameter])
@@ -3668,6 +3711,7 @@ class Controller:
     ) -> bool:
         return any(
             item.get("params") == candidate
+            and item.get("counts_as_parameter_experiment", False)
             for item in self.attempted_history_summary(session_dir)
         )
 
@@ -5761,6 +5805,126 @@ Embedded evidence:
         )
         return state
 
+    def replay_unmeasured_candidate(self, source_round_name: str) -> dict[str, Any]:
+        """Replay a prior candidate whose failure was not parameter-attributed.
+
+        This is the crash-safe/operator repair path for infrastructure failures
+        discovered only after later recovery work.  It never rewrites history:
+        the interrupted current round is archived with an explicit audit record
+        and the source candidate is submitted as a new retry round.
+        """
+        if not STATE_FILE.exists():
+            raise RuntimeError("No controller state exists to repair")
+        state = load_controller_state()
+        self.assert_state_image_identity(state)
+        session_dir = Path(state["session_dir"])
+        self.load_session_sidecars(session_dir)
+        source_round = session_dir / source_round_name
+        if source_round.parent != session_dir or not source_round.is_dir():
+            raise RuntimeError(f"Unknown Session round: {source_round_name!r}")
+        source_failure = source_round / "05_results" / "failure.yaml"
+        source_metrics = source_round / "05_results" / "metrics.json"
+        source_params = source_round / "02_parameters" / "candidate_params.yaml"
+        if not source_failure.is_file() or source_metrics.exists() or not source_params.is_file():
+            raise RuntimeError(
+                "Replay source must have candidate parameters and failure evidence, "
+                "but no Benchmark metrics"
+            )
+        source_attempt = next(
+            (
+                item
+                for item in self.attempted_history_summary(session_dir)
+                if item.get("round") == source_round_name
+            ),
+            None,
+        )
+        if not source_attempt:
+            raise RuntimeError("Replay source is not a terminal recorded attempt")
+        if source_attempt.get("counts_as_parameter_experiment", False):
+            raise RuntimeError(
+                "Refusing to replay a candidate already covered by Benchmark or "
+                "a parameter-attributed startup failure"
+            )
+        snapshot = self.task_snapshot(state.get("active_task_id"))
+        if not snapshot.get("terminal") and int(snapshot.get("active_pods", 0)) > 0:
+            raise RuntimeError(
+                "Current task still has active processes; stop it before replay"
+            )
+        current_round = self.round_dir(
+            session_dir, int(state["round_index"]), str(state["round_label"])
+        )
+        current_failure = current_round / "05_results" / "failure.yaml"
+        current_metrics = current_round / "05_results" / "metrics.json"
+        if current_metrics.exists():
+            raise RuntimeError("Current round already has Benchmark metrics")
+        if not current_failure.exists():
+            save_yaml(
+                current_failure,
+                {
+                    "detected_at": now(),
+                    "reason": (
+                        "Operator superseded this unmeasured recovery round to replay "
+                        f"the earlier infrastructure-blocked candidate {source_round_name}."
+                    ),
+                    "classification": "operator_superseded_unmeasured_recovery",
+                },
+            )
+        source_candidate = load_yaml(source_params)
+        next_index = int(state["round_index"]) + 1
+        candidate_index_match = re.search(r"_a(\d+)", source_round_name)
+        candidate_index = (
+            int(candidate_index_match.group(1))
+            if candidate_index_match
+            else int(state["candidate_index"])
+        )
+        retry_number = max(1, int(state.get("failure_retries", 0)) + 1)
+        next_label = f"a{candidate_index}r{retry_number}"
+        audit = {
+            "authorized_at": now(),
+            "source_round": source_round_name,
+            "superseded_round": current_round.name,
+            "retry_label": next_label,
+            "candidate": source_candidate,
+            "reason": (
+                "The source candidate never produced Benchmark metrics and its "
+                "failure was infrastructure/unattributed, so search coverage must "
+                "replay it after the external fix."
+            ),
+        }
+        save_json(
+            current_round / "06_agent_analysis" / "unmeasured_candidate_replay.json",
+            audit,
+        )
+        _, task_id, run_id = self.prepare_and_submit_round(
+            session_dir,
+            state,
+            index=next_index,
+            label=next_label,
+            candidate=source_candidate,
+            launch_profile=self.round_launch_profile(source_round),
+        )
+        state.update(
+            round_index=next_index,
+            candidate_index=candidate_index,
+            round_label=next_label,
+            active_task_id=task_id,
+            active_run_id=run_id,
+            current_candidate=source_candidate,
+            failure_retries=retry_number,
+            round_submitted_at=now(),
+            status="retrying_infrastructure_failure",
+            recovery_source_round=source_round_name,
+            recovery_reason="replay_unmeasured_candidate_after_external_fix",
+            last_failure_classification="transient_infrastructure",
+            last_failure_summary=audit["reason"],
+        )
+        self.save_state(state)
+        log(
+            f"Replayed unmeasured {source_round_name} as {next_label} "
+            f"task={task_id} run={run_id}"
+        )
+        return state
+
     def auto_retry_paused_current(self) -> dict[str, Any]:
         """Resume only a paused round matching a deterministic safe signature."""
         state = load_controller_state()
@@ -6479,6 +6643,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="stop only the task recorded by state.json using frozen Session config",
     )
+    group.add_argument(
+        "--replay-unmeasured-candidate",
+        metavar="ROUND_DIR",
+        help=(
+            "replay a prior no-metrics candidate only when its failure was not "
+            "attributed to the candidate parameters"
+        ),
+    )
     group.add_argument("--status", action="store_true", help="print controller state")
     parser.add_argument(
         "--strategy-profile",
@@ -6541,6 +6713,7 @@ def main() -> int:
         or args.retry_paused_current
         or args.auto_retry_paused_current
         or args.stop_active_task
+        or args.replay_unmeasured_candidate
         or (args.check_only and args.use_frozen_session)
     )
     if (args.use_frozen_session or args.allow_active_lease) and not args.check_only:
@@ -6656,6 +6829,17 @@ def main() -> int:
             print(
                 json.dumps(
                     controller.auto_retry_paused_current(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            controller.start(resume=True)
+        elif args.replay_unmeasured_candidate:
+            print(
+                json.dumps(
+                    controller.replay_unmeasured_candidate(
+                        args.replay_unmeasured_candidate
+                    ),
                     ensure_ascii=False,
                     indent=2,
                 )
