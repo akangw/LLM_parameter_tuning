@@ -5846,7 +5846,7 @@ Embedded evidence:
                 "a parameter-attributed startup failure"
             )
         snapshot = self.task_snapshot(state.get("active_task_id"))
-        if not snapshot.get("terminal") and int(snapshot.get("active_pods", 0)) > 0:
+        if not snapshot.get("terminal") and int(snapshot.get("active_pods") or 0) > 0:
             raise RuntimeError(
                 "Current task still has active processes; stop it before replay"
             )
