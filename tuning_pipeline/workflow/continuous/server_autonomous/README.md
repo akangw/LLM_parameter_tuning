@@ -152,6 +152,13 @@ Both managers apply the same recovery policy:
   Agent shell, image, topology, benchmark, path, or Lease mutation authority;
 - one failure chain is capped at four transient retries, one Agent diagnostic
   retry, three parameter corrections, and six total recovery rounds;
+- critical JSON/YAML artifacts use atomic replacement. `state.json.previous`
+  mirrors the latest committed state, and submission intent/task/run identity
+  form a recovery ledger so a crash around submission resumes existing work
+  instead of blindly submitting a duplicate;
+- artifact collection retries three times in place; persistent read-only
+  control-plane failure is promoted to a bounded Supervisor recovery without
+  changing the candidate or rerunning a completed Benchmark;
 - a completed Session exits cleanly and stays stopped;
 - unknown invariant failures, exhausted recovery, other `paused_*`, inconsistent
   state, an already running Controller, or a retained `STOP_REQUESTED` marker

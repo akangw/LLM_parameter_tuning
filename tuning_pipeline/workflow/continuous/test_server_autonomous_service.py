@@ -129,6 +129,43 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             action, _ = service_runtime.decide(runtime, "auto")
             self.assertEqual(action, "blocked")
 
+    def test_pending_submission_transaction_is_resumable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(
+                runtime,
+                status="running",
+                pending_submission={
+                    "round_index": 2,
+                    "round_label": "a2",
+                    "candidate": {"x": 1},
+                },
+            )
+            action, reason = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+            self.assertIn("submission", reason)
+
+    def test_corrupt_primary_state_uses_last_known_good_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(runtime, active_task_id="task-1", active_run_id="run-1")
+            (runtime / "state.json.previous").write_text(
+                (runtime / "state.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (runtime / "state.json").write_text('{"status":', encoding="utf-8")
+            action, reason = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+            self.assertIn("recovering active", reason)
+
+    def test_corrupt_primary_and_backup_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            (runtime / "state.json").write_text("{", encoding="utf-8")
+            (runtime / "state.json.previous").write_text("{", encoding="utf-8")
+            action, _ = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "blocked")
+
     def test_status_lease_prefers_frozen_session_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

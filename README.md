@@ -139,6 +139,9 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 | 恢复总预算 | 多种恢复策略连续触发 | 瞬态同候选最多 4 次、Agent 诊断性重跑最多 1 次、参数修正最多 3 次，且同一失败链总计最多 6 个恢复轮 | 达到任一上限即暂停，防止 32 NPU 无限空耗 |
 | Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变，最多额外提交 2 次 | 暂停人工处理，避免无限消耗 NPU |
 | 服务守护 | Controller 进程意外退出 | systemd/Supervisor 按服务策略重启；已有运行轮次从冻结状态恢复；已完成 Benchmark 的轮次从 Agent 分析处续接，不重跑测评 | 明确不可恢复或超过恢复预算的 `paused_*`、终态、状态不一致或保留 STOP 标记时退出码 78，禁止盲目重启 |
+| 状态与提交事务 | 写状态时掉电、状态文件损坏，或远端提交成功后 Controller 突然退出 | `state.json` 原子替换并保留同版本备份；提交前持久化 intent，提交后立即落盘 task/run 身份；重启时先对账再继续 | 主状态与备份都损坏，或无法证明远端提交身份时失败关闭，禁止猜测性重复提交 |
+| 控制面读故障 | SSH/本地传输暂断、远端产物查询失败 | 单轮原地重试 3 次，仍失败则标为可恢复 Controller I/O 错误，由 Supervisor 走有上限恢复 | 不修改候选、不重跑已完成 Benchmark |
+| DP 前端握手超时 | `SERVICE_READY` 前出现精确的五分钟 front-end response timeout，且 Lease 为一活跃一退出、没有 OOM/参数非法/HCCL 证据 | 归类为瞬态进程协调故障，保持候选走基础设施重试预算 | 任一危险签名存在时不套用该规则，转完整失败分析 |
 
 默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
 

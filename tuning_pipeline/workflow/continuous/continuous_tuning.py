@@ -147,6 +147,10 @@ class AgentProtocolError(RuntimeError):
     """The Agent transport/structured-output contract may succeed on retry."""
 
 
+class RecoverableControllerIOError(RuntimeError):
+    """A read-only control-plane operation may succeed after process restart."""
+
+
 class LeaseNotReadyError(RuntimeError):
     """The persistent Lease may recover without changing experiment state."""
 
@@ -387,18 +391,54 @@ def validate_activation_approval(
 
 def save_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    temporary = path.with_name(f".{path.name}.write-{os.getpid()}-{time.time_ns()}")
+    with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
 
 def save_yaml(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(value, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
+    payload = yaml.safe_dump(value, allow_unicode=True, sort_keys=False)
+    temporary = path.with_name(f".{path.name}.write-{os.getpid()}-{time.time_ns()}")
+    with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def load_controller_state() -> dict[str, Any]:
+    """Read primary state, falling back to the last known-good snapshot."""
+    try:
+        value = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("Controller state must be a JSON object")
+        return value
+    except (OSError, ValueError, json.JSONDecodeError) as primary_error:
+        backup = STATE_FILE.with_name(STATE_FILE.name + ".previous")
+        try:
+            value = json.loads(backup.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("Backup Controller state must be a JSON object")
+        except (OSError, ValueError, json.JSONDecodeError) as backup_error:
+            raise RuntimeError(
+                "Controller state and its last-known-good backup are unreadable: "
+                f"primary={primary_error}; backup={backup_error}"
+            ) from backup_error
+        save_json(STATE_FILE, value)
+        save_json(
+            STATE_FILE.with_name("state_recovery.audit.json"),
+            {
+                "recovered_at": now(),
+                "source": str(backup),
+                "primary_error": f"{type(primary_error).__name__}: {primary_error}",
+            },
+        )
+        return value
 
 
 def run_process(
@@ -3064,6 +3104,21 @@ class Controller:
                 found[name] = self.scp_from(f"{remote_run}/{name}", target)
         return found
 
+    def collect_with_retry(self, run_id: str, round_dir: Path) -> dict[str, bool]:
+        """Absorb short control-plane outages without changing experiment state."""
+        failures: list[str] = []
+        for attempt in range(1, 4):
+            try:
+                return self.collect(run_id, round_dir)
+            except Exception as exc:
+                failures.append(f"attempt {attempt}/3: {type(exc).__name__}: {exc}")
+                if attempt < 3:
+                    log(f"Artifact collection failed ({attempt}/3); retrying.")
+                    time.sleep(min(30, 5 * attempt))
+        raise RecoverableControllerIOError(
+            "Artifact collection failed after 3 attempts: " + failures[-1][-2000:]
+        )
+
     def start_aligned_benchmark(self, run_id: str, task_id: str | None) -> None:
         if self.benchmark_mode != "aligned_l1":
             return
@@ -4320,16 +4375,32 @@ The previous provider call failed its transport or structured-output contract.
 Return a fresh, complete JSON decision conforming exactly to the supplied schema.
 Failure detail: {protocol_failures[-1][-2000:]}
 """
-                result = run_structured_agent(
-                    self.agent_config,
-                    prompt=protocol_prompt,
-                    schema_path=self.decision_schema_path(
-                        session_dir, "agent_decision.schema.json"
-                    ),
-                    output_path=decision_path,
-                    cwd=KB_ROOT,
-                    allowed_dir=round_dir,
-                )
+                try:
+                    result = run_structured_agent(
+                        self.agent_config,
+                        prompt=protocol_prompt,
+                        schema_path=self.decision_schema_path(
+                            session_dir, "agent_decision.schema.json"
+                        ),
+                        output_path=decision_path,
+                        cwd=KB_ROOT,
+                        allowed_dir=round_dir,
+                    )
+                except Exception as exc:
+                    protocol_failures.append(
+                        f"attempt {protocol_attempt}/{protocol_attempts}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    if protocol_attempt < protocol_attempts:
+                        log(
+                            "Agent provider raised a transport exception "
+                            f"({protocol_attempt}/{protocol_attempts}); retrying."
+                        )
+                        continue
+                    raise AgentProtocolError(
+                        "Agent provider raised exceptions after all protocol "
+                        f"attempts: {protocol_failures[-1][-2000:]}"
+                    ) from exc
                 suffix = f"attempt_{attempt:02d}.protocol_{protocol_attempt:02d}"
                 (analysis_dir / f"agent_events.{suffix}.jsonl").write_text(
                     result.stdout, encoding="utf-8"
@@ -4773,14 +4844,26 @@ Embedded evidence:
                     "the structured-output contract. Return one fresh complete JSON "
                     "decision. Failure detail: " + protocol_failures[-1][-2000:]
                 )
-            result = run_structured_agent(
-                self.agent_config,
-                prompt=retry_prompt,
-                schema_path=self.failure_schema_path(session_dir),
-                output_path=decision_path,
-                cwd=KB_ROOT,
-                allowed_dir=round_dir,
-            )
+            try:
+                result = run_structured_agent(
+                    self.agent_config,
+                    prompt=retry_prompt,
+                    schema_path=self.failure_schema_path(session_dir),
+                    output_path=decision_path,
+                    cwd=KB_ROOT,
+                    allowed_dir=round_dir,
+                )
+            except Exception as exc:
+                protocol_failures.append(
+                    f"attempt {protocol_attempt}/{protocol_attempts}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                if protocol_attempt < protocol_attempts:
+                    continue
+                raise AgentProtocolError(
+                    "Failure-analysis Agent raised exceptions after all attempts: "
+                    + protocol_failures[-1][-2000:]
+                ) from exc
             suffix = f"failure_agent.protocol_{protocol_attempt:02d}"
             (analysis_dir / f"{suffix}.events.jsonl").write_text(
                 result.stdout, encoding="utf-8"
@@ -4874,6 +4957,70 @@ Embedded evidence:
                 f"master.log reports Address already in use at {address}.",
                 "An ApiServer child exited before SERVICE_READY was created.",
                 "No serving parameter change is required or permitted for this retry.",
+            ],
+            "action": "retry_same",
+            "safe_to_automate": True,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "candidate": current,
+        }
+
+    def deterministic_engine_frontend_handshake_retry(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Retry a proven pre-service DP front-end coordination timeout."""
+        runtime_dir = round_dir / "04_runtime"
+        if (runtime_dir / "SERVICE_READY").exists():
+            return None
+        texts: list[str] = []
+        for path in (
+            runtime_dir / "master.log",
+            runtime_dir / "worker.log",
+            runtime_dir / "run_status.json",
+            round_dir / "05_results" / "failure.yaml",
+        ):
+            if path.is_file():
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        evidence = "\n".join(texts)
+        handshake_timeout = (
+            "Did not receive response from front-end process within 5 minutes"
+            in evidence
+        )
+        partial_process_set = bool(
+            re.search(
+                r"LeaseProcessesPartialFailure|active.?[=:] ?1.*inactive.?[=:] ?1",
+                evidence,
+                re.IGNORECASE | re.DOTALL,
+            )
+        )
+        unsafe_signature = re.search(
+            r"out of memory|(?:NPU|device) OOM|invalid (?:argument|parameter)|"
+            r"HCCL.*(?:error|failed)|traceback.*candidate",
+            evidence,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if not handshake_timeout or not partial_process_set or unsafe_signature:
+            return None
+        return {
+            "summary": (
+                "EngineCore timed out before SERVICE_READY while waiting for the "
+                "DP front-end and the Lease reported a partial process set; retrying "
+                "the identical candidate within the infrastructure budget."
+            ),
+            "classification": "transient_infrastructure",
+            "root_cause": (
+                "The DP engine/front-end startup coordination did not complete "
+                "within five minutes; no parameter, OOM, or HCCL signature proves "
+                "that changing the serving candidate is corrective."
+            ),
+            "evidence": [
+                "SERVICE_READY was never created.",
+                "Logs contain the exact five-minute front-end response timeout.",
+                "The Lease reported one active and one inactive process.",
             ],
             "action": "retry_same",
             "safe_to_automate": True,
@@ -5121,16 +5268,39 @@ Embedded evidence:
         prompt_path = analysis_dir / "recovery_agent_prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         decision_path = analysis_dir / "recovery_decision.json"
-        result = run_structured_agent(
-            self.agent_config,
-            prompt=prompt,
-            schema_path=self.decision_schema_path(
-                session_dir, "agent_decision.schema.json"
-            ),
-            output_path=decision_path,
-            cwd=KB_ROOT,
-            allowed_dir=failed_round_dir,
-        )
+        result = None
+        protocol_failures: list[str] = []
+        protocol_attempts = self.max_agent_protocol_retries + 1
+        for protocol_attempt in range(1, protocol_attempts + 1):
+            try:
+                result = run_structured_agent(
+                    self.agent_config,
+                    prompt=prompt,
+                    schema_path=self.decision_schema_path(
+                        session_dir, "agent_decision.schema.json"
+                    ),
+                    output_path=decision_path,
+                    cwd=KB_ROOT,
+                    allowed_dir=failed_round_dir,
+                )
+            except Exception as exc:
+                protocol_failures.append(
+                    f"attempt {protocol_attempt}/{protocol_attempts}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                if protocol_attempt < protocol_attempts:
+                    continue
+                raise AgentProtocolError(
+                    "Recovery Agent provider raised exceptions after all attempts: "
+                    + protocol_failures[-1][-2000:]
+                ) from exc
+            if result.returncode == 0 and decision_path.exists():
+                break
+            protocol_failures.append(
+                f"attempt {protocol_attempt}/{protocol_attempts}: "
+                f"{result.provider}: {result.stderr[-2000:]}"
+            )
+        assert result is not None
         (analysis_dir / "recovery_agent_events.jsonl").write_text(
             result.stdout, encoding="utf-8"
         )
@@ -5138,8 +5308,9 @@ Embedded evidence:
             result.stderr, encoding="utf-8"
         )
         if result.returncode != 0 or not decision_path.exists():
-            raise RuntimeError(
-                f"{result.provider} recovery analysis failed: {result.stderr[-2000:]}"
+            raise AgentProtocolError(
+                f"{result.provider} recovery analysis failed after "
+                f"{protocol_attempts} attempts: {result.stderr[-2000:]}"
             )
         decision = json.loads(decision_path.read_text(encoding="utf-8"))
         if decision["action"] == "stop_complete":
@@ -5185,6 +5356,13 @@ Embedded evidence:
         launch_profile: str | None = None,
     ) -> tuple[Path, str | None, str]:
         next_dir = self.round_dir(session_dir, index, label)
+        state["pending_submission"] = {
+            "round_index": index,
+            "round_label": label,
+            "candidate": candidate,
+            "prepared_at": now(),
+        }
+        self.save_state(state)
         self.write_context(
             next_dir,
             {
@@ -5204,12 +5382,25 @@ Embedded evidence:
             dry_run=False,
             launch_profile=launch_profile,
         )
+        # Commit the external identity immediately after submit returns. This
+        # closes the larger crash window before each caller's bookkeeping and
+        # lets Supervisor resume the exact task/run instead of resubmitting.
+        state.update(
+            round_index=index,
+            round_label=label,
+            active_task_id=task_id,
+            active_run_id=run_id,
+            current_candidate=candidate,
+            round_submitted_at=now(),
+            pending_submission=None,
+        )
+        self.save_state(state)
         return next_dir, task_id, run_id
 
     def create_session(self) -> tuple[Path, dict[str, Any]]:
         if STATE_FILE.exists():
             try:
-                previous_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                previous_state = load_controller_state()
                 previous_dir = Path(previous_state.get("session_dir", ""))
                 if previous_dir.is_dir():
                     save_json(
@@ -5398,11 +5589,70 @@ Embedded evidence:
     def save_state(self, state: dict[str, Any]) -> None:
         state["updated_at"] = now()
         save_json(STATE_FILE, state)
+        # Keep a second complete copy of the same committed snapshot. A backup
+        # that lagged by one transition could resurrect an already-submitted
+        # round and cause duplicate work after storage corruption.
+        save_json(STATE_FILE.with_name(STATE_FILE.name + ".previous"), state)
+
+    def recover_pending_submission(self, state: dict[str, Any]) -> bool:
+        pending = state.get("pending_submission")
+        if not isinstance(pending, dict):
+            return False
+        session_dir = Path(str(state.get("session_dir", "")))
+        round_dir = self.round_dir(
+            session_dir,
+            int(pending["round_index"]),
+            str(pending["round_label"]),
+        )
+        submission_path = round_dir / "03_submission" / "submission.json"
+        submission: dict[str, Any] = {}
+        if submission_path.is_file():
+            submission = json.loads(submission_path.read_text(encoding="utf-8"))
+        run_id = str(submission.get("run_id", "")).strip()
+        task_id = submission.get("task_id") or submission.get("lease_name")
+        if not run_id and self.execution_mode == "ktp_lab":
+            pointer = round_dir / "02_parameters" / "lab_active_run.env"
+            if pointer.is_file():
+                match = re.search(
+                    r"^EXPERIMENT_RUN_ID=(?:'([^']+)'|\"([^\"]+)\"|(\S+))$",
+                    pointer.read_text(encoding="utf-8"),
+                    re.MULTILINE,
+                )
+                if match:
+                    run_id = next(value for value in match.groups() if value)
+                    task_id = self.lab.get("lease_name")
+        if not run_id or not task_id:
+            return False
+        state.update(
+            round_index=int(pending["round_index"]),
+            round_label=str(pending["round_label"]),
+            active_task_id=str(task_id),
+            active_run_id=run_id,
+            current_candidate=pending["candidate"],
+            round_submitted_at=submission.get("submitted_at") or now(),
+            pending_submission=None,
+            status="running",
+        )
+        self.save_state(state)
+        save_json(
+            round_dir / "03_submission" / "submission_recovery.audit.json",
+            {
+                "recovered_at": now(),
+                "run_id": run_id,
+                "task_id": str(task_id),
+                "source": (
+                    str(submission_path)
+                    if submission
+                    else "lab_active_run.env submission intent"
+                ),
+            },
+        )
+        return True
 
     def reanalyze_current(self) -> dict[str, Any]:
         if not STATE_FILE.exists():
             raise RuntimeError("No controller state exists to reanalyze")
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        state = load_controller_state()
         self.assert_state_image_identity(state)
         session_dir = Path(state["session_dir"])
         self.load_session_sidecars(session_dir)
@@ -5436,7 +5686,7 @@ Embedded evidence:
         """Operator-authorized same-candidate diagnostic retry."""
         if not STATE_FILE.exists():
             raise RuntimeError("No controller state exists to retry")
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        state = load_controller_state()
         allowed_statuses = {
             "paused_for_human",
             "paused_after_repeated_infrastructure_failure",
@@ -5511,6 +5761,52 @@ Embedded evidence:
         )
         return state
 
+    def auto_retry_paused_current(self) -> dict[str, Any]:
+        """Resume only a paused round matching a deterministic safe signature."""
+        state = load_controller_state()
+        if state.get("status") != "paused_for_human":
+            raise RuntimeError("Automatic paused recovery requires paused_for_human")
+        self.assert_state_image_identity(state)
+        session_dir = Path(state["session_dir"])
+        self.load_session_sidecars(session_dir)
+        failed_round = self.round_dir(
+            session_dir, int(state["round_index"]), str(state["round_label"])
+        )
+        decision = self.deterministic_engine_frontend_handshake_retry(
+            failed_round, state["current_candidate"]
+        )
+        if decision is None:
+            raise RuntimeError(
+                "Paused round does not match an approved deterministic auto-recovery"
+            )
+        retry_number = int(state.get("failure_retries", 0)) + 1
+        if retry_number > self.max_same_candidate_retries:
+            raise RuntimeError("Paused round exhausted its same-candidate retry budget")
+        save_json(
+            failed_round / "06_agent_analysis" / "post_pause_recovery_decision.json",
+            decision,
+        )
+        next_index = int(state["round_index"]) + 1
+        next_label = f"a{int(state['candidate_index'])}r{retry_number}"
+        _, task_id, run_id = self.prepare_and_submit_round(
+            session_dir,
+            state,
+            index=next_index,
+            label=next_label,
+            candidate=state["current_candidate"],
+            launch_profile=self.round_launch_profile(failed_round),
+        )
+        state.update(
+            failure_retries=retry_number,
+            status="retrying_infrastructure_failure",
+            recovery_source_round=failed_round.name,
+            recovery_reason="deterministic_engine_frontend_handshake_retry",
+            last_failure_classification="transient_infrastructure",
+            last_failure_summary=decision["summary"],
+        )
+        self.save_state(state)
+        return state
+
     def saved_analysis_decision(
         self,
         session_dir: Path,
@@ -5572,13 +5868,30 @@ Embedded evidence:
         if resume:
             if not STATE_FILE.exists():
                 raise RuntimeError("No controller state exists to resume")
-            state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            state = load_controller_state()
             self.assert_state_image_identity(state)
             session_dir = Path(state["session_dir"])
             if not session_dir.is_dir():
                 raise RuntimeError(f"Session directory does not exist: {session_dir}")
             self.load_session_sidecars(session_dir)
             self.write_decision_schemas(session_dir)
+            pending = state.get("pending_submission")
+            if self.recover_pending_submission(state):
+                log("Recovered an interrupted submission transaction from its ledger.")
+            elif isinstance(pending, dict):
+                log(
+                    "Interrupted submission has no external identity ledger; "
+                    "replaying the same frozen submission intent."
+                )
+                _, task_id, run_id = self.prepare_and_submit_round(
+                    session_dir,
+                    state,
+                    index=int(pending["round_index"]),
+                    label=str(pending["round_label"]),
+                    candidate=dict(pending["candidate"]),
+                )
+                state.update(active_task_id=task_id, active_run_id=run_id)
+                self.save_state(state)
             if not state.get("active_task_id") or not state.get("active_run_id"):
                 archived_round = self.round_dir(
                     session_dir,
@@ -5614,7 +5927,7 @@ Embedded evidence:
         else:
             if STATE_FILE.exists():
                 try:
-                    previous_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                    previous_state = load_controller_state()
                 except (OSError, ValueError):
                     previous_state = {}
                 previous_task = previous_state.get("active_task_id")
@@ -5706,7 +6019,7 @@ Embedded evidence:
                 found = {name: False for name in REMOTE_ARTIFACTS}
                 found["metrics.json"] = True
             else:
-                found = self.collect(state["active_run_id"], round_dir)
+                found = self.collect_with_retry(state["active_run_id"], round_dir)
             task = None
             if (
                 self.benchmark_mode == "aligned_l1"
@@ -5842,6 +6155,8 @@ Embedded evidence:
                     f"Round {state['round_label']} failed; invoking Codex failure analysis."
                 )
                 failure = self.deterministic_startup_port_retry(
+                    round_dir, state["current_candidate"]
+                ) or self.deterministic_engine_frontend_handshake_retry(
                     round_dir, state["current_candidate"]
                 ) or self.deterministic_benchmark_retry(
                     round_dir, state["current_candidate"]
@@ -6155,6 +6470,11 @@ def parse_args() -> argparse.Namespace:
         help="retry the paused candidate after an operator-authorized external fix",
     )
     group.add_argument(
+        "--auto-retry-paused-current",
+        action="store_true",
+        help="retry only when a paused round matches an approved deterministic signature",
+    )
+    group.add_argument(
         "--stop-active-task",
         action="store_true",
         help="stop only the task recorded by state.json using frozen Session config",
@@ -6219,6 +6539,7 @@ def main() -> int:
         args.resume
         or args.reanalyze_current
         or args.retry_paused_current
+        or args.auto_retry_paused_current
         or args.stop_active_task
         or (args.check_only and args.use_frozen_session)
     )
@@ -6239,7 +6560,7 @@ def main() -> int:
                 "session_config.yaml; "
                 "start a new Session to change them"
             )
-        frozen_state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        frozen_state = load_controller_state()
         frozen_config = Path(frozen_state["session_dir"]) / "session_config.yaml"
         if not frozen_config.is_file():
             raise RuntimeError(
@@ -6292,7 +6613,7 @@ def main() -> int:
         search_space_result=search_space_result,
     )
     if args.stop_active_task:
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        state = load_controller_state()
         print(controller.stop_active_task(state))
         return 0
     validate_agent_credentials(controller.agent_config)
@@ -6331,6 +6652,15 @@ def main() -> int:
             # unattended and no later metrics/Agent decision can advance the
             # closed loop.
             controller.start(resume=True)
+        elif args.auto_retry_paused_current:
+            print(
+                json.dumps(
+                    controller.auto_retry_paused_current(),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            controller.start(resume=True)
         elif args.dry_run or args.offline_dry_run:
             controller.dry_run_validation()
         else:
@@ -6348,7 +6678,9 @@ def main() -> int:
                         )
                         if isinstance(exc, RepeatedCandidateRejection):
                             paused_status = "paused_after_repeated_candidate_rejection"
-                        elif isinstance(exc, AgentProtocolError):
+                        elif isinstance(
+                            exc, (AgentProtocolError, RecoverableControllerIOError)
+                        ):
                             recovery_attempts = int(
                                 failed_state.get("controller_recovery_attempts", 0)
                             ) + 1

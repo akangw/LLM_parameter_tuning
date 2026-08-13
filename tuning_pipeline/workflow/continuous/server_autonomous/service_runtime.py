@@ -121,7 +121,16 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return "blocked", f"state cannot be read safely: {exc}"
+        backup_path = state_path.with_name(state_path.name + ".previous")
+        try:
+            state = json.loads(backup_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as backup_exc:
+            return "blocked", (
+                "state and last-known-good backup cannot be read safely: "
+                f"primary={exc}; backup={backup_exc}"
+            )
+        if not isinstance(state, dict):
+            return "blocked", "last-known-good state backup is not a JSON object"
 
     status = str(state.get("status", ""))
     if status in COMPLETED_STATUSES:
@@ -142,6 +151,8 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
 
     has_task = bool(state.get("active_task_id"))
     has_run = bool(state.get("active_run_id"))
+    if isinstance(state.get("pending_submission"), dict):
+        return "--resume", "recovering an interrupted submission transaction"
     if has_task and has_run:
         return "--resume", f"recovering active task/run from status {status or 'unknown'}"
     if has_task != has_run:

@@ -75,6 +75,40 @@ def config() -> dict:
 
 
 class ControllerTests(unittest.TestCase):
+    def test_state_write_is_atomic_and_recovers_last_known_good(self) -> None:
+        controller = tuning.Controller(config())
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(tuning, "STATE_FILE", root / "state.json"):
+                first = {"status": "running", "round_index": 1}
+                controller.save_state(first)
+                second = {"status": "running", "round_index": 2}
+                controller.save_state(second)
+                self.assertEqual(2, tuning.load_controller_state()["round_index"])
+                (root / "state.json").write_text('{"status":', encoding="utf-8")
+                recovered = tuning.load_controller_state()
+                self.assertEqual(2, recovered["round_index"])
+                self.assertTrue((root / "state_recovery.audit.json").is_file())
+
+    def test_collect_control_plane_outage_has_bounded_retry(self) -> None:
+        controller = tuning.Controller(config())
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            controller,
+            "collect",
+            side_effect=[RuntimeError("ssh reset"), {"metrics.json": False}],
+        ) as collect, patch.object(tuning.time, "sleep"):
+            result = controller.collect_with_retry("run-1", Path(temporary))
+        self.assertFalse(result["metrics.json"])
+        self.assertEqual(2, collect.call_count)
+
+    def test_collect_control_plane_outage_escalates_as_recoverable(self) -> None:
+        controller = tuning.Controller(config())
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            controller, "collect", side_effect=RuntimeError("ssh reset")
+        ), patch.object(tuning.time, "sleep"):
+            with self.assertRaises(tuning.RecoverableControllerIOError):
+                controller.collect_with_retry("run-1", Path(temporary))
+
     def test_config_overlay_preserves_base_and_replaces_nested_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2254,6 +2288,39 @@ SLOT  service
             self.assertEqual("retry_same", decision["action"])
             self.assertEqual("transient_infrastructure", decision["classification"])
             self.assertEqual(self.baseline, decision["candidate"])
+
+    def test_engine_frontend_handshake_timeout_gets_bounded_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (runtime_dir / "worker.log").write_text(
+                "EngineCore_DP1: Did not receive response from front-end process "
+                "within 5 minutes\nLeaseProcessesPartialFailure active=1 inactive=1\n",
+                encoding="utf-8",
+            )
+            decision = self.controller.deterministic_engine_frontend_handshake_retry(
+                round_dir, self.baseline
+            )
+            self.assertIsNotNone(decision)
+            self.assertEqual("retry_same", decision["action"])
+            self.assertEqual(self.baseline, decision["candidate"])
+
+    def test_engine_frontend_retry_fails_closed_when_oom_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (runtime_dir / "worker.log").write_text(
+                "Did not receive response from front-end process within 5 minutes\n"
+                "LeaseProcessesPartialFailure active=1 inactive=1\nNPU OOM\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(
+                self.controller.deterministic_engine_frontend_handshake_retry(
+                    round_dir, self.baseline
+                )
+            )
 
     def test_b0_retry_preserves_launch_profile_and_reconciliation(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
