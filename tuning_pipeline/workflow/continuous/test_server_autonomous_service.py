@@ -221,6 +221,12 @@ class ServiceRenderTests(unittest.TestCase):
             "automatic_registry_v1", merged["search_space"]["profile"]
         )
 
+        runner = (autonomous / "run_foreground.sh").read_text(encoding="utf-8")
+        service = (autonomous / "service.sh").read_text(encoding="utf-8")
+        self.assertIn("AUTO_RETRY_PAUSED_REQUEST", runner)
+        self.assertIn('ACTION="--auto-retry-paused-current"', runner)
+        self.assertIn("auto-retry-paused)", service)
+
     def test_rendered_configs_have_no_placeholders(self) -> None:
         repo_root = HERE.parents[2]
         with tempfile.TemporaryDirectory() as temp_dir:

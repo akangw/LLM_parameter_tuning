@@ -136,6 +136,12 @@ alive. To recover automatically after a server reboot, the Supervisor daemon
 itself must be registered with the host boot system; systemd user mode is the
 simpler supported route.
 
+For a legacy round already paused by a now-recognized deterministic signature,
+run `bash "$AUTO/service.sh" auto-retry-paused` and then start the managed
+service. The one-shot request is accepted only if the Controller reclassifies
+the saved evidence as safe, retry budgets remain, and the replacement round's
+new task/run identity is persisted before monitoring resumes.
+
 Both managers apply the same recovery policy:
 
 - an active task/run is resumed after a process crash or reboot;
@@ -159,6 +165,9 @@ Both managers apply the same recovery policy:
 - artifact collection retries three times in place; persistent read-only
   control-plane failure is promoted to a bounded Supervisor recovery without
   changing the candidate or rerunning a completed Benchmark;
+- a healthy-service GuideLLM zero-measurement failure stays in the Benchmark
+  recovery path: expected nonzero shell commands cannot bypass their retry
+  branch, and each failed attempt remains archived in a fresh result directory;
 - a completed Session exits cleanly and stays stopped;
 - unknown invariant failures, exhausted recovery, other `paused_*`, inconsistent
   state, an already running Controller, or a retained `STOP_REQUESTED` marker

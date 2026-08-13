@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import base64
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -2368,6 +2369,119 @@ SLOT  service
             self.assertIsNotNone(decision)
             self.assertEqual(decision["action"], "retry_same")
             self.assertEqual(decision["candidate"], self.baseline)
+
+    def test_guidellm_zero_measurement_case_gets_identical_bounded_retry(self) -> None:
+        self.controller.benchmark_mode = "aligned_l1"
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (runtime_dir / "SERVICE_READY").touch()
+            (runtime_dir / "benchmark_runner.log").write_text(
+                "CASE FAILED balanced/c1-warmup/guidellm.yaml runner_exit=1\n"
+                "ValueError: Cannot compile GenerativeMetrics: No measurement "
+                "start or end times available.\n",
+                encoding="utf-8",
+            )
+            (runtime_dir / "master.log").write_text(
+                "Application startup complete. HTTP 200 OK\n", encoding="utf-8"
+            )
+            decision = self.controller.deterministic_benchmark_retry(
+                round_dir, self.baseline
+            )
+            self.assertIsNotNone(decision)
+            self.assertEqual("benchmark_failure", decision["classification"])
+            self.assertEqual("retry_same", decision["action"])
+            self.assertEqual(self.baseline, decision["candidate"])
+
+    def test_guidellm_zero_measurement_retry_fails_closed_on_serving_error(self) -> None:
+        self.controller.benchmark_mode = "aligned_l1"
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (runtime_dir / "SERVICE_READY").touch()
+            (runtime_dir / "benchmark_runner.log").write_text(
+                "Cannot compile GenerativeMetrics: No measurement start or end "
+                "times available\n",
+                encoding="utf-8",
+            )
+            (runtime_dir / "worker.log").write_text(
+                "HCCL operation failed\n", encoding="utf-8"
+            )
+            self.assertIsNone(
+                self.controller.deterministic_benchmark_retry(
+                    round_dir, self.baseline
+                )
+            )
+
+    def test_benchmark_shell_disarms_err_trap_for_captured_failures(self) -> None:
+        script = (tuning.HERE / "remote" / "run_aligned_l1.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("begin_captured_failure()", script)
+        self.assertIn("end_captured_failure()", script)
+        # The only raw `set +e` is inside begin_captured_failure itself; every
+        # expected failing command site must use the trap-safe helper.
+        self.assertEqual(1, len(re.findall(r"^\s*set \+e\s*$", script, re.MULTILINE)))
+        self.assertGreaterEqual(script.count("begin_captured_failure"), 6)
+
+    def test_paused_auto_retry_tracks_the_new_submitted_round(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / "session"
+            failed_round = session / "round_016_a10"
+            failed_round.mkdir(parents=True)
+            state_path = root / "state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "status": "paused_for_human",
+                        "session_dir": str(session),
+                        "round_index": 16,
+                        "round_label": "a10",
+                        "candidate_index": 10,
+                        "current_candidate": self.baseline,
+                        "failure_retries": 0,
+                        "total_failure_recovery_rounds": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            decision = {
+                "summary": "healthy-service benchmark retry",
+                "classification": "benchmark_failure",
+                "action": "retry_same",
+                "candidate": self.baseline,
+                "changes": [],
+            }
+            with patch.object(tuning, "STATE_FILE", state_path), patch.object(
+                self.controller, "assert_state_image_identity"
+            ), patch.object(
+                self.controller, "load_session_sidecars"
+            ), patch.object(
+                self.controller,
+                "deterministic_engine_frontend_handshake_retry",
+                return_value=None,
+            ), patch.object(
+                self.controller,
+                "deterministic_benchmark_retry",
+                return_value=decision,
+            ), patch.object(
+                self.controller, "round_launch_profile", return_value="default"
+            ), patch.object(
+                self.controller,
+                "prepare_and_submit_round",
+                return_value=(session / "round_017_a10r1", "task-new", "run-new"),
+            ):
+                updated = self.controller.auto_retry_paused_current()
+
+            self.assertEqual(17, updated["round_index"])
+            self.assertEqual("a10r1", updated["round_label"])
+            self.assertEqual("task-new", updated["active_task_id"])
+            self.assertEqual("run-new", updated["active_run_id"])
+            self.assertEqual("benchmark_failure", updated["last_failure_classification"])
+            self.assertEqual(2, updated["total_failure_recovery_rounds"])
 
     def test_startup_zmq_collision_gets_identical_bounded_retry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

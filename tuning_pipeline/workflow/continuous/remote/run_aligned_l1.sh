@@ -13,7 +13,20 @@ failure_marker() {
     "${RUN_ID}" "${code}" "$(date -Iseconds)" > "${RUN_DIR}/BENCHMARK_FAILED"
   exit "${code}"
 }
-trap failure_marker ERR
+trap 'failure_marker "$?"' ERR
+
+# `set +e` does not suppress an ERR trap.  Every command below whose exit code
+# is intentionally inspected must temporarily disarm the top-level terminal
+# failure trap, otherwise the trap exits before the bounded retry branch runs.
+begin_captured_failure() {
+  trap - ERR
+  set +e
+}
+
+end_captured_failure() {
+  set -e
+  trap 'failure_marker "$?"' ERR
+}
 
 PARAM_FILE="${RUN_DIR}/candidate.env"
 [[ -f "${PARAM_FILE}" ]] || {
@@ -95,7 +108,7 @@ EOF
   "${SERVEBENCH_ROOT}/servebench" target-resolve \
     --target-profile "${CONFIG_DIR}/target.yaml" \
     --output "${RESOLVED_TARGET}"
-  set +e
+  begin_captured_failure
   docker run --rm --network host \
     --volume "${SERVEBENCH_WORKSPACE}:${SERVEBENCH_WORKSPACE}:ro" \
     --volume "${SERVEBENCH_WORKSPACE}/tools:/tools:ro" \
@@ -131,7 +144,7 @@ EOF
       python -B servebench_cli.py --spec-root "$SB_SPEC_ROOT" report "$SB_RESULT_PATH"
     '
   runtime_code=$?
-  set -e
+  end_captured_failure
   if (( runtime_code != 0 )); then
     for runtime_attempt in $(seq 1 "${RUNTIME_RETRY_LIMIT}"); do
       if (( full_retries_used >= TOTAL_FULL_RETRY_LIMIT )); then
@@ -140,11 +153,11 @@ EOF
       ((full_retries_used += 1))
       RESULT_PATH="${RESULT_ROOT}/${RESULT_NAME}-runtime-retry${runtime_attempt}"
       echo "Retrying the complete aligned-L1 repetition on the still-running service after a case runtime failure (attempt ${runtime_attempt}/${RUNTIME_RETRY_LIMIT})."
-      set +e
+      begin_captured_failure
       bash "${SCRIPT_DIR}/run_servebench_attempt.sh" \
         "${RESULT_PATH}" "${RESOLVED_TARGET}"
       runtime_code=$?
-      set -e
+      end_captured_failure
       printf '{"run_id":"%s","attempt":%s,"exit_code":%s,"result_path":"%s","updated_at":"%s"}\n' \
         "${RUN_ID}" "${runtime_attempt}" "${runtime_code}" "${RESULT_PATH}" "$(date -Iseconds)" \
         > "${RUN_DIR}/BENCHMARK_RUNTIME_RETRY_STATE"
@@ -165,14 +178,14 @@ done
 
 RETRY_PLAN="${RUN_DIR}/benchmark_case_retry_plan.json"
 run_metrics_gate() {
-  set +e
+  begin_captured_failure
   python3 "${SCRIPT_DIR}/aligned_l1_metrics.py" \
     "${RUN_PATHS[@]}" \
     --primary-concurrency "${PRIMARY_CONCURRENCY}" \
     --output "${RUN_DIR}/metrics.pending.json" \
     --retry-plan-output "${RETRY_PLAN}"
   local code=$?
-  set -e
+  end_captured_failure
   return "${code}"
 }
 
@@ -204,7 +217,7 @@ else
     done
     cp -a "${RETRY_PLAN}" "${retry_archive}/retry_plan.json"
     echo "Retrying one incomplete aligned-L1 case in-place before service teardown: ${retry_config} (attempt ${retry_number}/${CASE_RETRY_LIMIT})"
-    set +e
+    begin_captured_failure
     docker run --rm --network host \
       --volume "${SERVEBENCH_WORKSPACE}:${SERVEBENCH_WORKSPACE}:ro" \
       --volume "${SERVEBENCH_WORKSPACE}/tools:/tools:ro" \
@@ -233,7 +246,7 @@ else
       "${SERVEBENCH_ROOT}/servebench" report "${retry_run_dir}"
       case_retry_code=$?
     fi
-    set -e
+    end_captured_failure
     if (( case_retry_code != 0 )); then
       echo "Targeted case retry failed; escalating to a full same-service metrics recovery."
       break
@@ -264,11 +277,11 @@ if [[ "${metrics_ready}" != "true" ]]; then
       recovery_path="${BENCH_ROOT}/results/l1-metrics-retry${metrics_attempt}-rep${repetition}"
       resolved_target="${RESOLVED_TARGETS[$((repetition - 1))]}"
       echo "Re-running aligned-L1 repetition ${repetition}/${REPETITIONS} on the still-running service after metrics-gate failure (attempt ${metrics_attempt}/${METRICS_RETRY_LIMIT})."
-      set +e
+      begin_captured_failure
       bash "${SCRIPT_DIR}/run_servebench_attempt.sh" \
         "${recovery_path}" "${resolved_target}"
       recovery_code=$?
-      set -e
+      end_captured_failure
       if (( recovery_code != 0 )); then
         recovery_failed=true
         break

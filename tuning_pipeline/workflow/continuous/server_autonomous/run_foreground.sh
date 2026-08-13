@@ -27,8 +27,14 @@ PYTHON_BIN="${VLLMTKB_PYTHON:-${PYTHON_BIN}}"
 }
 
 EXTRA_ARGS=()
+AUTO_RETRY_PAUSED_REQUEST="${RUNTIME_ROOT}/AUTO_RETRY_PAUSED_REQUEST"
 REPLAY_UNMEASURED_REQUEST="${RUNTIME_ROOT}/REPLAY_UNMEASURED_REQUEST"
-if [[ -f "${REPLAY_UNMEASURED_REQUEST}" ]]; then
+if [[ -f "${AUTO_RETRY_PAUSED_REQUEST}" ]]; then
+  CONSUMED_AUTO_RETRY="${AUTO_RETRY_PAUSED_REQUEST}.consumed-$(date +%Y%m%d_%H%M%S)-$$"
+  mv "${AUTO_RETRY_PAUSED_REQUEST}" "${CONSUMED_AUTO_RETRY}"
+  ACTION="--auto-retry-paused-current"
+  echo "Consumed deterministic paused-round recovery request: ${CONSUMED_AUTO_RETRY}"
+elif [[ -f "${REPLAY_UNMEASURED_REQUEST}" ]]; then
   REPLAY_ROUND=$(head -n 1 "${REPLAY_UNMEASURED_REQUEST}")
   [[ "${REPLAY_ROUND}" =~ ^round_[0-9]+_a[0-9]+([a-z][0-9]+)?$ ]] || {
     echo "Invalid unmeasured-candidate replay round: ${REPLAY_ROUND}" >&2

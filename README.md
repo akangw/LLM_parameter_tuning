@@ -134,7 +134,7 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 | 资源隔离 | 任一 `blocked_lease_names` 仍占用资源，或当前槽位未空闲 | 不等待、不抢占、不重叠提交 | 立即失败关闭 |
 | 候选生成 | Agent 候选越过白名单、网格距离、组合约束或证据要求 | 最多重新选参 2 次 | 暂停，禁止提交非法候选 |
 | Agent 协议 | API/CLI 瞬断、空响应、非 JSON，或输出附带 Schema 禁止的说明性字段 | 同一实验轮最多重试 2 次；仅剥离明确禁止的多余元数据并记录审计，不改参数值、不补字段 | 协议重试耗尽后由服务守护最多恢复 Controller 3 次，随后暂停人工检查 |
-| Benchmark | 单 Case、完整运行或指标编译发生已知可恢复错误 | 各内部层最多重试 2 次；完整矩阵恢复共享最多 2 次完整重跑 | 保存失败产物并交给失败分类 |
+| Benchmark | 单 Case、完整运行或指标编译发生已知可恢复错误（含 GuideLLM 零测量窗口） | 只要服务健康，先在仍运行的同一服务上各层最多重试 2 次；完整矩阵恢复共享最多 2 次完整重跑；退出后仍可由 Controller 保持同候选走有界恢复 | 保存每次失败产物；出现 OOM/HCCL/EngineCore/API 启动危险签名时禁止误套 Benchmark 重试 |
 | 未知实验故障 | 确定性规则无法归类或无法给出修复 | Codex+DeepSeek 读取完整证据，可建议 1 次原参数诊断性重跑，或 Search Limits 内的最小参数修正；Controller 重新校验后才执行 | 禁止改镜像、拓扑、路径、Benchmark 或系统文件；Agent 无安全方案或预算耗尽才暂停 |
 | 恢复总预算 | 多种恢复策略连续触发 | 瞬态同候选最多 4 次、Agent 诊断性重跑最多 1 次、参数修正最多 3 次，且同一失败链总计最多 6 个恢复轮 | 达到任一上限即暂停，防止 32 NPU 无限空耗 |
 | Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变，最多额外提交 2 次 | 暂停人工处理，避免无限消耗 NPU |
@@ -150,6 +150,10 @@ Benchmark，或日志已把启动失败明确归因到候选参数/组合并经 
 候选覆盖，外部问题修复后必须保持原候选重试；需要回放较早的未测候选时用
 `--replay-unmeasured-candidate round_NNN_label`，命令会保留原轮和被替代轮的审计
 文件，且拒绝回放已经 Benchmark 或已被参数证据淘汰的候选。
+
+若旧版本已因确定性可恢复故障进入 `paused_for_human`，服务器自治入口可执行
+`service.sh auto-retry-paused` 后再启动 Supervisor/systemd。请求只会在 Controller
+重新匹配白名单签名且重试预算未耗尽时被消费；新 Task/Run/轮次会原子写回状态。
 
 默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
 

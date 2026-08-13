@@ -4838,8 +4838,12 @@ Classify the root cause using only log evidence:
   pause_for_human.
 - transient_infrastructure or network_or_hccl: retry_same only when an identical retry is
   safe; otherwise pause_for_human.
-- benchmark_failure: retry_same only for a clean retryable benchmark failure; otherwise
-  pause_for_human. Deterministic benchmark recovery is evaluated before this Agent call.
+- benchmark_failure: when SERVICE_READY exists, the failure is confined to the benchmark
+  harness, the candidate is unchanged, and serving logs contain no dangerous OOM, HCCL,
+  EngineCore, API-startup, or identity-drift signature, choose retry_same. Uncertainty about
+  the exact benchmark-harness trigger is not by itself a reason to pause. Deterministic
+  benchmark recovery is evaluated before this Agent call; pause only when the evidence
+  makes an identical retry unsafe.
 - image_or_dependency, model_or_runtime_bug or unknown: when the evidence cannot
   prove a parameter correction but an unchanged rerun is non-destructive and may
   collect decisive evidence or absorb a transient condition, use
@@ -4867,8 +4871,9 @@ Allowed values:
 {yaml.safe_dump(self.config['search_limits'], allow_unicode=True, sort_keys=False)}
 
 Never modify topology, model, image, network, paths, benchmark, or system state. Do not
-edit files. Return only schema-valid JSON. If the log evidence is
-not decisive, do not guess: use pause_for_human.
+edit files. Return only schema-valid JSON. If parameter or serving evidence is not
+decisive, do not guess a parameter change. A healthy-service benchmark-harness failure
+must use retry_same as specified above; other inconclusive failures use pause_for_human.
 
 Embedded evidence:
 {json.dumps(failure_evidence, ensure_ascii=False)}
@@ -5128,7 +5133,7 @@ Embedded evidence:
         round_dir: Path,
         current: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Return a bounded same-candidate retry for one clean missing request."""
+        """Return a bounded same-candidate retry for a clean harness failure."""
         if self.benchmark_mode != "aligned_l1":
             return None
         runtime_dir = round_dir / "04_runtime"
@@ -5152,6 +5157,51 @@ Embedded evidence:
             if not log_path.is_file():
                 return None
             text = log_path.read_text(encoding="utf-8", errors="replace")
+            zero_measurement_signature = (
+                "Cannot compile GenerativeMetrics: No measurement start or end "
+                "times available" in text
+            )
+            serving_failure_signature = re.search(
+                r"(?:NPU|device).*out of memory|HCCL.*(?:error|failed)|"
+                r"EngineCore.*(?:error|failed)|Connection refused|"
+                r"Application startup failed",
+                "\n".join(
+                    path.read_text(encoding="utf-8", errors="replace")
+                    for path in (runtime_dir / "master.log", runtime_dir / "worker.log")
+                    if path.is_file()
+                ),
+                re.IGNORECASE,
+            )
+            if zero_measurement_signature and not serving_failure_signature:
+                return {
+                    "summary": (
+                        "GuideLLM failed to compile one case because its measurement "
+                        "window was empty after SERVICE_READY; retrying the identical "
+                        "candidate within the benchmark/infrastructure budget."
+                    ),
+                    "classification": "benchmark_failure",
+                    "root_cause": (
+                        "The benchmark harness emitted the exact zero-measurement "
+                        "metrics-compilation signature while the serving logs contain "
+                        "no OOM, HCCL, EngineCore, or API-startup failure."
+                    ),
+                    "evidence": [
+                        "SERVICE_READY was present before Benchmark execution.",
+                        (
+                            "benchmark_runner.log contains: Cannot compile "
+                            "GenerativeMetrics: No measurement start or end times "
+                            "available."
+                        ),
+                        "No serving-side dangerous signature was found.",
+                    ],
+                    "action": "retry_same",
+                    "safe_to_automate": True,
+                    "change_strategy": "none",
+                    "interaction_analysis": [],
+                    "constraint_checks": [],
+                    "changes": [],
+                    "candidate": current,
+                }
             case_exits = re.findall(r"CASE COMPLETED .*? runner_exit=(\d+)", text)
             repetitions = int(self.benchmark["aligned_l1"]["repetitions"])
             expected_case_exits = 24 * repetitions
@@ -5938,6 +5988,8 @@ Embedded evidence:
         )
         decision = self.deterministic_engine_frontend_handshake_retry(
             failed_round, state["current_candidate"]
+        ) or self.deterministic_benchmark_retry(
+            failed_round, state["current_candidate"]
         )
         if decision is None:
             raise RuntimeError(
@@ -5946,6 +5998,9 @@ Embedded evidence:
         retry_number = int(state.get("failure_retries", 0)) + 1
         if retry_number > self.max_same_candidate_retries:
             raise RuntimeError("Paused round exhausted its same-candidate retry budget")
+        total_recovery_rounds = int(state.get("total_failure_recovery_rounds", 0)) + 1
+        if total_recovery_rounds > self.max_total_failure_recovery_rounds:
+            raise RuntimeError("Paused round exhausted its total failure-recovery budget")
         save_json(
             failed_round / "06_agent_analysis" / "post_pause_recovery_decision.json",
             decision,
@@ -5961,11 +6016,17 @@ Embedded evidence:
             launch_profile=self.round_launch_profile(failed_round),
         )
         state.update(
+            round_index=next_index,
+            round_label=next_label,
+            active_task_id=task_id,
+            active_run_id=run_id,
+            round_submitted_at=now(),
             failure_retries=retry_number,
+            total_failure_recovery_rounds=total_recovery_rounds,
             status="retrying_infrastructure_failure",
             recovery_source_round=failed_round.name,
-            recovery_reason="deterministic_engine_frontend_handshake_retry",
-            last_failure_classification="transient_infrastructure",
+            recovery_reason=f"deterministic_{decision['classification']}_retry",
+            last_failure_classification=decision["classification"],
             last_failure_summary=decision["summary"],
         )
         self.save_state(state)

@@ -99,6 +99,17 @@ case "${1:-}" in
     mv "${temporary}" "${request}"
     echo "Authorized audited replay of: $2"
     ;;
+  auto-retry-paused)
+    request="${RUNTIME_ROOT}/AUTO_RETRY_PAUSED_REQUEST"
+    [[ ! -e "${request}" ]] || {
+      echo "A deterministic paused-round recovery request already exists: ${request}" >&2
+      exit 2
+    }
+    temporary="${request}.tmp-$$"
+    printf '%s\n' "$(date -Iseconds)" > "${temporary}"
+    mv "${temporary}" "${request}"
+    echo "Authorized deterministic paused-round recovery. Start the managed service to consume it."
+    ;;
   authorize-new-session)
     archive_terminal_state
     ;;
@@ -157,7 +168,7 @@ case "${1:-}" in
     (cd "${SERVICE_ROOT}" && "${SUPERVISORCTL}" -c "${SUPERVISOR_CONFIG}" shutdown)
     ;;
   *)
-    echo "usage: $0 {prepare-env|render|authorize-resume|replay-unmeasured ROUND|authorize-new-session|systemd-install|systemd-start|systemd-stop|systemd-restart|systemd-status|systemd-logs [N]|supervisor-install|supervisor-start|supervisor-stop|supervisor-restart|supervisor-status|supervisor-shutdown}" >&2
+    echo "usage: $0 {prepare-env|render|authorize-resume|auto-retry-paused|replay-unmeasured ROUND|authorize-new-session|systemd-install|systemd-start|systemd-stop|systemd-restart|systemd-status|systemd-logs [N]|supervisor-install|supervisor-start|supervisor-stop|supervisor-restart|supervisor-status|supervisor-shutdown}" >&2
     exit 2
     ;;
 esac
