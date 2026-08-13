@@ -6029,6 +6029,17 @@ Embedded evidence:
         log(f"Dry-run complete: {session_dir}")
 
     def start(self, *, resume: bool = False) -> None:
+        def stop_was_requested_before_submission() -> bool:
+            if not STOP_FILE.exists():
+                return False
+            state.update(status="stop_requested")
+            self.save_state(state)
+            log(
+                "STOP_REQUESTED rechecked after analysis/recovery; refusing to "
+                "submit another experiment."
+            )
+            return True
+
         if resume:
             if not STATE_FILE.exists():
                 raise RuntimeError("No controller state exists to resume")
@@ -6235,6 +6246,13 @@ Embedded evidence:
                         "Codex determined that tuning is complete; no new round submitted."
                     )
                     return
+                if stop_was_requested_before_submission():
+                    state.update(
+                        status="stopped_after_current_round",
+                        active_task_id=None,
+                    )
+                    self.save_state(state)
+                    return
                 next_index = state["round_index"] + 1
                 next_candidate_index = state["candidate_index"] + 1
                 next_label = f"a{next_candidate_index}"
@@ -6403,6 +6421,14 @@ Embedded evidence:
                         )
                         return
 
+                    if stop_was_requested_before_submission():
+                        state.update(
+                            status="stopped_after_failed_round",
+                            active_task_id=None,
+                        )
+                        self.save_state(state)
+                        return
+
                     next_index = state["round_index"] + 1
                     next_candidate_index = state["candidate_index"] + 1
                     next_label = f"a{next_candidate_index}"
@@ -6510,6 +6536,14 @@ Embedded evidence:
                         f"a{state['candidate_index']}r{state['failure_retries']}"
                     )
                     next_status = "retrying_infrastructure_failure"
+
+                if stop_was_requested_before_submission():
+                    state.update(
+                        status="stopped_after_failed_round",
+                        active_task_id=None,
+                    )
+                    self.save_state(state)
+                    return
 
                 _, task_id, run_id = self.prepare_and_submit_round(
                     session_dir,
