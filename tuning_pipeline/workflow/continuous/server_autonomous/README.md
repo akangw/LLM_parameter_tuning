@@ -149,15 +149,15 @@ Both managers apply the same recovery policy:
   experiment round; schema-forbidden explanatory metadata is pruned with an
   adjacent audit, while parameter values, required fields and Search Limits
   remain strict;
-- after protocol retries are exhausted, a completed round may be resumed by
-  the service manager up to three times without rerunning its Benchmark;
+- after four in-round protocol retries are exhausted, a completed round may be
+  resumed by the service manager up to six times without rerunning its Benchmark;
 - experiment failures not solved by deterministic rules are passed to the
   frozen Codex+DeepSeek Agent with complete archived evidence. It may request
-  one unchanged diagnostic rerun or a Search-Limits-constrained parameter
+  two unchanged diagnostic reruns or a Search-Limits-constrained parameter
   correction; the Controller revalidates every action and never gives the
   Agent shell, image, topology, benchmark, path, or Lease mutation authority;
-- one failure chain is capped at four transient retries, one Agent diagnostic
-  retry, three parameter corrections, and six total recovery rounds;
+- one failure chain is capped at six transient retries, two Agent diagnostic
+  retries, four parameter corrections, and ten total recovery rounds;
 - critical JSON/YAML artifacts use atomic replacement. `state.json.previous`
   mirrors the latest committed state, and submission intent/task/run identity
   form a recovery ledger so a crash around submission resumes existing work

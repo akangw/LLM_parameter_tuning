@@ -155,6 +155,48 @@ class LeaseNotReadyError(RuntimeError):
     """The persistent Lease may recover without changing experiment state."""
 
 
+MANUAL_INTERVENTION_SIGNATURES = re.compile(
+    r"image.*(?:digest|identity|mismatch|not approved)|(?:digest|commit).*mismatch|"
+    r"permission denied|access denied|no such file or directory|missing (?:model|image|"
+    r"credential|api key|secret)|invalid (?:credential|api key)|authentication failed|"
+    r"configuration.*(?:invalid|mismatch)|state.*(?:inconsistent|corrupt)|"
+    r"topology.*mismatch|model path",
+    re.IGNORECASE,
+)
+
+
+def controller_exception_is_recoverable(exc: BaseException) -> bool:
+    """Classify process-restart-safe control-plane failures conservatively."""
+    if isinstance(
+        exc,
+        (
+            AgentProtocolError,
+            RecoverableControllerIOError,
+            LeaseNotReadyError,
+            RepeatedCandidateRejection,
+        ),
+    ):
+        return True
+    if isinstance(exc, (TimeoutError, ConnectionError, subprocess.SubprocessError)):
+        return True
+    if isinstance(exc, OSError) and not isinstance(exc, PermissionError):
+        return True
+    if not isinstance(exc, RuntimeError):
+        return False
+    text = str(exc)
+    if MANUAL_INTERVENTION_SIGNATURES.search(text):
+        return False
+    return bool(
+        re.search(
+            r"ssh|scp|sftp|paramiko|connection|timed? ?out|timeout|temporar|"
+            r"heartbeat|lease.*(?:ready|active|admission)|ktp-lab|pod|network|"
+            r"transport|remote (?:command|status|artifact)|http.*(?:429|5\d\d)",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 ALL_PARAM_TO_ENV = {
     "max_num_seqs": "MAX_NUM_SEQS",
     "max_model_len": "MAX_MODEL_LEN",
@@ -4938,8 +4980,14 @@ Embedded evidence:
                 f"{result.provider} failure analysis failed after "
                 f"{protocol_attempts} protocol attempts: {result.stderr[-2000:]}"
             )
-        decision = json.loads(decision_path.read_text(encoding="utf-8"))
-        self.validate_failure_decision(session_dir, decision, current)
+        try:
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+            self.validate_failure_decision(session_dir, decision, current)
+        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+            raise AgentProtocolError(
+                "Failure Agent returned a structurally readable but semantically "
+                f"invalid recovery decision: {exc}"
+            ) from exc
         self.write_selected_portrait_evidence(
             round_dir,
             decision["changes"],
@@ -5257,6 +5305,104 @@ Embedded evidence:
             "candidate": current,
         }
 
+    def deterministic_healthy_service_benchmark_retry(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Retry a harness-only failure after a proven healthy serving phase."""
+        runtime_dir = round_dir / "04_runtime"
+        if not (runtime_dir / "SERVICE_READY").exists():
+            return None
+        if (round_dir / "05_results" / "metrics.json").exists():
+            return None
+        evidence = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in (
+                runtime_dir / "master.log",
+                runtime_dir / "worker.log",
+                runtime_dir / "benchmark_runner.log",
+                runtime_dir / "run_status.json",
+                round_dir / "05_results" / "failure.yaml",
+            )
+            if path.is_file()
+        )
+        dangerous = re.search(
+            r"(?:NPU|device).*out of memory|\bOOM\b|HCCL.*(?:error|failed)|"
+            r"EngineCore.*(?:error|failed|died)|Application startup failed|"
+            r"image.*(?:digest|identity|mismatch)|permission denied|"
+            r"no such file or directory|invalid (?:argument|parameter)",
+            evidence,
+            re.IGNORECASE,
+        )
+        harness_failure = (runtime_dir / "BENCHMARK_FAILED").exists() or re.search(
+            r"BENCHMARK_FAILED|CASE FAILED|benchmark.*(?:failed|timeout)|"
+            r"GuideLLM|GenerativeMetrics|metrics(?:\.json)?.*(?:absent|missing)|"
+            r"MASTER_DONE exists but metrics\.json is absent",
+            evidence,
+            re.IGNORECASE,
+        )
+        if dangerous or not harness_failure:
+            return None
+        return {
+            "summary": (
+                "The serving phase reached SERVICE_READY and the archived evidence "
+                "confines the failure to the Benchmark harness; retrying the identical "
+                "candidate within the bounded recovery budget."
+            ),
+            "classification": "benchmark_failure",
+            "root_cause": (
+                "Benchmark execution or metrics compilation ended without a valid "
+                "metrics artifact while serving logs contain no dangerous signature."
+            ),
+            "evidence": [
+                "SERVICE_READY exists.",
+                "A Benchmark failure/missing-metrics signature exists.",
+                "No OOM, HCCL, EngineCore, identity, permission, path, or parameter-invalid signature exists.",
+            ],
+            "action": "retry_same",
+            "safe_to_automate": True,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "candidate": current,
+        }
+
+    def prefer_bounded_diagnostic_over_pause(
+        self,
+        failure: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Use one bounded unchanged diagnostic run before an inconclusive pause."""
+        if failure.get("action") != "pause_for_human":
+            return failure
+        classification = str(failure.get("classification", "unknown"))
+        if classification not in FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS:
+            return failure
+        if int(state.get("failure_diagnostic_retries", 0)) >= self.max_agent_diagnostic_retries:
+            return failure
+        text = "\n".join(
+            str(failure.get(key, "")) for key in ("summary", "root_cause", "evidence")
+        )
+        if MANUAL_INTERVENTION_SIGNATURES.search(text):
+            return failure
+        return {
+            **failure,
+            "summary": (
+                "The Agent could not prove an automatic repair, but no explicit "
+                "manual-only dependency is present; running one unchanged diagnostic "
+                "attempt before pausing. " + str(failure.get("summary", ""))
+            ),
+            "action": "diagnostic_retry_same",
+            "safe_to_automate": True,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "candidate": state["current_candidate"],
+        }
+
     def saved_failure_decision(
         self,
         session_dir: Path,
@@ -5406,27 +5552,33 @@ Embedded evidence:
                 f"{result.provider} recovery analysis failed after "
                 f"{protocol_attempts} attempts: {result.stderr[-2000:]}"
             )
-        decision = json.loads(decision_path.read_text(encoding="utf-8"))
-        if decision["action"] == "stop_complete":
-            if decision["candidate"] != rollback or decision["changes"]:
-                raise ValueError("stop_complete must preserve the known-good candidate")
-            self.validate_no_change_metadata(decision)
-            return decision
-        self.write_selected_portrait_evidence(
-            failed_round_dir,
-            decision["changes"],
-            prefix="recovery_selected",
-        )
-        self.validate_candidate(
-            rollback,
-            decision["candidate"],
-            decision["changes"],
-            decision,
-        )
-        if self.candidate_was_attempted(session_dir, decision["candidate"]):
-            raise ValueError(
-                "Recovery analysis proposed an already-attempted candidate"
+        try:
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+            if decision["action"] == "stop_complete":
+                if decision["candidate"] != rollback or decision["changes"]:
+                    raise ValueError("stop_complete must preserve the known-good candidate")
+                self.validate_no_change_metadata(decision)
+                return decision
+            self.write_selected_portrait_evidence(
+                failed_round_dir,
+                decision["changes"],
+                prefix="recovery_selected",
             )
+            self.validate_candidate(
+                rollback,
+                decision["candidate"],
+                decision["changes"],
+                decision,
+            )
+            if self.candidate_was_attempted(session_dir, decision["candidate"]):
+                raise ValueError(
+                    "Recovery analysis proposed an already-attempted candidate"
+                )
+        except (KeyError, ValueError, json.JSONDecodeError) as exc:
+            raise AgentProtocolError(
+                "Rollback recovery Agent returned a semantically invalid decision: "
+                f"{exc}"
+            ) from exc
         save_yaml(
             analysis_dir / "recovery_next_candidate.yaml",
             {
@@ -5990,6 +6142,8 @@ Embedded evidence:
             failed_round, state["current_candidate"]
         ) or self.deterministic_benchmark_retry(
             failed_round, state["current_candidate"]
+        ) or self.deterministic_healthy_service_benchmark_retry(
+            failed_round, state["current_candidate"]
         )
         if decision is None:
             raise RuntimeError(
@@ -6403,6 +6557,8 @@ Embedded evidence:
                     round_dir, state["current_candidate"]
                 ) or self.deterministic_benchmark_retry(
                     round_dir, state["current_candidate"]
+                ) or self.deterministic_healthy_service_benchmark_retry(
+                    round_dir, state["current_candidate"]
                 )
                 if failure is not None:
                     save_json(
@@ -6425,8 +6581,26 @@ Embedded evidence:
                         round_dir,
                         state["current_candidate"],
                     )
+                failure = self.prefer_bounded_diagnostic_over_pause(failure, state)
                 action = failure["action"]
-                if action == "pause_for_human":
+                rollback_success = None
+                if action == "pause_for_human" and failure["classification"] in {
+                    "parameter_invalid",
+                    "parameter_oom",
+                }:
+                    anchor = self.best_accepted_anchor(self.history_summary(session_dir))
+                    if anchor and isinstance(anchor.get("params"), dict):
+                        rollback_success = self.successful_candidate(
+                            session_dir, anchor["params"]
+                        )
+                        if rollback_success:
+                            failure = {**failure, "candidate": anchor["params"]}
+                            log(
+                                "The failed candidate is parameter-invalid/OOM and "
+                                "the Agent has no direct correction; rejecting it and "
+                                "continuing selection from the known-good anchor."
+                            )
+                if action == "pause_for_human" and rollback_success is None:
                     state.update(
                         status="paused_for_human",
                         last_failure_classification=failure["classification"],
@@ -6439,7 +6613,6 @@ Embedded evidence:
                     )
                     return
 
-                rollback_success = None
                 if action == "adjust_parameters":
                     rollback_success = self.successful_candidate(
                         session_dir,
@@ -6955,11 +7128,7 @@ def main() -> int:
                         failed_state = json.loads(
                             STATE_FILE.read_text(encoding="utf-8")
                         )
-                        if isinstance(exc, RepeatedCandidateRejection):
-                            paused_status = "paused_after_repeated_candidate_rejection"
-                        elif isinstance(
-                            exc, (AgentProtocolError, RecoverableControllerIOError)
-                        ):
+                        if controller_exception_is_recoverable(exc):
                             recovery_attempts = int(
                                 failed_state.get("controller_recovery_attempts", 0)
                             ) + 1
@@ -6978,16 +7147,10 @@ def main() -> int:
                             updated_at=now(),
                         )
                         save_json(STATE_FILE, failed_state)
-                        if isinstance(exc, RepeatedCandidateRejection):
-                            log(
-                                "Controller paused after consecutive deterministic "
-                                f"candidate rejections: {exc}"
-                            )
-                        else:
-                            log(
-                                "Controller paused after an internal error: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
+                        log(
+                            "Controller recorded a bounded restart decision after an "
+                            f"internal/control-plane error: {type(exc).__name__}: {exc}"
+                        )
                     except (OSError, ValueError, json.JSONDecodeError):
                         pass
                 raise

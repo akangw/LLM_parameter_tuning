@@ -31,6 +31,8 @@ agent:
   # Codex supplies the agent loop and structured tool discipline; its frozen
   # server-managed CODEX_HOME routes model inference to DeepSeek V4 Flash.
   provider: codex
+  settings:
+    max_protocol_retries: 4
   providers:
     # Optional NEW-Session route. It remains inactive while provider=deepseek.
     # This server-managed Codex installation and CODEX_HOME were verified with
@@ -57,9 +59,9 @@ lab:
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/lab_runs
   # Platform rescheduling can temporarily remove both worker heartbeats between
   # rounds. Wait for 2/2 Ready instead of treating missing heartbeats as v1.
-  readiness_wait_seconds: 1800
+  readiness_wait_seconds: 7200
   readiness_poll_seconds: 30
-  submission_readiness_retry_limit: 6
+  submission_readiness_retry_limit: 12
   # Autonomous mode fails closed while either existing chain owns resources.
   blocked_lease_names:
     - vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu

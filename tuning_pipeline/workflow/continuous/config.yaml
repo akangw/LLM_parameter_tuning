@@ -23,15 +23,17 @@ partial_exit_grace_seconds: 120
 # Unattended recovery uses per-class budgets plus one total cap. Deterministic
 # invalid states still fail closed instead of burning NPU time indefinitely.
 failure_recovery:
-  same_candidate_retries: 4
-  agent_diagnostic_retries: 1
-  parameter_adjustments: 3
-  total_recovery_rounds: 6
-max_controller_recovery_attempts: 3
+  same_candidate_retries: 6
+  agent_diagnostic_retries: 2
+  parameter_adjustments: 4
+  total_recovery_rounds: 10
+max_controller_recovery_attempts: 6
 # Codex is the default. Alternate providers reference credential environment
 # variable names; secrets are never stored in this file or Session artifacts.
 agent:
   provider: codex
+  settings:
+    max_protocol_retries: 4
   providers:
     codex:
       command: auto
@@ -98,11 +100,11 @@ benchmark:
     # Retry budgets are frozen into each candidate.env for auditability.
     # Targeted case retry is cheap; full runtime/metrics reruns remain bounded.
     case_retry_limit: 2
-    runtime_retry_limit: 2
-    metrics_retry_limit: 2
+    runtime_retry_limit: 3
+    metrics_retry_limit: 3
     # Shared cap across runtime and full-matrix metrics recovery. This prevents
     # the independent retry layers from multiplying into five full L1 passes.
-    total_full_retry_limit: 2
+    total_full_retry_limit: 3
     served_model: glm-5
     service_port: 8000
     tokenizer: /models/share/GLM-5.2-w8a8
@@ -305,7 +307,7 @@ change_policy:
   max_parameters_per_round: 4
   max_grid_steps_per_parameter: 2
   max_total_grid_steps: 6
-  max_candidate_reselections: 2
+  max_candidate_reselections: 5
   adaptive:
     enabled: true
     exploration:

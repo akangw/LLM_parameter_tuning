@@ -2415,6 +2415,102 @@ SLOT  service
                 )
             )
 
+    def test_unknown_healthy_service_benchmark_failure_gets_bounded_retry(self) -> None:
+        self.controller.benchmark_mode = "aligned_l1"
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (runtime_dir / "SERVICE_READY").touch()
+            (runtime_dir / "benchmark_runner.log").write_text(
+                "CASE FAILED new-harness-signature runner_exit=1\n",
+                encoding="utf-8",
+            )
+            (runtime_dir / "master.log").write_text(
+                "Application startup complete. HTTP 200 OK\n", encoding="utf-8"
+            )
+            decision = self.controller.deterministic_healthy_service_benchmark_retry(
+                round_dir, self.baseline
+            )
+            self.assertIsNotNone(decision)
+            self.assertEqual("retry_same", decision["action"])
+            self.assertEqual("benchmark_failure", decision["classification"])
+
+    def test_generic_benchmark_retry_rejects_dangerous_serving_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (runtime_dir / "SERVICE_READY").touch()
+            (runtime_dir / "benchmark_runner.log").write_text(
+                "CASE FAILED request runner_exit=1\n", encoding="utf-8"
+            )
+            (runtime_dir / "worker.log").write_text(
+                "HCCL operation failed\n", encoding="utf-8"
+            )
+            self.assertIsNone(
+                self.controller.deterministic_healthy_service_benchmark_retry(
+                    round_dir, self.baseline
+                )
+            )
+
+    def test_inconclusive_pause_uses_remaining_diagnostic_budget(self) -> None:
+        failure = {
+            "summary": "unclassified runtime exit",
+            "root_cause": "insufficient evidence",
+            "evidence": ["no dangerous signature"],
+            "classification": "unknown",
+            "action": "pause_for_human",
+            "safe_to_automate": False,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "candidate": self.baseline,
+        }
+        selected = self.controller.prefer_bounded_diagnostic_over_pause(
+            failure,
+            {"current_candidate": self.baseline, "failure_diagnostic_retries": 0},
+        )
+        self.assertEqual("diagnostic_retry_same", selected["action"])
+        self.assertTrue(selected["safe_to_automate"])
+
+    def test_manual_dependency_pause_is_not_auto_overridden(self) -> None:
+        failure = {
+            "summary": "image digest mismatch requires an approved image",
+            "root_cause": "image identity mismatch",
+            "evidence": [],
+            "classification": "image_or_dependency",
+            "action": "pause_for_human",
+            "safe_to_automate": False,
+            "candidate": self.baseline,
+            "changes": [],
+        }
+        selected = self.controller.prefer_bounded_diagnostic_over_pause(
+            failure,
+            {"current_candidate": self.baseline, "failure_diagnostic_retries": 0},
+        )
+        self.assertEqual("pause_for_human", selected["action"])
+
+    def test_control_plane_runtime_errors_are_restart_classified(self) -> None:
+        self.assertTrue(
+            tuning.controller_exception_is_recoverable(
+                RuntimeError("SSH connection timed out while reading remote status")
+            )
+        )
+        self.assertTrue(
+            tuning.controller_exception_is_recoverable(
+                tuning.RepeatedCandidateRejection("three invalid selections")
+            )
+        )
+        self.assertFalse(
+            tuning.controller_exception_is_recoverable(
+                RuntimeError("image digest mismatch requires approval")
+            )
+        )
+
     def test_benchmark_shell_disarms_err_trap_for_captured_failures(self) -> None:
         script = (tuning.HERE / "remote" / "run_aligned_l1.sh").read_text(
             encoding="utf-8"
