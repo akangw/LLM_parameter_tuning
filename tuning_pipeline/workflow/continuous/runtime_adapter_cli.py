@@ -255,7 +255,7 @@ def parse_args() -> argparse.Namespace:
     create.add_argument("--worker-data-parallel-start-rank", type=int, default=1)
     create.add_argument("--executor", default="ktp_two_role")
     create.add_argument("--search-space-profile", default="automatic_registry_v1")
-    create.add_argument("--strategy-profile", default="best_anchor_coverage_v2")
+    create.add_argument("--strategy-profile", default="hierarchical_throughput_v1")
     create.add_argument("--benchmark-profile", default="vllm_bench_public_v1")
     create.add_argument("--executor-validated", action="store_true")
     create.add_argument("--b0-validated", action="store_true")

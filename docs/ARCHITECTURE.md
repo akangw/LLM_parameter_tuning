@@ -32,17 +32,18 @@ flowchart LR
 
 ## Search Limits
 
-新 Session 默认使用人工审计注册表：
+当前 W8A8 新 Session 默认使用独立自动注册表：
 
 ```text
 340 ParameterYAML
 → 109 场景召回
-→ 人工审计 registry.yaml：23 项
-→ 20 Tunable：15 Active + 5 Reserve
-→ 5 Fixed + 1 Rejected
+→ 自动 registry.generated.yaml
+→ 102 Tunable：22 Active + 80 Reserve
+→ 40 Fixed + 0 Compiler Rejected
 ```
 
-新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前 Active 是：
+新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前自动路径的
+22 个 Active 是：
 
 ```text
 max_num_seqs
@@ -50,13 +51,23 @@ max_num_batched_tokens
 gpu_memory_utilization
 compilation_mode
 num_speculative_tokens
-enable_chunked_prefill
+async_scheduling
+enable_expert_parallel
+speculative_config__method
 long_prefill_token_threshold
-enable_prefix_caching
-cudagraph_capture_sizes
+fused_mc2
+enable_balance_scheduling
+enable_reduce_sample
+speculative_config__enforce_eager
+compilation_enable_sp
 max_cudagraph_capture_size
 mlapo
+enable_prefix_caching
 flashcomm1
+speculative_config__disable_padded_drafter_batch
+additional_config__ascend_compilation_config__enable_npugraph_ex
+additional_config__ascend_compilation_config__enable_static_kernel
+disable_hybrid_kv_cache_manager
 ```
 
 `automatic_registry_v1` 是本地和服务器自治的统一默认，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。两条路径在新 Session 创建时选择并冻结。当前人工路径为 15 Active，自动路径为 22 Active。人工路径在 MTP tokens 从 0 变为正数时，把 `async_scheduling=true` 作为派生配套变化，由 Controller 强制校验，不额外计作独立调参轴。

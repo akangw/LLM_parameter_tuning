@@ -42,6 +42,8 @@ PLACEHOLDER_MARKERS = (
     "placeholder",
     "your-",
 )
+DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_v1"
+DEFAULT_STRATEGY_PROFILE = "hierarchical_throughput_v1"
 
 
 def repository_files() -> list[Path]:
@@ -99,6 +101,113 @@ def main() -> int:
 
         continuous = ROOT / "tuning_pipeline" / "workflow" / "continuous"
         config = yaml.safe_load((continuous / "config.yaml").read_text(encoding="utf-8"))
+        default_pairs = {
+            "continuous/config.yaml": (
+                config["search_space"]["profile"],
+                config["strategy"]["profile"],
+            ),
+            "continuous/config.local.example.yaml": (
+                yaml.safe_load(
+                    (continuous / "config.local.example.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )["search_space"]["profile"],
+                yaml.safe_load(
+                    (continuous / "config.local.example.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )["strategy"]["profile"],
+            ),
+            "continuous/server_autonomous/config.yaml": (
+                yaml.safe_load(
+                    (continuous / "server_autonomous" / "config.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )["search_space"]["profile"],
+                yaml.safe_load(
+                    (continuous / "server_autonomous" / "config.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )["strategy"]["profile"],
+            ),
+            "continuous/launch_profiles/automatic_v2_b0.example.yaml": (
+                yaml.safe_load(
+                    (
+                        continuous
+                        / "launch_profiles"
+                        / "automatic_v2_b0.example.yaml"
+                    ).read_text(encoding="utf-8")
+                )["search_space"]["profile"],
+                yaml.safe_load(
+                    (
+                        continuous
+                        / "launch_profiles"
+                        / "automatic_v2_b0.example.yaml"
+                    ).read_text(encoding="utf-8")
+                )["strategy"]["profile"],
+            ),
+        }
+        for label, pair in default_pairs.items():
+            expected = (DEFAULT_SEARCH_SPACE_PROFILE, DEFAULT_STRATEGY_PROFILE)
+            if pair != expected:
+                errors.append(
+                    f"default profile drift in {label}: got {pair!r}, expected {expected!r}"
+                )
+
+        search_profiles = yaml.safe_load(
+            (
+                ROOT
+                / "tuning_pipeline"
+                / "workflow"
+                / "search_space_profiles.yaml"
+            ).read_text(encoding="utf-8")
+        )
+        strategy_profiles = yaml.safe_load(
+            (continuous / "strategy_profiles.yaml").read_text(encoding="utf-8")
+        )
+        if search_profiles["default_profile"] != DEFAULT_SEARCH_SPACE_PROFILE:
+            errors.append("search_space_profiles.yaml default_profile drift")
+        if strategy_profiles["default_strategy"] != DEFAULT_STRATEGY_PROFILE:
+            errors.append("strategy_profiles.yaml default_strategy drift")
+
+        runtime_profiles = yaml.safe_load(
+            (continuous / "runtime_profiles.yaml").read_text(encoding="utf-8")
+        )
+        runtime_default = runtime_profiles["profiles"][
+            runtime_profiles["default_profile"]
+        ]["config"]
+        runtime_pair = (
+            runtime_default["search_space"]["profile"],
+            runtime_default["strategy"]["profile"],
+        )
+        if runtime_pair != (DEFAULT_SEARCH_SPACE_PROFILE, DEFAULT_STRATEGY_PROFILE):
+            errors.append(f"default Runtime Profile drift: {runtime_pair!r}")
+
+        scenario = yaml.safe_load(
+            (
+                ROOT
+                / "scenarios"
+                / "glm52-w8a8-a3-2n-dp2-tp16"
+                / "scenario.yaml"
+            ).read_text(encoding="utf-8")
+        )["scenario"]
+        scenario_pair = (
+            scenario["search_space"]["default_profile"],
+            scenario["agent"]["strategy"],
+        )
+        if scenario_pair != (DEFAULT_SEARCH_SPACE_PROFILE, DEFAULT_STRATEGY_PROFILE):
+            errors.append(f"default W8A8 Scenario drift: {scenario_pair!r}")
+
+        adapter_cli = (continuous / "runtime_adapter_cli.py").read_text(
+            encoding="utf-8"
+        )
+        expected_cli_default = (
+            'create.add_argument("--strategy-profile", '
+            f'default="{DEFAULT_STRATEGY_PROFILE}")'
+        )
+        if expected_cli_default not in adapter_cli:
+            errors.append("Runtime Adapter scaffold strategy default drift")
+
         config, _ = resolve_runtime_profile(config, ROOT / "tuning_pipeline")
         resolve_topology_profile(config, ROOT / "tuning_pipeline")
         manifest = yaml.safe_load(

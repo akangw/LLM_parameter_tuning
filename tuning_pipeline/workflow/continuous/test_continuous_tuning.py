@@ -483,9 +483,15 @@ class ControllerTests(unittest.TestCase):
             "mtp_enablement", failed_attempt["hierarchical_probe"]["name"]
         )
 
-        default = tuning.Controller(config())
-        self.assertEqual("best_anchor_coverage_v2", default.strategy_profile_name)
-        self.assertNotIn("hierarchical_probe", default.effective_change_policy())
+        generic_policy_controller = tuning.Controller(config())
+        self.assertEqual(
+            "best_anchor_coverage_v2",
+            generic_policy_controller.strategy_profile_name,
+        )
+        self.assertNotIn(
+            "hierarchical_probe",
+            generic_policy_controller.effective_change_policy(),
+        )
 
     def test_hierarchical_layer_stays_for_promising_result_and_exits_at_budget(self) -> None:
         configured = config()

@@ -49,16 +49,17 @@ Runtime Adapter.
 
 ## Search-Space profiles
 
-New Sessions default to `curated_registry_v1`: the controller compiles the
-reviewed curated registry, reads only identity-compatible history, applies
-bounded history-aware rotation, and freezes the complete result. The independent
-`automatic_registry_v1` replacement rebuilds a registry from tagged portraits,
-exact pinned source evidence, and the deterministic compatibility policy. Select
-either only when creating a Session with `-SearchSpaceProfile`.
+New W8A8 Sessions default to `automatic_registry_v1`. It rebuilds a registry
+from tagged portraits, exact pinned source evidence, and the deterministic
+compatibility policy, then freezes the complete result without importing prior
+Session history. `curated_registry_v1` remains an explicit alternative that
+compiles the reviewed curated registry and can apply identity-compatible,
+bounded history-aware rotation. Select either only when creating a Session
+with `-SearchSpaceProfile`.
 
 The effective candidate contains:
 
-- 12 active tunable parameters selected by the compiler;
+- 22 active tunable parameters in the current automatic W8A8 compilation;
 - `async_scheduling` as a coupled derived companion when the curated MTP token
   axis is enabled after B0;
 - the remaining single-value runtime-contract parameters as fixed fields;
@@ -177,13 +178,14 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-The default strategy is `best_anchor_coverage_v2`. Each new proposal is anchored
-to the highest-scoring configuration that passed the deterministic baseline-relative
-throughput and latency gate. The evidence bundle includes per-parameter tested and
-untested values, causal single-parameter observations, and separately classified
-multi-parameter observations. Exploration prefers 2-3 independent changes; after a
-trusted improvement it narrows to 1-2. Rejected branches therefore remain evidence
-but do not silently become the base configuration for subsequent rounds.
+The W8A8 default strategy is `hierarchical_throughput_v1`, described below.
+`best_anchor_coverage_v2` remains an integrated opt-in strategy. It anchors each
+proposal to the highest-scoring configuration that passed the deterministic
+baseline-relative throughput and latency gate. Its evidence bundle includes
+per-parameter tested and untested values, causal single-parameter observations,
+and separately classified multi-parameter observations. Exploration prefers 2-3
+independent changes; after a trusted improvement it narrows to 1-2. Rejected
+branches remain evidence but do not silently become the base configuration.
 
 `best_anchor_coverage_v3` is also integrated. It deterministically requires 2-3
 independent changes during exploration and narrows local refinement to one grid
@@ -191,8 +193,8 @@ step. Both strategies still run the complete aligned-L1 matrix for every candida
 the screening helpers in `hierarchical_strategy.py` are reserved for a future
 reviewed Screen-to-Full state machine and cannot accept an improvement today.
 
-`hierarchical_throughput_v1` is an opt-in strategy for new Sessions whose primary
-objective is output-token throughput. It does **not** read A0 or any other Session's
+`hierarchical_throughput_v1` is the default W8A8 strategy for new Sessions whose
+primary objective is output-token throughput. It does **not** read A0 or any other Session's
 candidates or metrics. Instead, it applies a general ordered curriculum: MTP and
 its required scheduler/graph companions, expert-parallel communication, scheduler
 capacity, compilation/graph capture, then Ascend communication refinement. This

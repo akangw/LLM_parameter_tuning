@@ -51,7 +51,7 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 身份全部审计后才能激活；生成离线提案不代表服务器已支持该版本。
 
 Git 克隆已经包含当前正式画像、跳过清单和 Tags，可直接作为
-知识库复用；默认人工审计路径的权威 Search Limits 在新 Session 创建时重新编译并冻结。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
+知识库复用；默认自动注册表路径的权威 Search Limits 在新 Session 创建时重新编译并冻结。`sources/` checkout、`version_migrations/`、队列、Session 与日志不随
 Git 分发；它们应由入口脚本按所选版本和场景重新生成。
 
 新建 Session 默认选择 `automatic_registry_v1`，从画像、固定源码和确定性兼容策略生成并冻结 Search Limits；如需复用人工审计的 23 项注册表，显式使用 `-SearchSpaceProfile curated_registry_v1`。默认 Agent Strategy 为 `hierarchical_throughput_v1`。Search-Space、Agent Strategy 和 Benchmark 均不得在 Resume 中切换。

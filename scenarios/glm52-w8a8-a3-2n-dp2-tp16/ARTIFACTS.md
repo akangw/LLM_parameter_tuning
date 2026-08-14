@@ -9,7 +9,7 @@
 - Topology：`a3_dp2_tp16`
 - Executor：`ktp_two_role`
 - Benchmark：`aligned_l1_v4`
-- Strategy：`best_anchor_coverage_v2`
+- Strategy：`hierarchical_throughput_v1`
 - 镜像身份：`remote/image_version_manifest.yaml` + `activation.approved.yaml`
 
 共享参数画像位于 `portrait_pipeline/outputs/ParameterYAML/`，共享 Tags 位于

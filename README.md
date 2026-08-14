@@ -63,7 +63,7 @@ API Key、SSH 凭据、模型权重、私有 Benchmark 资产、Lease 或历史 
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
   -Scenario .\path\to\scenario.yaml
 
-# 默认复用人工 23 项注册表；需要时可显式切换为独立自动注册表
+# W8A8 默认使用独立自动注册表；需要历史人工边界时显式切换 curated
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
   -SearchSpaceProfile automatic_registry_v1
 
@@ -133,7 +133,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
 | Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_v1`（默认）、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | `best_anchor_coverage_v2`、`best_anchor_coverage_v3`、`hierarchical_throughput_v1` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | `hierarchical_throughput_v1`（默认）、`best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是

@@ -111,8 +111,8 @@ python -m workflow.registry_builder.candidate_validator `
 
 ## 两种可替换路径
 
-默认主链路为：`109 召回 → 人工 registry.yaml（23 项）→ 同一个 Search-Space Compiler → Controller`。
+默认主链路为：`109 召回 → 自动 registry.generated.yaml → 同一个 Search-Space Compiler → Controller`。
 
-可插拔自动替代路径为：`109 召回 → 自动 registry.generated.yaml → 同一个 Search-Space Compiler → Controller`。
+显式人工替代路径为：`109 召回 → 人工 registry.yaml（23 项）→ 同一个 Search-Space Compiler → Controller`。
 
 自动路径不会读取人工 `registry.yaml`。当前 Profile 激活预算生成 102 个可调维度（Active 22 + Reserve 80）和 40 个 Fixed。PCP、KV Cache dtype、Layer Sharding、Mix Placement、共享专家 DP、Cache Block 布局和无效占位值等不会作为当前 GLM/32-NPU 场景的可轮换轴。Controller 对已存在的同名参数复用成熟运行适配器，对自动路径新增的参数使用通用 CLI/ENV/JSON 注入协议；每次提交前再次执行候选域、物理拓扑、跨参数约束和注入渲染校验。

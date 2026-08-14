@@ -303,7 +303,9 @@ search_limits:
     - null
     - [16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192]
 change_policy:
-  strategy_version: best_anchor_coverage_v2
+  # The selected Strategy Profile overwrites this compatibility field during
+  # Controller initialization; keep the checked-in fallback aligned as well.
+  strategy_version: hierarchical_throughput_v1
   max_parameters_per_round: 4
   max_grid_steps_per_parameter: 2
   max_total_grid_steps: 6

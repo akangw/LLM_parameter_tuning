@@ -9,7 +9,8 @@
 - `parameter_portraits.agent.yaml` 中与 Active 参数相关的知识。
 - Search Limits 候选值、依赖和禁止组合。
 - 已完成轮次的指标、失败证据和当前最佳 Anchor。
-- Agent Strategy Profile，例如 `best_anchor_coverage_v2`。
+- Agent Strategy Profile；当前 W8A8 默认是 `hierarchical_throughput_v1`，
+  `best_anchor_coverage_v2/v3` 保留为新 Session 的显式可选策略。
 
 更换 Codex、DeepSeek 或其他 OpenAI-compatible Provider，只更换决策模型，不减少以上证据包。
 
