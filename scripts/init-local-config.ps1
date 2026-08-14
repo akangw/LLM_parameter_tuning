@@ -64,7 +64,7 @@ search_space:
   profile: $(ConvertTo-YamlScalar $SearchSpaceProfile)
 
 strategy:
-  profile: best_anchor_coverage_v2
+  profile: hierarchical_throughput_v1
 "@
 
 Set-Content -LiteralPath $target -Value $content -Encoding utf8

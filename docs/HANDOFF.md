@@ -37,8 +37,8 @@ tuning_pipeline/workflow/continuous/experiments/glm52_continuous_20260804_112130
 ## 4. 新机器验证
 
 ```powershell
-git clone https://github.com/chenasir/Auto_vllm_parameter.git
-cd Auto_vllm_parameter
+git clone https://github.com/akangw/LLM_parameter_tuning.git
+cd LLM_parameter_tuning
 .\scripts\fetch-sources.ps1
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1

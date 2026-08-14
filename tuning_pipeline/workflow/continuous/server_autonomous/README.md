@@ -48,6 +48,17 @@ From Windows, deploy the repository snapshot with:
 .\scripts\deploy-server-autonomous.ps1
 ```
 
+The command above preserves the verified server defaults.  For another Linux
+controller, pass both its SSH alias and the exact writable boundary; the
+deployment refuses a target outside that boundary:
+
+```powershell
+.\scripts\deploy-server-autonomous.ps1 `
+  -RemoteHost my-controller `
+  -AllowedWriteRoot /srv/my-user `
+  -RemoteRoot /srv/my-user/LLM_parameter_tuning
+```
+
 On the server:
 
 ```bash

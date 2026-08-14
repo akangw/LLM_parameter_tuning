@@ -17,6 +17,27 @@
 README 不公开具体实验分数、吞吐、延迟、逐轮候选或当前 Session
 状态；这些数据只保存在对应 Session 的受管产物中，并通过状态和导出命令按需查看。
 
+## 第一次接手：能否直接运行
+
+结论分为两层：在已集成的 `GLM-5.2 W8A8 + Atlas A3 + 2 节点 × 16 NPU + ktp-lab`
+环境中，补齐私有配置并通过预检后，可以运行完整自动化闭环；换成任意 NPU 服务器时，
+不能只克隆代码就直接提交，必须先完成对应 Runtime/Executor Adapter 的验证。仓库不会分发
+API Key、SSH 凭据、模型权重、私有 Benchmark 资产、Lease 或历史 Session。
+
+接手者必须提供：
+
+1. 可登录的调度/开发节点和独立可写目录；
+2. 模型与可选 MTP 权重路径、served-model 名称、网卡和环境脚本；
+3. 镜像 digest、vLLM/vllm-ascend commit、CANN 版本及 NPU 拓扑；
+4. 唯一 Lease 名称及对应资源执行器；
+5. Agent Provider 凭据（只放环境变量）；
+6. 内部、公开或自定义 Benchmark 三选一。
+
+最短验收顺序是：安装依赖 → 生成 Git 忽略的私有配置 → 密钥扫描/单元测试 →
+`CheckOnly` 或 `dry_run.sh` → 镜像身份和 Lease 预检 → 创建新 Session。任何预检失败都不应
+绕过；应按错误补齐环境或新建适配包。详细命令分别见下方“两种自动化运行模式”和
+[可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。
+
 ## 可选扩展接口与 Ascend Runtime Adapter
 
 ### 更换 vLLM / vllm-ascend 版本
@@ -209,8 +230,8 @@ B0/显式导入基线
 代码、Controller、Session 和日志都位于 Linux 开发/调度节点；NPU 计算节点仍只运行本轮服务和 Benchmark。服务器不安装 Codex 时，使用 `agent.provider: deepseek`；没有内部 ServeBench 权限时，使用 `benchmark.profile: vllm_bench_public_v1`。
 
 ```bash
-git clone https://github.com/chenasir/Auto_vllm_parameter.git
-cd Auto_vllm_parameter
+git clone https://github.com/akangw/LLM_parameter_tuning.git
+cd LLM_parameter_tuning
 python3 -m pip install -r tuning_pipeline/requirements-server-autonomous.txt
 
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
@@ -268,8 +289,8 @@ Benchmark 时不要依赖该私有资产复制脚本。
 ### 1. 启动前配置
 
 ```powershell
-git clone https://github.com/chenasir/Auto_vllm_parameter.git
-cd Auto_vllm_parameter
+git clone https://github.com/akangw/LLM_parameter_tuning.git
+cd LLM_parameter_tuning
 
 # 建议使用独立 Python 3.11+ 虚拟环境，避免污染系统/Anaconda 环境
 py -3.11 -m venv .venv
@@ -421,7 +442,7 @@ tuning_pipeline/workflow/continuous/experiments/<session>/
 ## 项目层级
 
 ```text
-Auto_vllm_parameter/
+LLM_parameter_tuning/
 ├─ pipeline/                     业务阅读入口（先读这里）
 │  ├─ 01_parameter_knowledge/    画像 → 迁移 → Tags → 召回 → Search Limits
 │  ├─ 02_agent_tuning/           基线 → Agent 候选 → Controller 校验

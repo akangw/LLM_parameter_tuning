@@ -5,7 +5,7 @@
 ## 一眼看懂：三条业务链 + 两个操作入口
 
 ```text
-Auto_vllm_parameter/
+LLM_parameter_tuning/
 ├─ pipeline/
 │  ├─ 01_parameter_knowledge/  画像、迁移、Tags、召回、Search Limits
 │  ├─ 02_agent_tuning/         Agent 选参和 Controller 校验

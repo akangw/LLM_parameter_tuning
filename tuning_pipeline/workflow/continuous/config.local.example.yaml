@@ -58,4 +58,4 @@ search_space:
   profile: automatic_registry_v1
 
 strategy:
-  profile: best_anchor_coverage_v2
+  profile: hierarchical_throughput_v1

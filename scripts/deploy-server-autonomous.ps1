@@ -1,13 +1,18 @@
 [CmdletBinding()]
 param(
     [string]$RemoteHost = "hetao-npu",
-    [string]$RemoteRoot = "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190"
+    [string]$RemoteRoot = "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190",
+    [string]$AllowedWriteRoot = "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace"
 )
 
 $ErrorActionPreference = "Stop"
-$allowedPrefix = "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/"
+$AllowedWriteRoot = $AllowedWriteRoot.TrimEnd("/")
+if (-not $AllowedWriteRoot.StartsWith("/", [System.StringComparison]::Ordinal) -or $AllowedWriteRoot -eq "/") {
+    throw "AllowedWriteRoot must be an absolute, non-root Linux directory."
+}
+$allowedPrefix = "$AllowedWriteRoot/"
 if (-not $RemoteRoot.StartsWith($allowedPrefix, [System.StringComparison]::Ordinal)) {
-    throw "RemoteRoot must remain inside the approved cjx-workspace directory."
+    throw "RemoteRoot must remain inside AllowedWriteRoot ($AllowedWriteRoot)."
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
