@@ -54,6 +54,17 @@ $remoteSha256 = ($remoteIdentityOutput | ForEach-Object {
 if (-not $remoteSize -or [int64]$remoteSize -ne $localSize -or $remoteSha256 -ne $localSha256) {
     throw "Failed to verify uploaded deployment archive size and SHA-256."
 }
+$deployedAt = (Get-Date).ToUniversalTime().ToString("o")
+$deploymentIdentity = [ordered]@{
+    schema = "vllmtkb-deployment/v1"
+    git_commit = $gitCommit
+    archive_sha256 = $localSha256
+    archive_size = $localSize
+    deployed_at = $deployedAt
+} | ConvertTo-Json -Compress
+$deploymentIdentityBase64 = [Convert]::ToBase64String(
+    [System.Text.Encoding]::UTF8.GetBytes($deploymentIdentity)
+)
 
 $remoteCommand = @"
 set -e
@@ -62,7 +73,7 @@ tar -xzf '$remoteArchive' -C '$RemoteRoot'
 chmod +x '$RemoteRoot'/tuning_pipeline/workflow/continuous/server_autonomous/*.sh
 manifest='$RemoteRoot/deployment.identity.json'
 temporary="`${manifest}.tmp-$stamp"
-printf '%s\n' '{"schema":"vllmtkb-deployment/v1","git_commit":"$gitCommit","archive_sha256":"$localSha256","archive_size":$localSize,"deployed_at":"$((Get-Date).ToUniversalTime().ToString("o"))"}' > "`${temporary}"
+printf '%s' '$deploymentIdentityBase64' | base64 -d > "`${temporary}"
 mv "`${temporary}" "`${manifest}"
 printf 'deployed_root=%s\nretained_archive=%s\ngit_commit=%s\narchive_sha256=%s\n' '$RemoteRoot' '$remoteArchive' '$gitCommit' '$localSha256'
 printf '__AUTONOMOUS_DEPLOY_RC__=0\n'
