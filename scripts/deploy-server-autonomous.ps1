@@ -38,14 +38,12 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to create the committed deployment arch
 $localSize = (Get-Item -LiteralPath $localArchive).Length
 $localSha256 = (Get-FileHash -LiteralPath $localArchive -Algorithm SHA256).Hash.ToLowerInvariant()
 
-& scp $localArchive "${RemoteHost}:$remoteArchive"
-if ($LASTEXITCODE -ne 0) { throw "Failed to upload the deployment archive." }
-
 # Some managed SSH installations emit a host-key ownership warning and return
 # nonzero after a command has completed. Validate the command's structured
 # stdout instead of accepting or rejecting it from that transport quirk alone.
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "SilentlyContinue"
+& scp $localArchive "${RemoteHost}:$remoteArchive" 2>$null
 $remoteIdentityOutput = & ssh -o BatchMode=yes $RemoteHost `
     "stat -c %s '$remoteArchive' && sha256sum '$remoteArchive'" 2>$null
 $ErrorActionPreference = $previousErrorActionPreference
