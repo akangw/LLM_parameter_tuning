@@ -83,7 +83,7 @@ flashcomm1
 disable_hybrid_kv_cache_manager
 ```
 
-`automatic_registry_a8_frontier_v3` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 28 Active + 75 Reserve；历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界最多轮换 3 个 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
+`automatic_registry_a8_frontier_v4` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 30 Active + 73 Reserve。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 联合选择，Controller 校验 K+1、TP8、图上限与 scheduler budget；历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界轮换 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
 
 自动替代路径当前 Controller 编译结果为：103 Tunable（28 Active + 75 Reserve）→ 39 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
 

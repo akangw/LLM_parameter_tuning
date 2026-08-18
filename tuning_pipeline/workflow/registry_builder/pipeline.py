@@ -381,6 +381,9 @@ class AutomaticRegistryPipeline:
         source_root: Path | None = None,
         activation_override: dict[str, Any] | None = None,
         baseline_override: dict[str, Any] | None = None,
+        history_path: Path | None = None,
+        previous_selection_path: Path | None = None,
+        history_rotation_override: dict[str, Any] | None = None,
     ) -> None:
         self.knowledge_dir = knowledge_dir.resolve()
         self.scenario_path = scenario_path.resolve()
@@ -390,6 +393,13 @@ class AutomaticRegistryPipeline:
         ).resolve()
         self.source_root = (source_root or DEFAULT_SOURCE_ROOT).resolve()
         self.activation_override = copy.deepcopy(activation_override or {})
+        self.history_path = history_path.resolve() if history_path else None
+        self.previous_selection_path = (
+            previous_selection_path.resolve() if previous_selection_path else None
+        )
+        self.history_rotation_override = copy.deepcopy(
+            history_rotation_override or {}
+        )
         self.scenario = yaml.safe_load(self.scenario_path.read_text(encoding="utf-8"))
         if baseline_override is not None:
             self.scenario["baseline"] = copy.deepcopy(baseline_override)
@@ -648,6 +658,9 @@ class AutomaticRegistryPipeline:
                 policy_path=self.policy_path,
                 activation_override=self.activation_override,
                 baseline_override=dict(self.scenario.get("baseline", {})),
+                history_path=self.history_path,
+                previous_selection_path=self.previous_selection_path,
+                history_rotation_override=self.history_rotation_override,
             ).compile()
         result["integration"]["connected_to_mainflow"] = False
         result["integration"]["registry_source"] = "automatic_registry_generated"

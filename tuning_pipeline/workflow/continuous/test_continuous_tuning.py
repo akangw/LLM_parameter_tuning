@@ -417,6 +417,112 @@ class ControllerTests(unittest.TestCase):
             self.controller.grid_step_distance([48, 8, 16, 32, 64], 48, 64),
         )
 
+    def test_mtp_graph_shapes_use_query_length_not_tp_divisibility(self) -> None:
+        configured = config()
+        configured["baseline"].update(
+            speculative_config__method="mtp",
+            cudagraph_capture_sizes=[16, 32, 48, 64],
+            max_cudagraph_capture_size=64,
+        )
+        configured["search_limits"].update(
+            num_speculative_tokens=[2, 3],
+            speculative_config__method=["mtp", None],
+            cudagraph_capture_sizes=[
+                [16, 32, 48, 64],
+                [3, 6, 12, 24, 48, 72, 96],
+                [4, 8, 16, 32, 64],
+            ],
+            max_cudagraph_capture_size=[64, 96],
+        )
+        configured["automatic_registry_validation"] = {
+            "scenario": {},
+            "compatibility_policy": {"schema_version": 1},
+            "active_injections": {
+                "speculative_config__method": {
+                    "kind": "json_path",
+                    "path": ["speculative_config", "method"],
+                }
+            }
+        }
+        controller = tuning.Controller(configured)
+        controller.automatic_registry_validation = None
+        controller.automatic_compatibility = None
+        candidate = dict(controller.config["baseline"])
+        candidate.update(
+            num_speculative_tokens=2,
+            async_scheduling=True,
+            speculative_config__method="mtp",
+            compilation_mode="FULL_DECODE_ONLY",
+            cudagraph_capture_sizes=[3, 6, 12, 24, 48, 72, 96],
+            max_cudagraph_capture_size=96,
+        )
+        controller.validate_candidate_invariants(candidate)
+        candidate["cudagraph_capture_sizes"] = [4, 8, 16, 32, 64]
+        candidate["max_cudagraph_capture_size"] = 64
+        with self.assertRaisesRegex(ValueError, "multiples"):
+            controller.validate_candidate_invariants(candidate)
+
+    def test_full_decode_only_rejects_unreachable_graph_maximum(self) -> None:
+        configured = config()
+        configured["baseline"].update(
+            max_num_seqs=32,
+            max_num_batched_tokens=4096,
+            num_speculative_tokens=3,
+            async_scheduling=True,
+            compilation_mode="FULL_DECODE_ONLY",
+            cudagraph_capture_sizes=[32, 64, 128],
+            max_cudagraph_capture_size=128,
+        )
+        configured["search_limits"].update(
+            max_num_seqs=[32, 64],
+            cudagraph_capture_sizes=[[32, 64, 128], [32, 64, 128, 256]],
+            max_cudagraph_capture_size=[128, 256],
+        )
+        controller = tuning.Controller(configured)
+        candidate = dict(controller.config["baseline"])
+        candidate.update(
+            cudagraph_capture_sizes=[32, 64, 128, 256],
+            max_cudagraph_capture_size=256,
+        )
+        with self.assertRaisesRegex(ValueError, "reachable decode token ceiling"):
+            controller.validate_candidate_invariants(candidate)
+        candidate["max_num_seqs"] = 64
+        controller.validate_candidate_invariants(candidate)
+
+    def test_task_queue_two_requires_explicit_graph_disabled_diagnostic(self) -> None:
+        configured = config()
+        configured["baseline"].update(
+            TASK_QUEUE_ENABLE=1,
+            cudagraph_capture_sizes=[16, 32, 48, 64],
+            max_cudagraph_capture_size=64,
+        )
+        configured["search_limits"].update(
+            compilation_mode=["FULL_DECODE_ONLY", "NONE"],
+            TASK_QUEUE_ENABLE=[0, 1, 2],
+            cudagraph_capture_sizes=[[16, 32, 48, 64], None],
+            max_cudagraph_capture_size=[64],
+        )
+        configured["automatic_registry_validation"] = {
+            "scenario": {},
+            "compatibility_policy": {"schema_version": 1},
+            "active_injections": {
+                "TASK_QUEUE_ENABLE": {
+                    "kind": "env_value",
+                    "name": "TASK_QUEUE_ENABLE",
+                }
+            }
+        }
+        controller = tuning.Controller(configured)
+        controller.automatic_registry_validation = None
+        controller.automatic_compatibility = None
+        candidate = dict(controller.config["baseline"])
+        candidate["TASK_QUEUE_ENABLE"] = 2
+        with self.assertRaisesRegex(ValueError, "graph mode NONE"):
+            controller.validate_candidate_invariants(candidate)
+        candidate["compilation_mode"] = "NONE"
+        candidate["cudagraph_capture_sizes"] = None
+        controller.validate_candidate_invariants(candidate)
+
     def test_infrastructure_failure_does_not_consume_candidate_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = Path(temporary)
@@ -1595,20 +1701,19 @@ class ControllerTests(unittest.TestCase):
                 archive_root=Path(temporary),
             )
         self.assertEqual(
-            "automatic_registry_a8_frontier_v3",
+            "automatic_registry_a8_frontier_v4",
             resolved["resolved_search_space"]["profile"],
         )
         self.assertEqual(
             "automatic_registry", resolved["resolved_search_space"]["mode"]
         )
         self.assertEqual(142, result["summary"]["registry_parameters"])
-        self.assertEqual(28, result["summary"]["active_parameters"])
-        self.assertEqual(75, result["summary"]["reserve_parameters"])
+        self.assertEqual(30, result["summary"]["active_parameters"])
+        self.assertEqual(73, result["summary"]["reserve_parameters"])
         self.assertEqual(39, result["summary"]["fixed_parameters"])
         self.assertEqual(0, result["summary"]["rejected_parameters"])
         self.assertEqual(
-            ["max_cudagraph_capture_size"],
-            resolved["resolved_search_space"]["derived_runtime_parameters"],
+            [], resolved["resolved_search_space"]["derived_runtime_parameters"]
         )
         self.assertEqual(
             resolved["search_limits"], result["integration"]["effective_search_limits"]
@@ -1625,6 +1730,79 @@ class ControllerTests(unittest.TestCase):
         }:
             self.assertIn(name, result["active_search_limits"])
         self.assertNotIn("VLLM_RAY_PER_WORKER_GPUS", result["active_search_limits"])
+
+    def test_frontier_v4_keeps_coupled_mtp_graph_and_prefill_values(self) -> None:
+        raw = tuning.load_config(
+            tuning.HERE / "server_autonomous" / "config.dp4_tp8.search_v4.yaml"
+        )
+        raw, _ = tuning.resolve_runtime_profile(raw, tuning.KB_ROOT)
+        raw = tuning.apply_topology_baseline_binding(raw)
+        raw = tuning.resolve_initial_baseline_definition(raw, tuning.KB_ROOT)
+        with tempfile.TemporaryDirectory() as temporary:
+            history_seed = Path(temporary) / "history.json"
+            history_seed.write_text("[]\n", encoding="utf-8")
+            raw["search_space"]["history_source"] = "explicit"
+            raw["search_space"]["history_path"] = str(history_seed)
+            resolved, result = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+        self.assertEqual(30, result["summary"]["active_parameters"])
+        self.assertEqual(
+            {0, 1, 2, 3, 4},
+            set(resolved["search_limits"]["num_speculative_tokens"]),
+        )
+        self.assertEqual(
+            {0, 512, 1024, 2048, 4096, 8192},
+            set(resolved["search_limits"]["long_prefill_token_threshold"]),
+        )
+        self.assertEqual(
+            {0, 1, 2}, set(resolved["search_limits"]["TASK_QUEUE_ENABLE"])
+        )
+        self.assertIn(
+            [3, 6, 12, 24, 48, 72, 96],
+            resolved["search_limits"]["cudagraph_capture_sizes"],
+        )
+        self.assertIn(
+            [4, 8, 12, 16, 24, 32, 48, 56, 64, 72, 84, 96, 108, 112, 128],
+            resolved["search_limits"]["cudagraph_capture_sizes"],
+        )
+        self.assertIn(
+            [5, 10, 15, 20, 30, 40, 60, 70, 80, 90, 105, 120, 135, 140, 160],
+            resolved["search_limits"]["cudagraph_capture_sizes"],
+        )
+        self.assertIn(
+            "max_cudagraph_capture_size", result["active_search_limits"]
+        )
+        self.assertEqual(
+            1,
+            tuning.Controller.grid_step_distance(
+                [[16, 32, 48, 64], [3, 6, 12, 24, 48, 72, 96]],
+                [16, 32, 48, 64],
+                [3, 6, 12, 24, 48, 72, 96],
+            ),
+        )
+
+    def test_frozen_continuation_history_is_visible_to_agent_and_dedupe(self) -> None:
+        controller = tuning.Controller(config())
+        imported = {
+            "round": "round_016_a13",
+            "params": dict(controller.config["baseline"]),
+            "outcome": "success",
+            "counts_as_parameter_experiment": True,
+            "experiment_evidence_status": "benchmarked",
+            "metrics": {"metrics": {"output_token_throughput": 591.1866}},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            frozen = session / "00_search_space" / "continuation_history.json"
+            frozen.parent.mkdir(parents=True)
+            frozen.write_text(
+                json.dumps([imported], ensure_ascii=False), encoding="utf-8"
+            )
+            history = controller.attempted_history_summary(session)
+        self.assertEqual([imported], history)
 
     def test_local_and_server_experiment_defaults_are_aligned(self) -> None:
         local = tuning.load_config(tuning.HERE / "config.yaml")

@@ -14,7 +14,7 @@ class HierarchicalStrategyTests(unittest.TestCase):
         with profiles_path.open(encoding="utf-8") as handle:
             profiles = yaml.safe_load(handle)
         self.assertEqual(
-            profiles["default_strategy"], "hierarchical_agentic_guided_v4"
+            profiles["default_strategy"], "hierarchical_agentic_guided_v5"
         )
         self.profile = profiles["strategies"]["best_anchor_coverage_v3"]
         self.assertEqual(self.profile["status"], "integrated")

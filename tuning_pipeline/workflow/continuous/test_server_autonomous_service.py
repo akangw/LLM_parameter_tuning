@@ -234,7 +234,7 @@ class ServiceRenderTests(unittest.TestCase):
             "vllm_bench_public_v1", merged["benchmark"]["profile"]
         )
         self.assertEqual(
-            "automatic_registry_a8_frontier_v3",
+            "automatic_registry_a8_frontier_v4",
             merged["search_space"]["profile"],
         )
 

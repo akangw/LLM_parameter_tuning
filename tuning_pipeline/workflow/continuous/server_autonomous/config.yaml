@@ -9,7 +9,7 @@ autonomous:
   allowed_write_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
 
 runtime:
-  profile: glm52_w8a8_a3_dp4_tp8_a8_guided_v4
+  profile: glm52_w8a8_a3_dp4_tp8_search_v4
   profiles_file: workflow/continuous/runtime_profiles.yaml
 
 # Parameter-only validation phase: DP4/TP8 is operator-frozen for every new
@@ -27,19 +27,19 @@ topology_campaign:
   maximum_candidate_index_per_topology: 24
 
 # Freeze the autonomous experiment choices independently from the default
-# Windows-to-server chain. Only DP2/TP16 is admitted by the selected Runtime;
-# A8, compiled Search Limits, history and best anchor stay in that identity.
+# Windows-to-server chain. Fixed DP4/TP8, compiled Search Limits, history and
+# the measured incumbent stay inside the selected Runtime identity.
 search_space:
-  profile: automatic_registry_a8_frontier_v3
+  profile: automatic_registry_a8_frontier_v4
   history_source: latest_completed_session
 
 strategy:
-  profile: hierarchical_agentic_guided_v4
+  profile: hierarchical_agentic_guided_v5
 
 initial_baseline:
-  label: a8_dp4_tp8_guided_v4
+  label: incumbent_search_v4
   launch_profile: explicit_candidate
-  definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+  definition: workflow/baselines/incumbent_glm52_w8a8_dp4_tp8_search_v4.yaml
 
 agent:
   # Codex supplies the agent loop and structured tool discipline; its frozen

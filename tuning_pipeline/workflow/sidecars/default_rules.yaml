@@ -33,16 +33,6 @@ rules:
     right: max_num_batched_tokens
     source: {type: existing_controller_contract}
 
-  - id: mtp_factor_divides_tensor_parallel
-    status: active
-    severity: hard
-    kind: divides_or_disabled
-    divisor: {add: [num_speculative_tokens, 1]}
-    dividend_scenario: topology.tensor_parallel_size
-    disabled_parameter: num_speculative_tokens
-    disabled_value: 0
-    source: {type: existing_controller_contract}
-
   - id: mtp_requires_async_scheduling
     status: active
     severity: hard

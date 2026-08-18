@@ -19,10 +19,26 @@ MODULE_DIR = Path(__file__).resolve().parent
 DEFAULT_POLICY_PATH = MODULE_DIR / "compatibility_policy.yaml"
 
 
+def _deep_merge_policy(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_policy(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
 def read_policy(path: Path) -> dict[str, Any]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"Compatibility policy must be an object: {path}")
+    parent = value.pop("extends", None)
+    if parent is not None:
+        parent_path = (path.parent / str(parent)).resolve()
+        if parent_path == path.resolve():
+            raise ValueError("Compatibility policy cannot extend itself")
+        value = _deep_merge_policy(read_policy(parent_path), value)
     if value.get("schema_version") != 1:
         raise ValueError("Unsupported compatibility policy schema")
     return value
@@ -218,6 +234,38 @@ class CompatibilityValidator:
                 )
         return stable_unique(normalized), rejected
 
+    def _candidate_domain_override(
+        self,
+        canonical: str,
+        injection: dict[str, Any],
+    ) -> tuple[list[Any] | None, list[dict[str, Any]]]:
+        """Return a policy-owned executable domain for structured/non-numeric axes.
+
+        Source extraction is intentionally conservative for list-valued parameters:
+        it normally discovers the current list, but cannot invent useful alternative
+        shapes.  Explicit overrides let the compatibility policy provide reviewed
+        templates while preserving the same fail-closed normalization used for
+        source-derived values.
+        """
+        overrides = self.policy.get("candidate_domain_overrides", {})
+        raw_values = overrides.get(canonical) if isinstance(overrides, dict) else None
+        if raw_values is None:
+            return None, []
+        if not isinstance(raw_values, list):
+            raise ValueError(
+                f"Candidate-domain override for {canonical} must be a list"
+            )
+        accepted: list[Any] = []
+        rejected: list[dict[str, Any]] = []
+        for raw in raw_values:
+            try:
+                value, _ = self._normalize_value(raw, injection)
+            except ValueError as exc:
+                rejected.append({"value": raw, "reason": str(exc)})
+                continue
+            accepted.append(value)
+        return stable_unique(accepted), rejected
+
     def _filter_policy_values(
         self,
         values: list[Any],
@@ -315,6 +363,12 @@ class CompatibilityValidator:
         numeric_domain = self.numeric_domain(canonical, baseline, accepted)
         if numeric_domain is not None:
             accepted = numeric_domain
+        domain_override, override_rejections = self._candidate_domain_override(
+            canonical, injection
+        )
+        if domain_override is not None:
+            accepted = domain_override
+            rejected_values.extend(override_rejections)
         if baseline is not None:
             accepted.insert(0, baseline)
         accepted = stable_unique(accepted)
@@ -366,6 +420,7 @@ class CompatibilityValidator:
             "normalization_events": normalization_events,
             "rejected_values": rejected_values,
             "numeric_domain_policy_applied": numeric_domain is not None,
+            "candidate_domain_override_applied": domain_override is not None,
         }
         return {
             "accepted": True,
@@ -379,6 +434,7 @@ class CompatibilityValidator:
                 "normalization_events": normalization_events,
                 "rejected_values": rejected_values,
                 "numeric_domain_policy_applied": numeric_domain is not None,
+                "candidate_domain_override_applied": domain_override is not None,
             },
         }
 

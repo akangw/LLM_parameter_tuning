@@ -1,6 +1,6 @@
 # Search-space construction is a Session-level choice, just like Agent and
 # Benchmark profiles. The selected definition is frozen into session_config.yaml.
-default_profile: automatic_registry_a8_frontier_v3
+default_profile: automatic_registry_a8_frontier_v4
 
 profiles:
   curated_registry_v1:
@@ -110,6 +110,56 @@ profiles:
         - speculative_config__method
         - speculative_config__attention_backend
         - cudagraph_capture_sizes
+        - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+        - TASK_QUEUE_ENABLE
+        - additional_config__ascend_compilation_config__fuse_allreduce_rms
+        - additional_config__prefill_comm_compute_overlap
+        - additional_config__ascend_compilation_config__enable_static_kernel
+        - additional_config__ascend_compilation_config__enable_npugraph_ex
+        - additional_config__ascend_compilation_config__fuse_norm_quant
+        - compilation_enable_sp
+    derived_parameters:
+      async_scheduling:
+        drivers: [num_speculative_tokens]
+
+  automatic_registry_a8_frontier_v4:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      DP4/TP8 Fast-C32 continuation space with richer useful numeric points,
+      reviewed CUDAGraph shape templates, graph-safe TASK_QUEUE_ENABLE 0/1 with
+      a graph-disabled value-2 diagnostic, and explicit Agent ownership of graph
+      maximum and hybrid-KV policy. Chunked prefill remains fixed on because the
+      64k context exceeds the scheduler token budget.
+      High-risk boundary values remain available, while proven-invalid values
+      are removed from the dominant graph-capture path.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.frontier_v4.yaml
+    source_root: ../portrait_pipeline/sources
+    # This continuation already exposes 30 reviewed Active axes. Do not let a
+    # generic unexplored-value bonus replace them with topology/Ray Reserve axes
+    # at Session creation; Reserve promotion remains a future versioned choice.
+    history_rotation:
+      maximum_swaps_per_session: 0
+    activation:
+      target_count: 30
+      maximum_count: 36
+      max_per_category: 10
+      additional_core_parameters:
+        - max_model_len
+        - max_cudagraph_capture_size
+        - cudagraph_capture_sizes
+        - disable_hybrid_kv_cache_manager
+        - mlapo
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager
+        - speculative_config__disable_padded_drafter_batch
+        - speculative_config__method
+        - speculative_config__attention_backend
         - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
         - TASK_QUEUE_ENABLE
         - additional_config__ascend_compilation_config__fuse_allreduce_rms

@@ -240,14 +240,6 @@ def machine_constraints() -> list[dict[str, Any]]:
             "right": "max_num_batched_tokens",
         },
         {
-            "id": "mtp_factor_divides_tensor_parallel",
-            "kind": "divides_or_disabled",
-            "divisor": {"add": ["num_speculative_tokens", 1]},
-            "dividend_scenario": "topology.tensor_parallel_size",
-            "disabled_parameter": "num_speculative_tokens",
-            "disabled_value": 0,
-        },
-        {
             "id": "decode_context_parallel_divides_tensor_parallel",
             "kind": "divides",
             "divisor": "decode_context_parallel_size",
@@ -382,6 +374,7 @@ class SearchSpaceCompiler:
         previous_selection_path: Path | None = None,
         activation_override: dict[str, Any] | None = None,
         baseline_override: dict[str, Any] | None = None,
+        history_rotation_override: dict[str, Any] | None = None,
     ):
         self.knowledge_dir = knowledge_dir.resolve()
         self.scenario_path = scenario_path.resolve()
@@ -409,6 +402,9 @@ class SearchSpaceCompiler:
         self.registry = read_yaml(self.registry_path)
         self.policy = read_yaml(self.policy_path)
         self.activation_override = copy.deepcopy(activation_override or {})
+        self.history_rotation_override = copy.deepcopy(
+            history_rotation_override or {}
+        )
         self.parameters = load_knowledge_base(self.knowledge_dir)
         self.by_name = {str(param["name"]): param for param in self.parameters}
         self.by_token: dict[str, list[dict[str, Any]]] = {}
@@ -467,11 +463,25 @@ class SearchSpaceCompiler:
         baseline = dict(self.scenario.get("baseline", {}))
         accepted: list[Any] = []
         rejected: list[dict[str, Any]] = []
+        # These constraints describe coupled axes. A value that is invalid only
+        # against the baseline companion can become valid in the same Agent
+        # proposal when that companion changes, so keep it in the frozen domain
+        # and enforce the complete combination at Controller preflight.
+        deferred_combination_constraints = {
+            "long_prefill_within_batch_budget",
+            "mtp_scheduler_budget",
+            "cudagraph_sizes_match_speculation_factor",
+        }
         for value in values:
             candidate = {**baseline, canonical: value}
             violations = validate_candidate(candidate, self.scenario)
-            if violations:
-                rejected.append({"value": value, "violations": violations})
+            blocking = [
+                violation
+                for violation in violations
+                if violation not in deferred_combination_constraints
+            ]
+            if blocking:
+                rejected.append({"value": value, "violations": blocking})
             else:
                 accepted.append(value)
         return accepted, rejected
@@ -739,7 +749,10 @@ class SearchSpaceCompiler:
                 if name not in current_names:
                     current_names.append(name)
             desired_names = {str(item["canonical_name"]) for item in desired}
-            rotation_policy = self.policy["history_selection"]["rotation"]
+            rotation_policy = {
+                **self.policy["history_selection"]["rotation"],
+                **self.history_rotation_override,
+            }
             maximum_swaps = int(rotation_policy["maximum_swaps_per_session"])
             minimum_margin = float(rotation_policy["minimum_score_margin"])
             minimum_core = int(rotation_policy["minimum_core_parameters_retained"])

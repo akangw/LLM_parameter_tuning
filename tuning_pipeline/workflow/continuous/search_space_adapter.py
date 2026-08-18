@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,10 @@ def _manifest_matches_scenario(
     )
 
 
+def _is_dry_run_session(session_dir: Path) -> bool:
+    return any(session_dir.glob("round_*_dryrun"))
+
+
 def _latest_history(
     archive_root: Path,
     *,
@@ -118,6 +123,8 @@ def _latest_history(
     )
     for path in candidates:
         session_dir = path.parents[2]
+        if _is_dry_run_session(session_dir):
+            continue
         config_path = session_dir / "session_config.yaml"
         manifest_path = session_dir / "image_version_manifest.yaml"
         try:
@@ -161,6 +168,8 @@ def _latest_previous_selection(
     )
     for path in candidates:
         session_dir = path.parents[1]
+        if _is_dry_run_session(session_dir):
+            continue
         try:
             value = yaml.safe_load(path.read_text(encoding="utf-8"))
             frozen_config = yaml.safe_load(
@@ -295,7 +304,10 @@ def resolve_search_limits(
     history_path = None
     topology_identity = _selected_topology_identity(config, project_root)
     history_mode = str(settings.get("history_source", "latest_completed_session"))
-    if history_mode == "latest_completed_session":
+    if history_mode in {
+        "latest_completed_session",
+        "latest_completed_session_or_explicit",
+    }:
         history_path = _latest_history(
             archive_root,
             benchmark_identity=_selected_benchmark_identity(config, project_root),
@@ -303,6 +315,16 @@ def resolve_search_limits(
             project_root=project_root,
             topology_identity=topology_identity,
         )
+        if history_path is None and history_mode.endswith("_or_explicit"):
+            explicit = settings.get("history_path")
+            if not explicit:
+                raise ValueError(
+                    "history_path is required for "
+                    "history_source=latest_completed_session_or_explicit"
+                )
+            history_path = _project_path(project_root, str(explicit))
+            if not history_path.is_file():
+                raise ValueError(f"Explicit continuation history is missing: {history_path}")
     elif history_mode == "none":
         history_path = None
     elif history_mode == "explicit":
@@ -365,6 +387,9 @@ def resolve_search_limits(
             source_root=source_root,
             activation_override=dict(profile.get("activation", {})),
             baseline_override=authoritative_baseline,
+            history_path=history_path,
+            previous_selection_path=previous_selection,
+            history_rotation_override=dict(profile.get("history_rotation", {})),
         )
         automatic_registry, result = automatic_pipeline.compile()
         compiler_scenario = automatic_pipeline.scenario
@@ -584,6 +609,16 @@ def write_session_search_space(
 ) -> None:
     output = session_dir / "00_search_space"
     output.mkdir(parents=True, exist_ok=False)
+    history_value = config.get("resolved_search_space", {}).get("history")
+    if history_value:
+        history_path = Path(str(history_value))
+        history = json.loads(history_path.read_text(encoding="utf-8"))
+        if not isinstance(history, list):
+            raise ValueError("Continuation history must be a JSON array")
+        (output / "continuation_history.json").write_text(
+            json.dumps(history, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     (output / "manual_search_limits.yaml").write_text(
         yaml.safe_dump(
             {"search_limits": config["manual_search_limits"]},

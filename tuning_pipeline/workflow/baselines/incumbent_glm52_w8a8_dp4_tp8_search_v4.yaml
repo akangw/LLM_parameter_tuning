@@ -1,0 +1,77 @@
+schema_version: 1
+baseline_id: incumbent-glm52-w8a8-dp4-tp8-search-v4
+status: approved_measured_incumbent_continuation
+launch_profile: explicit_candidate
+
+purpose: >-
+  Continue the fixed DP4/TP8 autonomous campaign from the best accepted Guided
+  V4 incumbent while upgrading only the frozen Search Limits.  The first V5
+  round remeasures this exact anchor under the same image and Fast-C32 V2 suite.
+
+source:
+  baseline: a8-glm52-w8a8-dp4-tp8-fixed-v3
+  lineage_session: cjx_glm52_dp4_tp8_a8_guided_v4_20260817_060618
+  lineage_round: round_016_a13
+  lineage_output_token_throughput: 591.1865758674417
+  adaptation_policy: preserve_exact_best_accepted_candidate
+
+target_identity:
+  model_contract: glm-5.2-w8a8
+  topology_profile: a3_dp4_tp8
+  reuse_policy: same_topology_pinned_image_and_fast_c32_v2_only
+
+deployment_invariants:
+  model: /models/share/GLM-5.2-w8a8
+  topology:
+    pods: 2
+    npu_per_pod: 16
+    data_parallel_size: 4
+    data_parallel_size_local: 2
+    tensor_parallel_size: 8
+    decode_context_parallel_size: 1
+  model_loading_backend: dtfs_page_cache
+  safetensors_prefetch_mode: node_blocking
+
+reference_parameters:
+  max_num_seqs: 64
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.90
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  async_scheduling: true
+  enable_expert_parallel: true
+  speculative_config__method: mtp
+  long_prefill_token_threshold: 0
+  mlapo: false
+  fused_mc2: 2
+  enable_balance_scheduling: true
+  enable_reduce_sample: false
+  speculative_config__enforce_eager: null
+  speculative_config__disable_padded_drafter_batch: false
+  speculative_config__attention_backend: null
+  cudagraph_capture_sizes: [16, 32, 48, 64]
+  VLLM_ASCEND_ENABLE_BATCH_MEMCPY: null
+  TASK_QUEUE_ENABLE: 1
+  additional_config__ascend_compilation_config__fuse_allreduce_rms: true
+  additional_config__prefill_comm_compute_overlap: false
+  additional_config__ascend_compilation_config__enable_static_kernel: false
+  additional_config__ascend_compilation_config__enable_npugraph_ex: true
+  additional_config__ascend_compilation_config__fuse_norm_quant: true
+  compilation_enable_sp: false
+  enable_prefix_caching: true
+  flashcomm1: true
+  enable_chunked_prefill: true
+  max_cudagraph_capture_size: 64
+  enable_eplb: false
+  eplb_num_redundant_experts: 0
+  disable_hybrid_kv_cache_manager: null
+
+acceptance_contract:
+  benchmark_profile: aligned_fast_c32_v2
+  repetitions: 1
+  expected_formal_cases: 4
+  require_zero_failed_requests: true
+  require_service_ready: true
+  first_round_is_topology_feasibility_measurement: false
+  use_as_initial_agent_incumbent_after_metrics_gate_passes: true

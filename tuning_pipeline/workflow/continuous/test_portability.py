@@ -118,7 +118,7 @@ class RuntimeProfileTests(unittest.TestCase):
             (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
         )
         resolved, identity = resolve_runtime_profile(config, self.project_root)
-        self.assertEqual(identity["profile"], "glm52_w8a8_a3_dp4_tp8_a8_guided_v4")
+        self.assertEqual(identity["profile"], "glm52_w8a8_a3_dp4_tp8_search_v4")
         self.assertEqual(resolved["topology"]["profile"], "a3_dp4_tp8")
         self.assertFalse(resolved["topology_campaign"]["enabled"])
         self.assertEqual(
@@ -126,7 +126,7 @@ class RuntimeProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             resolved["search_space"]["profile"],
-            "automatic_registry_a8_frontier_v3",
+            "automatic_registry_a8_frontier_v4",
         )
         self.assertIn("scenario", identity["artifacts"])
         self.assertEqual(len(identity["artifacts"]["scenario"]["sha256"]), 64)
@@ -136,6 +136,7 @@ class RuntimeProfileTests(unittest.TestCase):
             (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
         )
         config["runtime"]["profile"] = "glm52_w8a8_a3_topology_campaign_v4"
+        config["search_space"]["profile"] = "automatic_registry_a8_frontier_v3"
         config["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
         config["benchmark"]["profile"] = "aligned_fast_c32_v1"
         config["topology_campaign"]["enabled"] = True
@@ -157,6 +158,7 @@ class RuntimeProfileTests(unittest.TestCase):
             (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
         )
         config["runtime"]["profile"] = "glm52_w8a8_a3_dp4_tp8_a8_fixed_v1"
+        config["search_space"]["profile"] = "automatic_registry_a8_frontier_v3"
         config["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
         config["benchmark"]["profile"] = "aligned_fast_c32_v1"
         resolved, identity = resolve_runtime_profile(config, self.project_root)

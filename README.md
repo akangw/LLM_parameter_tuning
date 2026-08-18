@@ -83,11 +83,11 @@ cd .\tuning_pipeline
 python -m workflow.registry_builder.full_pipeline --dry-run
 ```
 
-它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_a8_frontier_v3` 现为 W8A8 统一默认（28 Active + 75 Reserve）；V2、原 `automatic_registry_v1` 和人工审计的 `curated_registry_v1` 保留为显式可选路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_a8_frontier_v4` 现为固定 DP4/TP8 Fast-C32 的统一默认（30 Active + 73 Reserve），包含 MTP K=1–4、K+1/TP8 约束下的 CUDAGraph 模板以及条件化 TASK_QUEUE 候选；V3、V2、原 `automatic_registry_v1` 和人工审计的 `curated_registry_v1` 保留为显式可选路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
 
 ### 更换 Ascend 模型、镜像、量化或拓扑
 
-模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包是 `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8。
+模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包是 `glm52_w8a8_a3_dp4_tp8_search_v4`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8，并从 Guided-V4 的实测最佳锚点续跑。
 
 新组合先生成 `planned` 适配包：
 
@@ -120,7 +120,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
-本地与服务器自治当前默认运行时统一为 `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A8 DP4/TP8 fixed-v3 baseline + automatic_registry_a8_frontier_v3 + hierarchical_agentic_guided_v4 + aligned_fast_c32_v2`。DP2/TP16、旧 frontier-v3 和拓扑 Campaign 均保留为显式选择，不介入默认主流程，也不与 DP4 Session 共用历史。历史说明见 [`FIXED_DP2_TP16_V4.md`](docs/FIXED_DP2_TP16_V4.md)、[`FIXED_DP4_TP8_V1.md`](docs/FIXED_DP4_TP8_V1.md)；未来恢复拓扑搜索见 [`TOPOLOGY_CAMPAIGN_V4.md`](docs/TOPOLOGY_CAMPAIGN_V4.md)。
+本地与服务器自治当前默认运行时统一为 `glm52_w8a8_a3_dp4_tp8_search_v4`：DP4/TP8 在 Session 创建前锁定，主流程执行 `Guided-V4 实测 incumbent + automatic_registry_a8_frontier_v4 + hierarchical_agentic_guided_v5 + aligned_fast_c32_v2`。DP2/TP16、旧 frontier-v3/guided-v4 和拓扑 Campaign 均保留为显式选择，不介入默认主流程，也不与新 Session 混写冻结身份。历史说明见 [`FIXED_DP2_TP16_V4.md`](docs/FIXED_DP2_TP16_V4.md)、[`FIXED_DP4_TP8_V1.md`](docs/FIXED_DP4_TP8_V1.md)；未来恢复拓扑搜索见 [`TOPOLOGY_CAMPAIGN_V4.md`](docs/TOPOLOGY_CAMPAIGN_V4.md)。
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -134,8 +134,8 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 | 接口 | 启动参数 | 当前选项 | 定义位置 |
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
-| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_a8_frontier_v3`（默认）、`automatic_registry_a8_agentic_v2`、`automatic_registry_v1`、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | `hierarchical_agentic_guided_v4`（默认）、`hierarchical_agentic_frontier_v3`、`hierarchical_agentic_topology_v2`、`hierarchical_throughput_v1`、`best_anchor_coverage_v2/v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_a8_frontier_v4`（默认）、`automatic_registry_a8_frontier_v3`、`automatic_registry_a8_agentic_v2`、`automatic_registry_v1`、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | `hierarchical_agentic_guided_v5`（默认）、`hierarchical_agentic_guided_v4`、`hierarchical_agentic_frontier_v3`、`hierarchical_agentic_topology_v2`、`hierarchical_throughput_v1`、`best_anchor_coverage_v2/v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
 | Benchmark | `-BenchmarkProfile` | `aligned_fast_c32_v2`（默认）、`aligned_fast_c32_v1`、`aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是

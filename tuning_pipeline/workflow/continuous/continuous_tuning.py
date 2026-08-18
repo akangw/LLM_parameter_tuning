@@ -344,6 +344,25 @@ def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def resolve_inherited_profile(
+    profiles: dict[str, Any], name: str, *, seen: set[str] | None = None
+) -> dict[str, Any]:
+    """Resolve a versioned profile overlay without mutating its parent."""
+    if name not in profiles or not isinstance(profiles[name], dict):
+        raise ValueError(f"Unknown profile {name!r}; available={sorted(profiles)}")
+    chain = set(seen or set())
+    if name in chain:
+        raise ValueError(f"Profile inheritance cycle detected at {name!r}")
+    chain.add(name)
+    overlay = copy.deepcopy(profiles[name])
+    parent = overlay.pop("extends", None)
+    if parent is None:
+        return overlay
+    return deep_merge(
+        resolve_inherited_profile(profiles, str(parent), seen=chain), overlay
+    )
+
+
 def load_config(path: Path) -> dict[str, Any]:
     """Load a config and an optional relative ``base_config`` overlay."""
     path = path.resolve()
@@ -1222,7 +1241,9 @@ class Controller:
                     f"Unknown strategy profile {self.strategy_profile_name!r}; "
                     f"available={sorted(strategies)}"
                 )
-            self.strategy_profile = dict(strategies[self.strategy_profile_name])
+            self.strategy_profile = resolve_inherited_profile(
+                strategies, self.strategy_profile_name
+            )
         if self.strategy_profile.get("status") != "integrated":
             raise ValueError(
                 f"Strategy {self.strategy_profile_name!r} is not integrated"
@@ -2477,6 +2498,49 @@ class Controller:
             )
         capture_sizes = candidate.get("cudagraph_capture_sizes")
         maximum_capture = candidate.get("max_cudagraph_capture_size")
+        if isinstance(capture_sizes, list) and capture_sizes:
+            if any(
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                for value in capture_sizes
+            ):
+                raise ValueError(
+                    "cudagraph_capture_sizes must contain positive integers"
+                )
+            if capture_sizes != sorted(set(capture_sizes)):
+                raise ValueError(
+                    "cudagraph_capture_sizes must be strictly increasing and unique"
+                )
+            mtp_depth = int(candidate.get("num_speculative_tokens") or 0)
+            graph_mode = candidate.get("compilation_mode")
+            if (
+                mtp_depth > 0
+                and graph_mode
+                in {"FULL", "FULL_DECODE_ONLY", "FULL_AND_PIECEWISE"}
+                and any(value % (mtp_depth + 1) != 0 for value in capture_sizes)
+            ):
+                raise ValueError(
+                    "Full-graph MTP cudagraph_capture_sizes must be multiples "
+                    "of num_speculative_tokens + 1"
+                )
+            if candidate.get("compilation_enable_sp") is True:
+                tensor_parallel_size = int(self.topology["tensor_parallel_size"])
+                if any(
+                    value % tensor_parallel_size != 0 for value in capture_sizes
+                ):
+                    raise ValueError(
+                        "Sequence-parallel cudagraph_capture_sizes must be "
+                        "multiples of tensor_parallel_size"
+                    )
+            if candidate.get("compilation_mode") == "FULL_DECODE_ONLY":
+                decode_token_ceiling = int(candidate["max_num_seqs"]) * (
+                    mtp_depth + 1
+                )
+                if max(capture_sizes) > decode_token_ceiling:
+                    raise ValueError(
+                        "FULL_DECODE_ONLY cudagraph_capture_sizes exceed the "
+                        "reachable decode token ceiling max_num_seqs * "
+                        "(num_speculative_tokens + 1)"
+                    )
         if (
             isinstance(capture_sizes, list)
             and capture_sizes
@@ -2486,6 +2550,14 @@ class Controller:
             raise ValueError(
                 "max_cudagraph_capture_size must equal the largest explicit "
                 "cudagraph_capture_sizes value"
+            )
+        if candidate.get("TASK_QUEUE_ENABLE") == 2 and not (
+            candidate.get("compilation_mode") == "NONE"
+            and candidate.get("cudagraph_capture_sizes") is None
+        ):
+            raise ValueError(
+                "TASK_QUEUE_ENABLE=2 is allowed only with graph mode NONE and "
+                "no explicit cudagraph capture list on the pinned torch_npu runtime"
             )
         rule_evaluation = self.runtime_rule_evaluation(candidate)
         if rule_evaluation and not rule_evaluation["allowed"]:
@@ -2933,6 +3005,11 @@ class Controller:
         before: Any,
         after: Any,
     ) -> int:
+        # A structured template is a categorical operating mode, not an
+        # ordinal sweep. Any validated template-to-template transition is one
+        # semantic step regardless of its display position in the whitelist.
+        if isinstance(before, (list, dict)) or isinstance(after, (list, dict)):
+            return 0 if before == after else 1
         ordered = cls.grid_step_order(grid)
         return abs(ordered.index(after) - ordered.index(before))
 
@@ -3899,6 +3976,16 @@ class Controller:
         must not consume search coverage or allow the Agent to skip the value.
         """
         attempts: list[dict[str, Any]] = []
+        continuation_path = (
+            session_dir / "00_search_space" / "continuation_history.json"
+        )
+        if continuation_path.is_file():
+            imported = json.loads(continuation_path.read_text(encoding="utf-8"))
+            if not isinstance(imported, list) or any(
+                not isinstance(item, dict) for item in imported
+            ):
+                raise ValueError("Frozen continuation_history.json must be an array of objects")
+            attempts.extend(copy.deepcopy(imported))
         for round_dir in sorted(session_dir.glob("round_*")):
             params_path = round_dir / "02_parameters" / "candidate_params.yaml"
             if not params_path.exists():

@@ -1,0 +1,91 @@
+schema_version: 1
+extends: compatibility_policy.yaml
+
+# Fast-C32/DP4 refinement keeps useful local points plus bounded high-risk
+# edges. It deliberately avoids values that cannot increase offered C32 work.
+numeric_candidate_domains:
+  max_model_len:
+    kind: fixed
+    values: [16384, 24576, 32768, 40960, 49152, 57344, 64000]
+    include_source_values: false
+    minimum: 12288
+    maximum: 64000
+    integer: true
+  max_num_seqs:
+    kind: fixed
+    values: [32, 48, 64, 80, 96, 128]
+    include_source_values: false
+    minimum: 32
+    maximum: 128
+    integer: true
+  max_num_batched_tokens:
+    kind: fixed
+    values: [1024, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768]
+    include_source_values: false
+    minimum: 1024
+    maximum: 32768
+    integer: true
+  gpu_memory_utilization:
+    kind: fixed
+    values: [0.85, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97]
+    include_source_values: false
+    minimum: 0.8
+    maximum: 0.98
+    precision: 2
+  max_cudagraph_capture_size:
+    kind: fixed
+    values: [32, 48, 64, 80, 96, 128, 160, 192, 256]
+    include_source_values: false
+    minimum: 16
+    maximum: 256
+    integer: true
+  num_speculative_tokens:
+    kind: fixed
+    values: [0, 1, 2, 3, 4]
+    include_source_values: false
+    minimum: 0
+    maximum: 4
+    integer: true
+  long_prefill_token_threshold:
+    kind: fixed
+    values: [0, 512, 1024, 2048, 4096, 8192]
+    include_source_values: false
+    minimum: 0
+    maximum: 8192
+    integer: true
+
+candidate_domain_overrides:
+  compilation_mode: [FULL_DECODE_ONLY, FULL_AND_PIECEWISE, PIECEWISE, FULL, NONE, null]
+  cudagraph_capture_sizes:
+    - null
+    # K=3 incumbent and alternatives (query length 4).
+    - [16, 32, 48, 64]
+    - [4, 8, 16, 32, 48, 64]
+    - [16, 32, 64]
+    - [4, 8, 16, 32, 64, 96, 128]
+    - [8, 16, 32, 64, 128, 192, 256]
+    # Dense C32 coverage is a bounded high-risk alternative: more captures and
+    # startup/memory cost, but much less padding across common dynamic batches.
+    - [4, 8, 12, 16, 24, 32, 48, 56, 64, 72, 84, 96, 108, 112, 128]
+    # K=2 alternatives (query length 3).
+    - [3, 6, 12, 24, 36, 48]
+    - [3, 6, 12, 24, 48, 72, 96]
+    - [6, 12, 24, 48, 96, 192]
+    - [3, 6, 9, 12, 18, 24, 36, 42, 48, 54, 63, 72, 81, 84, 96]
+    # K=1 alternatives (query length 2).
+    - [2, 4, 8, 16, 24, 32, 48, 64]
+    - [4, 8, 16, 32, 64, 128, 256]
+    - [2, 4, 6, 8, 12, 16, 24, 28, 32, 36, 42, 48, 54, 56, 64]
+    # K=4 high-risk alternatives (query length 5).
+    - [5, 10, 20, 40, 60, 80]
+    - [5, 10, 20, 40, 80, 120, 160]
+    - [10, 20, 40, 80, 160]
+    - [5, 10, 15, 20, 30, 40, 60, 70, 80, 90, 105, 120, 135, 140, 160]
+    # Sequence-parallel templates: multiples of TP8 and K+1.
+    - [8, 16, 24, 32, 48, 64]
+    - [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128]
+    - [24, 48, 72, 96, 120, 144, 168, 192]
+    - [8, 16, 32, 48, 64, 96, 128]
+    - [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128]
+    - [40, 80, 120, 160]
+  TASK_QUEUE_ENABLE: [0, 1, 2]

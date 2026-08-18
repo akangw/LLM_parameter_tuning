@@ -22,6 +22,9 @@ class TopologyCampaignTests(unittest.TestCase):
             config = yaml.safe_load(source.read_text(encoding="utf-8"))
             config["base_config"] = str((HERE / "config.yaml").resolve())
             config["runtime"]["profile"] = "glm52_w8a8_a3_topology_campaign_v4"
+            # The dormant topology Campaign remains a frozen v3 branch while
+            # the fixed-DP4/TP8 mainline advances to Frontier V4.
+            config["search_space"]["profile"] = "automatic_registry_a8_frontier_v3"
             config["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
             config["benchmark"]["profile"] = "aligned_fast_c32_v1"
             config["topology_campaign"]["enabled"] = True

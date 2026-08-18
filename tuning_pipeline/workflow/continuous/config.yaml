@@ -4,7 +4,7 @@ remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vl
 # Compatibility-critical selections are grouped into one immutable Ascend
 # runtime adapter. A config.local overlay can select another integrated adapter.
 runtime:
-  profile: glm52_w8a8_a3_dp4_tp8_a8_guided_v4
+  profile: glm52_w8a8_a3_dp4_tp8_search_v4
   profiles_file: workflow/continuous/runtime_profiles.yaml
 # Keep the completed topology Campaign implementation dormant while the fixed
 # DP4/TP8 parameter-only chain is validated end to end. Re-enabling this flag
@@ -82,7 +82,7 @@ agent:
     command:
       command: configure-structured-json-command
 strategy:
-  profile: hierarchical_agentic_guided_v4
+  profile: hierarchical_agentic_guided_v5
   profiles_file: workflow/continuous/strategy_profiles.yaml
 execution_mode: ktp_lab
 # Execution layout is named and frozen into each inner Session. The outer
@@ -293,9 +293,9 @@ fixed_scenario:
   temperature: 0
   primary_metric: output_throughput
 initial_baseline:
-  label: a8_dp4_tp8_guided_v4
+  label: incumbent_search_v4
   launch_profile: explicit_candidate
-  definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+  definition: workflow/baselines/incumbent_glm52_w8a8_dp4_tp8_search_v4.yaml
 baseline:
   # Typed pre-launch estimates. B0-deployable passes only max_model_len=64000;
   # all other serving-performance flags remain source-resolved. After a
@@ -332,7 +332,7 @@ baseline:
 # Search-Space profiles. The server-authoritative default is the independently
 # generated automatic registry; the reviewed curated registry remains opt-in.
 search_space:
-  profile: automatic_registry_a8_frontier_v3
+  profile: automatic_registry_a8_frontier_v4
   profiles_file: workflow/search_space_profiles.yaml
   # Recompile a new Session from the latest identity-matched completed history.
   # The current Session stays frozen; rotation can promote up to three Reserve

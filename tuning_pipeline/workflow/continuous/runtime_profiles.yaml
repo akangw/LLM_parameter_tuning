@@ -1,5 +1,5 @@
 schema_version: 1
-default_profile: glm52_w8a8_a3_dp4_tp8_a8_guided_v4
+default_profile: glm52_w8a8_a3_dp4_tp8_search_v4
 profiles:
   glm52_w8a8_a3_topology_campaign_v4:
     status: integrated
@@ -306,6 +306,71 @@ profiles:
         benchmark:
           - aligned_l1_v4
           - aligned_fast_c32_v2
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Search V4 continuation: same pinned model/image, DP4/TP8 and Fast-C32 V2
+  # measurement identity, but a new immutable Session because the candidate
+  # language and incumbent baseline have changed.
+  glm52_w8a8_a3_dp4_tp8_search_v4:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_dp4_tp8_search_v4
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/incumbent_glm52_w8a8_dp4_tp8_search_v4.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v2/spec/suites/01_调优_快速筛选-v2.yaml
+    config:
+      topology:
+        profile: a3_dp4_tp8
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v4
+      strategy:
+        profile: hierarchical_agentic_guided_v5
+      benchmark:
+        profile: aligned_fast_c32_v2
+      initial_baseline:
+        label: incumbent_search_v4
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/incumbent_glm52_w8a8_dp4_tp8_search_v4.yaml
+    compatibility:
+      executor: ktp_two_role_local_dp
+      requires_new_session: true
+      live_model_fit_required: true
+      allowed_profiles:
+        topology: [a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v4
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+          - curated_registry_v1
+        strategy:
+          - hierarchical_agentic_guided_v5
+          - hierarchical_agentic_guided_v4
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - hierarchical_throughput_v1
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+        benchmark:
+          - aligned_fast_c32_v2
+          - aligned_l1_v4
           - aligned_fast_c32_v1
           - vllm_bench_public_v1
           - custom_adapter_v1

@@ -1,8 +1,51 @@
 # Strategy profiles are deliberately separate from config.yaml. The live
 # controller freezes the selected profile into each Session.
-default_strategy: hierarchical_agentic_guided_v4
+default_strategy: hierarchical_agentic_guided_v5
 
 strategies:
+  hierarchical_agentic_guided_v5:
+    extends: hierarchical_agentic_guided_v4
+    status: integrated
+    purpose: >-
+      Versioned continuation of Guided V4 for the richer Frontier-V4 candidate
+      language. Layers still guide coverage and the Agent still owns parameter
+      count, exact parameters, values and cross-layer experiments. V5 adds
+      explicit MTP/CUDAGraph shape ownership and keeps graph-disabled execution
+      diagnostic-only while preserving bounded high-risk exploration.
+    structured_candidate_guidance:
+      cudagraph_capture_sizes:
+        decision_owner: agent
+        semantics: categorical_shape_template
+        required_checks:
+          - strictly_increasing_unique_positive_integers
+          - maximum_matches_max_cudagraph_capture_size
+          - full_graph_mtp_sizes_are_multiples_of_k_plus_one
+          - sequence_parallel_sizes_are_multiples_of_tensor_parallel_size
+          - full_decode_only_maximum_is_reachable_by_scheduler_decode_capacity
+        normal_mode: graph_enabled
+        graph_disabled_mode: diagnostic_ablation_only
+      mtp_graph_joint_experiment:
+        encouraged: true
+        parameters:
+          - num_speculative_tokens
+          - cudagraph_capture_sizes
+          - max_cudagraph_capture_size
+          - max_num_batched_tokens
+        maximum_independent_parameters: 4
+        intent: >-
+          Let the Agent jointly select K, a K+1-compatible graph template and
+          its bound; include scheduler budget only when the K change requires
+          or strongly motivates it.
+      task_queue:
+        graph_enabled_values: [0, 1]
+        graph_disabled_diagnostic_values: [2]
+        value_2_requires:
+          compilation_mode: NONE
+          cudagraph_capture_sizes: null
+      coupled_domain_policy:
+        defer_baseline_only_pruning: true
+        controller_validates_complete_candidate: true
+
   hierarchical_agentic_guided_v4:
     status: integrated
     purpose: >-

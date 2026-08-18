@@ -6,11 +6,11 @@ progress is deliberately excluded; a running Session always uses its frozen
 
 | Axis | New-Session default |
 |---|---|
-| Runtime Adapter | `glm52_w8a8_a3_dp4_tp8_a8_guided_v4` |
+| Runtime Adapter | `glm52_w8a8_a3_dp4_tp8_search_v4` |
 | Topology | `a3_dp4_tp8` (2 nodes × 16 NPU, DP4, local-DP2, TP8) |
-| Baseline | `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml` |
-| Search Space | `automatic_registry_a8_frontier_v3` (28 Active + 75 Reserve) |
-| Agent strategy | `hierarchical_agentic_guided_v4` |
+| Baseline | `incumbent_glm52_w8a8_dp4_tp8_search_v4.yaml` (Guided-V4 a13 incumbent, 591.187 output tok/s) |
+| Search Space | `automatic_registry_a8_frontier_v4` (30 Active + 73 Reserve) |
+| Agent strategy | `hierarchical_agentic_guided_v5` |
 | Benchmark | `aligned_fast_c32_v2` |
 | Topology Campaign | disabled |
 | Recovery | autonomous; pause only for a proven immutable external blocker |
@@ -21,7 +21,7 @@ planning metadata, not a hard timeout. The only outer stuck-run safety boundary
 is `round_timeout_minutes`.
 
 The default server lifecycle can be invoked directly or through
-`server_autonomous/dp4_tp8_v4.sh`; both resolve to the same configuration and
+`server_autonomous/dp4_tp8_search_v4.sh`; both resolve to the same configuration and
 runtime root. DP2/TP16, DP4 v1-v3, frontier-v3 and Topology Campaign V4 remain
 integrated historical/explicit profiles. Their documentation describes those
 frozen identities and does not override this file.

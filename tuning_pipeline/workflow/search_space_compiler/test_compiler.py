@@ -45,13 +45,13 @@ class ConstraintTests(unittest.TestCase):
     def setUp(self) -> None:
         self.scenario = {"topology": {"tensor_parallel_size": 16}}
 
-    def test_speculation_factor_must_divide_tp(self) -> None:
+    def test_speculation_factor_is_not_artificially_coupled_to_tp(self) -> None:
         candidate = {
             "max_num_seqs": 48,
             "max_num_batched_tokens": 4096,
             "num_speculative_tokens": 2,
         }
-        self.assertIn(
+        self.assertNotIn(
             "mtp_factor_divides_tensor_parallel",
             validate_candidate(candidate, self.scenario),
         )

@@ -1,8 +1,8 @@
 # 运行与恢复
 
-> 当前默认：固定 `DP4/TP8` 的 `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`；使用
-> A8 DP4 fixed-v3 基线 + `automatic_registry_a8_frontier_v3` +
-> `hierarchical_agentic_guided_v4` + `aligned_fast_c32_v2`。Topology
+> 当前默认：固定 `DP4/TP8` 的 `glm52_w8a8_a3_dp4_tp8_search_v4`；使用
+> Guided-V4 实测 incumbent + `automatic_registry_a8_frontier_v4` +
+> `hierarchical_agentic_guided_v5` + `aligned_fast_c32_v2`。Topology
 > Campaign V4 已实现但默认休眠，旧 `automatic_registry_v1` 和
 > `aligned_l1_v4` 只用于显式历史回退。
 
@@ -28,7 +28,7 @@
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
-# 默认 automatic_registry_a8_frontier_v3；下面两条演示显式历史/人工回退
+# 默认 automatic_registry_a8_frontier_v4；下面两条演示显式历史/人工回退
 .\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
 .\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 
