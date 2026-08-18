@@ -26,6 +26,13 @@ PYTHON_BIN="${VLLMTKB_PYTHON:-${PYTHON_BIN}}"
   exit 78
 }
 
+if "${PYTHON_BIN}" "${TOPOLOGY_CAMPAIGN}" \
+  --config "${CONFIG}" --campaign-root "${CAMPAIGN_ROOT}" --is-enabled; then
+  exec "${PYTHON_BIN}" "${TOPOLOGY_CAMPAIGN}" \
+    --config "${CONFIG}" --campaign-root "${CAMPAIGN_ROOT}" \
+    --run --mode "${MODE}"
+fi
+
 EXTRA_ARGS=()
 AUTO_RETRY_PAUSED_REQUEST="${RUNTIME_ROOT}/AUTO_RETRY_PAUSED_REQUEST"
 REPLAY_UNMEASURED_REQUEST="${RUNTIME_ROOT}/REPLAY_UNMEASURED_REQUEST"
@@ -33,7 +40,7 @@ if [[ -f "${AUTO_RETRY_PAUSED_REQUEST}" ]]; then
   CONSUMED_AUTO_RETRY="${AUTO_RETRY_PAUSED_REQUEST}.consumed-$(date +%Y%m%d_%H%M%S)-$$"
   mv "${AUTO_RETRY_PAUSED_REQUEST}" "${CONSUMED_AUTO_RETRY}"
   ACTION="--auto-retry-paused-current"
-  echo "Consumed deterministic paused-round recovery request: ${CONSUMED_AUTO_RETRY}"
+  echo "Consumed fresh-Agent paused-round recovery request: ${CONSUMED_AUTO_RETRY}"
 elif [[ -f "${REPLAY_UNMEASURED_REQUEST}" ]]; then
   REPLAY_ROUND=$(head -n 1 "${REPLAY_UNMEASURED_REQUEST}")
   [[ "${REPLAY_ROUND}" =~ ^round_[0-9]+_a[0-9]+([a-z][0-9]+)?$ ]] || {
@@ -83,22 +90,49 @@ request_graceful_stop() {
 }
 trap request_graceful_stop TERM INT
 
-"${PYTHON_BIN}" "${CONTROLLER}" \
-  --config "${CONFIG}" \
-  --runtime-root "${RUNTIME_ROOT}" \
-  "${ACTION}" "${EXTRA_ARGS[@]}" &
-CHILD_PID=$!
 printf '%s\n' "$$" > "${PROCESS_ROOT}/service-wrapper.pid"
-printf '%s\n' "${CHILD_PID}" > "${PROCESS_ROOT}/controller.pid"
 
-set +e
-while kill -0 "${CHILD_PID}" 2>/dev/null; do
+RESTART_ATTEMPT=0
+while true; do
+  "${PYTHON_BIN}" "${CONTROLLER}" \
+    --config "${CONFIG}" \
+    --runtime-root "${RUNTIME_ROOT}" \
+    "${ACTION}" "${EXTRA_ARGS[@]}" &
+  CHILD_PID=$!
+  printf '%s\n' "${CHILD_PID}" > "${PROCESS_ROOT}/controller.pid"
+  set +e
   wait "${CHILD_PID}"
-  CHILD_CODE=$?
+  FINAL_CODE=$?
+  set -e
+  if [[ ${FINAL_CODE} -eq 0 ]]; then
+    exit 0
+  fi
+
+  RESTART_DECISION=$("${PYTHON_BIN}" - "${RUNTIME_ROOT}/state.json" <<'PY'
+import json, sys
+try:
+    state = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("stop")
+    raise SystemExit
+status = str(state.get("status", ""))
+if status == "recovering_controller_error":
+    print("resume")
+elif status == "paused_for_human" and not state.get("human_intervention"):
+    print("reanalyze")
+else:
+    print("stop")
+PY
+  )
+  case "${RESTART_DECISION}" in
+    resume) ACTION=--resume ;;
+    reanalyze) ACTION=--auto-retry-paused-current ;;
+    *) exit "${FINAL_CODE}" ;;
+  esac
+  EXTRA_ARGS=()
+  RESTART_ATTEMPT=$((RESTART_ATTEMPT + 1))
+  BACKOFF=$((RESTART_ATTEMPT * 15))
+  (( BACKOFF > 120 )) && BACKOFF=120
+  echo "Controller exited with code ${FINAL_CODE}; autonomous ${RESTART_DECISION} after ${BACKOFF}s."
+  sleep "${BACKOFF}"
 done
-wait "${CHILD_PID}" 2>/dev/null
-FINAL_CODE=$?
-if [[ ${FINAL_CODE} -eq 127 ]]; then
-  FINAL_CODE=${CHILD_CODE:-0}
-fi
-exit "${FINAL_CODE}"

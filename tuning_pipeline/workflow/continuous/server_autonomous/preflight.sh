@@ -25,19 +25,23 @@ if "deepseek-v4-flash" not in models:
 print("DeepSeek API/model preflight: OK")
 PY
 
-AGENT_PROVIDER=$("${PYTHON_BIN}" - "${CONFIG}" <<'PY'
-import sys, yaml
-with open(sys.argv[1], encoding="utf-8") as stream:
-    config = yaml.safe_load(stream) or {}
+AGENT_PROVIDER=$("${PYTHON_BIN}" - "${CONFIG}" "${SCRIPT_DIR}" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from service_runtime import _load_config
+config = _load_config(Path(sys.argv[1]))
 print((config.get("agent") or {}).get("provider", "deepseek"))
 PY
 )
 
 if [[ "${AGENT_PROVIDER}" == "codex" ]]; then
-  mapfile -d '' CODEX_SETTINGS < <("${PYTHON_BIN}" - "${CONFIG}" <<'PY'
-import sys, yaml
-with open(sys.argv[1], encoding="utf-8") as stream:
-    config = yaml.safe_load(stream) or {}
+  mapfile -d '' CODEX_SETTINGS < <("${PYTHON_BIN}" - "${CONFIG}" "${SCRIPT_DIR}" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from service_runtime import _load_config
+config = _load_config(Path(sys.argv[1]))
 settings = (((config.get("agent") or {}).get("providers") or {}).get("codex") or {})
 for value in (
     settings.get("command", "codex"),
@@ -108,4 +112,12 @@ print("Codex Agent over DeepSeek preflight: OK")
 PY
 fi
 
-controller --check-only
+if "${PYTHON_BIN}" "${TOPOLOGY_CAMPAIGN}" \
+  --config "${CONFIG}" --campaign-root "${CAMPAIGN_ROOT}" --is-enabled; then
+  "${PYTHON_BIN}" "${TOPOLOGY_CAMPAIGN}" \
+    --config "${CONFIG}" --campaign-root "${CAMPAIGN_ROOT}" --check-only
+  controller --check-only --topology-profile a3_dp2_tp16
+  controller --check-only --topology-profile a3_dp4_tp8
+else
+  controller --check-only
+fi

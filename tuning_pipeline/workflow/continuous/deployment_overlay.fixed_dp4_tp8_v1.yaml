@@ -1,0 +1,71 @@
+schema_version: 1
+status: archived_deployment_evidence
+authoritative_for_current_default: false
+overlay_id: fixed-dp4-tp8-v1-20260814
+base_overlay: deployment_overlay.fixed_dp2_tp16_v4.yaml
+base_commit: 3b5c898b8d45728e53073842590d4ed963a1d97a
+git_sync_performed: false
+github_sync_authorized: false
+deployment_roots:
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
+policy:
+  delete_operations_allowed: false
+  formal_npu_job_started_during_deployment: false
+  default_dp2_package_preserved: true
+  fixed_dp4_topology: a3_dp4_tp8
+  topology_campaign_enabled: false
+  independent_runtime_history_and_lease: true
+  baseline_lineage: a8_glm52_w8a8_expert_fast_v1
+  baseline_profile: a8_glm52_w8a8_dp4_tp8_fixed_v1
+  parameter_search_profile: automatic_registry_a8_frontier_v3
+  parameter_strategy_profile: hierarchical_agentic_frontier_v3
+  benchmark_profile: aligned_fast_c32_v1
+  fast_benchmark_maximum_seconds: 600
+local_validation:
+  unittest_passed: 239
+  targeted_unittest_passed: 134
+  post_preflight_merge_fix_targeted_unittest_passed: 1
+  ruff_changed_python: passed_with_preexisting_e402_ignored
+  structured_yaml_documents: 46
+  structured_json_documents: 8
+  bash_syntax: passed
+  fixed_dp4_runtime_resolution: passed
+  git_diff_check: passed
+remote_validation:
+  overlay_and_manifest_sha256_files_per_root: 14
+  unittest_passed_per_root: 239
+  fixed_dp4_offline_dry_run: passed_in_isolated_audit_runtime
+  merged_codex_deepseek_controller_preflight: passed
+  frozen_geometry:
+    data_parallel_size: 4
+    data_parallel_size_local: 2
+    tensor_parallel_size: 8
+    worker_data_parallel_start_rank: 2
+    executor_remote_contract: distributed_local_dp_v1
+  fixed_dp4_lease_exists: true
+  lease_job_id: 14066
+  lease_ready_nodes: 2
+  lease_ready_npu: 32
+  controller_running: true
+  controller_pid: 65365
+  formal_session_id: cjx_glm52_dp4_tp8_a8_fixed_20260814_072808
+  formal_run_id: a8_dp4_tp8_fixed_v1_20260814_072823
+  formal_runtime_experiments_present: false
+  formal_runtime_state_lock_pid_files_present: false
+  formal_npu_job_started: true
+payload_file_count: 13
+payload_sha256:
+  'README.md': 82c0708ab762d82c033614326343b67b81c25c9e791648e1b7cb93df52d5164f
+  'docs/FIXED_DP4_TP8_V1.md': 70990840beaba3e5a1fa25783af5a694e880ccce6f21f3c09cb2a25a9ce8cf5f
+  'tuning_pipeline/workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml': 92bb172e662a3ff7a5e10009470dc6b649d78287792ae36200016685865807df
+  'tuning_pipeline/workflow/continuous/continuous_tuning.py': 239ddadd8dfeef557006adac61556b0f5acc1b9db31c7171ea0019eaef64f306
+  'tuning_pipeline/workflow/continuous/runtime_profiles.yaml': 62743a55f9355320189562bd484230f63d56186a958cf3b63b4b101d5d8ca520
+  'tuning_pipeline/workflow/continuous/server_autonomous/README.md': 3685a33883f316bab57b964a371bbf8be2503f35e4edea7b9fdb41449cad6aa0
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.yaml': 81add96873fda90eec7036115a26a6c37e652252421183edafa9ebf6bad48563
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.dp4_tp8.yaml': badee1a705b06af7bb1dd38433eb5fc0cc9bd465b531d77c29ef873c83c18f44
+  'tuning_pipeline/workflow/continuous/server_autonomous/dp4_tp8.sh': 673cbe4c2538d6531dd5a9eb956546ac489cee927ed95cbc51c2525b57d785c1
+  'tuning_pipeline/workflow/continuous/server_autonomous/preflight.sh': 07393b04cfebda4a7ab97e6e702bca487d7e1ff06f069453b4d74674fa5536cc
+  'tuning_pipeline/workflow/continuous/test_continuous_tuning.py': 9f9fae5cce7f5bb26c569bb9207e8d0de84d7e49dae20025efef2b567341f6c7
+  'tuning_pipeline/workflow/continuous/test_portability.py': ab847700fb5483f21683aa955a42e34dbf9f98340b96a93c4ecd2b0810266473
+  'tuning_pipeline/workflow/continuous/test_server_autonomous_service.py': ccbaadb21045deef34267ebb5cf93c947f988969cb070315a41eadb8deeb6a4a

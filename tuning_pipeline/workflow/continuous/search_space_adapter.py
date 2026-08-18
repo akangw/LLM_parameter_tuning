@@ -52,6 +52,45 @@ def _selected_benchmark_identity(
     return {"mode": mode, "definition": copy.deepcopy(definition)}
 
 
+def _selected_topology_identity(
+    config: dict[str, Any], project_root: Path
+) -> dict[str, Any]:
+    """Return only the immutable geometry/executor fields that key history."""
+    settings = config.get("topology", {})
+    if not isinstance(settings, dict):
+        raise ValueError("topology configuration must be an object")
+    profile_name = str(settings.get("profile", "legacy_a3_dp2_tp16"))
+    frozen = settings.get("resolved_profile")
+    if isinstance(frozen, dict):
+        profile = frozen
+    else:
+        profiles_path = _project_path(
+            project_root,
+            str(
+                settings.get(
+                    "profiles_file", "workflow/continuous/topology_profiles.yaml"
+                )
+            ),
+        )
+        document = yaml.safe_load(profiles_path.read_text(encoding="utf-8")) or {}
+        profile = document.get("profiles", {}).get(profile_name)
+        if not isinstance(profile, dict):
+            raise ValueError(f"Unknown Topology profile {profile_name!r}")
+    return {
+        "profile": profile_name,
+        "executor": profile.get("executor"),
+        "nodes": profile.get("nodes"),
+        "npu_per_node": profile.get("npu_per_node"),
+        "data_parallel_size": profile.get("data_parallel_size"),
+        "data_parallel_size_local": profile.get("data_parallel_size_local"),
+        "tensor_parallel_size": profile.get("tensor_parallel_size"),
+        "worker_replicas": profile.get("worker_replicas"),
+        "worker_data_parallel_start_rank": profile.get(
+            "worker_data_parallel_start_rank"
+        ),
+    }
+
+
 def _manifest_matches_scenario(
     manifest: dict[str, Any], scenario_image: dict[str, Any]
 ) -> bool:
@@ -70,6 +109,7 @@ def _latest_history(
     benchmark_identity: dict[str, Any],
     scenario_image: dict[str, Any],
     project_root: Path,
+    topology_identity: dict[str, Any] | None = None,
 ) -> Path | None:
     candidates = sorted(
         archive_root.glob("*/round_*/06_agent_analysis/history_input.json"),
@@ -88,9 +128,16 @@ def _latest_history(
             frozen_benchmark = _selected_benchmark_identity(
                 frozen_config, project_root
             )
+            frozen_topology = (
+                _selected_topology_identity(frozen_config, project_root)
+                if topology_identity is not None
+                else None
+            )
         except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
             continue
         if frozen_benchmark != benchmark_identity:
+            continue
+        if topology_identity is not None and frozen_topology != topology_identity:
             continue
         if not _manifest_matches_scenario(manifest, scenario_image):
             continue
@@ -105,6 +152,7 @@ def _latest_previous_selection(
     benchmark_identity: dict[str, Any],
     scenario_image: dict[str, Any],
     project_root: Path,
+    topology_identity: dict[str, Any] | None = None,
 ) -> Path | None:
     candidates = sorted(
         archive_root.glob("*/00_search_space/search_space.compiled.yaml"),
@@ -128,12 +176,18 @@ def _latest_previous_selection(
             frozen_benchmark = _selected_benchmark_identity(
                 frozen_config, project_root
             )
+            frozen_topology = (
+                _selected_topology_identity(frozen_config, project_root)
+                if topology_identity is not None
+                else None
+            )
         except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
             continue
         if (
             isinstance(value, dict)
             and value.get("integration", {}).get("search_space_profile") == profile_name
             and frozen_benchmark == benchmark_identity
+            and (topology_identity is None or frozen_topology == topology_identity)
             and _manifest_matches_scenario(manifest, scenario_image)
         ):
             return path
@@ -239,6 +293,7 @@ def resolve_search_limits(
         project_root, str(profile.get("knowledge_dir", "tag_params/output/params"))
     )
     history_path = None
+    topology_identity = _selected_topology_identity(config, project_root)
     history_mode = str(settings.get("history_source", "latest_completed_session"))
     if history_mode == "latest_completed_session":
         history_path = _latest_history(
@@ -246,6 +301,7 @@ def resolve_search_limits(
             benchmark_identity=_selected_benchmark_identity(config, project_root),
             scenario_image=dict(scenario_document.get("image", {})),
             project_root=project_root,
+            topology_identity=topology_identity,
         )
     elif history_mode == "none":
         history_path = None
@@ -265,6 +321,7 @@ def resolve_search_limits(
         benchmark_identity=benchmark_identity,
         scenario_image=scenario_image,
         project_root=project_root,
+        topology_identity=topology_identity,
     )
     automatic_registry: dict[str, Any] | None = None
     if mode == "curated_registry":
@@ -383,6 +440,30 @@ def resolve_search_limits(
             else:
                 effective_limits[name] = [baseline[name]]
 
+    # An expert baseline can contain a source-discovered parameter that is in
+    # Reserve for this Session and therefore absent from both Active and the
+    # legacy manual fallback schema. Keep its exact baseline value fixed and
+    # preserve its generated runtime-injection contract. Dropping it would make
+    # the archived A8 candidate different from the process we actually launch.
+    baseline_only_runtime_parameters: list[str] = []
+    automatic_parameters = (
+        {
+            str(item["canonical_name"]): item
+            for item in automatic_registry.get("parameters", [])
+        }
+        if isinstance(automatic_registry, dict)
+        else {}
+    )
+    for name, value in baseline.items():
+        if name in effective_limits:
+            continue
+        if name not in automatic_parameters:
+            raise ValueError(
+                f"Baseline parameter {name!r} has no compiled registry/injection contract"
+            )
+        effective_limits[name] = [copy.deepcopy(value)]
+        baseline_only_runtime_parameters.append(name)
+
     if set(baseline) != set(effective_limits):
         missing = sorted(set(effective_limits) - set(baseline))
         extra = sorted(set(baseline) - set(effective_limits))
@@ -438,12 +519,18 @@ def resolve_search_limits(
     result["integration"]["derived_runtime_parameters"] = list(
         derived_runtime_parameters
     )
+    result["integration"]["baseline_only_runtime_parameters"] = list(
+        baseline_only_runtime_parameters
+    )
     result["integration"]["fixed_runtime_parameters"] = list(
         fixed_runtime_parameters
     )
     config["manual_search_limits"] = manual_limits
     config["search_limits"] = effective_limits
     config["baseline"] = baseline
+    config["conditional_search_exclusions"] = copy.deepcopy(
+        (result.get("history_analysis") or {}).get("conditional_exclusions", [])
+    )
     config["search_limits_resolved"] = True
     if automatic_registry is not None:
         parameters = {
@@ -466,7 +553,8 @@ def resolve_search_limits(
             },
             "active_injections": {
                 name: copy.deepcopy(parameters[name]["injection"])
-                for name in active_names
+                for name in effective_limits
+                if name in parameters
             },
         }
     config["resolved_search_space"] = {
@@ -477,9 +565,13 @@ def resolve_search_limits(
         "active_tunable_parameters": list(result["active_search_limits"]),
         "reserve_tunable_parameters": list(result.get("reserve_search_limits", {})),
         "derived_runtime_parameters": derived_runtime_parameters,
+        "baseline_only_runtime_parameters": baseline_only_runtime_parameters,
         "fixed_runtime_parameters": fixed_runtime_parameters,
         "source_default_anchor_parameters": source_default_anchors,
         "rotation_swaps": result["rotation_audit"]["swaps"],
+        "conditional_failure_exclusions": copy.deepcopy(
+            config["conditional_search_exclusions"]
+        ),
     }
     return config, result
 

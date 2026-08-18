@@ -14,6 +14,7 @@ from workflow.continuous.session_bundle import (
     inspect_bundle,
 )
 from workflow.continuous.runtime_profile import (
+    apply_topology_baseline_binding,
     resolve_runtime_profile,
     validate_runtime_selections,
 )
@@ -87,6 +88,26 @@ class TopologyProfileTests(unittest.TestCase):
             resolved["topology"]["profile"], "a3_single_16npu_dp2local_tp8"
         )
 
+    def test_distributed_local_dp_profile_resolves_integrated_executor(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        resolved, profile = resolve_topology_profile(
+            {
+                "topology": {
+                    "profile": "a3_dp4_tp8",
+                    "profiles_file": "workflow/continuous/topology_profiles.yaml",
+                }
+            },
+            root,
+        )
+        self.assertEqual(4, profile["data_parallel_size"])
+        self.assertEqual(2, profile["data_parallel_size_local"])
+        self.assertEqual(2, profile["worker_data_parallel_start_rank"])
+        self.assertEqual(
+            "distributed_local_dp_v1",
+            profile["resolved_executor"]["remote_contract"],
+        )
+        self.assertEqual("a3_dp4_tp8", resolved["topology"]["profile"])
+
 
 class RuntimeProfileTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -97,10 +118,71 @@ class RuntimeProfileTests(unittest.TestCase):
             (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
         )
         resolved, identity = resolve_runtime_profile(config, self.project_root)
-        self.assertEqual(identity["profile"], "glm52_w8a8_a3_dp2_tp16")
-        self.assertEqual(resolved["topology"]["profile"], "a3_dp2_tp16")
+        self.assertEqual(identity["profile"], "glm52_w8a8_a3_dp4_tp8_a8_guided_v4")
+        self.assertEqual(resolved["topology"]["profile"], "a3_dp4_tp8")
+        self.assertFalse(resolved["topology_campaign"]["enabled"])
+        self.assertEqual(
+            resolved["benchmark"]["profile"], "aligned_fast_c32_v2"
+        )
+        self.assertEqual(
+            resolved["search_space"]["profile"],
+            "automatic_registry_a8_frontier_v3",
+        )
         self.assertIn("scenario", identity["artifacts"])
         self.assertEqual(len(identity["artifacts"]["scenario"]["sha256"]), 64)
+
+    def test_dp4_topology_binds_probe_baseline_instead_of_dp2_a8(self) -> None:
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
+        )
+        config["runtime"]["profile"] = "glm52_w8a8_a3_topology_campaign_v4"
+        config["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
+        config["benchmark"]["profile"] = "aligned_fast_c32_v1"
+        config["topology_campaign"]["enabled"] = True
+        resolved, _ = resolve_runtime_profile(config, self.project_root)
+        resolved["topology"]["profile"] = "a3_dp4_tp8"
+        resolved = apply_topology_baseline_binding(resolved)
+        self.assertEqual(
+            "a8_dp4_tp8_probe_v1", resolved["initial_baseline"]["label"]
+        )
+        self.assertTrue(
+            resolved["initial_baseline"]["definition"].endswith(
+                "a8_glm52_w8a8_dp4_tp8_probe_v1.yaml"
+            )
+        )
+        validate_runtime_selections(resolved)
+
+    def test_fixed_dp4_runtime_owns_a8_derived_baseline_and_executor(self) -> None:
+        config = yaml.safe_load(
+            (Path(__file__).resolve().parent / "config.yaml").read_text(encoding="utf-8")
+        )
+        config["runtime"]["profile"] = "glm52_w8a8_a3_dp4_tp8_a8_fixed_v1"
+        config["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
+        config["benchmark"]["profile"] = "aligned_fast_c32_v1"
+        resolved, identity = resolve_runtime_profile(config, self.project_root)
+        self.assertEqual("a3_dp4_tp8", resolved["topology"]["profile"])
+        self.assertEqual(
+            "ktp_two_role_local_dp", identity["compatibility"]["executor"]
+        )
+        self.assertEqual(
+            "a8_dp4_tp8_fixed_v1", resolved["initial_baseline"]["label"]
+        )
+        self.assertTrue(
+            resolved["initial_baseline"]["definition"].endswith(
+                "a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml"
+            )
+        )
+        baseline = yaml.safe_load(
+            (self.project_root / resolved["initial_baseline"]["definition"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        parameters = baseline["reference_parameters"]
+        self.assertEqual(64, parameters["max_num_seqs"])
+        self.assertEqual(64000, parameters["max_model_len"])
+        self.assertEqual(1, parameters["num_speculative_tokens"])
+        self.assertEqual(64, parameters["max_cudagraph_capture_size"])
+        validate_runtime_selections(resolved)
 
     def test_controller_freeze_does_not_reapply_bindings_over_explicit_choice(self) -> None:
         config = yaml.safe_load(

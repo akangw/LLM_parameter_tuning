@@ -51,13 +51,15 @@ CASE_RETRY_LIMIT="${BENCHMARK_CASE_RETRY_LIMIT:-2}"
 RUNTIME_RETRY_LIMIT="${BENCHMARK_RUNTIME_RETRY_LIMIT:-2}"
 METRICS_RETRY_LIMIT="${BENCHMARK_METRICS_RETRY_LIMIT:-2}"
 TOTAL_FULL_RETRY_LIMIT="${BENCHMARK_TOTAL_FULL_RETRY_LIMIT:-2}"
+EXPECTED_FORMAL_CASES="${BENCHMARK_EXPECTED_FORMAL_CASES:-12}"
+BENCHMARK_BUDGET_STARTED_EPOCH=$(date +%s)
 BENCH_ROOT="${RUN_DIR}/servebench"
 mkdir -p "${BENCH_ROOT}"
 
 export SERVEBENCH_ROOT BENCHMARK_SPEC_ROOT BENCHMARK_DATASET_ROOT
 export BENCHMARK_TOKENIZER BENCHMARK_EXPECTED_FINGERPRINT_JSON
 export RUN_DIR SERVEBENCH_WORKSPACE SERVEBENCH_DOCKER_IMAGE GUIDELLM_ACTIVATION
-export BENCHMARK_SUITE BENCHMARK_PHASE
+export BENCHMARK_SUITE BENCHMARK_PHASE BENCHMARK_SUITE_ID
 python3 "${SCRIPT_DIR}/validate_aligned_l1_inputs.py"
 
 KTP_JOB_ID=$(
@@ -182,6 +184,7 @@ run_metrics_gate() {
   python3 "${SCRIPT_DIR}/aligned_l1_metrics.py" \
     "${RUN_PATHS[@]}" \
     --primary-concurrency "${PRIMARY_CONCURRENCY}" \
+    --expected-formal-cases "${EXPECTED_FORMAL_CASES}" \
     --output "${RUN_DIR}/metrics.pending.json" \
     --retry-plan-output "${RETRY_PLAN}"
   local code=$?
@@ -306,6 +309,23 @@ fi
   echo "Aligned L1 metrics gate still failed after bounded targeted and full same-service retries." >&2
   failure_marker 2
 }
+BENCHMARK_WALL_SECONDS=$(( $(date +%s) - BENCHMARK_BUDGET_STARTED_EPOCH ))
+python3 - "${RUN_DIR}/metrics.pending.json" \
+  "${BENCHMARK_WALL_SECONDS}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload.setdefault("metrics", {})["benchmark_wall_time_seconds"] = int(sys.argv[2])
+temporary = path.with_name(f".{path.name}.timing-{os.getpid()}")
+temporary.write_text(
+    json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+)
+os.replace(temporary, path)
+PY
 cp "${RUN_DIR}/metrics.pending.json" "${RUN_DIR}/metrics.json"
 
 printf '{"run_id":"%s","status":"completed","repetitions":%s,"updated_at":"%s"}\n' \

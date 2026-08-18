@@ -102,13 +102,13 @@ case "${1:-}" in
   auto-retry-paused)
     request="${RUNTIME_ROOT}/AUTO_RETRY_PAUSED_REQUEST"
     [[ ! -e "${request}" ]] || {
-      echo "A deterministic paused-round recovery request already exists: ${request}" >&2
+      echo "A fresh-Agent paused-round recovery request already exists: ${request}" >&2
       exit 2
     }
     temporary="${request}.tmp-$$"
     printf '%s\n' "$(date -Iseconds)" > "${temporary}"
     mv "${temporary}" "${request}"
-    echo "Authorized deterministic paused-round recovery. Start the managed service to consume it."
+    echo "Authorized fresh Agent analysis of the paused round. Start the managed service to consume it."
     ;;
   authorize-new-session)
     archive_terminal_state

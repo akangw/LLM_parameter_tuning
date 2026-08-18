@@ -1,8 +1,25 @@
 # Benchmark selection is separate from the Agent strategy. A profile chooses
 # one fully configured definition from config.yaml and is frozen per Session.
-default_profile: aligned_l1_v4
+default_profile: aligned_fast_c32_v2
 
 profiles:
+  aligned_fast_c32_v2:
+    status: integrated
+    mode: aligned_l1
+    definition_key: aligned_l1_fast_v2
+    purpose: >-
+      Versioned repair of Fast-C32: four C32 workloads with complete
+      throughput/TTFT/TPOT reporting and a pre-launch suite/dataset contract.
+
+  aligned_fast_c32_v1:
+    status: integrated
+    mode: aligned_l1
+    definition_key: aligned_l1_fast
+    purpose: >-
+      Fixed four-workload C32 benchmark with 64 formal requests per workload,
+      explicit throughput/TTFT/TPOT reporting. Its 600-second value is planning
+      metadata, not an execution cutoff.
+
   aligned_l1_v4:
     status: integrated
     mode: aligned_l1

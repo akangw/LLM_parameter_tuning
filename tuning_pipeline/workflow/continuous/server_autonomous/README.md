@@ -4,6 +4,15 @@ This mode runs the knowledge query, deterministic Controller, DeepSeek Agent,
 ktp-lab submission, Benchmark collection, and Session archive on the Linux
 server.  It is isolated from the default Windows-to-server chain.
 
+The checked-in default runs one fixed DP4/TP8 Session with the A8-derived
+fixed-v3 baseline, automatic_registry_a8_frontier_v3, guided-v4 strategy and
+Fast-C32-v2 benchmark. The topology Campaign remains installed but dormant;
+the main service does not schedule, compare or spend budget on another topology.
+
+`dp4_tp8_v4.sh` is the explicit dispatcher for the same production identity.
+The older DP4 v1-v3 dispatchers and fixed DP2 package remain reproducible
+historical entrypoints, but are not defaults and never share runtime state.
+
 ## Isolation contract
 
 - Existing defaults remain `windows_remote + paramiko + codex`.
@@ -85,12 +94,35 @@ bash tuning_pipeline/workflow/continuous/server_autonomous/prepare_lease.sh
 bash tuning_pipeline/workflow/continuous/server_autonomous/preflight.sh
 ```
 
-Start or resume the Controller:
+`preflight.sh` validates the fixed DP4/TP8 runtime and idle Lease without
+submitting a candidate. Mutable state lives in
+`runtime_fixed_dp4_tp8_v4_guided_agent_live/`, so legacy runtime roots
+cannot cause an accidental resume. When the dormant Campaign is explicitly
+re-enabled later, it must receive another isolated runtime root.
+
+Start or resume the fixed-topology Controller:
 
 ```bash
 bash tuning_pipeline/workflow/continuous/server_autonomous/start.sh auto
 bash tuning_pipeline/workflow/continuous/server_autonomous/status.sh
 ```
+
+The explicit production dispatcher pins the same config and runtime root for
+every lifecycle command:
+
+```bash
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+bash "$AUTO/dp4_tp8_v4.sh" dry-run
+bash "$AUTO/dp4_tp8_v4.sh" prepare-lease
+bash "$AUTO/dp4_tp8_v4.sh" preflight
+bash "$AUTO/dp4_tp8_v4.sh" start new
+bash "$AUTO/dp4_tp8_v4.sh" status
+```
+
+The DP4 baseline keeps the A8 lineage and 64K capability. Its exact values are
+owned by `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml`; documentation does not duplicate
+those values. `prepare-lease` is intentionally not part of deployment or offline
+validation; run it only when the live experiment is explicitly authorized.
 
 ## Persistent service (recommended)
 
@@ -147,28 +179,34 @@ alive. To recover automatically after a server reboot, the Supervisor daemon
 itself must be registered with the host boot system; systemd user mode is the
 simpler supported route.
 
-For a legacy round already paused by a now-recognized deterministic signature,
-run `bash "$AUTO/service.sh" auto-retry-paused` and then start the managed
-service. The one-shot request is accepted only if the Controller reclassifies
-the saved evidence as safe, retry budgets remain, and the replacement round's
-new task/run identity is persisted before monitoring resumes.
+For a legacy round paused by an older policy, run
+`bash "$AUTO/service.sh" auto-retry-paused` and then start the managed service.
+The one-shot request forces fresh Agent analysis against the current recovery
+contract. With `failure_recovery.hard_terminal_only=true`, retry counters are
+audit signals rather than pause gates; only a proven immutable external block
+may preserve `paused_for_human`. A replacement round's new task/run identity is
+persisted before monitoring resumes.
 
 Both managers apply the same recovery policy:
 
 - an active task/run is resumed after a process crash or reboot;
-- Agent transport/structured-output failures are retried twice within the same
+- Agent transport/structured-output failures use the frozen
+  `agent_protocol_retries` budget within the same
   experiment round; schema-forbidden explanatory metadata is pruned with an
   adjacent audit, while parameter values, required fields and Search Limits
   remain strict;
 - after four in-round protocol retries are exhausted, a completed round may be
   resumed by the service manager up to six times without rerunning its Benchmark;
-- experiment failures not solved by deterministic rules are passed to the
-  frozen Codex+DeepSeek Agent with complete archived evidence. It may request
-  two unchanged diagnostic reruns or a Search-Limits-constrained parameter
-  correction; the Controller revalidates every action and never gives the
+- experiment failures are passed to the frozen Codex+DeepSeek Agent with the
+  current logs plus unresolved signatures from earlier rounds. The Agent owns
+  the recovery candidate and may request unchanged diagnostic reruns or a
+  Search-Limits/Recovery-Registry-constrained single or coupled correction;
+  deterministic rules are provider-availability fallbacks, not preselected
+  Agent candidates. The Controller revalidates every action and never gives the
   Agent shell, image, topology, benchmark, path, or Lease mutation authority;
-- one failure chain is capped at six transient retries, two Agent diagnostic
-  retries, four parameter corrections, and ten total recovery rounds;
+- retry, diagnostic and correction counts remain visible audit/budget signals.
+  With `failure_recovery.hard_terminal_only=true`, exhausting those counters
+  does not stop autonomy; each failed round returns to fresh Agent analysis;
 - critical JSON/YAML artifacts use atomic replacement. `state.json.previous`
   mirrors the latest committed state, and submission intent/task/run identity
   form a recovery ledger so a crash around submission resumes existing work
@@ -180,9 +218,12 @@ Both managers apply the same recovery policy:
   recovery path: expected nonzero shell commands cannot bypass their retry
   branch, and each failed attempt remains archived in a fresh result directory;
 - a completed Session exits cleanly and stays stopped;
-- unknown invariant failures, exhausted recovery, other `paused_*`, inconsistent
-  state, an already running Controller, or a retained `STOP_REQUESTED` marker
-  exits with code 78 and is not restarted;
+- `pause_for_human` is accepted only for a proven immutable block such as an
+  unavailable/unsupported model or image, identity mismatch, missing permission
+  or credential, resource/topology contract mismatch, or corrupt state. The
+  round writes `human_intervention_required.json` with operator steps. Other
+  Agent pauses are converted to continued recovery, and controller/provider
+  errors are restarted with bounded backoff by the foreground service wrapper;
 - TERM from either manager is converted into `STOP_REQUESTED`, then the wrapper
   waits up to 24 hours for the active round to archive before forced shutdown.
 
@@ -191,8 +232,9 @@ condition, not proof of an old worker protocol. Before each real submission it
 waits up to `lab.readiness_wait_seconds` for the declared topology to return to
 `2/2 Ready`. If readiness changes between the status check and `ktp-lab run`,
 the specific pre-admission protocol-v2 error is retried with the same pending
-candidate and run ID. It never retries arbitrary submission errors, never
-overlaps a running slot, and safely pauses after the bounded deadline expires.
+candidate and run ID. It never overlaps a running slot. In hard-terminal-only
+mode, an unavailable Lease enters controller recovery/backoff and is retried;
+it does not become a human pause merely because a readiness window elapsed.
 
 After an intentional stop, explicitly authorize a later start by archiving the
 retained marker (the command moves it; it does not delete evidence):

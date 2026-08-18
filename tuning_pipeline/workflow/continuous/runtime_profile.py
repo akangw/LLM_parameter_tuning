@@ -102,6 +102,8 @@ def validate_runtime_selections(config: dict[str, Any]) -> None:
         "benchmark": config.get("benchmark", {}).get("profile"),
         "agent_provider": config.get("agent", {}).get("provider", "codex"),
     }
+    if "topology" in allowed:
+        selected["topology"] = config.get("topology", {}).get("profile")
     runtime_name = str(runtime.get("profile", "unknown"))
     for kind, value in selected.items():
         choices = allowed.get(kind)
@@ -114,6 +116,38 @@ def validate_runtime_selections(config: dict[str, Any]) -> None:
                 f"{kind} profile {value!r} is incompatible with runtime "
                 f"{runtime_name!r}; allowed={choices}"
             )
+
+
+def apply_topology_baseline_binding(config: dict[str, Any]) -> dict[str, Any]:
+    """Bind the topology-specific starting point before Search Limits compile.
+
+    A runtime may support more than one rank geometry, but an expert incumbent
+    is evidence for exactly one geometry. The mapping is frozen in the runtime
+    adapter so a command-line topology selection cannot accidentally keep A8's
+    DP2/TP16 baseline when it creates a DP4/TP8 Session.
+    """
+    resolved = copy.deepcopy(config)
+    runtime = resolved.get("runtime", {})
+    profile = runtime.get("resolved_profile", {}) if isinstance(runtime, dict) else {}
+    mappings = profile.get("topology_baselines", {}) if isinstance(profile, dict) else {}
+    topology = resolved.get("topology", {})
+    topology_name = topology.get("profile") if isinstance(topology, dict) else None
+    if not isinstance(mappings, dict) or not mappings:
+        return resolved
+    binding = mappings.get(topology_name)
+    if not isinstance(binding, dict):
+        raise ValueError(
+            f"Runtime profile {runtime.get('profile')!r} has no baseline binding "
+            f"for topology {topology_name!r}"
+        )
+    required = ("label", "launch_profile", "definition")
+    missing = [name for name in required if not str(binding.get(name, "")).strip()]
+    if missing:
+        raise ValueError(
+            f"Topology baseline binding {topology_name!r} lacks fields: {missing}"
+        )
+    resolved["initial_baseline"] = copy.deepcopy(binding)
+    return resolved
 
 
 def resolve_runtime_profile(

@@ -1,0 +1,63 @@
+schema_version: 1
+status: archived_deployment_evidence
+authoritative_for_current_default: false
+overlay_id: fixed-dp2-tp16-v4-20260814
+base_overlay: deployment_overlay.topology_campaign_v4.yaml
+base_commit: 3b5c898b8d45728e53073842590d4ed963a1d97a
+git_sync_performed: false
+github_sync_authorized: false
+deployment_roots:
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
+policy:
+  delete_operations_allowed: false
+  formal_npu_job_started_during_deployment: false
+  main_flow_topology: a3_dp2_tp16
+  topology_campaign_enabled: false
+  dormant_topology_campaign_preserved: true
+  dormant_campaign_requires_explicit_new_session: true
+  parameter_baseline: a8_glm52_w8a8_expert_fast_v1
+  parameter_search_profile: automatic_registry_a8_frontier_v3
+  parameter_strategy_profile: hierarchical_agentic_frontier_v3
+  benchmark_profile: aligned_fast_c32_v1
+  fast_benchmark_maximum_seconds: 600
+  legacy_server_runtime_isolated: true
+local_validation:
+  unittest_passed: 236
+  ruff_changed_python: passed_with_preexisting_e402_ignored
+  structured_yaml_documents: 43
+  structured_json_documents: 8
+  bash_syntax: passed
+  fixed_topology_offline_dry_run: passed
+  dormant_campaign_is_enabled_exit: 1
+  git_diff_check: passed
+remote_validation:
+  overlay_and_manifest_sha256_files_per_root: 17
+  unittest_passed_per_root: 236
+  desktop_route_offline_dry_run: passed_locally
+  source_mirror_on_server_offline_dry_run: not_applicable_requires_desktop_paramiko_environment
+  server_autonomous_offline_dry_run: passed
+  dormant_campaign_is_enabled_exit_per_root: 1
+  target_fixed_lease_exists: false
+  controller_running: false
+  formal_runtime_experiments_present: false
+  formal_runtime_state_lock_pid_files_present: false
+  formal_npu_job_started: false
+payload_file_count: 16
+payload_sha256:
+  'README.md': f30b1401e67a091a9d90b3806442b5f664ca7857c842ed5302b87ef5ff42cf5b
+  'docs/ARCHITECTURE.md': 6f8404a78e9f864f44cf3e624b47506c749c33f5463723460adc669784e70c16
+  'docs/OPERATIONS.md': 106f6218170050ce130ad651ad140d47b9235d2c7c02386b59241a38260bf9cd
+  'docs/TOPOLOGY_CAMPAIGN_V4.md': 8dd761b96c9339ac0aa912f69e607075e112a6e223d63a4d058b30dd0fc7818a
+  'docs/FIXED_DP2_TP16_V4.md': 9cc2629dcee39432126548f883197c79ca3e85f2d9eadb5775fca3b32e116b7d
+  'tuning_pipeline/workflow/continuous/README.md': 1409b4985e4960cc1a2379399be5ac824e34d4c932f1fd9b41775fef46d87037
+  'tuning_pipeline/workflow/continuous/config.yaml': a788d075c8b6e41521f53ce290371537e6b6d73f977ba64eba82e87ff29b41ac
+  'tuning_pipeline/workflow/continuous/continuous_tuning.py': af78cceed49507ec4d6c4b314bbbaa6643c519ee874b77542dfbd94d362e5999
+  'tuning_pipeline/workflow/continuous/runtime_profiles.yaml': adc4b2e2d1f7abefb85d3d046ae16eb805d90c8e70dc48d38f3626b8742ef88b
+  'tuning_pipeline/workflow/continuous/server_autonomous/README.md': 3c45cadc45da42be210cfdad29460c51421ce14ec4daac97e94d21ebcc277699
+  'tuning_pipeline/workflow/continuous/server_autonomous/common.sh': 32192ad34782fdda8c208c4ecaaf4fa60d13b98756f0df088f401f96051a1970
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.local.example.yaml': c405cfbddce4b4cc45a64c969fbb8ab545f693e16516ba0832ad6673a6a3d6c1
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.yaml': a85b418744a5f39ab05bc70efc1c1a17503a4742fdb888d703b4a94105543a02
+  'tuning_pipeline/workflow/continuous/test_continuous_tuning.py': 62ab2280e9a1c5fcf114e643ddab0cad70e09c63dca24c86937662d9547b7d08
+  'tuning_pipeline/workflow/continuous/test_portability.py': 4bc8eac0e823f099e6ad1b316bdf02421c39ff68d91f0c9d2b571df25ca3fa4b
+  'tuning_pipeline/workflow/continuous/test_topology_campaign.py': ceda6d949303ec4c415ea77c84187153cebe6b76f97282e2228d21d53c29efb0

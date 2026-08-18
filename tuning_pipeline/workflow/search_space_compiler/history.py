@@ -143,6 +143,14 @@ def analyze_history(
             ],
         )
     )
+    hard_failure_classifications = set(
+        policy.get(
+            "hard_value_failure_classifications",
+            ["parameter_invalid", "parameter_oom"],
+        )
+    )
+    conditional_exclusions: list[dict[str, Any]] = []
+    conditional_exclusion_keys: set[str] = set()
 
     for trial in trials:
         params = trial["params"]
@@ -168,6 +176,29 @@ def analyze_history(
                 for name in trial["attributed_parameters"]
                 if name in candidate_values
             ]
+        if (
+            failure_is_attributable
+            and trial.get("failure_classification") in hard_failure_classifications
+            and changed
+        ):
+            conditions = {
+                str(name): value
+                for name, value in params.items()
+                if name in candidate_values
+            }
+            exclusion_key = json.dumps(
+                conditions, ensure_ascii=False, sort_keys=True
+            )
+            if conditions and exclusion_key not in conditional_exclusion_keys:
+                conditional_exclusion_keys.add(exclusion_key)
+                conditional_exclusions.append(
+                    {
+                        "trial_id": trial["trial_id"],
+                        "failure_classification": trial["failure_classification"],
+                        "conditions": conditions,
+                        "attributed_parameters": list(changed),
+                    }
+                )
         gain = trial.get("objective_gain_percent")
         if not isinstance(gain, (int, float)):
             gain = (
@@ -226,12 +257,6 @@ def analyze_history(
             previous_success_metrics = metrics
 
     minimum_evidence = max(1, int(policy.get("minimum_evidence_trials", 3)))
-    hard_failure_classifications = set(
-        policy.get(
-            "hard_value_failure_classifications",
-            ["parameter_invalid", "parameter_oom"],
-        )
-    )
     weights = policy.get("weights", {})
     result: dict[str, Any] = {}
     for name, values in candidate_values.items():
@@ -239,40 +264,16 @@ def analyze_history(
         candidate_keys = {
             json.dumps(value, ensure_ascii=False, sort_keys=True) for value in values
         }
-        quarantined_values = []
-        already_excluded_failed_values = []
-        quarantined_keys: set[str] = set()
-        already_excluded_keys: set[str] = set()
-        for item in items:
-            value_key = json.dumps(
-                item["value"], ensure_ascii=False, sort_keys=True
-            )
-            if (
-                not item["success"]
-                and item.get("failure_classification")
-                in hard_failure_classifications
-            ):
-                if value_key in candidate_keys and value_key not in quarantined_keys:
-                    quarantined_keys.add(value_key)
-                    quarantined_values.append(item["value"])
-                elif (
-                    value_key not in candidate_keys
-                    and value_key not in already_excluded_keys
-                ):
-                    already_excluded_keys.add(value_key)
-                    already_excluded_failed_values.append(item["value"])
-        hard_failed_keys = quarantined_keys | already_excluded_keys
-        scoring_items = [
-            item
-            for item in items
-            if not (
-                not item["success"]
-                and json.dumps(
-                    item["value"], ensure_ascii=False, sort_keys=True
-                )
-                in hard_failed_keys
-            )
+        parameter_conditional_failures = [
+            copy
+            for copy in conditional_exclusions
+            if name in copy.get("attributed_parameters", [])
         ]
+        # A hard failure is evidence about the complete configuration that was
+        # launched, not proof that each individual value is globally invalid.
+        # Keep the value available for a different companion combination and
+        # retain the failed observation in its evidence score.
+        scoring_items = list(items)
         weighted_samples = sum(
             item["attribution_weight"] for item in scoring_items
         )
@@ -344,10 +345,8 @@ def analyze_history(
                 reasons.append("latency_guardrail_regressions")
             if instability_score:
                 reasons.append("unstable_measured_gain")
-        if quarantined_values:
-            reasons.append("hard_failed_values_quarantined")
-        if already_excluded_failed_values:
-            reasons.append("hard_failed_values_already_excluded")
+        if parameter_conditional_failures:
+            reasons.append("conditional_hard_failure_recorded")
         result[name] = {
             "trial_count": len(items),
             "scoring_trial_count": len(scoring_items),
@@ -364,8 +363,10 @@ def analyze_history(
             "coverage_ratio": round(coverage, 4),
             "confidence": round(confidence, 4),
             "score_adjustment": round(adjustment, 4),
-            "quarantined_values": quarantined_values,
-            "already_excluded_failed_values": already_excluded_failed_values,
+            # Retained as empty compatibility fields for archived consumers.
+            "quarantined_values": [],
+            "already_excluded_failed_values": [],
+            "conditional_failures": parameter_conditional_failures,
             "reasons": reasons,
             "observations": items,
         }
@@ -376,5 +377,6 @@ def analyze_history(
         "attributed_trial_count": attributed_trials,
         "ignored_non_parameter_failure_trials": ignored_failure_trials,
         "primary_metric": primary_metric,
+        "conditional_exclusions": conditional_exclusions,
         "parameters": result,
     }

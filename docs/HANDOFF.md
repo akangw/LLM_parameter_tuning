@@ -1,13 +1,17 @@
 # 项目交接清单
 
+> 当前默认版本为固定 DP4/TP8 的 `guided-v4`。旧 B0、DP2 和 frontier-v3
+> 内容仅作历史与回退说明；当前身份以根 README 和配置中的 Runtime Adapter 为准。
+
 ## 1. 接手者先读
 
 1. 根目录 `框架.md`：先理解三大板块和核心概念。
 2. 根目录 `README.md`：确认当前状态和入口。
 3. `docs/ARTIFACTS.md`：理解每阶段产物与日志。
 4. `docs/CURRENT_SESSION.md`：确认当前实验进度。
-5. `docs/OPERATIONS.md`：执行检查、恢复和停止。
-6. `docs/DEPENDENCIES.md`：确认外部只读依赖。
+5. `docs/CURRENT_DEFAULTS.md`：确认新 Session 的唯一默认身份。
+6. `docs/OPERATIONS.md`：执行检查、恢复和停止。
+7. `docs/DEPENDENCIES.md`：确认外部只读依赖。
 
 ## 2. 固定身份
 

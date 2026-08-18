@@ -13,10 +13,8 @@ parameters:
 
   - canonical_name: max_model_len
     knowledge_names: [--max-model-len]
-    candidate_values: [64000]
+    candidate_values: [16384, 32768, 49152, 64000]
     risk: high
-    role: session_fixed
-    fixed_reason: benchmark_and_memory_contract
     integration_status: existing
     injection: {kind: env_value, name: MAX_MODEL_LEN, target: vllm_cli}
 

@@ -26,6 +26,26 @@ def _token(name: str) -> str:
     return name.removeprefix("--").replace("-", "_").lower()
 
 
+def _portrait_tokens(name: str) -> list[str]:
+    """Return equivalent tokens used by generated axes and ParameterYAML.
+
+    Generated Search Limits use snake-case object names and ``__`` path
+    separators.  ParameterYAML predates that convention and uses dotted class
+    names such as ``SpeculativeConfig.method``.  Keep the equivalence here so
+    every automatically admitted axis can resolve evidence without requiring a
+    hand-maintained registry alias.
+    """
+
+    flattened = _token(name).replace("__", ".")
+    return _stable_unique(
+        (
+            _token(name),
+            flattened,
+            flattened.replace("speculative_config.", "speculativeconfig."),
+        )
+    )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -145,7 +165,14 @@ class PortraitRetriever:
     def _variants(self, name: str) -> list[dict[str, Any]]:
         canonical = self.canonical_name(name)
         aliases = self.canonical_aliases.get(canonical, [name, canonical])
-        tokens = _stable_unique(_token(alias) for alias in aliases)
+        tokens = _stable_unique(
+            token
+            for alias in aliases
+            # Automatically compiled Search Limits flatten nested JSON fields
+            # while ParameterYAML preserves dotted object/class paths.  These
+            # axes remain valid even when the legacy registry lacks an alias.
+            for token in _portrait_tokens(alias)
+        )
         variants: list[dict[str, Any]] = []
         seen_files: set[str] = set()
         for token in tokens:

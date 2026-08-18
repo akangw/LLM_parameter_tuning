@@ -1,8 +1,27 @@
 schema_version: 1
 default_profile: a3_dp2_tp16
+selection:
+  stage: topology_outer_session
+  order: 0
+  decision_owner: agent
+  safety_owner: controller
+  session_boundary_required: true
+  objective: benchmark_output_token_throughput
+  model_contract: glm-5.2-w8a8
+  available_nodes: 2
+  npu_per_node: 16
+  policy: >-
+    The Controller filters executor, capacity and deterministic contract blockers.
+    Production-proven profiles enter screening directly. Experimental profiles
+    must first pass one frozen-baseline startup plus Fast-C32 probe. The Agent
+    chooses ordering and budget allocation among the remaining topology Sessions;
+    topology is never mutated inside a serving-parameter Session.
 profiles:
   a3_dp2_tp16:
     status: integrated
+    validation: production_proven
+    model_contracts: [glm-5.2-w8a8]
+    novice_label: Recommended GLM-5.2 W8A8 topology
     executor: ktp_two_role
     nodes: 2
     npu_per_node: 16
@@ -12,8 +31,14 @@ profiles:
     data_parallel_rpc_port: 12980
     worker_replicas: 1
     worker_data_parallel_start_rank: 1
+    fit_evidence:
+      source: cjx_glm52_continuous_20260807_093620/round_009_a8
+      result: passed
   a3_single_16npu_dp2local_tp8:
     status: integrated
+    validation: scenario_specific
+    model_contracts: [glm-5.2-w4a8c8]
+    novice_label: Single-node W4A8C8 topology
     executor: ktp_single_node_local_dp
     nodes: 1
     npu_per_node: 16
@@ -23,3 +48,47 @@ profiles:
     data_parallel_rpc_port: 12980
     worker_replicas: 0
     worker_data_parallel_start_rank: 0
+  a3_dp4_tp8:
+    status: integrated
+    validation: experimental_preflight_required
+    model_contracts: [glm-5.2-w8a8]
+    novice_label: Two-node DP4/TP8 candidate
+    executor: ktp_two_role_local_dp
+    nodes: 2
+    npu_per_node: 16
+    data_parallel_size: 4
+    data_parallel_size_local: 2
+    tensor_parallel_size: 8
+    data_parallel_rpc_port: 12980
+    worker_replicas: 1
+    worker_data_parallel_start_rank: 2
+    baseline_definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_probe_v1.yaml
+    preflight:
+      mode: frozen_baseline_startup_and_fast_c32
+      required: true
+      promote_after:
+        service_ready: true
+        benchmark_gate_passed: true
+      reject_after:
+        - model_fit_failure
+        - startup_oom
+        - executor_contract_failure
+    risk_notes:
+      - GLM-5.2 W8A8 weight shard per NPU is approximately twice the proven TP16 shard.
+      - This profile has no production model-fit evidence until its campaign probe passes.
+  a3_dp1_tp32:
+    status: planned
+    validation: executor_missing
+    model_contracts: []
+    novice_label: Cross-node TP32 candidate
+    executor: ktp_cross_node_tp
+    nodes: 2
+    npu_per_node: 16
+    data_parallel_size: 1
+    data_parallel_size_local: 1
+    tensor_parallel_size: 32
+    data_parallel_rpc_port: 12980
+    worker_replicas: 1
+    worker_data_parallel_start_rank: 0
+    blockers:
+      - Current ktp two-role launcher distributes DP ranks, not one TP group across nodes.

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import datetime as dt
 import base64
+import copy
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -16,6 +18,7 @@ from .search_space_adapter import (
     _latest_history,
     _latest_previous_selection,
     _selected_benchmark_identity,
+    _selected_topology_identity,
     resolve_search_limits,
     write_session_search_space,
 )
@@ -75,7 +78,89 @@ def config() -> dict:
     return value
 
 
+def production_b0_config() -> dict:
+    """Select the preserved legacy B0 route for B0-specific regression tests."""
+    value = tuning.load_yaml(tuning.HERE / "config.yaml")
+    value["runtime"]["profile"] = "glm52_w8a8_a3_dp2_tp16"
+    value["benchmark"]["profile"] = "aligned_l1_v4"
+    value["search_space"]["profile"] = "automatic_registry_v1"
+    value["strategy"]["profile"] = "hierarchical_throughput_v1"
+    value["initial_baseline"] = {
+        "label": "b0_deployable",
+        "launch_profile": "official_source_defaults_deployable",
+        "definition": "workflow/baselines/b0_deployable_64k.yaml",
+    }
+    return value
+
+
 class ControllerTests(unittest.TestCase):
+    def test_disabled_campaign_exposes_only_fixed_dp2_identity_to_agent(self) -> None:
+        configured = config()
+        configured["topology_campaign"] = {"enabled": False}
+        configured["topology"] = {
+            "profile": "a3_dp2_tp16",
+            "profiles_file": "workflow/continuous/topology_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        self.assertFalse(controller.topology_campaign_enabled)
+        self.assertEqual("fixed_topology_session", controller.topology_plan["stage"])
+        self.assertEqual("a3_dp2_tp16", controller.topology_plan["selected_profile"])
+        self.assertEqual(
+            ["a3_dp2_tp16"], controller.topology_plan["eligible_profiles"]
+        )
+        policy = controller.effective_change_policy()
+        self.assertEqual("fixed_session", policy["outer_topology_stage"]["mode"])
+        self.assertEqual(
+            "a3_dp2_tp16",
+            policy["outer_topology_stage"]["selected_profile"],
+        )
+
+    def test_disabled_campaign_can_freeze_an_independent_dp4_identity(self) -> None:
+        configured = config()
+        configured["topology_campaign"] = {"enabled": False}
+        configured["topology"] = {
+            "profile": "a3_dp4_tp8",
+            "profiles_file": "workflow/continuous/topology_profiles.yaml",
+        }
+        configured["initial_baseline"] = {
+            "label": "a8_dp4_tp8_fixed_v1",
+            "definition": "workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml",
+        }
+        controller = tuning.Controller(configured)
+        self.assertEqual("fixed_topology_session", controller.topology_plan["stage"])
+        self.assertEqual("a3_dp4_tp8", controller.topology_plan["selected_profile"])
+        self.assertEqual(["a3_dp4_tp8"], controller.topology_plan["eligible_profiles"])
+        self.assertIn("a3_dp4_tp8 is operator-frozen", controller.topology_plan["selection_reason"])
+        candidate = controller.topology_plan["candidates"][0]
+        self.assertEqual("a8_dp4_tp8_fixed_v1", candidate["session_baseline_label"])
+        self.assertTrue(candidate["session_baseline_definition"].endswith("dp4_tp8_fixed_v1.yaml"))
+        self.assertEqual(4, controller.topology["data_parallel_size"])
+        self.assertEqual(2, controller.topology["data_parallel_size_local"])
+        self.assertEqual(8, controller.topology["tensor_parallel_size"])
+        self.assertEqual(
+            "distributed_local_dp_v1",
+            controller.topology["resolved_executor"]["remote_contract"],
+        )
+
+    def test_outer_campaign_budget_pause_status_is_candidate_indexed(self) -> None:
+        self.assertIsNone(
+            tuning.session_budget_pause_status(
+                1, 2, topology_feasibility_only=False
+            )
+        )
+        self.assertEqual(
+            "budget_paused",
+            tuning.session_budget_pause_status(
+                2, 2, topology_feasibility_only=False
+            ),
+        )
+        self.assertEqual(
+            "topology_feasibility_passed",
+            tuning.session_budget_pause_status(
+                0, 0, topology_feasibility_only=True
+            ),
+        )
+
     def test_state_write_is_atomic_and_recovers_last_known_good(self) -> None:
         controller = tuning.Controller(config())
         with tempfile.TemporaryDirectory() as temporary:
@@ -199,7 +284,7 @@ class ControllerTests(unittest.TestCase):
             )
             frozen = json.loads(json.dumps(raw))
             # A different repetition contract must not influence a new Session.
-            frozen["benchmark"]["aligned_l1"]["repetitions"] = 3
+            frozen["benchmark"]["aligned_l1_fast_v2"]["repetitions"] = 3
             tuning.save_yaml(session / "session_config.yaml", frozen)
             tuning.save_yaml(
                 session / "image_version_manifest.yaml",
@@ -223,8 +308,8 @@ class ControllerTests(unittest.TestCase):
                     project_root=project_root,
                 )
             )
-            frozen["benchmark"]["aligned_l1"]["repetitions"] = raw["benchmark"][
-                "aligned_l1"
+            frozen["benchmark"]["aligned_l1_fast_v2"]["repetitions"] = raw["benchmark"][
+                "aligned_l1_fast_v2"
             ]["repetitions"]
             tuning.save_yaml(session / "session_config.yaml", frozen)
             selected = _latest_history(
@@ -244,6 +329,61 @@ class ControllerTests(unittest.TestCase):
                     ),
                     scenario_image=scenario["image"],
                     project_root=project_root,
+                ),
+            )
+
+    def test_automatic_history_and_rotation_are_topology_keyed(self) -> None:
+        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        project_root = tuning.KB_ROOT
+        scenario = tuning.load_yaml(
+            project_root
+            / "workflow"
+            / "search_space_compiler"
+            / "scenario.glm52-a3-aligned-l1.yaml"
+        )
+        topology_identity = _selected_topology_identity(raw, project_root)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            session = root / "dp4_session"
+            history = session / "round_001_a1" / "06_agent_analysis" / "history_input.json"
+            history.parent.mkdir(parents=True)
+            history.write_text("[]\n", encoding="utf-8")
+            selection = session / "00_search_space" / "search_space.compiled.yaml"
+            selection.parent.mkdir(parents=True)
+            tuning.save_yaml(
+                selection,
+                {
+                    "integration": {
+                        "search_space_profile": "automatic_registry_a8_frontier_v3"
+                    }
+                },
+            )
+            frozen = copy.deepcopy(raw)
+            frozen["topology"]["profile"] = "a3_dp2_tp16"
+            tuning.save_yaml(session / "session_config.yaml", frozen)
+            tuning.save_yaml(
+                session / "image_version_manifest.yaml",
+                tuning.load_yaml(tuning.IMAGE_MANIFEST_FILE),
+            )
+            kwargs = {
+                "benchmark_identity": _selected_benchmark_identity(raw, project_root),
+                "scenario_image": scenario["image"],
+                "project_root": project_root,
+                "topology_identity": topology_identity,
+            }
+            self.assertIsNone(_latest_history(root, **kwargs))
+            self.assertIsNone(
+                _latest_previous_selection(
+                    root, "automatic_registry_a8_frontier_v3", **kwargs
+                )
+            )
+            frozen["topology"]["profile"] = "a3_dp4_tp8"
+            tuning.save_yaml(session / "session_config.yaml", frozen)
+            self.assertEqual(history, _latest_history(root, **kwargs))
+            self.assertEqual(
+                selection,
+                _latest_previous_selection(
+                    root, "automatic_registry_a8_frontier_v3", **kwargs
                 ),
             )
 
@@ -533,6 +673,68 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(1, exhausted["probe_index"])
         self.assertEqual(1, negative["probe_index"])
 
+    def test_agentic_cross_layer_stage_has_no_controller_selected_layer(self) -> None:
+        configured = config()
+        configured["strategy"] = {
+            "profile": "hierarchical_agentic_topology_v2",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        history = [
+            {
+                "round": f"round_{index:03d}",
+                "metrics": {"benchmark_mode": "aligned_l1"},
+            }
+            for index in range(8)
+        ]
+        policy = controller.effective_change_policy(history, history)
+        self.assertEqual("cross_layer_refinement", policy["hierarchical_stage"])
+        self.assertEqual("agent", policy["cross_layer_selection_owner"])
+        self.assertIsNone(policy["controller_preselected_layer"])
+        self.assertNotIn("cross_layer_revisit", policy)
+
+    def test_guided_v4_selects_only_layer_and_agent_owns_experiment(self) -> None:
+        configured = config()
+        configured["strategy"] = {
+            "profile": "hierarchical_agentic_guided_v4",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        baseline_history = [{"round": "b0", "metrics": {"benchmark_mode": "aligned_l1"}}]
+        policy = controller.effective_change_policy(
+            baseline_history, baseline_history
+        )
+        probe = policy["hierarchical_probe"]
+        self.assertEqual("context_capacity_geometry", probe["name"])
+        self.assertEqual("agent", probe["parameter_selection_owner"])
+        self.assertNotIn("interaction_plan", probe)
+        self.assertFalse(
+            controller.strategy_profile["hierarchy"]["coupling_hints_are_binding"]
+        )
+        self.assertEqual([2, 4], policy["preferred_parameters_per_round"])
+        self.assertEqual(1, policy["minimum_parameters_per_round"])
+        self.assertEqual(4, policy["max_parameters_per_round"])
+
+        # One low/unknown-value measurement per layer is enough for compact
+        # coverage; after all six, the Controller supplies evidence but no layer.
+        history = [
+            {
+                "round": f"round_{index:03d}",
+                "metrics": {"benchmark_mode": "aligned_l1"},
+            }
+            for index in range(7)
+        ]
+        cross_layer = controller.effective_change_policy(history, history)
+        self.assertEqual(
+            "cross_layer_refinement", cross_layer["hierarchical_stage"]
+        )
+        self.assertEqual("agent", cross_layer["cross_layer_selection_owner"])
+        self.assertIsNone(cross_layer["controller_preselected_layer"])
+        self.assertEqual(
+            {"exploitation": 0, "cross_layer_interaction": 0, "frontier_novelty": 0},
+            cross_layer["measured_exploration_budget_state"]["counts"],
+        )
+
     def test_mtp_method_is_a_portrait_exempt_mechanical_companion(self) -> None:
         controller = self.controller
         controller.portrait_retriever = SimpleNamespace(
@@ -579,12 +781,12 @@ class ControllerTests(unittest.TestCase):
     def test_benchmark_profile_selects_and_freezes_one_definition(self) -> None:
         configured = config()
         controller = tuning.Controller(configured)
-        self.assertEqual("aligned_l1_v4", controller.benchmark_profile_name)
+        self.assertEqual("aligned_fast_c32_v2", controller.benchmark_profile_name)
         self.assertEqual("aligned_l1", controller.benchmark_mode)
         frozen = controller.config
         frozen["benchmark"]["profiles_file"] = "missing-after-session.yaml"
         self.assertEqual(
-            "aligned_l1_v4",
+            "aligned_fast_c32_v2",
             tuning.Controller(frozen).benchmark_profile_name,
         )
         configured["benchmark"]["profile"] = "missing"
@@ -658,9 +860,7 @@ class ControllerTests(unittest.TestCase):
             analysis_dir = round_dir / "06_agent_analysis"
             schema_dir.mkdir(parents=True)
             analysis_dir.mkdir(parents=True)
-            (schema_dir / "agent_decision.schema.json").write_text(
-                "{}", encoding="utf-8"
-            )
+            controller.write_decision_schemas(session)
             decisions = [
                 {"candidate": {"id": "bad"}, "changes": []},
                 {"candidate": {"id": "good"}, "changes": []},
@@ -801,6 +1001,150 @@ class ControllerTests(unittest.TestCase):
                 ],
             )
 
+    def test_conditional_failure_rejects_exact_combination_only(self) -> None:
+        configured = config()
+        failed = dict(self.baseline, max_num_seqs=64)
+        configured["conditional_search_exclusions"] = [
+            {
+                "trial_id": "round_oom",
+                "failure_classification": "parameter_oom",
+                "conditions": failed,
+                "attributed_parameters": ["max_num_seqs"],
+            }
+        ]
+        controller = tuning.Controller(configured)
+        with self.assertRaisesRegex(ValueError, "exactly matches"):
+            controller.validate_candidate(
+                self.baseline,
+                failed,
+                [
+                    {
+                        "parameter": "max_num_seqs",
+                        "before": 48,
+                        "after": 64,
+                        "rationale": "Repeat the complete failed capacity combination.",
+                    }
+                ],
+            )
+        alternative = dict(failed, gpu_memory_utilization=0.9)
+        controller.validate_candidate(
+            self.baseline,
+            alternative,
+            [
+                {
+                    "parameter": "max_num_seqs",
+                    "before": 48,
+                    "after": 64,
+                    "rationale": "Retest sequence capacity with different memory headroom.",
+                },
+                {
+                    "parameter": "gpu_memory_utilization",
+                    "before": 0.93,
+                    "after": 0.9,
+                    "rationale": "Change the companion value so this is a new combination.",
+                },
+            ],
+        )
+
+    def test_frontier_budget_is_measured_without_controller_preselection(self) -> None:
+        configured = config()
+        configured["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
+        controller = tuning.Controller(configured)
+        history = [
+            {"round": "r1", "decision": {"exploration_intent": "exploitation"}},
+            {"round": "r2", "decision": {"exploration_intent": "exploitation"}},
+            {
+                "round": "r3",
+                "decision": {"exploration_intent": "cross_layer_interaction"},
+            },
+        ]
+        attempted = [
+            *history,
+            {"round": "r4", "decision": {"exploration_intent": "frontier_novelty"}},
+            {
+                "round": "r5",
+                "decision": {"exploration_intent": "diagnostic_ablation"},
+            },
+        ]
+        state = controller.measured_exploration_budget_state(
+            history,
+            attempted,
+            {
+                "programmatic_tracking": True,
+                "agent_final_choice": True,
+                "exploitation_fraction": 0.65,
+                "cross_layer_interaction_fraction": 0.25,
+                "frontier_novelty_fraction": 0.10,
+            },
+        )
+        self.assertEqual(
+            {"exploitation": 2, "cross_layer_interaction": 1, "frontier_novelty": 1},
+            state["counts"],
+        )
+        self.assertEqual(["exploitation"], state["underrepresented_intents"])
+        self.assertIsNone(state["controller_preselected_intent"])
+        self.assertEqual(1, state["diagnostic_ablation_count"])
+        self.assertEqual(0, state["diagnostic_ablation_remaining"])
+
+    def test_frontier_mtp_off_requires_single_diagnostic_ablation(self) -> None:
+        configured = config()
+        configured["strategy"]["profile"] = "hierarchical_agentic_frontier_v3"
+        configured["search_limits"]["num_speculative_tokens"] = [0, 3]
+        controller = tuning.Controller(configured)
+        candidate = dict(self.baseline, num_speculative_tokens=0)
+        changes = [
+            {
+                "parameter": "num_speculative_tokens",
+                "before": 3,
+                "after": 0,
+                "rationale": "One bounded MTP-off diagnostic isolates draft overhead.",
+            }
+        ]
+        base_decision = {
+            "change_strategy": "single_parameter",
+            "knowledge_evidence": [
+                "Measured decode behavior motivates one bounded diagnostic ablation."
+            ],
+            "interaction_analysis": [],
+            "constraint_checks": [
+                "A zero speculative depth disables MTP without changing topology."
+            ],
+        }
+        policy = controller.effective_change_policy()
+        policy.update(
+            minimum_parameters_per_round=1,
+            max_parameters_per_round=1,
+            max_grid_steps_per_parameter=1,
+            max_total_grid_steps=1,
+        )
+        with self.assertRaisesRegex(ValueError, "diagnostic_ablation"):
+            controller.validate_candidate(
+                self.baseline,
+                candidate,
+                changes,
+                {**base_decision, "exploration_intent": "exploitation"},
+                policy,
+            )
+        controller.validate_candidate(
+            self.baseline,
+            candidate,
+            changes,
+            {**base_decision, "exploration_intent": "diagnostic_ablation"},
+            policy,
+        )
+        exhausted = copy.deepcopy(policy)
+        exhausted["measured_exploration_budget_state"][
+            "diagnostic_ablation_count"
+        ] = 1
+        with self.assertRaisesRegex(ValueError, "budget is exhausted"):
+            controller.validate_candidate(
+                self.baseline,
+                candidate,
+                changes,
+                {**base_decision, "exploration_intent": "diagnostic_ablation"},
+                exhausted,
+            )
+
     def test_state_image_identity_must_match_verified_manifest(self) -> None:
         with self.assertRaises(RuntimeError):
             self.controller.assert_state_image_identity({})
@@ -816,15 +1160,12 @@ class ControllerTests(unittest.TestCase):
         env_text = controller.candidate_env(
             configured["initial_baseline"]["label"], configured["baseline"]
         )
-        self.assertIn(
-            "LAUNCH_PROFILE=official_source_defaults_deployable", env_text
-        )
+        self.assertIn("LAUNCH_PROFILE=explicit_candidate", env_text)
         self.assertIn("BENCHMARK_MODE=aligned_l1", env_text)
         self.assertIn("BENCHMARK_REPETITIONS=1", env_text)
-        self.assertIn(
-            "BENCHMARK_SUITE='01_调优_结构化定长-v4.yaml'",
-            env_text,
-        )
+        self.assertIn("BENCHMARK_SUITE='01_调优_快速筛选-v2.yaml'", env_text)
+        self.assertIn("BENCHMARK_EXPECTED_FORMAL_CASES=4", env_text)
+        self.assertNotIn("BENCHMARK_TIME_BUDGET_SECONDS", env_text)
         self.assertIn('"schema_files_sha256"', env_text)
         self.assertIn("SAFETENSORS_LOAD_STRATEGY=prefetch", env_text)
         self.assertIn("SAFETENSORS_PREFETCH_MODE=node_blocking", env_text)
@@ -925,6 +1266,9 @@ class ControllerTests(unittest.TestCase):
 
     def test_single_node_executor_renders_master_only(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        # This profile belongs to the independent W4A8C8 runtime; remove the
+        # W8A8 runtime allowlist so this test can isolate executor rendering.
+        configured.pop("runtime", None)
         configured["topology"] = {
             "profile": "a3_single_16npu_dp2local_tp8",
             "profiles_file": "workflow/continuous/topology_profiles.yaml",
@@ -1081,7 +1425,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("planner.example:1223", environment)
 
     def test_b0_reconciles_source_resolved_values_before_agent_handoff(self) -> None:
-        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured = production_b0_config()
         controller = tuning.Controller(configured)
         with tempfile.TemporaryDirectory() as temporary:
             session = Path(temporary) / "session"
@@ -1162,7 +1506,10 @@ class ControllerTests(unittest.TestCase):
             )
             self.assertEqual(expected_names, set(resolved["search_limits"]))
             self.assertEqual(raw["search_limits"], resolved["manual_search_limits"])
-            self.assertEqual([64000], resolved["search_limits"]["max_model_len"])
+            self.assertEqual(
+                [64000, 16384, 32768, 49152],
+                resolved["search_limits"]["max_model_len"],
+            )
             self.assertEqual(
                 result["active_search_limits"]["async_scheduling"],
                 resolved["search_limits"]["async_scheduling"],
@@ -1197,10 +1544,9 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(
                 "mtp", payload["json_configs"]["speculative_config"]["method"]
             )
-            self.assertFalse(
-                payload["json_configs"]["speculative_config"][
-                    "disable_padded_drafter_batch"
-                ]
+            self.assertNotIn(
+                "disable_padded_drafter_batch",
+                payload["json_configs"]["speculative_config"],
             )
             mismatched_graph = dict(resolved["baseline"])
             mismatched_graph["max_cudagraph_capture_size"] = 256
@@ -1249,25 +1595,36 @@ class ControllerTests(unittest.TestCase):
                 archive_root=Path(temporary),
             )
         self.assertEqual(
-            "automatic_registry_v1", resolved["resolved_search_space"]["profile"]
+            "automatic_registry_a8_frontier_v3",
+            resolved["resolved_search_space"]["profile"],
         )
         self.assertEqual(
             "automatic_registry", resolved["resolved_search_space"]["mode"]
         )
         self.assertEqual(142, result["summary"]["registry_parameters"])
-        self.assertEqual(22, result["summary"]["active_parameters"])
-        self.assertEqual(80, result["summary"]["reserve_parameters"])
-        self.assertEqual(40, result["summary"]["fixed_parameters"])
+        self.assertEqual(28, result["summary"]["active_parameters"])
+        self.assertEqual(75, result["summary"]["reserve_parameters"])
+        self.assertEqual(39, result["summary"]["fixed_parameters"])
         self.assertEqual(0, result["summary"]["rejected_parameters"])
         self.assertEqual(
-            ["cudagraph_capture_sizes"],
+            ["max_cudagraph_capture_size"],
             resolved["resolved_search_space"]["derived_runtime_parameters"],
         )
         self.assertEqual(
             resolved["search_limits"], result["integration"]["effective_search_limits"]
         )
-        for name in {"num_speculative_tokens", "async_scheduling", "fused_mc2"}:
+        for name in {
+            "max_model_len",
+            "num_speculative_tokens",
+            "async_scheduling",
+            "fused_mc2",
+            "speculative_config__attention_backend",
+            "additional_config__ascend_compilation_config__fuse_norm_quant",
+            "compilation_enable_sp",
+            "speculative_config__disable_padded_drafter_batch",
+        }:
             self.assertIn(name, result["active_search_limits"])
+        self.assertNotIn("VLLM_RAY_PER_WORKER_GPUS", result["active_search_limits"])
 
     def test_local_and_server_experiment_defaults_are_aligned(self) -> None:
         local = tuning.load_config(tuning.HERE / "config.yaml")
@@ -1367,7 +1724,7 @@ class ControllerTests(unittest.TestCase):
         curated_active = set(curated_result["active_search_limits"])
         self.assertEqual(26, len(registry["parameters"]))
         self.assertEqual(22, len(automatic_active))
-        self.assertEqual(80, automatic_result["summary"]["reserve_parameters"])
+        self.assertEqual(81, automatic_result["summary"]["reserve_parameters"])
         self.assertEqual(14, len(automatic_active & curated_active))
         self.assertFalse(
             automatic_result["automatic_registry_snapshot"]["audit"][
@@ -1383,7 +1740,7 @@ class ControllerTests(unittest.TestCase):
         )
 
     def test_b0_reconciliation_updates_frozen_automatic_domains(self) -> None:
-        raw = tuning.load_yaml(tuning.HERE / "config.yaml")
+        raw = production_b0_config()
         raw["search_space"]["profile"] = "automatic_registry_v1"
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1434,11 +1791,11 @@ class ControllerTests(unittest.TestCase):
                 controller.config["search_limits"]["cudagraph_capture_sizes"],
             )
             self.assertEqual(
-                [256, 32, 64, 128, 192],
+                [256, 32, 64, 128, 192, 384, 512],
                 controller.config["search_limits"]["max_num_seqs"],
             )
             self.assertEqual(
-                [2048, 4096, 8192, 16384, 32768],
+                [2048, 1024, 4096, 8192, 16384, 32768],
                 controller.config["search_limits"]["max_num_batched_tokens"],
             )
             frozen = tuning.load_yaml(session / "session_config.yaml")
@@ -2239,6 +2596,49 @@ SLOT  service
                 )
             )
 
+    def test_failure_recovery_allows_precise_single_parameter_repair(self) -> None:
+        configured = config()
+        configured["search_limits"]["mlapo"] = [True, False]
+        configured["baseline"]["mlapo"] = True
+        controller = tuning.Controller(configured)
+        current = {**self.baseline, "mlapo": True}
+        candidate = {**current, "mlapo": False}
+        decision = {
+            "summary": "Disable the directly implicated MLAPO path",
+            "classification": "model_or_runtime_bug",
+            "root_cause": "MLAPO fused weight processing timed out",
+            "evidence": ["aclnnMuls vector core timeout in fused MLAPO"],
+            "action": "adjust_parameters",
+            "safe_to_automate": True,
+            "change_strategy": "single_parameter",
+            "interaction_analysis": [],
+            "constraint_checks": ["mlapo=false is inside the frozen search grid"],
+            "changes": [
+                {
+                    "parameter": "mlapo",
+                    "before": True,
+                    "after": False,
+                    "rationale": "Bypass the exact fused MLAPO path that timed out.",
+                }
+            ],
+            "recovery_changes": [],
+            "candidate": candidate,
+        }
+        exploration_policy = {
+            "phase": "exploration",
+            "minimum_parameters_per_round": 2,
+            "max_parameters_per_round": 4,
+            "max_grid_steps_per_parameter": 2,
+            "max_total_grid_steps": 4,
+            "derived_parameters": {},
+        }
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            controller, "effective_change_policy", return_value=exploration_policy
+        ):
+            controller.validate_failure_decision(
+                Path(temporary), decision, current
+            )
+
     def test_failure_recovery_enforces_classification_action_contract(self) -> None:
         controller = tuning.Controller(config())
         current = dict(self.baseline)
@@ -2308,6 +2708,168 @@ SLOT  service
                     current,
                 )
 
+    def test_fused_moe_failure_uses_recovery_registry_outside_active_search(self) -> None:
+        configured = config()
+        configured["failure_recovery"] = {
+            "recovery_parameters": {
+                "additional_config__multistream_overlap_shared_expert": {
+                    "initial_value": True,
+                    "allowed_values": [False, True],
+                    "injection": {
+                        "kind": "json_path",
+                        "path": [
+                            "additional_config",
+                            "multistream_overlap_shared_expert",
+                        ],
+                    },
+                }
+            }
+        }
+        controller = tuning.Controller(configured)
+        self.assertNotIn(
+            "additional_config__multistream_overlap_shared_expert",
+            controller.candidate_schema,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (round_dir / "04_runtime" / "worker.log").write_text(
+                "ValueError: FusedMoE shared experts split computation does not "
+                "match the integrated computation.\n",
+                encoding="utf-8",
+            )
+            decision = controller.deterministic_fused_moe_shared_expert_recovery(
+                round_dir, self.baseline
+            )
+            self.assertIsNotNone(decision)
+            assert decision is not None
+            self.assertEqual("adjust_parameters", decision["action"])
+            self.assertEqual([], decision["changes"])
+            self.assertEqual(False, decision["recovery_changes"][0]["after"])
+            controller.validate_failure_decision(
+                round_dir, decision, self.baseline
+            )
+            updated = controller.validate_recovery_changes(
+                decision["recovery_changes"]
+            )
+            controller.runtime_recovery_values = updated
+            env_text = controller.candidate_env("a0f1", self.baseline)
+            encoded = next(
+                line.split("=", 1)[1]
+                for line in env_text.splitlines()
+                if line.startswith("RUNTIME_INJECTION_PAYLOAD_B64=")
+            )
+            payload = json.loads(base64.b64decode(shlex.split(encoded)[0]))
+            self.assertFalse(
+                payload["json_configs"]["additional_config"][
+                    "multistream_overlap_shared_expert"
+                ]
+            )
+
+    def test_shared_expert_overlap_is_not_hardcoded_in_remote_launcher(self) -> None:
+        script = (tuning.HERE / "remote" / "common_runtime_loop.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('"multistream_overlap_shared_expert": True', script)
+
+    def test_mlapo_vector_timeout_preempts_cascading_gloo_retry(self) -> None:
+        configured = config()
+        configured["search_limits"]["mlapo"] = [True, False]
+        configured["baseline"]["mlapo"] = True
+        controller = tuning.Controller(configured)
+        current = {**self.baseline, "mlapo": True}
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (round_dir / "04_runtime" / "worker.log").write_text(
+                "File vllm_ascend/attention/sfa_v1.py, in "
+                "_process_weights_for_fused_mlapo\n"
+                "RuntimeError: current operator aclnnMuls\n"
+                "Vector core execution timed out\n"
+                "RuntimeError: gloo Connection closed by peer\n",
+                encoding="utf-8",
+            )
+            decision = controller.deterministic_mlapo_vector_timeout_recovery(
+                round_dir, current
+            )
+            self.assertIsNotNone(decision)
+            assert decision is not None
+            self.assertEqual("adjust_parameters", decision["action"])
+            self.assertEqual("model_or_runtime_bug", decision["classification"])
+            self.assertEqual("mlapo", decision["changes"][0]["parameter"])
+            self.assertFalse(decision["candidate"]["mlapo"])
+            self.assertEqual([], decision["recovery_changes"])
+            controller.validate_failure_decision(round_dir, decision, current)
+
+    def test_generic_vector_timeout_does_not_disable_mlapo(self) -> None:
+        configured = config()
+        configured["search_limits"]["mlapo"] = [True, False]
+        configured["baseline"]["mlapo"] = True
+        controller = tuning.Controller(configured)
+        current = {**self.baseline, "mlapo": True}
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "04_runtime" / "worker.log").write_text(
+                "RuntimeError: current operator aclnnMuls\n"
+                "Vector core execution timed out\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(
+                controller.deterministic_mlapo_vector_timeout_recovery(
+                    round_dir, current
+                )
+            )
+
+    def test_historical_mlapo_root_cause_remains_visible_after_later_failure(self) -> None:
+        configured = config()
+        configured["search_limits"]["mlapo"] = [True, False]
+        configured["baseline"]["mlapo"] = True
+        controller = tuning.Controller(configured)
+        current = {**self.baseline, "mlapo": True}
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            earlier = session / "round_000_a0"
+            later = session / "round_001_a0r1"
+            (earlier / "04_runtime").mkdir(parents=True)
+            (later / "04_runtime").mkdir(parents=True)
+            (earlier / "04_runtime" / "worker.log").write_text(
+                "attention/sfa_v1.py _process_weights_for_fused_mlapo\n"
+                "current operator aclnnMuls\nVector core execution timed out\n",
+                encoding="utf-8",
+            )
+            (later / "04_runtime" / "worker.log").write_text(
+                "ERR02200 HcclAllGather EI0006\n", encoding="utf-8"
+            )
+            decision = controller.pending_historical_deterministic_recovery(
+                session, current
+            )
+            self.assertIsNotNone(decision)
+            assert decision is not None
+            self.assertFalse(decision["candidate"]["mlapo"])
+            self.assertIn("round_000_a0", decision["summary"])
+
+    def test_exact_hccl_communicator_failure_is_retryable_not_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            (round_dir / "04_runtime").mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (round_dir / "04_runtime" / "worker.log").write_text(
+                "hcclCommInitRootInfoConfig ERR02200\n"
+                "current operator name is HcclAllGather\n"
+                "Communication_Error_Get_Socket(EI0006)\n",
+                encoding="utf-8",
+            )
+            decision = self.controller.deterministic_hccl_communicator_retry(
+                round_dir, self.baseline
+            )
+            self.assertIsNotNone(decision)
+            assert decision is not None
+            self.assertEqual("network_or_hccl", decision["classification"])
+            self.assertEqual("retry_same", decision["action"])
+
     def test_failure_schema_matches_controller_action_contract(self) -> None:
         schema = json.loads(
             (tuning.HERE / "failure_decision.schema.json").read_text(encoding="utf-8")
@@ -2348,6 +2910,40 @@ SLOT  service
                 "const"
             ]
         )
+        self.assertIn("recovery_changes", schema["required"])
+
+    def test_agent_schemas_match_controller_change_budget(self) -> None:
+        configured = config()
+        configured["change_policy"]["max_parameters_per_round"] = 4
+        controller = tuning.Controller(configured)
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            controller.write_decision_schemas(session)
+            for filename in (
+                "agent_decision.schema.json",
+                "failure_decision.schema.json",
+            ):
+                schema = json.loads(
+                    (session / "00_search_space" / filename).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(
+                    controller.max_parameters_per_round,
+                    schema["properties"]["changes"]["maxItems"],
+                )
+            runtime_agent_schema = json.loads(
+                controller.agent_schema_path(session).read_text(encoding="utf-8")
+            )
+            runtime_failure_schema = json.loads(
+                controller.failure_schema_path(session).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                4, runtime_agent_schema["properties"]["changes"]["maxItems"]
+            )
+            self.assertEqual(
+                4, runtime_failure_schema["properties"]["changes"]["maxItems"]
+            )
 
     def test_structured_one_request_shortfall_gets_bounded_retry(self) -> None:
         self.controller.benchmark_mode = "aligned_l1"
@@ -2462,6 +3058,24 @@ SLOT  service
                 )
             )
 
+    def test_generic_benchmark_retry_rejects_static_dataset_contract_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            runtime_dir.mkdir(parents=True)
+            (round_dir / "05_results").mkdir()
+            (runtime_dir / "SERVICE_READY").touch()
+            (runtime_dir / "BENCHMARK_FAILED").touch()
+            (runtime_dir / "benchmark_runner.log").write_text(
+                "错误：数据集缺少切片：fast-c32-primary/chat-1024-256/c32-warmup\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(
+                self.controller.deterministic_healthy_service_benchmark_retry(
+                    round_dir, self.baseline
+                )
+            )
+
     def test_inconclusive_pause_uses_remaining_diagnostic_budget(self) -> None:
         failure = {
             "summary": "unclassified runtime exit",
@@ -2499,6 +3113,79 @@ SLOT  service
             {"current_candidate": self.baseline, "failure_diagnostic_retries": 0},
         )
         self.assertEqual("pause_for_human", selected["action"])
+        intervention = self.controller.hard_terminal_intervention(failure)
+        self.assertIsNotNone(intervention)
+        assert intervention is not None
+        self.assertEqual("image_or_version_identity", intervention["category"])
+        self.assertTrue(intervention["operator_steps"])
+
+    def test_negated_image_mismatch_is_not_a_hard_terminal(self) -> None:
+        failure = {
+            "summary": "HCCL failed; no image identity mismatch is present",
+            "root_cause": "socket timeout",
+            "evidence": ["image digest is verified and unchanged"],
+            "classification": "network_or_hccl",
+            "action": "pause_for_human",
+            "candidate": self.baseline,
+            "changes": [],
+        }
+        self.assertIsNone(self.controller.hard_terminal_intervention(failure))
+
+    def test_network_pause_uses_remaining_same_candidate_budget(self) -> None:
+        failure = {
+            "summary": "persistent HCCL socket timeout without a hard block",
+            "root_cause": "cross-node communicator did not initialize",
+            "evidence": ["ERR02200 followed by EI0006"],
+            "classification": "network_or_hccl",
+            "action": "pause_for_human",
+            "safe_to_automate": False,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "recovery_changes": [],
+            "candidate": self.baseline,
+        }
+        selected = self.controller.prefer_bounded_diagnostic_over_pause(
+            failure,
+            {
+                "current_candidate": self.baseline,
+                "failure_retries": 1,
+                "failure_diagnostic_retries": 0,
+            },
+        )
+        self.assertEqual("retry_same", selected["action"])
+        self.assertTrue(selected["safe_to_automate"])
+
+    def test_hard_terminal_only_mode_does_not_pause_at_retry_budget(self) -> None:
+        configured = config()
+        configured["failure_recovery"] = {
+            "hard_terminal_only": True,
+            "same_candidate_retries": 1,
+            "agent_diagnostic_retries": 0,
+            "parameter_adjustments": 0,
+            "total_recovery_rounds": 0,
+        }
+        controller = tuning.Controller(configured)
+        failure = {
+            "summary": "HCCL socket timeout remains diagnostically recoverable",
+            "root_cause": "communicator initialization timed out",
+            "evidence": ["ERR02200 and EI0006"],
+            "classification": "network_or_hccl",
+            "action": "pause_for_human",
+            "safe_to_automate": False,
+            "candidate": self.baseline,
+            "changes": [],
+        }
+        selected = controller.prefer_bounded_diagnostic_over_pause(
+            failure,
+            {
+                "current_candidate": self.baseline,
+                "failure_retries": 99,
+                "failure_diagnostic_retries": 99,
+            },
+        )
+        self.assertEqual("retry_same", selected["action"])
 
     def test_control_plane_runtime_errors_are_restart_classified(self) -> None:
         self.assertTrue(
@@ -2516,6 +3203,15 @@ SLOT  service
                 RuntimeError("image digest mismatch requires approval")
             )
         )
+        self.assertTrue(
+            tuning.controller_exception_is_recoverable(
+                RuntimeError(
+                    "FileNotFoundError: [Errno 2] No such file or directory: "
+                    "'/mnt/host-model/workspace/run/request.json.tmp-959' -> "
+                    "'/mnt/host-model/workspace/run/request.json'"
+                )
+            )
+        )
 
     def test_benchmark_shell_disarms_err_trap_for_captured_failures(self) -> None:
         script = (tuning.HERE / "remote" / "run_aligned_l1.sh").read_text(
@@ -2527,6 +3223,12 @@ SLOT  service
         # expected failing command site must use the trap-safe helper.
         self.assertEqual(1, len(re.findall(r"^\s*set \+e\s*$", script, re.MULTILINE)))
         self.assertGreaterEqual(script.count("begin_captured_failure"), 6)
+        self.assertNotIn("timeout --foreground", script)
+        self.assertNotIn("hard budget", script)
+        retry_script = (
+            tuning.HERE / "remote" / "run_servebench_attempt.sh"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("timeout --foreground", retry_script)
 
     def test_paused_auto_retry_tracks_the_new_submitted_round(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2553,9 +3255,16 @@ SLOT  service
             decision = {
                 "summary": "healthy-service benchmark retry",
                 "classification": "benchmark_failure",
+                "root_cause": "benchmark harness ended without metrics",
+                "evidence": ["service remained healthy"],
                 "action": "retry_same",
+                "safe_to_automate": True,
+                "change_strategy": "none",
+                "interaction_analysis": [],
+                "constraint_checks": [],
                 "candidate": self.baseline,
                 "changes": [],
+                "recovery_changes": [],
             }
             with patch.object(tuning, "STATE_FILE", state_path), patch.object(
                 self.controller, "assert_state_image_identity"
@@ -2563,11 +3272,7 @@ SLOT  service
                 self.controller, "load_session_sidecars"
             ), patch.object(
                 self.controller,
-                "deterministic_engine_frontend_handshake_retry",
-                return_value=None,
-            ), patch.object(
-                self.controller,
-                "deterministic_benchmark_retry",
+                "analyze_failure",
                 return_value=decision,
             ), patch.object(
                 self.controller, "round_launch_profile", return_value="default"
@@ -2640,7 +3345,7 @@ SLOT  service
             )
 
     def test_b0_retry_preserves_launch_profile_and_reconciliation(self) -> None:
-        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        configured = production_b0_config()
         controller = tuning.Controller(configured)
         env_text = controller.candidate_env(
             "a0r1",

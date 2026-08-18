@@ -145,6 +145,22 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             self.assertEqual(action, "--resume")
             self.assertIn("submission", reason)
 
+    def test_pending_submission_overrides_transient_controller_pause(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(
+                runtime,
+                status="paused_controller_error",
+                pending_submission={
+                    "round_index": 1,
+                    "round_label": "a1",
+                    "candidate": {"max_num_batched_tokens": 4096},
+                },
+            )
+            action, reason = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+            self.assertIn("submission", reason)
+
     def test_corrupt_primary_state_uses_last_known_good_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime = Path(temp_dir)
@@ -218,7 +234,8 @@ class ServiceRenderTests(unittest.TestCase):
             "vllm_bench_public_v1", merged["benchmark"]["profile"]
         )
         self.assertEqual(
-            "automatic_registry_v1", merged["search_space"]["profile"]
+            "automatic_registry_a8_frontier_v3",
+            merged["search_space"]["profile"],
         )
 
         runner = (autonomous / "run_foreground.sh").read_text(encoding="utf-8")
@@ -226,6 +243,32 @@ class ServiceRenderTests(unittest.TestCase):
         self.assertIn("AUTO_RETRY_PAUSED_REQUEST", runner)
         self.assertIn('ACTION="--auto-retry-paused-current"', runner)
         self.assertIn("auto-retry-paused)", service)
+
+    def test_dp4_entrypoint_selects_isolated_fixed_topology_package(self) -> None:
+        autonomous = HERE / "server_autonomous"
+        config = service_runtime._load_config(autonomous / "config.dp4_tp8.yaml")
+        self.assertFalse(config["topology_campaign"]["enabled"])
+        self.assertEqual(
+            "glm52_w8a8_a3_dp4_tp8_a8_fixed_v1",
+            config["runtime"]["profile"],
+        )
+        self.assertEqual(
+            "a8_dp4_tp8_fixed_v1", config["initial_baseline"]["label"]
+        )
+        self.assertIn("fixed-dp4tp8", config["lab"]["lease_name"])
+        self.assertIn("lab_runs_fixed_dp4_tp8_v1", config["lab"]["output_root"])
+        self.assertIn(
+            "vllmtkb-auto-fixed-dp2tp16-v4-20260814-2x16npu",
+            config["lab"]["blocked_lease_names"],
+        )
+        wrapper = (autonomous / "dp4_tp8.sh").read_text(encoding="utf-8")
+        self.assertIn('config.dp4_tp8.yaml', wrapper)
+        self.assertIn('runtime_fixed_dp4_tp8_v1', wrapper)
+        self.assertIn('prepare_lease.sh', wrapper)
+        self.assertIn('run_foreground.sh', wrapper)
+        preflight = (autonomous / "preflight.sh").read_text(encoding="utf-8")
+        self.assertGreaterEqual(preflight.count("from service_runtime import _load_config"), 2)
+        self.assertGreaterEqual(preflight.count("config = _load_config(Path(sys.argv[1]))"), 2)
 
     def test_rendered_configs_have_no_placeholders(self) -> None:
         repo_root = HERE.parents[2]

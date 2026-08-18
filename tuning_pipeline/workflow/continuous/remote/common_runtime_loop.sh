@@ -278,6 +278,19 @@ case "${EXECUTOR_REMOTE_CONTRACT}" in
       --data-parallel-rpc-port "${DATA_PARALLEL_RPC_PORT}"
     )
     ;;
+  distributed_local_dp_v1)
+    if [[ "${WORKER_REPLICAS}" != 1 ]] || \
+       [[ "${DATA_PARALLEL_SIZE_LOCAL}" -le 1 ]] || \
+       [[ "${WORKER_DATA_PARALLEL_START_RANK}" != "${DATA_PARALLEL_SIZE_LOCAL}" ]] || \
+       [[ "${DATA_PARALLEL_SIZE}" != "$((DATA_PARALLEL_SIZE_LOCAL * (WORKER_REPLICAS + 1)))" ]]; then
+      echo "Invalid distributed local-DP topology contract" >&2
+      exit 2
+    fi
+    VLLM_COMMON_ARGS+=(
+      --data-parallel-address "${MASTER_IP}"
+      --data-parallel-rpc-port "${DATA_PARALLEL_RPC_PORT}"
+    )
+    ;;
   single_node_local_dp_v1)
     if [[ "${WORKER_REPLICAS}" != 0 || "${DATA_PARALLEL_SIZE}" != "${DATA_PARALLEL_SIZE_LOCAL}" ]]; then
       echo "Invalid single-node local-DP topology contract" >&2
@@ -451,7 +464,6 @@ flashcomm1, mlapo, fused_mc2, balance, reduce_sample, generated_path, fixed_json
 config = {
     "enable_npugraph_ex": True,
     "fuse_muls_add": True,
-    "multistream_overlap_shared_expert": True,
     "enable_flashcomm1": flashcomm1 == "true",
     "enable_mlapo": mlapo == "true",
     "enable_fused_mc2": int(fused_mc2),

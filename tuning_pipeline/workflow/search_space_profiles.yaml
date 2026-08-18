@@ -1,6 +1,6 @@
 # Search-space construction is a Session-level choice, just like Agent and
 # Benchmark profiles. The selected definition is frozen into session_config.yaml.
-default_profile: automatic_registry_v1
+default_profile: automatic_registry_a8_frontier_v3
 
 profiles:
   curated_registry_v1:
@@ -52,6 +52,75 @@ profiles:
         - enable_balance_scheduling
         - enable_reduce_sample
         - speculative_config__enforce_eager
+
+  automatic_registry_a8_agentic_v2:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      A8-centered automatic registry with a slightly wider high-upside frontier.
+      The active set grows from 22 to 26 axes, while the remaining 76 stay in
+      auditable reserve instead of burdening every Agent decision.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
+    source_root: ../portrait_pipeline/sources
+    activation:
+      target_count: 26
+      maximum_count: 30
+      max_per_category: 7
+      additional_core_parameters:
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager
+        - cudagraph_capture_sizes
+        - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+        - additional_config__ascend_compilation_config__fuse_allreduce_rms
+        - additional_config__prefill_comm_compute_overlap
+    derived_parameters:
+      async_scheduling:
+        drivers: [num_speculative_tokens]
+
+  automatic_registry_a8_frontier_v3:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      High-risk, evidence-driven A8 frontier search. Context capacity is a
+      normal tuning axis, impossible Ascend values are filtered before the
+      Agent, and the next identity-matched Session may rotate up to three
+      measured low-value Active axes with higher-value Reserve axes.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.yaml
+    source_root: ../portrait_pipeline/sources
+    activation:
+      target_count: 28
+      maximum_count: 32
+      max_per_category: 8
+      additional_core_parameters:
+        - max_model_len
+        - mlapo
+        - fused_mc2
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        - speculative_config__enforce_eager
+        - speculative_config__disable_padded_drafter_batch
+        - speculative_config__method
+        - speculative_config__attention_backend
+        - cudagraph_capture_sizes
+        - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+        - TASK_QUEUE_ENABLE
+        - additional_config__ascend_compilation_config__fuse_allreduce_rms
+        - additional_config__prefill_comm_compute_overlap
+        - additional_config__ascend_compilation_config__enable_static_kernel
+        - additional_config__ascend_compilation_config__enable_npugraph_ex
+        - additional_config__ascend_compilation_config__fuse_norm_quant
+        - compilation_enable_sp
+    derived_parameters:
+      async_scheduling:
+        drivers: [num_speculative_tokens]
 
   automatic_registry_glm52_w4a8c8_v1:
     status: integrated

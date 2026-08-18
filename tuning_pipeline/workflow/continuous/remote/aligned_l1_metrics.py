@@ -74,7 +74,9 @@ def metric_percentile(
     )
 
 
-def formal_plan(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def formal_plan(
+    manifest: dict[str, Any], expected_formal_cases: int = 12
+) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     cases = manifest.get("cases")
     if not isinstance(cases, list):
@@ -121,8 +123,11 @@ def formal_plan(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "concurrency": streams,
             "expected_requests": expected,
         }
-    if len(result) != 12:
-        raise ValueError(f"aligned L1 requires 12 formal cases, got {len(result)}")
+    if len(result) != expected_formal_cases:
+        raise ValueError(
+            "aligned L1 formal case count mismatch: "
+            f"expected {expected_formal_cases}, got {len(result)}"
+        )
     return result
 
 
@@ -211,7 +216,9 @@ def request_gate(case: dict[str, Any], expected: int) -> dict[str, Any]:
     }
 
 
-def retryable_single_missing_case(run_dirs: list[Path]) -> dict[str, Any] | None:
+def retryable_single_missing_case(
+    run_dirs: list[Path], expected_formal_cases: int = 12
+) -> dict[str, Any] | None:
     """Locate one clean formal case that is short by exactly one request."""
     candidates: list[dict[str, Any]] = []
     for raw_run_dir in run_dirs:
@@ -237,7 +244,7 @@ def retryable_single_missing_case(run_dirs: list[Path]) -> dict[str, Any] | None
             )
         ):
             return None
-        plan = formal_plan(manifest)
+        plan = formal_plan(manifest, expected_formal_cases)
         report_cases = report.get("cases")
         if not isinstance(report_cases, list):
             return None
@@ -300,7 +307,11 @@ def retryable_single_missing_case(run_dirs: list[Path]) -> dict[str, Any] | None
     return candidates[0] if len(candidates) == 1 else None
 
 
-def evaluate_repetition(run_dir: Path, primary_concurrency: int) -> dict[str, Any]:
+def evaluate_repetition(
+    run_dir: Path,
+    primary_concurrency: int,
+    expected_formal_cases: int = 12,
+) -> dict[str, Any]:
     run_dir = run_dir.resolve()
     # ServeBench <=0.7 wrote manifest.json/report.json at the result root.
     # ServeBench 1.0 writes artifacts/manifest.json and result.json.
@@ -330,7 +341,7 @@ def evaluate_repetition(run_dir: Path, primary_concurrency: int) -> dict[str, An
         if counts.get(field) != 0:
             raise ValueError(f"report.case_counts.{field} must be zero")
 
-    plan = formal_plan(manifest)
+    plan = formal_plan(manifest, expected_formal_cases)
     shapes = dataset_shapes(run_dir, manifest)
     report_cases = report.get("cases")
     if not isinstance(report_cases, list):
@@ -428,8 +439,15 @@ def coefficient_of_variation(values: list[float]) -> float:
     return statistics.stdev(values) / mean * 100 if mean else math.inf
 
 
-def consolidate(run_dirs: list[Path], primary_concurrency: int) -> dict[str, Any]:
-    repetitions = [evaluate_repetition(path, primary_concurrency) for path in run_dirs]
+def consolidate(
+    run_dirs: list[Path],
+    primary_concurrency: int,
+    expected_formal_cases: int = 12,
+) -> dict[str, Any]:
+    repetitions = [
+        evaluate_repetition(path, primary_concurrency, expected_formal_cases)
+        for path in run_dirs
+    ]
     scores = [
         repetition["primary_aggregate_output_tps_geomean"]
         for repetition in repetitions
@@ -477,19 +495,36 @@ def consolidate(run_dirs: list[Path], primary_concurrency: int) -> dict[str, Any
         for repetition in repetitions
         for case in repetition["cases"]
     )
+    primary_cases = [
+        case for case in case_summary if case["concurrency"] == primary_concurrency
+    ]
+    if not primary_cases:
+        raise ValueError("no primary-concurrency cases are available for reporting")
     metrics = {
         "successful_requests": successful,
         "failed_requests": 0,
         # Compatibility key used by the existing comparison controller.
         "output_token_throughput": statistics.median(scores),
         "primary_score_cv_percent": coefficient_of_variation(scores),
+        "ttft_p50_ms": statistics.median(
+            [case["ttft_p50_ms"] for case in primary_cases]
+        ),
+        "ttft_p90_ms": statistics.median(
+            [case["ttft_p90_ms"] for case in primary_cases]
+        ),
+        "tpot_p50_ms": statistics.median(
+            [case["tpot_p50_ms"] for case in primary_cases]
+        ),
+        "tpot_p90_ms": statistics.median(
+            [case["tpot_p90_ms"] for case in primary_cases]
+        ),
     }
     return {
         "benchmark_mode": "aligned_l1",
         "parse_status": "ok",
         "metrics": metrics,
         "l1": {
-            "suite": "tuning-fixed",
+            "suite": os.environ.get("BENCHMARK_SUITE_ID", "tuning-fixed"),
             "all_repetitions_gate_passed": True,
             "repetition_count": len(repetitions),
             "primary_concurrency": primary_concurrency,
@@ -506,15 +541,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", action="append", type=Path, required=True)
     parser.add_argument("--primary-concurrency", type=int, default=32)
+    parser.add_argument("--expected-formal-cases", type=int, default=12)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--retry-plan-output", type=Path)
     args = parser.parse_args()
     retry_plan: dict[str, Any] = {"retryable": False}
     try:
-        result = consolidate(args.run, args.primary_concurrency)
+        if args.expected_formal_cases < 1:
+            raise ValueError("expected formal case count must be positive")
+        result = consolidate(
+            args.run,
+            args.primary_concurrency,
+            args.expected_formal_cases,
+        )
     except (FileNotFoundError, ValueError, KeyError, TypeError) as exc:
         try:
-            candidate = retryable_single_missing_case(args.run)
+            candidate = retryable_single_missing_case(
+                args.run, args.expected_formal_cases
+            )
         except (FileNotFoundError, ValueError, KeyError, TypeError):
             candidate = None
         if candidate is not None:

@@ -58,6 +58,9 @@ topology:
 
 features:
   mtp: true
+  # The pinned async MTP path cannot exercise the unpadded drafter switch:
+  # upstream requires async scheduling to be disabled for that value.
+  unpadded_drafter_async_compatible: false
   pd_disaggregated: false
   kv_transfer: false
   lora: false

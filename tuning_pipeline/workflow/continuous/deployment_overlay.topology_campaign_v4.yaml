@@ -1,0 +1,102 @@
+schema_version: 1
+status: archived_deployment_evidence
+authoritative_for_current_default: false
+overlay_id: topology-campaign-v4-20260814
+base_commit: 3b5c898b8d45728e53073842590d4ed963a1d97a
+git_sync_performed: false
+github_sync_authorized: false
+deployment_roots:
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190
+  - /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190
+policy:
+  delete_operations_allowed: false
+  original_benchmark_asset_mutable: false
+  formal_npu_job_started_during_deployment: false
+  topology_decision_owner: agent
+  topology_frozen_within_inner_session: true
+  fast_benchmark_maximum_seconds: 600
+  production_incumbent: a3_dp2_tp16
+  experimental_challenger: a3_dp4_tp8
+  blocked_until_cross_node_tp_executor: a3_dp1_tp32
+local_validation:
+  unittest_passed: 235
+  ruff_changed_python: passed_with_preexisting_e402_ignored
+  structured_yaml_documents: 41
+  structured_json_documents: 8
+  bash_syntax: passed
+  topology_campaign_check_only: passed
+  git_diff_check: passed
+remote_validation:
+  overlay_and_manifest_sha256_files_per_root: 59
+  runtime_closure_files_synced_per_root: 134
+  tuning_pipeline_support_files_synced_per_root: 14
+  pinned_source_commits:
+    vllm: 418bd6273c03bf48d5066733769e0a74bdc51694
+    vllm_ascend: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+  unittest_passed_per_root: 235
+  topology_campaign_check_only_per_root: passed
+  offline_dry_run:
+    a3_dp2_tp16: passed
+    a3_dp4_tp8: passed
+  online_check_only: expected_lease_not_created
+  formal_npu_job_started: false
+payload_file_count: 58
+payload_sha256:
+  'docs/A8_FAST_AGENTIC_V2.md': d59f0bfc1e73b3fcdbf2c80f363f4f6377105622f7819d27f5867fbf456c3bc2
+  'docs/A8_FRONTIER_AGENTIC_V3.md': 4f6e1e7d917d2ea4dd0c9152f775eac3209daf44f122cc7b86d1cf56e9f5e73b
+  'docs/ARCHITECTURE.md': 26d12e32e0dd3e929bccaa43ed3209995794bd454f9dc6f72f6bafb9fe09f035
+  'docs/HANDOFF.md': 3114cf9fdcca1debf473c5de0ed86d0b5d313d6d363a76c2646af9e5d21718e3
+  'docs/OPERATIONS.md': 6907d8c872c82b6a3407cd80156a5a24dc063ae5677e5adbb28b553dfe2e5e86
+  'docs/TOPOLOGY_CAMPAIGN_V4.md': a43d38c7c7f13e830e6888c546f6da775a2ad7da435e10629ad995407fa5d1e8
+  'README.md': b79f24af034dd0114b9c86b8406fd840be1faf67adbbdde55a47424360f7684d
+  'tuning_pipeline/workflow/baselines/a8_glm52_w8a8_dp4_tp8_probe_v1.yaml': 4f9557bda8de1c085f88556676222dd9a73876b198139e341bcc430191f02c13
+  'tuning_pipeline/workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml': 929e2233d9a08f7f89954ce78c47991609502dbc386df5d3db4f592c3379be42
+  'tuning_pipeline/workflow/continuous/agent_decision.schema.json': 801f2f8151b9c38bda2becd0ee1edad1cd778433781f05bb5015e4d30217aca8
+  'tuning_pipeline/workflow/continuous/benchmark_assets/aligned-fast-c32-v1/README.md': 6371cecffe80a18b7822a60aaf630a0616ff57410a9ef518415eafab6f0be3eb
+  'tuning_pipeline/workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml': 53c15add17634abbffcfff1b3dde183213fbbd0669e832fda59c52e1631d4145
+  'tuning_pipeline/workflow/continuous/benchmark_profiles.yaml': d496c6415fb8f83b944d315c6f99cfb349d23c28dcf1004170f741208b4b3803
+  'tuning_pipeline/workflow/continuous/config.yaml': f613067c7d31201615a170e2607eb4a2eebaa2708535f098a714a59dbd0b05fa
+  'tuning_pipeline/workflow/continuous/continuous_tuning.py': 5119171eba24a793c7c9c902f74ca05cdffdbf421f79162b1b2fa91e88802db6
+  'tuning_pipeline/workflow/continuous/deployment_overlay.a8_fast_agentic_v2.yaml': e9abc71e825296bfe9bb65e8152f86664a493e997194d5edac730046e563659b
+  'tuning_pipeline/workflow/continuous/deployment_overlay.a8_frontier_agentic_v3.yaml': 6562c05be5a8ce84d1c041a80688933319a3986b4acada21150a20e06a8e6920
+  'tuning_pipeline/workflow/continuous/executor_profiles.yaml': bb5ae10ca822ff5a9f1e8c504cdfe0c5086294a7beba12c33297689e3c6e869f
+  'tuning_pipeline/workflow/continuous/README.md': 95d0861cdb5f2fa1be3460bcc812aebe095a7ec4709cbd919fc9796d91e4978d
+  'tuning_pipeline/workflow/continuous/remote/aligned_l1_metrics.py': ffc05fdc633a19948a4166ec31e47e82c1228eb4acb74a788cd6bc481de2ec6e
+  'tuning_pipeline/workflow/continuous/remote/benchmark_result.schema.json': 2d465a7ed2f40ebd2572705c721742fdc8da2ebde4203ab7ac4b5af236af4c22
+  'tuning_pipeline/workflow/continuous/remote/common_runtime_loop.sh': ed887e2cf2975aa9b06e7444597704b4029633d8020c414fa18744c7ee6d3862
+  'tuning_pipeline/workflow/continuous/remote/run_aligned_l1.sh': a01a9f9922870dbd9d791f454a022159e955c7006c218d7207fe84cc93a3e700
+  'tuning_pipeline/workflow/continuous/remote/run_servebench_attempt.sh': b4c950071d29318e4983549a8f93546c5c5c5d15a46a0da5bccc0a85be95cafd
+  'tuning_pipeline/workflow/continuous/remote/run_worker_loop.sh': 0e986df063474993ee10c73c7de25e0b3ca7b5f4876dda407bec369313a76618
+  'tuning_pipeline/workflow/continuous/runtime_profile.py': 2a838e2ffea8e2c1943654505d6f3414efa229f4b83f97dc11b42339a01d1311
+  'tuning_pipeline/workflow/continuous/runtime_profiles.yaml': 2d763054712d616ac657a3e70bf5ce7b597cefa5bc4d2d98846d579ef290a32b
+  'tuning_pipeline/workflow/continuous/search_space_adapter.py': 7bf220a7960404c83c0ac5ebc30cbafeb34254c002ce1cc1cbce9cbf41af884a
+  'tuning_pipeline/workflow/continuous/server_autonomous/common.sh': 8d0528500958c689b59c8abd4a28ca3a0ebd1d9494400f9c9510b2eff87786a3
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.local.example.yaml': 42a0005820d83dfe7d721297468536d2ebfce4e83d18b967efba054f36c3097d
+  'tuning_pipeline/workflow/continuous/server_autonomous/config.yaml': 8189848bd061210fd88c9cc80c55c55e0aed06566c641de57eb83d4d2208b79a
+  'tuning_pipeline/workflow/continuous/server_autonomous/preflight.sh': 6cbc5b5a886a0f379fb0a7fa375c67fca98771cec519107cd51b384a69bd203f
+  'tuning_pipeline/workflow/continuous/server_autonomous/README.md': 6d213db13506b92ef8c8a6f4e096f7ab49f967f3ae0f68f258e74f1f2e5552ec
+  'tuning_pipeline/workflow/continuous/server_autonomous/run_foreground.sh': a0d139ced1684c72d647c697c1cb857c88ff67dcb915aa7d21455636e8ea63d0
+  'tuning_pipeline/workflow/continuous/server_autonomous/start.sh': 5afef7ffbe8db0c19770bb9ffccbcedfa2366a027198950d6eb1a8c19f4800f4
+  'tuning_pipeline/workflow/continuous/server_autonomous/status.sh': 56d1c7aff22a849105cc120dff232956bb5cbdee3fe67950053af8f718491756
+  'tuning_pipeline/workflow/continuous/strategy_profiles.yaml': e23bed5ce4bca7215f50c797e59b7765981a90e9c866461a1ab40642b3b79354
+  'tuning_pipeline/workflow/continuous/test_aligned_l1_metrics.py': 41f6ec6d088ae27db12451e645ed0eeff0d0b16ed392b25fd3b954ce7740a8ad
+  'tuning_pipeline/workflow/continuous/test_continuous_tuning.py': 36b456225197f0bf2e7dd41731fa1ed2ee129d1a671d5df38ec4a1ae557e3336
+  'tuning_pipeline/workflow/continuous/test_hierarchical_strategy.py': 0dba0bbab27fc65a0b88124c641c8b56a08b6b9edc38fd01892e8f51998e6015
+  'tuning_pipeline/workflow/continuous/test_portability.py': b0f5e47b2686dbdadd4a3f921144f0b10b8cd8c50efc940f3b2e3acac2b57ab0
+  'tuning_pipeline/workflow/continuous/test_server_autonomous_service.py': 53c8784e8b837afb35c237802ccfa284672f1d681687ddc2b6c14251a923bd53
+  'tuning_pipeline/workflow/continuous/test_topology_advisor.py': 4f3b38392bd34e62b3d6345e3565f439dc24f5ade5f01dc8679595efe9121015
+  'tuning_pipeline/workflow/continuous/test_topology_campaign.py': 057c0e30fa068d35f0eb4d706c82ca83b35c89d4d156f62e8a93f19f44b3eb00
+  'tuning_pipeline/workflow/continuous/topology_advisor.py': 59c4ad24faf1cc0001ea09b4442cba15240b4e60040e8dcef57fab15e35ac8fb
+  'tuning_pipeline/workflow/continuous/topology_campaign.py': b752c8682614cfe4b50d5e76bd6c26975a1daf73fc23656bedd7444ce0bc750d
+  'tuning_pipeline/workflow/continuous/topology_campaign_decision.schema.json': 9b923bb2c6bd01eab2e0de9c1208300693168b9703b73cefa1beb5653650ac3d
+  'tuning_pipeline/workflow/continuous/topology_profiles.yaml': 5989d33fe98fa63d2e6c904177cac5cde5a450814835b701c9df4d70144ce35d
+  'tuning_pipeline/workflow/registry_builder/compatibility.py': 0146179498401abd4c5518c876dee52ebf38ee0da7bea9fa8914ad53ef7ff4c9
+  'tuning_pipeline/workflow/registry_builder/compatibility_policy.yaml': 04af0d35985cc5fd2c42bd4047898f9170ceb646ee4d16fb704841ac4832d15d
+  'tuning_pipeline/workflow/registry_builder/test_pipeline.py': 516956c5caca291e80907cbcbf87ae87f844c11008df42f175c64760dd313418
+  'tuning_pipeline/workflow/search_space_compiler/compiler.py': f13bab038a1bb0ac7b1a89e5abc8c1bcc8d623c5388d1763ae72f9e3bcdcd00d
+  'tuning_pipeline/workflow/search_space_compiler/history.py': 0600cc83d7cf1867dcf3e2967746866a1f5e64807a03f2a78243a368fb62e2a6
+  'tuning_pipeline/workflow/search_space_compiler/policy.yaml': a7a6a1f0d2058d916dfb100e40ec642e67612d625830ab65f4954475d5d164f2
+  'tuning_pipeline/workflow/search_space_compiler/registry.yaml': 984e6d29be327bd665413d35b55ee24faa76fef7d476664243709a771aeb086d
+  'tuning_pipeline/workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml': 258fa2a02c0abd43d86205d8e38a4640c03970c1200a254dd4b8462a33d7e65e
+  'tuning_pipeline/workflow/search_space_compiler/test_compiler.py': 4c47b6baabf1a841ea49be6353455d0912b34674c7c7cacb4cda5770d9386ed0
+  'tuning_pipeline/workflow/search_space_profiles.yaml': 992163106e7b278364aad63daa31394b04ccdbf53254c666cf71a7874bea06c1

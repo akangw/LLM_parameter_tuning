@@ -711,26 +711,9 @@ class SearchSpaceCompiler:
             for item in eligible:
                 stats = history_analysis["parameters"][item["canonical_name"]]
                 item["history_evidence"] = stats
-                quarantined_keys = {
-                    json.dumps(value, ensure_ascii=False, sort_keys=True)
-                    for value in stats.get("quarantined_values", [])
-                }
-                if quarantined_keys:
-                    retained_values = [
-                        value
-                        for value in item["values"]
-                        if json.dumps(
-                            value, ensure_ascii=False, sort_keys=True
-                        )
-                        not in quarantined_keys
-                    ]
-                    item["history_pruned_values"] = stats["quarantined_values"]
-                    if len(retained_values) >= 2:
-                        item["values"] = retained_values
-                    else:
-                        item["history_evidence"]["reasons"].append(
-                            "quarantine_not_applied_because_it_would_exhaust_dimension"
-                        )
+                item["conditional_failure_exclusions"] = copy.deepcopy(
+                    stats.get("conditional_failures", [])
+                )
                 item["history_score_adjustment"] = stats["score_adjustment"]
                 item["activation_score"] = round(
                     float(item["base_activation_score"])
@@ -816,8 +799,8 @@ class SearchSpaceCompiler:
                     ) + (in_name in core)
                     if retained_core < minimum_core:
                         continue
-                    margin = float(candidate_in["activation_score"]) - float(
-                        candidate_out["activation_score"]
+                    margin = float(candidate_in.get("history_score_adjustment", 0.0)) - float(
+                        candidate_out.get("history_score_adjustment", 0.0)
                     )
                     if margin < minimum_margin:
                         continue
@@ -828,6 +811,11 @@ class SearchSpaceCompiler:
                             "out": out_name,
                             "in": in_name,
                             "score_margin": round(margin, 4),
+                            "activation_score_margin": round(
+                                float(candidate_in["activation_score"])
+                                - float(candidate_out["activation_score"]),
+                                4,
+                            ),
                             "out_reasons": candidate_out.get(
                                 "history_evidence", {}
                             ).get("reasons", []),

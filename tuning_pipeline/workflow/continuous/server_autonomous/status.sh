@@ -36,7 +36,12 @@ if [[ -f "${SERVICE_ROOT}/supervisord.conf" && -n "${SUPERVISORCTL}" ]]; then
   echo "Supervisor service: ${SUPERVISOR_STATE:-not running}"
 fi
 
-controller --status
+if [[ -f "${CAMPAIGN_ROOT}/campaign_state.json" ]]; then
+  echo "Topology Campaign state:"
+  "${PYTHON_BIN}" -m json.tool "${CAMPAIGN_ROOT}/campaign_state.json"
+else
+  controller --status
+fi
 echo
 LEASE_NAME=$("${PYTHON_BIN}" "${SCRIPT_DIR}/service_runtime.py" lease-name \
   --runtime-root "${RUNTIME_ROOT}" --config "${CONFIG}")

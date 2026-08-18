@@ -25,7 +25,12 @@
         "failed_requests": {"type": "number", "minimum": 0},
         "output_token_throughput": {"type": "number", "minimum": 0},
         "mean_ttft": {"type": "number", "minimum": 0},
-        "mean_tpot": {"type": "number", "minimum": 0}
+        "mean_tpot": {"type": "number", "minimum": 0},
+        "ttft_p50_ms": {"type": "number", "minimum": 0},
+        "ttft_p90_ms": {"type": "number", "minimum": 0},
+        "tpot_p50_ms": {"type": "number", "minimum": 0},
+        "tpot_p90_ms": {"type": "number", "minimum": 0},
+        "benchmark_wall_time_seconds": {"type": "number", "minimum": 0}
       }
     }
   }

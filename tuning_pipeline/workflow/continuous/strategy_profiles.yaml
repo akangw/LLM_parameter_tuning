@@ -1,8 +1,494 @@
 # Strategy profiles are deliberately separate from config.yaml. The live
 # controller freezes the selected profile into each Session.
-default_strategy: hierarchical_throughput_v1
+default_strategy: hierarchical_agentic_guided_v4
 
 strategies:
+  hierarchical_agentic_guided_v4:
+    status: integrated
+    purpose: >-
+      Dependency-ordered layers with Agent-owned experiments. The Controller
+      selects only the current semantic layer; the Agent owns the parameter
+      count, exact parameters, values and any justified companions. Coupling
+      hints are non-binding. After compact one-or-two-measurement coverage, the
+      Agent autonomously composes evidence-backed cross-layer and frontier
+      experiments while deterministic filters reject only impossible, conflicting
+      or exactly repeated failed configurations.
+    topology_stage:
+      order: 0
+      mode: outer_session
+      planner: workflow/continuous/topology_advisor.py
+      decision_owner: agent
+      controller_role: feasibility_filter_identity_freeze_and_metrics_gate
+      requires_new_session_per_topology: true
+      completion_rule: >-
+        Continue only after one validated topology remains or the Agent selects
+        the highest-value gate-passed topology from comparable Session metrics.
+    measurement_policy:
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+        minimum_throughput_gain_percent: 3.0
+        maximum_single_workload_throughput_regression_percent: 5.0
+    exploration:
+      independent_parameters_per_round: [1, 4]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 8
+    hierarchy:
+      selection_contract: controller_selects_layer_agent_selects_experiment
+      cross_layer_selection: agent_autonomous
+      controller_candidate_parameter_selection: disabled
+      coupling_hints_are_binding: false
+      promising_incremental_gain_percent: 0.0
+      ordered_probes:
+        - name: context_capacity_geometry
+          order: 1
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - max_model_len
+            - gpu_memory_utilization
+            - max_num_seqs
+            - max_num_batched_tokens
+          coupling_hints:
+            - parameters: [max_model_len, gpu_memory_utilization]
+              hypothesis: Context reservation and usable KV-pool headroom interact.
+            - parameters: [max_num_seqs, max_num_batched_tokens]
+              hypothesis: Concurrency capacity and scheduler token budget jointly set saturation.
+            - parameters: [max_model_len, gpu_memory_utilization, max_num_seqs, max_num_batched_tokens]
+              hypothesis: A coherent four-axis boundary probe may converge faster than isolated sweeps.
+          intent: >-
+            Establish a workload-valid context and memory/scheduler operating
+            envelope before changing execution features. The Agent may choose
+            any coherent one-to-four parameter experiment in this layer.
+        - name: speculative_decode_path
+          order: 2
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - num_speculative_tokens
+            - speculative_config__method
+            - async_scheduling
+            - speculative_config__attention_backend
+            - speculative_config__disable_padded_drafter_batch
+            - speculative_config__enforce_eager
+            - enable_reduce_sample
+          coupling_hints:
+            - parameters: [num_speculative_tokens, async_scheduling]
+              hypothesis: Draft depth changes scheduler pressure and must preserve the valid async path.
+            - parameters: [num_speculative_tokens, speculative_config__attention_backend, speculative_config__disable_padded_drafter_batch]
+              hypothesis: Drafter depth, attention implementation and padding jointly affect acceptance and decode cost.
+          diagnostic_ablation:
+            maximum_per_session: 1
+            trigger: explicit_hypothesis_only
+            dominant_mode:
+              speculative_config__method: mtp
+              async_scheduling: true
+              num_speculative_tokens: [1, 3]
+          intent: >-
+            Keep MTP dominant in normal experiments and let the Agent jointly
+            optimize draft depth, scheduling, drafter shape and sampling path.
+        - name: prefill_kv_scheduler
+          order: 3
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_prefix_caching
+            - enable_chunked_prefill
+            - long_prefill_token_threshold
+            - disable_hybrid_kv_cache_manager
+          coupling_hints:
+            - parameters: [enable_chunked_prefill, long_prefill_token_threshold, max_num_batched_tokens]
+              hypothesis: Chunking threshold and token budget control long-prefill scheduling together.
+            - parameters: [enable_prefix_caching, disable_hybrid_kv_cache_manager, gpu_memory_utilization]
+              hypothesis: KV policy value depends on cache layout and available pool headroom.
+          intent: >-
+            Optimize long-input prefill, KV reuse and scheduler behavior after
+            the basic capacity envelope and MTP path have measurements.
+        - name: compilation_and_graph_shape
+          order: 4
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - compilation_mode
+            - compilation_enable_sp
+            - max_cudagraph_capture_size
+            - cudagraph_capture_sizes
+            - additional_config__ascend_compilation_config__enable_npugraph_ex
+            - additional_config__ascend_compilation_config__enable_static_kernel
+          coupling_hints:
+            - parameters: [compilation_mode, cudagraph_capture_sizes, max_num_seqs]
+              hypothesis: Graph mode and captured shapes should cover the measured concurrency envelope.
+            - parameters: [additional_config__ascend_compilation_config__enable_npugraph_ex, additional_config__ascend_compilation_config__enable_static_kernel]
+              hypothesis: Ascend graph and static-kernel switches alter compatible execution paths together.
+          intent: >-
+            Align compilation mode and graph shape coverage with the already
+            measured scheduler, MTP and concurrency operating region.
+        - name: moe_routing_and_balance
+          order: 5
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_expert_parallel
+            - enable_eplb
+            - eplb_num_redundant_experts
+            - enable_balance_scheduling
+          coupling_hints:
+            - parameters: [enable_expert_parallel, enable_eplb, eplb_num_redundant_experts]
+              hypothesis: Expert placement, balancing and redundancy form one constrained routing system.
+            - parameters: [enable_expert_parallel, enable_balance_scheduling, gpu_memory_utilization]
+              hypothesis: Routing balance can trade communication against memory headroom.
+          intent: >-
+            Let the Agent test MoE execution and balancing only with explicit
+            prerequisites, memory evidence and topology-aware reasoning.
+        - name: ascend_communication_and_fusion_kernels
+          order: 6
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - flashcomm1
+            - mlapo
+            - fused_mc2
+            - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+            - TASK_QUEUE_ENABLE
+            - additional_config__ascend_compilation_config__fuse_allreduce_rms
+            - additional_config__ascend_compilation_config__fuse_norm_quant
+            - additional_config__prefill_comm_compute_overlap
+          coupling_hints:
+            - parameters: [fused_mc2, flashcomm1, additional_config__ascend_compilation_config__fuse_allreduce_rms]
+              hypothesis: Communication and collective fusion paths can interact nonlinearly.
+            - parameters: [TASK_QUEUE_ENABLE, VLLM_ASCEND_ENABLE_BATCH_MEMCPY, additional_config__prefill_comm_compute_overlap]
+              hypothesis: Queueing, memcpy and overlap jointly shape host/device pipeline efficiency.
+            - parameters: [mlapo, additional_config__ascend_compilation_config__fuse_norm_quant]
+              hypothesis: Fused model kernels may expose gains or runtime-specific incompatibilities.
+          intent: >-
+            Explore difficult Ascend queue, communication and fused-kernel
+            interactions after upstream execution choices are measured.
+    autonomous_cross_layer:
+      decision_owner: agent
+      controller_supplies:
+        - per_layer_measurement_summary
+        - complete_active_whitelist
+        - attempted_combinations
+        - conditional_failure_exclusions
+        - parameter_portraits_and_constraints
+        - best_accepted_anchor
+        - measured_exploration_budget_state
+      controller_must_not_supply: preselected_candidate_layer_or_parameters
+      objectives:
+        - converge quickly by exploiting the strongest measured basin
+        - compose historically supported cross-layer interactions for larger gains
+        - reserve meaningful rounds for risky high-upside combinations humans rarely test
+        - avoid evidence-free bundles and exact repeated failed configurations
+      exploration_budget:
+        programmatic_tracking: true
+        agent_final_choice: true
+        exploitation_fraction: 0.55
+        cross_layer_interaction_fraction: 0.30
+        frontier_novelty_fraction: 0.15
+    local_refinement:
+      independent_parameters_per_round: [1, 4]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 8
+
+  hierarchical_agentic_frontier_v3:
+    status: integrated
+    purpose: >-
+      Topology-first, high-risk A8 frontier search. Impossible combinations are
+      rejected deterministically, while the Agent may compose evidence-backed
+      two-to-four parameter interactions. Context capacity is tunable, exact
+      failed combinations are remembered conditionally, and cross-layer budget
+      usage is measured by the Controller without preselecting the next layer.
+    topology_stage:
+      order: 0
+      mode: outer_session
+      planner: workflow/continuous/topology_advisor.py
+      decision_owner: agent
+      controller_role: feasibility_filter_identity_freeze_and_metrics_gate
+      requires_new_session_per_topology: true
+      completion_rule: >-
+        Continue only after one validated topology remains or the Agent selects
+        the highest-value gate-passed topology from comparable Session metrics.
+    measurement_policy:
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+        minimum_throughput_gain_percent: 3.0
+        maximum_single_workload_throughput_regression_percent: 5.0
+    exploration:
+      independent_parameters_per_round: [1, 4]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 8
+    hierarchy:
+      cross_layer_selection: agent_autonomous
+      controller_candidate_layer_selection: disabled
+      promising_incremental_gain_percent: -2.0
+      ordered_probes:
+        - name: context_capacity_geometry
+          independent_parameters_per_round: [2, 4]
+          minimum_successful_measurements: 2
+          maximum_successful_measurements: 3
+          parameters:
+            - max_model_len
+            - gpu_memory_utilization
+            - max_num_seqs
+            - max_num_batched_tokens
+            - long_prefill_token_threshold
+          interaction_plan:
+            - [max_model_len, gpu_memory_utilization]
+            - [max_num_seqs, max_num_batched_tokens]
+            - [max_model_len, gpu_memory_utilization, max_num_seqs, max_num_batched_tokens]
+          intent: >-
+            First map context and memory headroom, then scheduler capacity, then
+            compose their best evidence-backed pair into a four-axis frontier
+            experiment. OOM is useful evidence for that exact combination.
+        - name: speculative_decode_path
+          independent_parameters_per_round: [1, 3]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - num_speculative_tokens
+            - speculative_config__method
+            - async_scheduling
+            - speculative_config__attention_backend
+            - speculative_config__disable_padded_drafter_batch
+            - speculative_config__enforce_eager
+          diagnostic_ablation:
+            maximum_per_session: 1
+            trigger: explicit_hypothesis_only
+            dominant_mode:
+              speculative_config__method: mtp
+              async_scheduling: true
+              num_speculative_tokens: [1, 3]
+          intent: >-
+            Keep the proven MTP path dominant, refine valid TP16 draft depths and
+            Ascend-supported draft attention, and permit at most one explicit
+            MTP-off diagnostic rather than repeatedly rediscovering the obvious.
+        - name: prefill_kv_scheduler
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_prefix_caching
+            - enable_chunked_prefill
+            - long_prefill_token_threshold
+            - disable_hybrid_kv_cache_manager
+          intent: Explore long-input scheduling and KV policy against the frozen workload evidence.
+        - name: compilation_and_graph_shape
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - compilation_mode
+            - compilation_enable_sp
+            - max_cudagraph_capture_size
+            - cudagraph_capture_sizes
+            - additional_config__ascend_compilation_config__enable_npugraph_ex
+            - additional_config__ascend_compilation_config__enable_static_kernel
+          intent: Tune graph mode, shape coverage and Ascend graph switches as one constrained family.
+        - name: moe_routing_and_balance
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_expert_parallel
+            - enable_eplb
+            - eplb_num_redundant_experts
+            - enable_balance_scheduling
+          intent: Test expert execution and balancing only with explicit prerequisites and memory evidence.
+        - name: ascend_communication_and_kernels
+          independent_parameters_per_round: [1, 3]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - flashcomm1
+            - mlapo
+            - fused_mc2
+            - enable_reduce_sample
+            - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+            - TASK_QUEUE_ENABLE
+            - additional_config__ascend_compilation_config__fuse_allreduce_rms
+            - additional_config__ascend_compilation_config__fuse_norm_quant
+            - additional_config__prefill_comm_compute_overlap
+          intent: Explore difficult Ascend communication, queue and fusion interactions with explicit source constraints.
+    autonomous_cross_layer:
+      decision_owner: agent
+      controller_supplies:
+        - per_layer_measurement_summary
+        - complete_active_whitelist
+        - attempted_combinations
+        - conditional_failure_exclusions
+        - parameter_portraits_and_constraints
+        - best_accepted_anchor
+        - measured_exploration_budget_state
+      controller_must_not_supply: preselected_candidate_layer
+      objectives:
+        - exploit the strongest measured basin with small local moves
+        - reserve measured rounds for untested high-upside cross-layer interactions
+        - promote frontier novelty without repeating evidence-free directions
+      exploration_budget:
+        programmatic_tracking: true
+        agent_final_choice: true
+        exploitation_fraction: 0.65
+        cross_layer_interaction_fraction: 0.25
+        frontier_novelty_fraction: 0.10
+    local_refinement:
+      independent_parameters_per_round: [1, 2]
+      max_grid_steps_per_parameter: 1
+      max_total_grid_steps: 2
+
+  hierarchical_agentic_topology_v2:
+    status: integrated
+    purpose: >-
+      Topology-first, expert-baseline search. Topology is selected by the Agent
+      outside the serving-parameter Session after deterministic feasibility
+      filtering. Inside a Session, ordered family coverage accelerates early
+      convergence; after coverage, the Agent autonomously chooses layers and
+      cross-layer interactions while the Controller enforces only safety,
+      identity and change-budget constraints.
+    topology_stage:
+      order: 0
+      mode: outer_session
+      planner: workflow/continuous/topology_advisor.py
+      decision_owner: agent
+      controller_role: feasibility_filter_identity_freeze_and_metrics_gate
+      requires_new_session_per_topology: true
+      completion_rule: >-
+        Continue only after one validated topology remains or the Agent selects
+        the highest-value gate-passed topology from comparable Session metrics.
+    measurement_policy:
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+        minimum_throughput_gain_percent: 3.0
+        maximum_single_workload_throughput_regression_percent: 5.0
+    exploration:
+      independent_parameters_per_round: [1, 3]
+      max_grid_steps_per_parameter: 2
+      max_total_grid_steps: 7
+    hierarchy:
+      cross_layer_selection: agent_autonomous
+      controller_candidate_layer_selection: disabled
+      promising_incremental_gain_percent: -2.0
+      ordered_probes:
+        - name: capacity_and_memory_geometry
+          independent_parameters_per_round: [2, 3]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - max_num_seqs
+            - max_num_batched_tokens
+            - gpu_memory_utilization
+            - long_prefill_token_threshold
+          intent: >-
+            Establish the safe saturation region around A8 before changing
+            execution features. Couple capacity and memory only when the
+            hypothesis explains the expected queue/KV effect.
+        - name: speculative_decode_path
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - num_speculative_tokens
+            - async_scheduling
+            - speculative_config__disable_padded_drafter_batch
+            - speculative_config__enforce_eager
+          intent: >-
+            Refine A8's MTP path, including drafter batching and eager-mode
+            interactions instead of treating speculative depth in isolation.
+        - name: prefill_kv_scheduler
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_prefix_caching
+            - enable_chunked_prefill
+            - long_prefill_token_threshold
+            - disable_hybrid_kv_cache_manager
+          intent: >-
+            Explore prefill scheduling and KV-cache policy using the long-input
+            workload as explicit evidence.
+        - name: compilation_and_graph_shape
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - compilation_mode
+            - compilation_enable_sp
+            - max_cudagraph_capture_size
+            - cudagraph_capture_sizes
+            - additional_config__ascend_compilation_config__enable_npugraph_ex
+            - additional_config__ascend_compilation_config__enable_static_kernel
+          intent: >-
+            Tune graph mode, shape coverage and Ascend graph switches as one
+            constrained compilation family.
+        - name: moe_routing_and_balance
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - enable_expert_parallel
+            - enable_eplb
+            - eplb_num_redundant_experts
+            - enable_balance_scheduling
+          intent: >-
+            Test expert execution and balancing together only where their
+            prerequisites and memory cost are explicit.
+        - name: ascend_communication_and_kernels
+          independent_parameters_per_round: [1, 2]
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - flashcomm1
+            - mlapo
+            - fused_mc2
+            - enable_reduce_sample
+            - VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+            - additional_config__ascend_compilation_config__fuse_allreduce_rms
+            - additional_config__prefill_comm_compute_overlap
+          intent: >-
+            Explore Ascend communication and fusion axes that are difficult to
+            cover manually, with one high-risk switch per experiment unless a
+            documented interaction requires a pair.
+    autonomous_cross_layer:
+      decision_owner: agent
+      controller_supplies:
+        - per_layer_measurement_summary
+        - complete_active_whitelist
+        - attempted_combinations
+        - parameter_portraits_and_constraints
+        - best_accepted_anchor
+      controller_must_not_supply: preselected_candidate_layer
+      objectives:
+        - exploit the strongest measured basin with small local moves
+        - reserve some rounds for untested high-upside cross-layer interactions
+        - avoid repeating negative directions without a new interaction hypothesis
+      exploration_budget:
+        exploitation_fraction: 0.65
+        cross_layer_interaction_fraction: 0.25
+        frontier_novelty_fraction: 0.10
+    local_refinement:
+      independent_parameters_per_round: [1, 2]
+      max_grid_steps_per_parameter: 1
+      max_total_grid_steps: 2
+
   best_anchor_coverage_v2:
     status: integrated
     purpose: >-

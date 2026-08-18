@@ -4,8 +4,20 @@ remote_project: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vl
 # Compatibility-critical selections are grouped into one immutable Ascend
 # runtime adapter. A config.local overlay can select another integrated adapter.
 runtime:
-  profile: glm52_w8a8_a3_dp2_tp16
+  profile: glm52_w8a8_a3_dp4_tp8_a8_guided_v4
   profiles_file: workflow/continuous/runtime_profiles.yaml
+# Keep the completed topology Campaign implementation dormant while the fixed
+# DP4/TP8 parameter-only chain is validated end to end. Re-enabling this flag
+# requires a NEW Campaign root and the topology_campaign_v4 runtime profile.
+topology_campaign:
+  enabled: false
+  candidate_profiles: [a3_dp2_tp16, a3_dp4_tp8, a3_dp1_tp32]
+  screen_measurements_per_topology: 3
+  competitive_slice_rounds: 4
+  minimum_challenger_rounds_per_slice: 1
+  final_challenger_verification_rounds: 2
+  maximum_competitive_cycles: 8
+  maximum_candidate_index_per_topology: 24
 deployment:
   # Server-specific launch identity. These values are frozen in every Session
   # and exported to both Lease workers; no operator path is hidden in Bash.
@@ -23,10 +35,24 @@ partial_exit_grace_seconds: 120
 # Unattended recovery uses per-class budgets plus one total cap. Deterministic
 # invalid states still fail closed instead of burning NPU time indefinitely.
 failure_recovery:
+  # In autonomous production mode, budgets remain audit/selection signals but
+  # do not terminate the loop. Only a proven immutable dependency may pause.
+  hard_terminal_only: true
   same_candidate_retries: 6
   agent_diagnostic_retries: 2
   parameter_adjustments: 4
   total_recovery_rounds: 10
+  # Recovery-only controls are deliberately separate from the performance
+  # Active Search set.  They may be changed only after a failed round when
+  # logs/source evidence proves that they directly gate the failing path.
+  max_recovery_parameter_changes: 2
+  recovery_parameters:
+    additional_config__multistream_overlap_shared_expert:
+      initial_value: false
+      allowed_values: [false, true]
+      injection:
+        kind: json_path
+        path: [additional_config, multistream_overlap_shared_expert]
 max_controller_recovery_attempts: 6
 # Codex is the default. Alternate providers reference credential environment
 # variable names; secrets are never stored in this file or Session artifacts.
@@ -56,13 +82,13 @@ agent:
     command:
       command: configure-structured-json-command
 strategy:
-  profile: hierarchical_throughput_v1
+  profile: hierarchical_agentic_guided_v4
   profiles_file: workflow/continuous/strategy_profiles.yaml
 execution_mode: ktp_lab
-# Execution layout is named and frozen into each Session. The only integrated
-# executor remains the already validated two-node, 16-NPU-per-node layout.
+# Execution layout is named and frozen into each inner Session. The outer
+# Campaign may time-slice DP2/TP16 and DP4/TP8 over the same 2x16-NPU Lease.
 topology:
-  profile: a3_dp2_tp16
+  profile: a3_dp4_tp8
   profiles_file: workflow/continuous/topology_profiles.yaml
 # The sliced MTP-only checkpoint made by the deployment owner. Set the exact
 # server path before preparing the lease; leaving it empty fails closed.
@@ -79,12 +105,12 @@ model_loading:
   safetensors_prefetch_block_size: 16777216
 lab:
   # Versioned lease name prevents reuse of Pods created from the previous image.
-  lease_name: vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+  lease_name: vllmtkb-fixed-dp2tp16-v4-418bd627-32c8cf190
   lease_yaml: workflow/auto/lease_loop.yaml
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/lab_runs
 benchmark:
   # The selected profile and its definition are frozen into each Session.
-  profile: aligned_l1_v4
+  profile: aligned_fast_c32_v2
   profiles_file: workflow/continuous/benchmark_profiles.yaml
   aligned_l1:
     # Pin the exact standard filename so a future central alias update cannot
@@ -121,6 +147,89 @@ benchmark:
     spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/spec
     dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-structured-v4/datasets
     suite_sha256: 5d7baacf92dbcff2b2972db0dd4649b78a88e1b9d099d0ff37552a232b48b353
+    schema_files_sha256:
+      schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
+    tokenizer_files_sha256:
+      tokenizer.json: 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+      tokenizer_config.json: 98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc
+    dataset_manifests_sha256:
+      tuning-structured-chat-1024-256-v1/manifest.json: d5f00196e77ad4bbfe139212ee611ace3e7374f80f0807403195abeb039ee49f
+      tuning-structured-prefill-8192-512-v1/manifest.json: 36b1f2ddb0a17d7321fe92425484b303ba79ae8d6b09b4204eb211dbf1968b5d
+      tuning-structured-balanced-1024-1024-v1/manifest.json: 5521d58078bd8b5fc727c2749d2cb86df61326fd774d2c1b9f9b19606b04aaf8
+      tuning-structured-decode-256-2048-v1/manifest.json: d50b2c466153f74e0a0c00f7f94dd6d8baa9e780d3f5f3fed53a6dfcc02e76a0
+    primary_concurrency: 32
+    workloads:
+      chat-1024-256: {input_tokens: 1024, output_tokens: 256}
+      prefill-8192-512: {input_tokens: 8192, output_tokens: 512}
+      balanced-1024-1024: {input_tokens: 1024, output_tokens: 1024}
+      decode-256-2048: {input_tokens: 256, output_tokens: 2048}
+  aligned_l1_fast:
+    suite: 01_调优_快速筛选-v1.yaml
+    suite_id: tuning-fast-c32
+    suite_version: v1
+    phase: all
+    repetitions: 1
+    expected_formal_cases: 4
+    # Planning metadata only. The fixed suite is never killed because this
+    # target is exceeded; round_timeout_minutes remains the outer safety bound.
+    target_benchmark_seconds: 600
+    case_retry_limit: 0
+    runtime_retry_limit: 0
+    metrics_retry_limit: 0
+    total_full_retry_limit: 0
+    served_model: glm-5
+    service_port: 8000
+    tokenizer: /models/share/GLM-5.2-w8a8
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    servebench_workspace: /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
+    servebench_version: 1.0.1
+    servebench_commit: 5f01dcafd9b4ce9c788d8f7c1a537d4b3ea83c73
+    docker_image: 10.1.30.201:31443/user-1-wangakang/vllm-ascend@sha256:46d8bbb49f90f0607a41f972b7d847b434e0cf0f86fce9164549a7fdf0033112
+    guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v1/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v1/datasets
+    suite_sha256: 53c15add17634abbffcfff1b3dde183213fbbd0669e832fda59c52e1631d4145
+    schema_files_sha256:
+      schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
+    tokenizer_files_sha256:
+      tokenizer.json: 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+      tokenizer_config.json: 98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc
+    dataset_manifests_sha256:
+      tuning-structured-chat-1024-256-v1/manifest.json: d5f00196e77ad4bbfe139212ee611ace3e7374f80f0807403195abeb039ee49f
+      tuning-structured-prefill-8192-512-v1/manifest.json: 36b1f2ddb0a17d7321fe92425484b303ba79ae8d6b09b4204eb211dbf1968b5d
+      tuning-structured-balanced-1024-1024-v1/manifest.json: 5521d58078bd8b5fc727c2749d2cb86df61326fd774d2c1b9f9b19606b04aaf8
+      tuning-structured-decode-256-2048-v1/manifest.json: d50b2c466153f74e0a0c00f7f94dd6d8baa9e780d3f5f3fed53a6dfcc02e76a0
+    primary_concurrency: 32
+    workloads:
+      chat-1024-256: {input_tokens: 1024, output_tokens: 256}
+      prefill-8192-512: {input_tokens: 8192, output_tokens: 512}
+      balanced-1024-1024: {input_tokens: 1024, output_tokens: 1024}
+      decode-256-2048: {input_tokens: 256, output_tokens: 2048}
+  aligned_l1_fast_v2:
+    suite: 01_调优_快速筛选-v2.yaml
+    suite_id: tuning-fast-c32-v2
+    suite_version: v2
+    phase: all
+    repetitions: 1
+    expected_formal_cases: 4
+    # Planning metadata only; this does not truncate the fixed benchmark.
+    target_benchmark_seconds: 600
+    case_retry_limit: 0
+    runtime_retry_limit: 0
+    metrics_retry_limit: 0
+    total_full_retry_limit: 0
+    served_model: glm-5
+    service_port: 8000
+    tokenizer: /models/share/GLM-5.2-w8a8
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    servebench_workspace: /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
+    servebench_version: 1.0.1
+    servebench_commit: 5f01dcafd9b4ce9c788d8f7c1a537d4b3ea83c73
+    docker_image: 10.1.30.201:31443/user-1-wangakang/vllm-ascend@sha256:46d8bbb49f90f0607a41f972b7d847b434e0cf0f86fce9164549a7fdf0033112
+    guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v2/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v2/datasets
+    suite_sha256: a89ea466a48b48fc2be418fa1ba1abed9b992476e4f8f8143f44dc10bbc09f93
     schema_files_sha256:
       schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
     tokenizer_files_sha256:
@@ -184,9 +293,9 @@ fixed_scenario:
   temperature: 0
   primary_metric: output_throughput
 initial_baseline:
-  label: b0_deployable
-  launch_profile: official_source_defaults_deployable
-  definition: workflow/baselines/b0_deployable_64k.yaml
+  label: a8_dp4_tp8_guided_v4
+  launch_profile: explicit_candidate
+  definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
 baseline:
   # Typed pre-launch estimates. B0-deployable passes only max_model_len=64000;
   # all other serving-performance flags remain source-resolved. After a
@@ -223,11 +332,12 @@ baseline:
 # Search-Space profiles. The server-authoritative default is the independently
 # generated automatic registry; the reviewed curated registry remains opt-in.
 search_space:
-  profile: automatic_registry_v1
+  profile: automatic_registry_a8_frontier_v3
   profiles_file: workflow/search_space_profiles.yaml
-  # Keep each new Session independent. Historical metrics or candidates are
-  # reused only through an explicit baseline/session import.
-  history_source: none
+  # Recompile a new Session from the latest identity-matched completed history.
+  # The current Session stays frozen; rotation can promote up to three Reserve
+  # axes only at the next Session boundary.
+  history_source: latest_completed_session
   # Used by curated_registry_v1 for entries marked planned. Automatic registry
   # entries are admitted by source, compatibility and runtime checks instead.
   approved_planned_parameters:
@@ -273,15 +383,15 @@ sidecars:
 # Preserved manual fallback pool. It is used unchanged when
 # search_limits_mode is set to manual.
 search_limits:
-  max_num_seqs: [256, 8, 16, 32, 48, 64, 96, 128]
-  max_model_len: [64000]
-  max_num_batched_tokens: [2048, 4096, 8192, 16384, 32768]
-  gpu_memory_utilization: [0.92, 0.85, 0.90, 0.93, 0.95]
+  max_num_seqs: [256, 32, 64, 128, 192, 384, 512]
+  max_model_len: [64000, 49152, 32768, 16384]
+  max_num_batched_tokens: [2048, 1024, 4096, 8192, 16384, 32768]
+  gpu_memory_utilization: [0.92, 0.85, 0.90, 0.93, 0.95, 0.97]
   enable_prefix_caching: [false, true]
   async_scheduling: [false, true]
   enable_expert_parallel: [false, true]
   compilation_mode: [FULL_AND_PIECEWISE, FULL_DECODE_ONLY, PIECEWISE]
-  num_speculative_tokens: [0, 1, 2, 3]
+  num_speculative_tokens: [3, 1, 0]
   long_prefill_token_threshold: [0, 1024, 2048, 4096]
   enable_chunked_prefill: [true, false]
   max_cudagraph_capture_size: [192, 128, 256]
@@ -305,18 +415,18 @@ search_limits:
 change_policy:
   # The selected Strategy Profile overwrites this compatibility field during
   # Controller initialization; keep the checked-in fallback aligned as well.
-  strategy_version: hierarchical_throughput_v1
+  strategy_version: hierarchical_agentic_frontier_v3
   max_parameters_per_round: 4
   max_grid_steps_per_parameter: 2
-  max_total_grid_steps: 6
+  max_total_grid_steps: 8
   max_candidate_reselections: 5
   adaptive:
     enabled: true
     exploration:
-      preferred_parameters_per_round: [2, 3]
-      max_parameters_per_round: 3
+      preferred_parameters_per_round: [2, 4]
+      max_parameters_per_round: 4
       max_grid_steps_per_parameter: 2
-      max_total_grid_steps: 6
+      max_total_grid_steps: 8
     refinement:
       preferred_parameters_per_round: [1, 2]
       max_parameters_per_round: 2
@@ -331,7 +441,8 @@ change_policy:
         - num_speculative_tokens
         - max_cudagraph_capture_size
   parameter_groups:
-    scheduler_capacity:
+    context_capacity_geometry:
+      - max_model_len
       - max_num_seqs
       - max_num_batched_tokens
       - gpu_memory_utilization
@@ -358,6 +469,7 @@ change_policy:
       - num_speculative_tokens
       - speculative_config__enforce_eager
   high_risk_parameters:
+    - max_model_len
     - gpu_memory_utilization
     - compilation_mode
     - compilation_enable_sp
@@ -366,6 +478,18 @@ change_policy:
     - enable_balance_scheduling
     - enable_reduce_sample
     - speculative_config__enforce_eager
+  approved_high_risk_interaction_groups:
+    context_capacity_geometry:
+      parameters:
+        - max_model_len
+        - gpu_memory_utilization
+        - max_num_seqs
+        - max_num_batched_tokens
+      maximum_parameters_per_round: 4
+      policy: >-
+        Agent-owned coupled experiments are allowed after explicit memory,
+        scheduler-budget and workload-shape checks. OOM excludes only the exact
+        conditional combination, never an individual value globally.
 measurement_policy:
   minimum_successful_requests: 8
   require_zero_failed_requests: true

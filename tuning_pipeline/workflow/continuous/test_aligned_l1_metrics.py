@@ -39,6 +39,7 @@ def build_run(
     wrong_shape: bool = False,
     servebench_1_layout: bool = False,
     c32_shortfall: int = 0,
+    c32_only: bool = False,
 ) -> Path:
     datasets = []
     cases = []
@@ -55,7 +56,8 @@ def build_run(
             },
         )
         datasets.append({"workload": workload, "snapshot": snapshot})
-        for concurrency, expected in ((1, 2), (16, 32), (32, 64)):
+        points = ((32, 64),) if c32_only else ((1, 2), (16, 32), (32, 64))
+        for concurrency, expected in points:
             actual_requests = (
                 expected - c32_shortfall
                 if workload == "decode-256-2048" and concurrency == 32
@@ -150,6 +152,23 @@ class AlignedL1MetricsTests(unittest.TestCase):
             100.0,
         )
         self.assertEqual(result["metrics"]["successful_requests"], 392)
+        self.assertEqual(result["metrics"]["ttft_p50_ms"], 100.0)
+        self.assertEqual(result["metrics"]["tpot_p90_ms"], 11.0)
+
+    def test_fast_four_case_matrix_reports_throughput_ttft_and_tpot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = build_run(Path(directory) / "rep1", c32_only=True)
+            result = metrics.consolidate([run], 32, expected_formal_cases=4)
+        self.assertEqual(4, len(result["l1"]["cases"]))
+        self.assertEqual(256, result["metrics"]["successful_requests"])
+        self.assertAlmostEqual(100.0, result["metrics"]["output_token_throughput"])
+        for name in (
+            "ttft_p50_ms",
+            "ttft_p90_ms",
+            "tpot_p50_ms",
+            "tpot_p90_ms",
+        ):
+            self.assertIn(name, result["metrics"])
 
     def test_rejects_token_shape_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

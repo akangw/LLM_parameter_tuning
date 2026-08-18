@@ -11,6 +11,7 @@ scenarios/*/operator.local.yaml
 
 # Local runtime state and high-volume experiment evidence.
 tuning_pipeline/workflow/continuous/state.json
+tuning_pipeline/workflow/continuous/state.json.previous
 tuning_pipeline/workflow/continuous/latest_controller_launch.txt
 tuning_pipeline/workflow/continuous/controller.lock.stale-*
 tuning_pipeline/workflow/continuous/config.local.yaml

@@ -1,6 +1,428 @@
 schema_version: 1
-default_profile: glm52_w8a8_a3_dp2_tp16
+default_profile: glm52_w8a8_a3_dp4_tp8_a8_guided_v4
 profiles:
+  glm52_w8a8_a3_topology_campaign_v4:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_topology_v4
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+      baseline_dp4_tp8_probe: workflow/baselines/a8_glm52_w8a8_dp4_tp8_probe_v1.yaml
+      topology_campaign: workflow/continuous/topology_campaign.py
+      topology_campaign_schema: workflow/continuous/topology_campaign_decision.schema.json
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml
+    config:
+      topology:
+        profile: a3_dp2_tp16
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_frontier_v3
+      benchmark:
+        profile: aligned_fast_c32_v1
+      initial_baseline:
+        label: a8_expert_fast_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+    topology_baselines:
+      a3_dp2_tp16:
+        label: a8_expert_fast_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+      a3_dp4_tp8:
+        label: a8_dp4_tp8_probe_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_probe_v1.yaml
+    compatibility:
+      executor: ktp_two_role
+      requires_new_session: true
+      allowed_profiles:
+        topology: [a3_dp2_tp16, a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Fixed DP4/TP8 challenger package. It preserves the A8 lineage but starts
+  # with a conservative topology-specific baseline and independent history.
+  glm52_w8a8_a3_dp4_tp8_a8_fixed_v1:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_dp4_tp8_a8_fixed
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml
+    config:
+      topology:
+        profile: a3_dp4_tp8
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_frontier_v3
+      benchmark:
+        profile: aligned_fast_c32_v1
+      initial_baseline:
+        label: a8_dp4_tp8_fixed_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml
+    compatibility:
+      executor: ktp_two_role_local_dp
+      requires_new_session: true
+      live_model_fit_required: true
+      allowed_profiles:
+        topology: [a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Fresh-Lease continuation after the V1 failure Agent isolated the MLAPO
+  # fused-weight vector-core timeout. Keep this as a separate immutable runtime
+  # identity so V1 Sessions remain reproducible.
+  glm52_w8a8_a3_dp4_tp8_a8_fixed_v2:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_dp4_tp8_a8_fixed_v2
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v2.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml
+    config:
+      topology:
+        profile: a3_dp4_tp8
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_frontier_v3
+      benchmark:
+        profile: aligned_fast_c32_v1
+      initial_baseline:
+        label: a8_dp4_tp8_fixed_v2
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v2.yaml
+    compatibility:
+      executor: ktp_two_role_local_dp
+      requires_new_session: true
+      live_model_fit_required: true
+      allowed_profiles:
+        topology: [a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Versioned continuation after Fast-C32 V1 exposed a suite/dataset phase-ID
+  # mismatch. V3 also freezes the successful TASK_QUEUE_ENABLE=1 recovery so
+  # the healthy serving configuration is measured instead of rediscovered.
+  glm52_w8a8_a3_dp4_tp8_a8_fixed_v3:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_dp4_tp8_a8_fixed_v3
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v2/spec/suites/01_调优_快速筛选-v2.yaml
+    config:
+      topology:
+        profile: a3_dp4_tp8
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_frontier_v3
+      benchmark:
+        profile: aligned_fast_c32_v2
+      initial_baseline:
+        label: a8_dp4_tp8_fixed_v3
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+    compatibility:
+      executor: ktp_two_role_local_dp
+      requires_new_session: true
+      live_model_fit_required: true
+      allowed_profiles:
+        topology: [a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v2
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # V4 keeps the validated DP4/TP8, A8 baseline and Fast-C32 V2 benchmark
+  # identities, but replaces mandatory parameter-pair probes with guided layers
+  # whose exact experiments are owned by the Agent.
+  glm52_w8a8_a3_dp4_tp8_a8_guided_v4:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_dp4_tp8_a8_guided_v4
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v2/spec/suites/01_调优_快速筛选-v2.yaml
+    config:
+      topology:
+        profile: a3_dp4_tp8
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_guided_v4
+      benchmark:
+        profile: aligned_fast_c32_v2
+      initial_baseline:
+        label: a8_dp4_tp8_guided_v4
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml
+    compatibility:
+      executor: ktp_two_role_local_dp
+      requires_new_session: true
+      live_model_fit_required: true
+      allowed_profiles:
+        topology: [a3_dp4_tp8]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_guided_v4
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v2
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  # Archived fixed-DP2 production route. It remains integrated and explicitly
+  # selectable, but the repository default is the guided DP4/TP8 package above.
+  glm52_w8a8_a3_a8_frontier_v3:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_a8_frontier
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml
+    config:
+      topology:
+        profile: a3_dp2_tp16
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_frontier_v3
+      strategy:
+        profile: hierarchical_agentic_frontier_v3
+      benchmark:
+        profile: aligned_fast_c32_v1
+      initial_baseline:
+        label: a8_expert_fast_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+    compatibility:
+      executor: ktp_two_role
+      requires_new_session: true
+      allowed_profiles:
+        topology: [a3_dp2_tp16]
+        search_space:
+          - automatic_registry_a8_frontier_v3
+          - automatic_registry_a8_agentic_v2
+          - automatic_registry_v1
+        strategy:
+          - hierarchical_agentic_frontier_v3
+          - hierarchical_agentic_topology_v2
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
+  glm52_w8a8_a3_a8_fast_agentic_v2:
+    status: integrated
+    platform: ascend
+    session_prefix: cjx_glm52_a8_fast_agentic
+    model_contract:
+      family: glm
+      variant: glm-5.2
+      weight_format: w8a8
+      supports_mtp: true
+    artifacts:
+      scenario: workflow/search_space_compiler/scenario.glm52-a3-aligned-l1.yaml
+      baseline: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+      image_manifest: workflow/continuous/remote/image_version_manifest.yaml
+      image_activation: workflow/continuous/activation.approved.yaml
+      topology_profiles: workflow/continuous/topology_profiles.yaml
+      executor_profiles: workflow/continuous/executor_profiles.yaml
+      benchmark_suite: workflow/continuous/benchmark_assets/aligned-fast-c32-v1/spec/suites/01_调优_快速筛选-v1.yaml
+    config:
+      topology:
+        profile: a3_dp2_tp16
+        profiles_file: workflow/continuous/topology_profiles.yaml
+      image_identity:
+        manifest: workflow/continuous/remote/image_version_manifest.yaml
+        activation: workflow/continuous/activation.approved.yaml
+      search_space:
+        profile: automatic_registry_a8_agentic_v2
+      strategy:
+        profile: hierarchical_agentic_topology_v2
+      benchmark:
+        profile: aligned_fast_c32_v1
+      initial_baseline:
+        label: a8_expert_fast_v1
+        launch_profile: explicit_candidate
+        definition: workflow/baselines/a8_glm52_w8a8_expert_fast_v1.yaml
+    compatibility:
+      executor: ktp_two_role
+      requires_new_session: true
+      allowed_profiles:
+        topology: [a3_dp2_tp16]
+        search_space:
+          - automatic_registry_v1
+          - automatic_registry_a8_agentic_v2
+        strategy:
+          - best_anchor_coverage_v2
+          - best_anchor_coverage_v3
+          - hierarchical_throughput_v1
+          - hierarchical_agentic_topology_v2
+        benchmark:
+          - aligned_l1_v4
+          - aligned_fast_c32_v1
+          - vllm_bench_public_v1
+          - custom_adapter_v1
+        agent_provider: [codex, deepseek, anthropic, openai_compatible, command]
+
   glm52_w8a8_a3_dp2_tp16:
     status: integrated
     platform: ascend

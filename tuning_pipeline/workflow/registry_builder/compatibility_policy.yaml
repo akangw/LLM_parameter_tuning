@@ -16,20 +16,31 @@ normalization:
 # rebuilds these domains from the observed B0 value after the first B0 log is
 # accepted. Before B0, the scenario snapshot is only a provisional seed.
 numeric_candidate_domains:
+  max_model_len:
+    kind: fixed
+    values: [16384, 32768, 49152, 64000]
+    include_source_values: false
+    minimum: 12288
+    maximum: 64000
+    integer: true
   max_num_seqs:
-    kind: factor
-    factors: [0.125, 0.25, 0.5, 0.75, 1.0]
-    minimum: 8
+    kind: fixed
+    values: [32, 64, 128, 192, 256, 384, 512]
+    include_source_values: false
+    minimum: 32
+    maximum: 512
     integer: true
   max_num_batched_tokens:
-    kind: factor
-    factors: [1.0, 2.0, 4.0, 8.0, 16.0]
+    kind: fixed
+    values: [1024, 2048, 4096, 8192, 16384, 32768]
+    include_source_values: false
     minimum: 1024
     maximum: 32768
     integer: true
   gpu_memory_utilization:
-    kind: offset
-    offsets: [-0.07, -0.02, 0.0, 0.01, 0.03]
+    kind: fixed
+    values: [0.85, 0.9, 0.92, 0.93, 0.95, 0.97]
+    include_source_values: false
     minimum: 0.8
     maximum: 0.98
     precision: 2
@@ -42,7 +53,7 @@ numeric_candidate_domains:
     # B0 disables speculative decoding. These are deliberately discrete
     # serving modes, rather than values derived by multiplying zero.
     kind: fixed
-    values: [0, 1, 2, 3]
+    values: [0, 1, 3]
 
 # Scenario-level invariants are not Agent tuning dimensions. The value is owned
 # by the selected model, topology or benchmark profile.
@@ -57,8 +68,8 @@ parameter_rules:
     role: session_fixed
     scenario_path: topology.pipeline_parallel_size
   - match: max_model_len
-    role: session_fixed
     scenario_path: baseline.max_model_len
+    risk_override: high
   - match: dtype
     role: session_fixed
   - match: quantization
@@ -102,6 +113,13 @@ parameter_rules:
     risk_override: high
   - match: speculative_config__enforce_eager
     scenario_path: baseline.speculative_config__enforce_eager
+  - match: speculative_config__disable_padded_drafter_batch
+    scenario_path: baseline.speculative_config__disable_padded_drafter_batch
+    risk_override: high
+    # True remains high risk, but it is not globally impossible. The exact
+    # combination constraints below require async_scheduling=false and PCP=1,
+    # allowing the Agent to test the coupled mode without admitting the known
+    # invalid async+unpadded combination.
   - match: e_p_l_b_config__num_redundant_experts
     rename_to: eplb_num_redundant_experts
     scenario_path: baseline.eplb_num_redundant_experts
@@ -113,6 +131,8 @@ parameter_rules:
     role: session_fixed
   - match: attention_backend
     role: session_fixed
+  - match: speculative_config__attention_backend
+    risk_override: high
   - match: attention_config__mla_prefill_backend
     role: session_fixed
   - match: compilation_config__backend
@@ -250,13 +270,9 @@ combination_constraints:
     required_parameter: async_scheduling
     required_op: eq
     required_value: false
-  - id: unpadded_drafter_requires_pcp_one
-    kind: require_if_active
-    parameter: speculative_config__disable_padded_drafter_batch
-    inactive_values: [null, false]
-    required_parameter: prefill_context_parallel_size
-    required_op: eq
-    required_value: 1
+  # PCP is deployment-fixed at its source default 1 in this runtime adapter;
+  # it is not an Agent candidate field. The unpadded path's actionable
+  # candidate constraint is therefore the async-scheduling exclusion above.
   - id: shared_expert_dp_requires_expert_parallel
     kind: require_if_active
     parameter: additional_config__enable_shared_expert_dp

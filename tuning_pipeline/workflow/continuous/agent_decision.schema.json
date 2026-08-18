@@ -8,6 +8,7 @@
     "result_assessment",
     "knowledge_evidence",
     "change_strategy",
+    "exploration_intent",
     "interaction_analysis",
     "constraint_checks",
     "changes",
@@ -28,6 +29,17 @@
     "change_strategy": {
       "type": "string",
       "enum": ["none", "single_parameter", "coupled_parameters"]
+    },
+    "exploration_intent": {
+      "type": "string",
+      "enum": [
+        "none",
+        "ordered_probe",
+        "exploitation",
+        "cross_layer_interaction",
+        "frontier_novelty",
+        "diagnostic_ablation"
+      ]
     },
     "interaction_analysis": {
       "type": "array",

@@ -325,7 +325,7 @@ class CompilerIntegrationTests(unittest.TestCase):
             self.assertEqual(0.0, stats["failure_rate"])
             self.assertAlmostEqual(10.0, stats["mean_gain_percent"])
 
-    def test_parameter_oom_quarantines_value_not_dimension(self) -> None:
+    def test_parameter_oom_excludes_only_complete_combination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             history_path = Path(temporary) / "history.json"
             baseline = dict(self.compiler.scenario["baseline"])
@@ -372,13 +372,23 @@ class CompilerIntegrationTests(unittest.TestCase):
             result = compiler.compile()
             parameter = next(
                 item
-                for item in result["active_parameters"]
+                for item in [
+                    *result["active_parameters"],
+                    *result["reserve_candidates"],
+                ]
                 if item["canonical_name"] == "max_num_batched_tokens"
             )
-            self.assertNotIn(16384, parameter["values"])
-            self.assertEqual([16384], parameter["history_pruned_values"])
+            self.assertIn(16384, parameter["values"])
+            self.assertNotIn("history_pruned_values", parameter)
             self.assertEqual(
-                0.0, parameter["history_evidence"]["failure_rate"]
+                1.0, parameter["history_evidence"]["failure_rate"]
+            )
+            exclusions = result["history_analysis"]["conditional_exclusions"]
+            self.assertEqual(1, len(exclusions))
+            self.assertEqual("parameter_oom", exclusions[0]["failure_classification"])
+            self.assertEqual(
+                16384,
+                exclusions[0]["conditions"]["max_num_batched_tokens"],
             )
 
 

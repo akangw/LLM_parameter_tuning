@@ -13,6 +13,7 @@
     "interaction_analysis",
     "constraint_checks",
     "changes",
+    "recovery_changes",
     "candidate"
   ],
   "allOf": [
@@ -24,13 +25,21 @@
       "then": {
         "properties": {
           "classification": {
-            "enum": ["parameter_invalid", "parameter_oom", "model_or_runtime_bug"]
+            "enum": [
+              "parameter_invalid",
+              "parameter_oom",
+              "model_or_runtime_bug",
+              "network_or_hccl",
+              "transient_infrastructure",
+              "image_or_dependency",
+              "unknown"
+            ]
           },
           "safe_to_automate": {"const": true},
           "change_strategy": {
             "enum": ["single_parameter", "coupled_parameters"]
           },
-          "changes": {"minItems": 1}
+          "changes": {"minItems": 0}
         }
       }
     },
@@ -48,7 +57,8 @@
           "change_strategy": {"const": "none"},
           "interaction_analysis": {"maxItems": 0},
           "constraint_checks": {"maxItems": 0},
-          "changes": {"maxItems": 0}
+          "changes": {"maxItems": 0},
+          "recovery_changes": {"maxItems": 0}
         }
       }
     },
@@ -63,7 +73,8 @@
           "change_strategy": {"const": "none"},
           "interaction_analysis": {"maxItems": 0},
           "constraint_checks": {"maxItems": 0},
-          "changes": {"maxItems": 0}
+          "changes": {"maxItems": 0},
+          "recovery_changes": {"maxItems": 0}
         }
       }
     },
@@ -75,13 +86,23 @@
       "then": {
         "properties": {
           "classification": {
-            "enum": ["image_or_dependency", "model_or_runtime_bug", "unknown"]
+            "enum": [
+              "parameter_invalid",
+              "parameter_oom",
+              "transient_infrastructure",
+              "network_or_hccl",
+              "image_or_dependency",
+              "model_or_runtime_bug",
+              "benchmark_failure",
+              "unknown"
+            ]
           },
           "safe_to_automate": {"const": true},
           "change_strategy": {"const": "none"},
           "interaction_analysis": {"maxItems": 0},
           "constraint_checks": {"maxItems": 0},
-          "changes": {"maxItems": 0}
+          "changes": {"maxItems": 0},
+          "recovery_changes": {"maxItems": 0}
         }
       }
     }
@@ -153,6 +174,35 @@
               {"type": "boolean"},
               {"type": "null"},
               {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}}
+            ]
+          },
+          "rationale": {"type": "string", "minLength": 12}
+        }
+      }
+    },
+    "recovery_changes": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["parameter", "before", "after", "rationale"],
+        "properties": {
+          "parameter": {"type": "string"},
+          "before": {
+            "anyOf": [
+              {"type": "string"},
+              {"type": "number"},
+              {"type": "boolean"},
+              {"type": "null"}
+            ]
+          },
+          "after": {
+            "anyOf": [
+              {"type": "string"},
+              {"type": "number"},
+              {"type": "boolean"},
+              {"type": "null"}
             ]
           },
           "rationale": {"type": "string", "minLength": 12}

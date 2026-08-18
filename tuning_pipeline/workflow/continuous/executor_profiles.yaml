@@ -22,3 +22,28 @@ executors:
       worker_replicas: [0]
       worker_data_parallel_start_rank: [0]
     remote_contract: single_node_local_dp_v1
+  ktp_two_role_local_dp:
+    status: integrated
+    platform: ascend
+    purpose: Two nodes with two local DP replicas per node.
+    constraints:
+      nodes: [2]
+      data_parallel_size: [4]
+      data_parallel_size_local: [2]
+      worker_replicas: [1]
+      worker_data_parallel_start_rank: [2]
+    remote_contract: distributed_local_dp_v1
+    readiness:
+      static_wiring_validated: true
+      live_model_fit_required_per_model_contract: true
+  ktp_cross_node_tp:
+    status: planned
+    platform: ascend
+    purpose: One tensor-parallel group spanning both physical nodes.
+    constraints:
+      nodes: [2]
+      data_parallel_size: [1]
+      data_parallel_size_local: [1]
+      worker_replicas: [1]
+      worker_data_parallel_start_rank: [0]
+    remote_contract: cross_node_tp_v1

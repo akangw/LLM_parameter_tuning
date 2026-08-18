@@ -135,6 +135,12 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
     status = str(state.get("status", ""))
     if status in COMPLETED_STATUSES:
         return "complete", f"Session is already terminal: {status}"
+    # A durable pending-submission ledger is more specific than a generic
+    # paused Controller status.  It lets --resume recover the already-created
+    # round/run identity after a transient start-service failure without
+    # duplicating the Agent decision or asking an operator to reconstruct it.
+    if isinstance(state.get("pending_submission"), dict):
+        return "--resume", "recovering an interrupted submission transaction"
     if status in RECOVERABLE_CONTROLLER_STATUSES and terminal_artifact_exists(state):
         return "--resume", f"retrying bounded recoverable Controller error: {status}"
     if (
@@ -151,8 +157,6 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
 
     has_task = bool(state.get("active_task_id"))
     has_run = bool(state.get("active_run_id"))
-    if isinstance(state.get("pending_submission"), dict):
-        return "--resume", "recovering an interrupted submission transaction"
     if has_task and has_run:
         return "--resume", f"recovering active task/run from status {status or 'unknown'}"
     if has_task != has_run:

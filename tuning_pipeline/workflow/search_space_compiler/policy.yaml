@@ -15,6 +15,7 @@ activation:
   max_per_category: 4
   core_parameters:
     - max_num_seqs
+    - max_model_len
     - max_num_batched_tokens
     - gpu_memory_utilization
     - compilation_mode
@@ -53,8 +54,8 @@ history_selection:
     coverage_deficit_bonus: 6
     unexplored_bonus: 8
   rotation:
-    maximum_swaps_per_session: 2
-    minimum_score_margin: 2
+    maximum_swaps_per_session: 3
+    minimum_score_margin: 1
     minimum_core_parameters_retained: 5
 
 approval:

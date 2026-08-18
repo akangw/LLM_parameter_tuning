@@ -119,6 +119,94 @@ def _prune_disallowed_metadata(
     return value, removed
 
 
+def _fallback_validate_json_schema(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    path: str = "$",
+) -> None:
+    """Validate the strict schema subset used by Controller decisions.
+
+    Production prefers ``jsonschema``. This fallback keeps the contract strict
+    in minimal/offline controller environments instead of silently accepting an
+    invalid Agent value when that optional package is absent.
+    """
+
+    def json_equal(left: Any, right: Any) -> bool:
+        return type(left) is type(right) and left == right
+
+    def matches(candidate: Any, branch: dict[str, Any]) -> bool:
+        try:
+            _fallback_validate_json_schema(candidate, branch, path=path)
+            return True
+        except ValueError:
+            return False
+
+    if "if" in schema and matches(value, schema["if"]):
+        _fallback_validate_json_schema(value, schema.get("then", {}), path=path)
+    for branch in schema.get("allOf", []):
+        _fallback_validate_json_schema(value, branch, path=path)
+    if "anyOf" in schema and not any(
+        matches(value, branch) for branch in schema["anyOf"]
+    ):
+        raise ValueError(f"{path} does not match any allowed schema")
+    if "const" in schema and not json_equal(value, schema["const"]):
+        raise ValueError(f"{path} must equal {schema['const']!r}")
+    if "enum" in schema and not any(json_equal(value, item) for item in schema["enum"]):
+        raise ValueError(f"{path}={value!r} is outside the allowed enum")
+
+    declared_types = schema.get("type")
+    if declared_types is not None:
+        names = [declared_types] if isinstance(declared_types, str) else declared_types
+        checks = {
+            "object": lambda item: isinstance(item, dict),
+            "array": lambda item: isinstance(item, list),
+            "string": lambda item: isinstance(item, str),
+            "boolean": lambda item: isinstance(item, bool),
+            "null": lambda item: item is None,
+            "number": lambda item: isinstance(item, (int, float))
+            and not isinstance(item, bool),
+            "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
+        }
+        if not any(checks.get(name, lambda _item: False)(value) for name in names):
+            raise ValueError(f"{path} has invalid type {type(value).__name__}; expected {names}")
+
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                raise ValueError(f"{path} is missing required property {key!r}")
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                raise ValueError(f"{path} has forbidden properties {extras}")
+        for key, child in value.items():
+            if key in properties:
+                _fallback_validate_json_schema(
+                    child, properties[key], path=f"{path}.{key}"
+                )
+    if isinstance(value, list):
+        if len(value) < int(schema.get("minItems", 0)):
+            raise ValueError(f"{path} has fewer than minItems")
+        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+            raise ValueError(f"{path} has more than maxItems")
+        if isinstance(schema.get("items"), dict):
+            for index, child in enumerate(value):
+                _fallback_validate_json_schema(
+                    child, schema["items"], path=f"{path}[{index}]"
+                )
+    if isinstance(value, str) and len(value) < int(schema.get("minLength", 0)):
+        raise ValueError(f"{path} is shorter than minLength")
+    if isinstance(value, str) and "pattern" in schema:
+        if re.search(str(schema["pattern"]), value) is None:
+            raise ValueError(f"{path} does not match the required pattern")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in schema and value < schema["minimum"]:
+            raise ValueError(f"{path} is below minimum")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise ValueError(f"{path} is above maximum")
+
+
 def _validate_and_write(value: Any, schema_path: Path, output_path: Path) -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     normalized, removed = _prune_disallowed_metadata(value, schema)
@@ -127,7 +215,7 @@ def _validate_and_write(value: Any, schema_path: Path, output_path: Path) -> Non
 
         jsonschema.validate(normalized, schema)
     except ImportError:
-        pass
+        _fallback_validate_json_schema(normalized, schema)
     output_path.write_text(
         json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

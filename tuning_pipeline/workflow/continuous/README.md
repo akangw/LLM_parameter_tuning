@@ -49,17 +49,18 @@ Runtime Adapter.
 
 ## Search-Space profiles
 
-New W8A8 Sessions default to `automatic_registry_v1`. It rebuilds a registry
+New W8A8 Sessions default to `automatic_registry_a8_frontier_v3`. It rebuilds a registry
 from tagged portraits, exact pinned source evidence, and the deterministic
-compatibility policy, then freezes the complete result without importing prior
-Session history. `curated_registry_v1` remains an explicit alternative that
+compatibility policy. It imports only identity-matched completed history for
+conditional failure memory and bounded Active/Reserve rotation. `curated_registry_v1` remains an explicit alternative that
 compiles the reviewed curated registry and can apply identity-compatible,
 bounded history-aware rotation. Select either only when creating a Session
 with `-SearchSpaceProfile`.
 
 The effective candidate contains:
 
-- 22 active tunable parameters in the current automatic W8A8 compilation;
+- 28 active tunable parameters and 75 auditable reserve parameters in the
+  current automatic W8A8 compilation;
 - `async_scheduling` as a coupled derived companion when the curated MTP token
   axis is enabled after B0;
 - the remaining single-value runtime-contract parameters as fixed fields;
@@ -102,8 +103,17 @@ Ascend runtime does not expose the required upstream CLI contract, so
 `enable_eplb=false` and `eplb_num_redundant_experts=0` remain fixed runtime
 fields. A candidate that attempts to enable EPLB is rejected before submission.
 
-Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The two-node
-TP16/DP2 topology remains fixed across all tuning rounds.
+Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The current default
+runtime is `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`: DP4/TP8 is frozen before Session
+creation, and the Agent receives a fixed-topology identity rather than a list
+of topology candidates. Only serving parameters consume the active budget.
+
+The completed `glm52_w8a8_a3_topology_campaign_v4`, `topology_campaign.py`,
+DP2/TP16 and the topology Campaign remain integrated but dormant behind
+explicit profiles and `topology_campaign.enabled: false`. Re-enabling the
+Campaign requires a new isolated runtime root and Session; topology histories
+are never mixed. See
+`docs/FIXED_DP2_TP16_V4.md` and `docs/TOPOLOGY_CAMPAIGN_V4.md`.
 
 The model checkpoint is on DTFS. The pinned vLLM background prefetcher divides
 files by global DP*TP rank, which leaves each physical DP node with only part
@@ -113,17 +123,20 @@ and 16 MiB blocks, waits for completion, and then launches vLLM with lazy mmap
 so the broken background prefetch cannot race model loading. Requested and
 effective strategies, files, bytes, seconds, shards/s, and GiB/s are archived.
 
-This project uses the isolated persistent lease
-`vllmtkb-418bd627-32c8cf190-glm52-a3-32npu`; it does not share the historical
-0706 lease or its process slots.
+The server-autonomous fixed route uses the isolated persistent lease
+`vllmtkb-auto-fixed-dp4tp8-v2-20260817-2x16npu`; it does not share historical
+leases or process slots.
 
 ## Benchmark modes
 
-`config.yaml` keeps two benchmark implementations:
+`config.yaml` keeps multiple benchmark implementations:
 
-- `aligned_l1` (default): the read-only central
-  `01_调优_固定矩阵-v3.yaml` / `tuning-fixed` standard, frozen JSONL datasets,
-  C1/C16/C32, four workloads, and one complete repetition per tuning round.
+- `aligned_fast_c32_v2` (default): the copied and immutable
+  `tuning-fast-c32-v2` suite, four frozen C32 workloads with complete output
+  throughput, TTFT and TPOT reporting. Its 600-second target is planning
+  metadata and never truncates the fixed suite;
+- `aligned_fast_c32_v1` (archived/opt-in): the prior fixed C32 suite;
+- `aligned_l1_v4` (opt-in): the preserved 12-case C1/C16/C32 matrix.
 The aligned runner reads the central ServeBench standard and datasets without
 modifying them. Every repetition and all generated evidence are written below:
 
@@ -136,8 +149,9 @@ modifying them. Every repetition and all generated evidence are written below:
 
 The original ServeBench reports remain unchanged. `aligned_l1_metrics.py`
 supports both the archived root-level layout and ServeBench 1.0's
-`result.json` plus `artifacts/manifest.json` layout. It validates all 12 formal
-cases, exact token shapes, zero errors/incomplete requests and cache evidence.
+`result.json` plus `artifacts/manifest.json` layout. It validates the frozen
+profile-specific formal-case count, exact token shapes, zero errors/incomplete
+requests and cache evidence.
 Because GuideLLM can close a 64-request concurrent case at 63 successful
 requests while ServeBench reports it complete, the request gate requires at
 least 98% completion (64 -> 63; 32 and 2 remain exact) and records the ratio.
@@ -148,11 +162,10 @@ Under the default strategy, candidate acceptance requires all repetitions, a
 noise-adjusted primary gain, TTFT/TPOT P50/P90 limits, and no more than 5% C32
 throughput regression in any single workload. Small-sample P99 is not used.
 
-The one-repetition policy is a continuous-search policy, not a reduced matrix:
-each round still executes the complete formal case and warmup definition. It is
-based on archived calibration evidence retained in the private Session artifacts;
-specific experimental measurements are intentionally not published in repository
-documentation. The configured gain, error, per-workload, and latency checks remain.
+The fast profile deliberately removes C1/C16 while preserving all four primary
+C32 workload shapes. Reports expose output throughput, TTFT P50/P90, TPOT P50/P90
+and benchmark wall time at the top level. The measured workload is allowed to
+finish; only the outer round safety timeout can terminate a genuinely stuck run.
 
 If a round ends without metrics, Codex performs a separate failure analysis:
 
@@ -178,7 +191,13 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-The W8A8 default strategy is `hierarchical_throughput_v1`, described below.
+The W8A8 default strategy is `hierarchical_agentic_guided_v4`. The Controller
+selects the semantic layer during ordered coverage, while the Agent owns the
+exact parameters, values, parameter count and justified companions; cross-layer
+refinement is fully Agent-owned. It makes `max_model_len` a normal Active axis,
+permits evidence-backed one-to-four parameter experiments, remembers hard failures
+as exact conditional combinations, measures the Agent's 65/25/10 exploration mix,
+and leaves the final cross-layer intent and parameter choice to the Agent.
 `best_anchor_coverage_v2` remains an integrated opt-in strategy. It anchors each
 proposal to the highest-scoring configuration that passed the deterministic
 baseline-relative throughput and latency gate. Its evidence bundle includes
@@ -193,7 +212,7 @@ step. Both strategies still run the complete aligned-L1 matrix for every candida
 the screening helpers in `hierarchical_strategy.py` are reserved for a future
 reviewed Screen-to-Full state machine and cannot accept an improvement today.
 
-`hierarchical_throughput_v1` is the default W8A8 strategy for new Sessions whose
+`hierarchical_throughput_v1` remains the legacy W8A8 strategy for Sessions whose
 primary objective is output-token throughput. It does **not** read A0 or any other Session's
 candidates or metrics. Instead, it applies a general ordered curriculum: MTP and
 its required scheduler/graph companions, expert-parallel communication, scheduler
@@ -229,7 +248,9 @@ reject overrides so an existing experiment cannot drift.
 
 Benchmark selection is an independent frozen axis. `benchmark_profiles.yaml`
 maps a stable profile name to one complete definition in `config.yaml`.
-`aligned_l1_v4` is the formal default. A new Session may use `-BenchmarkProfile`; resume and
+`aligned_fast_c32_v2` is the formal default; `aligned_fast_c32_v1` and
+`aligned_l1_v4` remain opt-in.
+A new Session may use `-BenchmarkProfile`; resume and
 retry reject Benchmark overrides so measurements from different contracts are
 never silently mixed.
 

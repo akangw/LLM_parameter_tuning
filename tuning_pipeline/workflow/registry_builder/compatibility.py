@@ -162,13 +162,35 @@ class CompatibilityValidator:
         # Before B0, source values remain useful, source-verified provisional
         # evidence. After B0 the Controller disables this merge so the frozen
         # online domain is exclusively B0-anchored.
-        source = source_values if include_source_values else []
+        source = (
+            source_values
+            if include_source_values and bool(rule.get("include_source_values", True))
+            else []
+        )
         return stable_unique([anchor, *normalized, *source])
 
     def _filter_special_domain(
         self, canonical: str, values: list[Any]
     ) -> tuple[list[Any], list[dict[str, Any]]]:
         rejected: list[dict[str, Any]] = []
+        if canonical == "speculative_config__attention_backend":
+            # The upstream enum mixes CUDA, ROCm, XPU and CPU implementations.
+            # For the pinned Ascend draft path, null keeps capability-aware
+            # auto-selection and FLASH_ATTN is the only explicit experimental
+            # selector with source evidence in the exact plugin tree.
+            supported = {None, "FLASH_ATTN"}
+            accepted = []
+            for value in values:
+                if value in supported:
+                    accepted.append(value)
+                else:
+                    rejected.append(
+                        {
+                            "value": value,
+                            "reason": "draft_attention_backend_not_supported_on_pinned_ascend",
+                        }
+                    )
+            return stable_unique(accepted), rejected
         if canonical != "speculative_config__method":
             return values, rejected
         normalized: list[Any] = []

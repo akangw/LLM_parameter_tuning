@@ -138,7 +138,7 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
 
     def test_final_tunable_pool_excludes_known_non_executable_axes(self) -> None:
         summary = self.search_result["summary"]
-        self.assertEqual(102, summary["eligible_tunable_parameters"])
+        self.assertEqual(103, summary["eligible_tunable_parameters"])
         self.assertEqual(22, summary["active_parameters"])
         self.assertEqual(
             summary["eligible_tunable_parameters"] - summary["active_parameters"],
@@ -199,6 +199,7 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
     def test_automatic_active_limits_are_scenario_compatible(self) -> None:
         expected = {
             "max_num_seqs",
+            "max_model_len",
             "max_num_batched_tokens",
             "gpu_memory_utilization",
             "compilation_mode",
@@ -216,7 +217,6 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
             "speculative_config__enforce_eager",
             "enable_prefix_caching",
             "flashcomm1",
-            "speculative_config__disable_padded_drafter_batch",
             "additional_config__ascend_compilation_config__enable_npugraph_ex",
             "additional_config__ascend_compilation_config__enable_static_kernel",
             "disable_hybrid_kv_cache_manager",
@@ -326,11 +326,11 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
     def test_numeric_domains_are_parameter_specific_and_b0_anchored(self) -> None:
         validator = CompatibilityValidator(scenario=self.pipeline.scenario)
         self.assertEqual(
-            [256, 32, 64, 128, 192],
+            [256, 32, 64, 128, 192, 384, 512],
             validator.numeric_domain("max_num_seqs", 256, [32, 128, 256]),
         )
         self.assertEqual(
-            [0.92, 0.85, 0.9, 0.93, 0.95],
+            [0.92, 0.85, 0.9, 0.93, 0.95, 0.97],
             validator.numeric_domain("gpu_memory_utilization", 0.92, [0.93]),
         )
 

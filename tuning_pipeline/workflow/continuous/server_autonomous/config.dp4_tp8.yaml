@@ -1,0 +1,41 @@
+base_config: config.yaml
+
+# Independent fixed-topology challenger. This does not enable the outer
+# topology Campaign and cannot read or resume the DP2/TP16 runtime state.
+runtime:
+  profile: glm52_w8a8_a3_dp4_tp8_a8_fixed_v1
+  profiles_file: workflow/continuous/runtime_profiles.yaml
+
+topology_campaign:
+  enabled: false
+
+search_space:
+  profile: automatic_registry_a8_frontier_v3
+  history_source: latest_completed_session
+
+strategy:
+  profile: hierarchical_agentic_frontier_v3
+
+# The first formal DP4/TP8 Session reproduced the pinned image's exact
+# FusedMoE split/shared-expert consistency failure twice.  Preserve that
+# evidence as a topology/image-specific recovery anchor instead of spending a
+# third model-load cycle rediscovering it.  This remains outside Active Search.
+failure_recovery:
+  recovery_parameters:
+    additional_config__multistream_overlap_shared_expert:
+      initial_value: false
+
+initial_baseline:
+  label: a8_dp4_tp8_fixed_v1
+  launch_profile: explicit_candidate
+  definition: workflow/baselines/a8_glm52_w8a8_dp4_tp8_fixed_v1.yaml
+
+lab:
+  lease_name: vllmtkb-auto-fixed-dp4tp8-v1-20260814-2x16npu
+  output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-server-autonomous-418bd627-32c8cf190/workflow/auto/lab_runs_fixed_dp4_tp8_v1
+  blocked_lease_names:
+    - vllmtkb-auto-fixed-dp2tp16-v4-20260814-2x16npu
+    - vllmtkb-auto-topology-v4-20260814-2x16npu
+    - vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu
+    - vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+    - vllmtkb-senior-migrated-w8a8-dp2tp16-20260806

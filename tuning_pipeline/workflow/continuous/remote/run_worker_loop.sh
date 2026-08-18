@@ -9,7 +9,9 @@ exec > >(tee -a "${RUN_DIR}/worker.log") 2>&1
 echo "EXPERIMENT_RUN_ID=${EXPERIMENT_RUN_ID}"
 echo "ROLE=worker NODE_IP=${NODE_IP} MASTER_IP=${MASTER_IP} NIC_NAME=${NIC_NAME}"
 prefetch_checkpoints_on_node
-vllm serve "${MODEL_PATH}" --headless --data-parallel-start-rank 1 "${VLLM_COMMON_ARGS[@]}" &
+vllm serve "${MODEL_PATH}" --headless \
+  --data-parallel-start-rank "${WORKER_DATA_PARALLEL_START_RANK}" \
+  "${VLLM_COMMON_ARGS[@]}" &
 VLLM_PID=$!
 
 stop_worker() {

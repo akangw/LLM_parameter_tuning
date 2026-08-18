@@ -1,0 +1,77 @@
+规范版本: servebench-suite-v1
+测试:
+  名称: 调优快速筛选矩阵
+  标识: tuning-fast-c32-v2
+  版本: v2
+  状态: 正式
+  层级: 调优
+  说明: 保留四类冻结负载的C32主目标和完整64请求样本，移除C1/C16重复覆盖，并与原始冻结数据的阶段标识对齐。
+  级别: L1
+请求:
+  接口: /v1/completions
+  温度: 0
+  TopP: 1
+  忽略结束符: true
+  失败重试次数: 0
+  随机种子: 42
+工作负载:
+- 名称: 常规对话
+  标识: chat-1024-256
+  用途: [常规服务, 调度与吞吐]
+  数据:
+    类型: 冻结JSONL
+    输入Token数: 1024
+    输出Token数: 256
+    清单: datasets/tuning-structured-chat-1024-256-v1/manifest.json
+  提示词模式: 唯一提示词
+- 名称: 长输入问答
+  标识: prefill-8192-512
+  用途: [RAG, Prefill压力]
+  数据:
+    类型: 冻结JSONL
+    输入Token数: 8192
+    输出Token数: 512
+    清单: datasets/tuning-structured-prefill-8192-512-v1/manifest.json
+  提示词模式: 唯一提示词
+- 名称: 均衡输入输出
+  标识: balanced-1024-1024
+  用途: [均衡Prefill与Decode, MTP收益]
+  数据:
+    类型: 冻结JSONL
+    输入Token数: 1024
+    输出Token数: 1024
+    清单: datasets/tuning-structured-balanced-1024-1024-v1/manifest.json
+  提示词模式: 唯一提示词
+- 名称: 长内容生成
+  标识: decode-256-2048
+  用途: [代码与推理输出, Decode压力, MTP收益]
+  数据:
+    类型: 冻结JSONL
+    输入Token数: 256
+    输出Token数: 2048
+    清单: datasets/tuning-structured-decode-256-2048-v1/manifest.json
+  提示词模式: 唯一提示词
+阶段:
+- 名称: C32快速主目标
+  标识: core-fixed-matrix
+  类型: 固定并发
+  工作负载:
+  - chat-1024-256
+  - prefill-8192-512
+  - balanced-1024-1024
+  - decode-256-2048
+  缓存状态: 不适用
+  Case角色: 正式测量
+  最大错误数: 3
+  测试点:
+  - 并发: 32
+    正式请求数: 64
+    预热请求数: 4
+    时间上限秒: 300
+公平性:
+- 四类工作负载、冻结请求、Tokenizer、随机种子、温度和C32正式请求数与结构化定长v4保持一致。
+- 快速版只删除不参与主评分的C1/C16层级，不缩减每类C32的64个正式请求。
+- 阶段标识固定为core-fixed-matrix，必须在启动模型前验证所有C32预热与正式切片。
+- 每个候选必须零错误、零未完成请求并通过精确Token形状检查。
+- 输出报告必须包含每负载及汇总的输出吞吐、TTFT P50/P90和TPOT P50/P90。
+- 单次完整测评受600秒硬预算约束；超时不产生可接受分数。

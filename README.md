@@ -6,13 +6,15 @@
 
 面向 GLM-5.2、Atlas A3 和 vLLM Ascend 的参数知识构建与连续自动调优项目。项目从 `vllmTKB0706` 的在线闭环迁移而来，但使用独立源码版本、知识产物、Controller 状态、远端目录和 ktp-lab Lease。
 
+新 Session 的唯一默认矩阵见 [`docs/CURRENT_DEFAULTS.md`](docs/CURRENT_DEFAULTS.md)；运行中 Session 始终以自身冻结配置为准。
+
 ## 当前状态
 
 - vLLM 与 vllm-ascend 源码身份已固定，具体 commit 由版本清单和镜像身份文件校验。
 - 参数画像、Tags、场景召回、人工注册表和自动注册表知识产物均已建立。
 - 新 Session 会重新编译并冻结自己的 Search Limits；在线权威结果只保存在该 Session 的 `00_search_space/`。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
-- `B0-deployable` 是正式默认基线定义；必要的部署兼容覆盖由版本化基线文件记录，其余参数继续从目标源码解析。
+- 当前正式基线是 DP4/TP8 的 A8 派生固定基线 `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml`；`B0-deployable` 仅保留为官方源码默认对照与其他 Runtime Adapter 的显式入口。
 
 README 不公开具体实验分数、吞吐、延迟、逐轮候选或当前 Session
 状态；这些数据只保存在对应 Session 的受管产物中，并通过状态和导出命令按需查看。
@@ -81,11 +83,11 @@ cd .\tuning_pipeline
 python -m workflow.registry_builder.full_pipeline --dry-run
 ```
 
-它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_v1` 已完整接入 Controller，并作为 W8A8 统一默认；生成的注册表、兼容策略、注入契约和 Search Limits 会冻结到 Session。人工审计的 23 项 `curated_registry_v1` 保留为显式可选路线。独立命令仍只写指定审计目录、不提交服务器任务。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_a8_frontier_v3` 现为 W8A8 统一默认（28 Active + 75 Reserve）；V2、原 `automatic_registry_v1` 和人工审计的 `curated_registry_v1` 保留为显式可选路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
 
 ### 更换 Ascend 模型、镜像、量化或拓扑
 
-模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、B0、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包 `glm52_w8a8_a3_dp2_tp16` 完整保留现有 GLM-5.2 W8A8、A3、两节点 × 16 NPU、DP2/TP16 主流程。
+模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包是 `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8。
 
 新组合先生成 `planned` 适配包：
 
@@ -118,7 +120,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
-本地与服务器自治在线闭环统一默认使用 `automatic_registry_v1 + codex + hierarchical_throughput_v1 + aligned_l1_v4`，且 `history_source: none`，不会把其他 Session 的候选或指标静默带入新实验。需要复用 B0 时必须显式导入并通过身份校验。新建 Session 时仍可显式选择 Search-Space、策略、Provider 或 Benchmark：
+本地与服务器自治当前默认运行时统一为 `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A8 DP4/TP8 fixed-v3 baseline + automatic_registry_a8_frontier_v3 + hierarchical_agentic_guided_v4 + aligned_fast_c32_v2`。DP2/TP16、旧 frontier-v3 和拓扑 Campaign 均保留为显式选择，不介入默认主流程，也不与 DP4 Session 共用历史。历史说明见 [`FIXED_DP2_TP16_V4.md`](docs/FIXED_DP2_TP16_V4.md)、[`FIXED_DP4_TP8_V1.md`](docs/FIXED_DP4_TP8_V1.md)；未来恢复拓扑搜索见 [`TOPOLOGY_CAMPAIGN_V4.md`](docs/TOPOLOGY_CAMPAIGN_V4.md)。
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -132,9 +134,9 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 | 接口 | 启动参数 | 当前选项 | 定义位置 |
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
-| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_v1`（默认）、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | `hierarchical_throughput_v1`（默认）、`best_anchor_coverage_v2`、`best_anchor_coverage_v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
-| Benchmark | `-BenchmarkProfile` | `aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_a8_frontier_v3`（默认）、`automatic_registry_a8_agentic_v2`、`automatic_registry_v1`、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | `hierarchical_agentic_guided_v4`（默认）、`hierarchical_agentic_frontier_v3`、`hierarchical_agentic_topology_v2`、`hierarchical_throughput_v1`、`best_anchor_coverage_v2/v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | `aligned_fast_c32_v2`（默认）、`aligned_fast_c32_v1`、`aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是
 Runtime Adapter 的执行后端，不改变上述四个调优接口。
@@ -219,7 +221,7 @@ B0/显式导入基线
 # Lease 不存在时仅执行一次
 .\scripts\prepare-remote.ps1
 
-# 从 B0 启动自动闭环
+# 从当前 Runtime Adapter 冻结的 A8 DP4/TP8 基线启动自动闭环
 .\一键启动.ps1 -NewSession
 ```
 
@@ -374,7 +376,7 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
   -SearchSpaceProfile curated_registry_v1
 ```
 
-当前配置的新 Session 会从 `round_000_b0_deployable` 开始：它保留官方源码默认启动，仅显式设置 `--max-model-len 64000` 以满足固定拓扑的 KV Cache 约束。成功完成并从日志回填实际默认值后，Controller 自动进入 Agent 选参和后续实验闭环。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
+当前配置的新 Session 从 `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml` 冻结的显式基线开始；基线通过相同 Benchmark 门禁后，Controller 自动进入 Agent 选参和后续实验闭环。`round_000_b0_deployable` 只属于显式选择旧 B0 Runtime 的 Session。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
 
 如果本地已经存在旧 Session，先用相同选择执行新 Session 预检，避免普通
 `-CheckOnly` 自动检查旧 Session：

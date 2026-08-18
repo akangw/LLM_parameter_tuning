@@ -1,5 +1,11 @@
 # 架构与数据流
 
+> 2026-08-18 当前默认为固定 DP4/TP8、A8 DP4 派生基线、28/75 自动空间、
+> guided-v4 Agent 自主选参与 fast-C32-v2 固定基准。Topology Campaign V4 已实现但
+> 不介入当前主流程。本文后续出现的 B0、DP2、22/80、
+> `hierarchical_throughput_v1` 或 `aligned_l1_v4` 默认描述属于保留的旧路线；
+> 当前权威设计见 [A8_FRONTIER_AGENTIC_V3.md](A8_FRONTIER_AGENTIC_V3.md)。
+
 ## 系统边界
 
 项目分为离线知识构建和在线连续调优两条链路。本地 Windows 机器是控制面，`hetao-npu` 是执行入口，ktp-lab 两节点 Lease 是计算面。
@@ -36,10 +42,11 @@ flowchart LR
 
 ```text
 340 ParameterYAML
-→ 109 场景召回
+→ 225 场景召回
 → 自动 registry.generated.yaml
-→ 102 Tunable：22 Active + 80 Reserve
-→ 40 Fixed + 0 Compiler Rejected
+→ 142 自动 Registry 参数
+→ 103 Tunable：28 Active + 75 Reserve
+→ 39 Fixed + 0 Compiler Rejected
 ```
 
 新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前自动路径的
@@ -47,6 +54,7 @@ flowchart LR
 
 ```text
 max_num_seqs
+max_model_len
 max_num_batched_tokens
 gpu_memory_utilization
 compilation_mode
@@ -55,24 +63,29 @@ async_scheduling
 enable_expert_parallel
 speculative_config__method
 long_prefill_token_threshold
+mlapo
 fused_mc2
 enable_balance_scheduling
 enable_reduce_sample
 speculative_config__enforce_eager
+speculative_config__attention_backend
+cudagraph_capture_sizes
+VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+TASK_QUEUE_ENABLE
+additional_config__ascend_compilation_config__fuse_allreduce_rms
+additional_config__prefill_comm_compute_overlap
+additional_config__ascend_compilation_config__enable_static_kernel
+additional_config__ascend_compilation_config__enable_npugraph_ex
+additional_config__ascend_compilation_config__fuse_norm_quant
 compilation_enable_sp
-max_cudagraph_capture_size
-mlapo
 enable_prefix_caching
 flashcomm1
-speculative_config__disable_padded_drafter_batch
-additional_config__ascend_compilation_config__enable_npugraph_ex
-additional_config__ascend_compilation_config__enable_static_kernel
 disable_hybrid_kv_cache_manager
 ```
 
-`automatic_registry_v1` 是本地和服务器自治的统一默认，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。两条路径在新 Session 创建时选择并冻结。当前人工路径为 15 Active，自动路径为 22 Active。人工路径在 MTP tokens 从 0 变为正数时，把 `async_scheduling=true` 作为派生配套变化，由 Controller 强制校验，不额外计作独立调参轴。
+`automatic_registry_a8_frontier_v3` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码和确定性兼容策略生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 28 Active + 75 Reserve；历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界最多轮换 3 个 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
 
-自动替代路径当前 Controller 编译结果为：102 Tunable（22 Active + 80 Reserve）→ 40 Fixed + 0 Compiler Rejected。
+自动替代路径当前 Controller 编译结果为：103 Tunable（28 Active + 75 Reserve）→ 39 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
 
 历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 
@@ -80,7 +93,7 @@ disable_hybrid_kv_cache_manager
 
 ## 在线状态机
 
-- B0 用官方源码默认值建立新 Session 基线；A0 作为历史专家配置基线保留。
+- 当前默认从 A8 DP4/TP8 fixed-v3 建立新 Session 基线；B0 作为官方源码默认对照保留。
 - Codex 从最佳已验收锚点出发提出候选。
 - 第一层使用画像和关系证据判断候选是否合理。
 - 第二层由 Python 强制执行白名单、参数组合、网格预算、重复候选和历史隔离。

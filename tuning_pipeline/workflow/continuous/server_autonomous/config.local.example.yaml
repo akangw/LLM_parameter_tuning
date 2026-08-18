@@ -12,7 +12,11 @@ autonomous:
 # executor identity all match the target environment.  Otherwise create and
 # validate a new Runtime Adapter before starting a Session.
 runtime:
-  profile: glm52_w8a8_a3_dp2_tp16
+  profile: glm52_w8a8_a3_a8_frontier_v3
+
+# Keep topology selection dormant while validating the parameter-only chain.
+topology_campaign:
+  enabled: false
 
 deployment:
   model_path: /CHANGE_ME/models/GLM-5.2-w8a8
@@ -35,6 +39,6 @@ benchmark:
   profile: vllm_bench_public_v1
 
 lab:
-  lease_name: CHANGE_ME_UNIQUE_VERSIONED_LEASE
-  output_root: /CHANGE_ME/writable/vllmtkb-server-autonomous/workflow/auto/lab_runs
+  lease_name: CHANGE_ME_FIXED_DP2_TP16_VERSIONED_LEASE
+  output_root: /CHANGE_ME/writable/vllmtkb-server-autonomous/workflow/auto/lab_runs_fixed_dp2_tp16_v4
   blocked_lease_names: []

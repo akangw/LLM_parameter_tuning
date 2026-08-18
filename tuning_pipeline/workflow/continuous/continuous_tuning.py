@@ -41,8 +41,13 @@ try:
     )
     from .search_space_adapter import resolve_search_limits, write_session_search_space
     from .model_loading_profile import resolve_model_loading_profile
-    from .runtime_profile import resolve_runtime_profile, validate_runtime_selections
+    from .runtime_profile import (
+        apply_topology_baseline_binding,
+        resolve_runtime_profile,
+        validate_runtime_selections,
+    )
     from .topology_profile import resolve_topology_profile
+    from .topology_advisor import build_plan as build_topology_plan, load_document as load_topology_document
     from .agent_provider import (
         resolve_agent_profile,
         run_structured_agent,
@@ -56,8 +61,13 @@ except ImportError:  # Direct script execution.
     )
     from search_space_adapter import resolve_search_limits, write_session_search_space
     from model_loading_profile import resolve_model_loading_profile
-    from runtime_profile import resolve_runtime_profile, validate_runtime_selections
+    from runtime_profile import (
+        apply_topology_baseline_binding,
+        resolve_runtime_profile,
+        validate_runtime_selections,
+    )
     from topology_profile import resolve_topology_profile
+    from topology_advisor import build_plan as build_topology_plan, load_document as load_topology_document
     from agent_provider import (
         resolve_agent_profile,
         run_structured_agent,
@@ -155,12 +165,32 @@ class LeaseNotReadyError(RuntimeError):
     """The persistent Lease may recover without changing experiment state."""
 
 
+def session_budget_pause_status(
+    candidate_index: int,
+    pause_after_candidate_index: int | None,
+    *,
+    topology_feasibility_only: bool,
+) -> str | None:
+    """Return the terminal slice status only after the requested metrics index."""
+    if (
+        pause_after_candidate_index is None
+        or candidate_index < pause_after_candidate_index
+    ):
+        return None
+    return (
+        "topology_feasibility_passed"
+        if topology_feasibility_only
+        else "budget_paused"
+    )
+
+
 MANUAL_INTERVENTION_SIGNATURES = re.compile(
     r"image.*(?:digest|identity|mismatch|not approved)|(?:digest|commit).*mismatch|"
-    r"permission denied|access denied|no such file or directory|missing (?:model|image|"
+    r"permission denied|access denied|no such file or directory[^\n]{0,200}"
+    r"(?:model|image|checkpoint|tokenizer)|missing (?:model|image|"
     r"credential|api key|secret)|invalid (?:credential|api key)|authentication failed|"
-    r"configuration.*(?:invalid|mismatch)|state.*(?:inconsistent|corrupt)|"
-    r"topology.*mismatch|model path",
+    r"(?:frozen|immutable) configuration.*mismatch|state.*(?:inconsistent|corrupt)|"
+    r"topology.*mismatch|model path.*(?:missing|unavailable|not found)",
     re.IGNORECASE,
 )
 
@@ -184,6 +214,19 @@ def controller_exception_is_recoverable(exc: BaseException) -> bool:
     if not isinstance(exc, RuntimeError):
         return False
     text = str(exc)
+    # ktp-lab ranks share the run directory.  Its atomic JSON writer currently
+    # derives the temporary suffix from the container-local PID, so two ranks
+    # can occasionally choose the same name (for example request.json.tmp-959)
+    # and race on the final rename.  This is a transient control-plane write
+    # collision, not a missing model/artifact, even when the workspace path
+    # itself contains the word ``model`` (for example /mnt/host-model/...).
+    if re.search(
+        r"FileNotFoundError:.*\.json\.tmp-[^'\"\s]+['\"]?\s*->\s*"
+        r"['\"][^'\"\n]+\.json",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        return True
     if MANUAL_INTERVENTION_SIGNATURES.search(text):
         return False
     return bool(
@@ -230,13 +273,30 @@ B0_LAUNCH_PROFILE = "official_source_defaults_deployable"
 # cannot propose an action that the controller later rejects because the two
 # layers silently drifted apart.
 FAILURE_ADJUSTABLE_CLASSIFICATIONS = frozenset(
-    {"parameter_invalid", "parameter_oom", "model_or_runtime_bug"}
+    {
+        "parameter_invalid",
+        "parameter_oom",
+        "model_or_runtime_bug",
+        "network_or_hccl",
+        "transient_infrastructure",
+        "image_or_dependency",
+        "unknown",
+    }
 )
 FAILURE_RETRYABLE_CLASSIFICATIONS = frozenset(
     {"transient_infrastructure", "network_or_hccl", "benchmark_failure"}
 )
 FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS = frozenset(
-    {"image_or_dependency", "model_or_runtime_bug", "unknown"}
+    {
+        "parameter_invalid",
+        "parameter_oom",
+        "transient_infrastructure",
+        "network_or_hccl",
+        "image_or_dependency",
+        "model_or_runtime_bug",
+        "benchmark_failure",
+        "unknown",
+    }
 )
 FAILURE_ALL_CLASSIFICATIONS = frozenset(
     {
@@ -528,6 +588,8 @@ class Controller:
         dry_run: bool = False,
         offline_dry_run: bool = False,
         search_space_result: dict[str, Any] | None = None,
+        pause_after_candidate_index: int | None = None,
+        topology_feasibility_only: bool = False,
     ):
         runtime_config, self.runtime_identity = resolve_runtime_profile(
             config, KB_ROOT, apply_bindings=False
@@ -537,6 +599,77 @@ class Controller:
         )
         self.config, self.topology = resolve_topology_profile(loading_config, KB_ROOT)
         validate_runtime_selections(self.config)
+        topology_setting = self.config.get("topology", {})
+        topology_profiles_value = (
+            topology_setting.get("profiles_file")
+            or "workflow/continuous/topology_profiles.yaml"
+        )
+        topology_profiles_path = Path(str(topology_profiles_value))
+        if not topology_profiles_path.is_absolute():
+            topology_profiles_path = KB_ROOT / topology_profiles_path
+        runtime_model = self.runtime_identity.get("model_contract", {})
+        model_contract_name = (
+            f"{runtime_model.get('variant')}-{runtime_model.get('weight_format')}"
+        )
+        topology_document = load_topology_document(topology_profiles_path)
+        selection_defaults = topology_document.get("selection", {})
+        self.topology_plan = build_topology_plan(
+            topology_document,
+            model_contract=model_contract_name,
+            available_nodes=int(
+                selection_defaults.get("available_nodes", self.topology["nodes"])
+            ),
+            npu_per_node=int(
+                selection_defaults.get("npu_per_node", self.topology["npu_per_node"])
+            ),
+        )
+        campaign_settings = self.config.get("topology_campaign", {})
+        self.topology_campaign_enabled = bool(
+            isinstance(campaign_settings, dict)
+            and campaign_settings.get("enabled") is True
+        )
+        self.topology_fixed_mode = bool(
+            isinstance(campaign_settings, dict)
+            and campaign_settings.get("enabled") is False
+        )
+        if self.topology_fixed_mode:
+            selected_profile = str(self.config.get("topology", {}).get("profile", ""))
+            selected_candidate = next(
+                (
+                    copy.deepcopy(item)
+                    for item in self.topology_plan.get("candidates", [])
+                    if str(item.get("profile")) == selected_profile
+                ),
+                None,
+            )
+            if selected_candidate is None:
+                raise ValueError(
+                    f"Fixed topology profile is absent from the topology plan: {selected_profile!r}"
+                )
+            session_baseline = self.config.get("initial_baseline", {})
+            if isinstance(session_baseline, dict):
+                selected_candidate["session_baseline_label"] = session_baseline.get(
+                    "label"
+                )
+                selected_candidate["session_baseline_definition"] = (
+                    session_baseline.get("definition")
+                )
+            self.topology_plan = {
+                "schema_version": "vllmtkb-topology-plan/v1",
+                "stage": "fixed_topology_session",
+                "decision_owner": "operator_policy",
+                "controller_role": "identity_freeze_and_metrics_gate",
+                "requires_new_session_per_profile": True,
+                "selected_profile": selected_profile,
+                "selection_reason": (
+                    f"{selected_profile} is operator-frozen for parameter-only "
+                    "chain validation; "
+                    "the dormant outer Campaign cannot allocate another topology."
+                ),
+                "candidates": [selected_candidate],
+                "eligible_profiles": [selected_profile],
+            }
+        self.config["topology_plan"] = copy.deepcopy(self.topology_plan)
         config = self.config
         effective_runtime = {
             "topology_profile": self.config.get("topology", {}).get("profile"),
@@ -558,9 +691,20 @@ class Controller:
         self.dry_run = dry_run
         self.offline_dry_run = offline_dry_run
         self.search_space_result = search_space_result
+        self.pause_after_candidate_index = pause_after_candidate_index
+        self.topology_feasibility_only = topology_feasibility_only
+        if pause_after_candidate_index is not None and pause_after_candidate_index < 0:
+            raise ValueError("pause_after_candidate_index must be >= 0")
+        if topology_feasibility_only and pause_after_candidate_index != 0:
+            raise ValueError(
+                "topology_feasibility_only requires pause_after_candidate_index=0"
+            )
         if set(config["baseline"]) != set(config["search_limits"]):
             raise ValueError("baseline and search_limits parameter schemas differ")
         self.candidate_schema = set(config["baseline"])
+        self.conditional_search_exclusions = copy.deepcopy(
+            config.get("conditional_search_exclusions", [])
+        )
         automatic_validation = config.get("automatic_registry_validation")
         self.automatic_registry_validation = (
             copy.deepcopy(automatic_validation)
@@ -693,6 +837,9 @@ class Controller:
         if not 1 <= self.max_controller_recovery_attempts <= 10:
             raise ValueError("max_controller_recovery_attempts must be between 1 and 10")
         recovery_policy = dict(config.get("failure_recovery", {}))
+        self.hard_terminal_only = bool(
+            recovery_policy.get("hard_terminal_only", False)
+        )
         self.max_same_candidate_retries = int(
             recovery_policy.get("same_candidate_retries", 4)
         )
@@ -705,6 +852,60 @@ class Controller:
         self.max_total_failure_recovery_rounds = int(
             recovery_policy.get("total_recovery_rounds", 6)
         )
+        self.max_recovery_parameter_changes = int(
+            recovery_policy.get("max_recovery_parameter_changes", 2)
+        )
+        if not 1 <= self.max_recovery_parameter_changes <= 4:
+            raise ValueError(
+                "failure_recovery.max_recovery_parameter_changes must be between 1 and 4"
+            )
+        raw_recovery_parameters = recovery_policy.get("recovery_parameters", {})
+        if not isinstance(raw_recovery_parameters, dict):
+            raise ValueError("failure_recovery.recovery_parameters must be a mapping")
+        self.recovery_parameter_registry: dict[str, dict[str, Any]] = {}
+        self.runtime_recovery_values: dict[str, Any] = {}
+        self.recovery_runtime_injections: dict[str, dict[str, Any]] = {}
+        for raw_name, raw_definition in raw_recovery_parameters.items():
+            name = str(raw_name)
+            if not isinstance(raw_definition, dict):
+                raise ValueError(f"Recovery parameter {name!r} must be a mapping")
+            allowed_values = copy.deepcopy(raw_definition.get("allowed_values", []))
+            if not isinstance(allowed_values, list) or not allowed_values:
+                raise ValueError(
+                    f"Recovery parameter {name!r} requires non-empty allowed_values"
+                )
+            initial_value = copy.deepcopy(raw_definition.get("initial_value"))
+            if initial_value not in allowed_values:
+                raise ValueError(
+                    f"Recovery parameter {name!r} initial_value is outside allowed_values"
+                )
+            injection = copy.deepcopy(raw_definition.get("injection"))
+            if not isinstance(injection, dict) or injection.get("kind") != "json_path":
+                raise ValueError(
+                    f"Recovery parameter {name!r} requires a json_path injection"
+                )
+            path = injection.get("path")
+            if not isinstance(path, list) or not path or not all(
+                isinstance(part, str) and part for part in path
+            ):
+                raise ValueError(
+                    f"Recovery parameter {name!r} has an invalid injection path"
+                )
+            self.recovery_parameter_registry[name] = {
+                "allowed_values": allowed_values,
+                "initial_value": initial_value,
+                "injection": injection,
+            }
+            self.runtime_recovery_values[name] = copy.deepcopy(initial_value)
+            self.recovery_runtime_injections[name] = injection
+        overlap = set(self.generic_runtime_injections) & set(
+            self.recovery_runtime_injections
+        )
+        if overlap:
+            raise ValueError(
+                "Recovery-only parameters must not also be Active Search parameters: "
+                f"{sorted(overlap)}"
+            )
         for name, value, upper in (
             ("same_candidate_retries", self.max_same_candidate_retries, 8),
             ("agent_diagnostic_retries", self.max_agent_diagnostic_retries, 3),
@@ -950,6 +1151,14 @@ class Controller:
                 retry_limit = int(aligned.get(field, 2))
                 if not 0 <= retry_limit <= 3:
                     raise ValueError(f"aligned L1 {field} must be between 0 and 3")
+            expected_formal_cases = int(aligned.get("expected_formal_cases", 12))
+            if expected_formal_cases < 1:
+                raise ValueError("aligned L1 expected_formal_cases must be positive")
+            target_seconds = int(aligned.get("target_benchmark_seconds", 600))
+            if not 60 <= target_seconds <= 43200:
+                raise ValueError(
+                    "aligned L1 target_benchmark_seconds must be 60..43200"
+                )
         elif self.benchmark_mode == "vllm_bench_serve":
             public = self.benchmark[self.benchmark_mode]
             required = ("input_tokens", "output_tokens", "num_prompts", "request_rate")
@@ -1305,9 +1514,19 @@ class Controller:
             )
         for filename in ("agent_decision.schema.json", "failure_decision.schema.json"):
             schema = json.loads((HERE / filename).read_text(encoding="utf-8"))
+            schema["properties"]["changes"]["maxItems"] = (
+                self.max_parameters_per_round
+            )
             candidate_schema = schema["properties"]["candidate"]
             candidate_schema["required"] = list(self.config["search_limits"])
             candidate_schema["properties"] = candidate_properties
+            if filename == "failure_decision.schema.json":
+                recovery_schema = schema["properties"]["recovery_changes"]
+                recovery_schema["maxItems"] = self.max_recovery_parameter_changes
+                recovery_schema["items"]["properties"]["parameter"] = {
+                    "type": "string",
+                    "enum": sorted(self.recovery_parameter_registry),
+                }
             save_json(schema_dir / filename, schema)
 
     def _sidecar_project_path(self, key: str, default: str) -> Path:
@@ -1477,6 +1696,24 @@ class Controller:
     ) -> None:
         if not self.portrait_retriever or not changes:
             return
+        result = self.validate_selected_portrait_evidence(changes)
+        save_yaml(
+            round_dir / "06_agent_analysis" / f"{prefix}_parameter_portraits.yaml",
+            result,
+        )
+
+    def validate_selected_portrait_evidence(
+        self,
+        changes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Validate evidence before accepting an Agent candidate.
+
+        Keeping this check inside candidate reselection prevents a valid round
+        from crashing the whole controller merely because one proposed axis has
+        incomplete portrait metadata.
+        """
+        if not self.portrait_retriever or not changes:
+            return {}
         names = [
             str(item["parameter"]).removeprefix("--").replace("-", "_")
             for item in changes
@@ -1514,10 +1751,7 @@ class Controller:
                 "No parameter portrait evidence for changed parameters: "
                 f"{unresolved_changed}"
             )
-        save_yaml(
-            round_dir / "06_agent_analysis" / f"{prefix}_parameter_portraits.yaml",
-            result,
-        )
+        return result
 
     def refresh_runtime_rules(self, session_dir: Path, round_dir: Path) -> None:
         if not self.runtime_rule_store:
@@ -1550,25 +1784,61 @@ class Controller:
         """
         frozen = self.decision_schema_path(session_dir, "failure_decision.schema.json")
         frozen_schema = json.loads(frozen.read_text(encoding="utf-8"))
-        actions = set(frozen_schema["properties"]["action"]["enum"])
-        if "diagnostic_retry_same" in actions:
-            return frozen
         current_schema = json.loads(
             (HERE / "failure_decision.schema.json").read_text(encoding="utf-8")
         )
         current_schema["properties"]["candidate"] = frozen_schema["properties"][
             "candidate"
         ]
+        current_schema["properties"]["changes"]["maxItems"] = (
+            self.max_parameters_per_round
+        )
+        recovery_schema = current_schema["properties"]["recovery_changes"]
+        recovery_schema["maxItems"] = self.max_recovery_parameter_changes
+        recovery_schema["items"]["properties"]["parameter"] = {
+            "type": "string",
+            "enum": sorted(self.recovery_parameter_registry),
+        }
         migrated = frozen.with_name("failure_decision.runtime.schema.json")
         save_json(migrated, current_schema)
         save_json(
             migrated.with_name("failure_schema_migration.audit.json"),
             {
                 "migrated_at": now(),
-                "policy": "recovery_actions_only_v1",
+                "policy": "agent_owned_failure_recovery_v3",
                 "source": str(frozen),
                 "candidate_schema_preserved": True,
-                "added_actions": ["diagnostic_retry_same"],
+                "action_contract_source": "current_controller_with_frozen_candidate_schema",
+                "added_recovery_parameters": sorted(
+                    self.recovery_parameter_registry
+                ),
+            },
+        )
+        return migrated
+
+    def agent_schema_path(self, session_dir: Path) -> Path:
+        """Apply current Agent change budgets without widening frozen values."""
+        frozen = self.decision_schema_path(session_dir, "agent_decision.schema.json")
+        frozen_schema = json.loads(frozen.read_text(encoding="utf-8"))
+        current_schema = json.loads(
+            (HERE / "agent_decision.schema.json").read_text(encoding="utf-8")
+        )
+        current_schema["properties"]["candidate"] = frozen_schema["properties"][
+            "candidate"
+        ]
+        current_schema["properties"]["changes"]["maxItems"] = (
+            self.max_parameters_per_round
+        )
+        migrated = frozen.with_name("agent_decision.runtime.schema.json")
+        save_json(migrated, current_schema)
+        save_json(
+            migrated.with_name("agent_schema_migration.audit.json"),
+            {
+                "migrated_at": now(),
+                "policy": "agent_owned_selection_contract_v2",
+                "source": str(frozen),
+                "candidate_schema_preserved": True,
+                "max_parameters_per_round": self.max_parameters_per_round,
             },
         )
         return migrated
@@ -1656,7 +1926,7 @@ class Controller:
         temporary = destination.with_name(
             f"{destination.name}.download-{os.getpid()}-{time.time_ns()}"
         )
-        result = run_process(
+        run_process(
             ["scp", f"{self.remote_host}:{source}", str(temporary)],
             timeout=120,
         )
@@ -1792,9 +2062,17 @@ class Controller:
             else:
                 text = str(value)
             lines.append(f"{env_name}={shlex.quote(text)}")
-        if self.generic_runtime_injections:
+        runtime_injections = {
+            **self.generic_runtime_injections,
+            **self.recovery_runtime_injections,
+        }
+        if runtime_injections:
+            runtime_values = {
+                **candidate,
+                **self.runtime_recovery_values,
+            }
             payload = compile_generic_runtime_payload(
-                candidate, self.generic_runtime_injections
+                runtime_values, runtime_injections
             )
             encoded = base64.b64encode(
                 json.dumps(
@@ -1805,6 +2083,17 @@ class Controller:
             lines.append("RUNTIME_INJECTION_PAYLOAD_B64=" + shlex.quote(encoded))
         else:
             lines.append("RUNTIME_INJECTION_MODE=native_v1")
+        lines.append(
+            "RUNTIME_RECOVERY_PARAMETERS_JSON="
+            + shlex.quote(
+                json.dumps(
+                    self.runtime_recovery_values,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+        )
         lines.append(f"MTP_DRAFT_MODEL_PATH={shlex.quote(self.mtp_draft_model)}")
         deployment_env = {
             "MODEL_PATH": self.deployment["model_path"],
@@ -1895,6 +2184,10 @@ class Controller:
                 "BENCHMARK_SPEC_ROOT": aligned["spec_root"],
                 "BENCHMARK_DATASET_ROOT": aligned["dataset_root"],
                 "BENCHMARK_PRIMARY_CONCURRENCY": aligned["primary_concurrency"],
+                "BENCHMARK_SUITE_ID": aligned.get("suite_id", "tuning-fixed"),
+                "BENCHMARK_EXPECTED_FORMAL_CASES": aligned.get(
+                    "expected_formal_cases", 12
+                ),
                 "BENCHMARK_CASE_RETRY_LIMIT": aligned.get("case_retry_limit", 2),
                 "BENCHMARK_RUNTIME_RETRY_LIMIT": aligned.get("runtime_retry_limit", 2),
                 "BENCHMARK_METRICS_RETRY_LIMIT": aligned.get("metrics_retry_limit", 2),
@@ -2216,7 +2509,6 @@ class Controller:
             return str(result.get("message", "External executor prepare completed."))
         self.ensure_no_blocked_leases()
         self.sync_remote_scripts()
-        lease_name = str(self.lab["lease_name"])
         lease_yaml = str(self.lab.get("lease_yaml", "workflow/auto/lease_loop.yaml"))
         output_root = str(self.lab.get("output_root", "workflow/auto/lab_runs"))
         mode = " --submit" if submit else ""
@@ -2585,6 +2877,8 @@ class Controller:
         change_count: int,
     ) -> None:
         strategy = decision.get("change_strategy")
+        if decision.get("exploration_intent") == "none":
+            raise ValueError("A changed candidate requires a non-none exploration_intent")
         expected_strategy = (
             "single_parameter" if change_count == 1 else "coupled_parameters"
         )
@@ -2619,6 +2913,8 @@ class Controller:
             raise ValueError(
                 "A no-change decision must not claim change interactions or checks"
             )
+        if decision.get("exploration_intent") not in {None, "none"}:
+            raise ValueError("A no-change decision requires exploration_intent=none")
 
     @staticmethod
     def grid_step_order(grid: list[Any]) -> list[Any]:
@@ -2823,7 +3119,41 @@ class Controller:
             "derived_parameters": self.derived_parameter_rules,
             "parameter_groups": self.change_policy.get("parameter_groups", {}),
             "high_risk_parameters": self.change_policy.get("high_risk_parameters", []),
+            "approved_high_risk_interaction_groups": copy.deepcopy(
+                self.change_policy.get("approved_high_risk_interaction_groups", {})
+            ),
+            "conditional_failure_exclusions": copy.deepcopy(
+                self.conditional_search_exclusions
+            ),
+            "outer_topology_stage": (
+                copy.deepcopy(self.strategy_profile.get("topology_stage", {}))
+                if not self.topology_fixed_mode
+                else {
+                    "order": 0,
+                    "mode": "fixed_session",
+                    "selected_profile": self.config.get("topology", {}).get("profile"),
+                    "decision_owner": "operator_policy",
+                    "controller_role": "identity_freeze_and_metrics_gate",
+                    "requires_new_session_per_topology": True,
+                    "completion_rule": (
+                        "Do not propose or compare topology changes in this Session; "
+                        "optimize only the frozen serving-parameter Search Limits."
+                    ),
+                }
+            ),
         }
+        autonomous = self.strategy_profile.get("autonomous_cross_layer", {})
+        budget = (
+            autonomous.get("exploration_budget", {})
+            if isinstance(autonomous, dict)
+            else {}
+        )
+        if isinstance(budget, dict) and budget.get("programmatic_tracking"):
+            effective["measured_exploration_budget_state"] = (
+                self.measured_exploration_budget_state(
+                    history or [], attempted_history or [], budget
+                )
+            )
         if phase == "exploration" and ordered_probes:
             if probe_index < len(ordered_probes):
                 probe = ordered_probes[probe_index]
@@ -2849,7 +3179,13 @@ class Controller:
                         and len(preferred) == 2
                         and all(isinstance(value, int) for value in preferred)
                     ):
-                        minimum, maximum = preferred
+                        preferred_minimum, maximum = preferred
+                        minimum = int(
+                            probe.get(
+                                "minimum_independent_parameters",
+                                preferred_minimum,
+                            )
+                        )
                         if not 1 <= minimum <= maximum:
                             raise ValueError(
                                 "hierarchical probe independent parameter range is invalid"
@@ -2882,15 +3218,25 @@ class Controller:
                     )
         elif ordered_probes:
             revisits = hierarchy_state.get("ranked_cross_layer_revisits", [])
-            revisit_probe = None
-            if revisits:
-                revisit = revisits[
-                    int(hierarchy_state.get("cross_layer_rounds", 0)) % len(revisits)
-                ]
-                revisit_probe = ordered_probes[int(revisit["probe_index"])]
+            layer_evidence = []
+            for revisit in revisits:
+                probe_index_for_evidence = int(revisit["probe_index"])
+                layer_evidence.append(
+                    {
+                        **copy.deepcopy(revisit),
+                        "probe": copy.deepcopy(
+                            ordered_probes[probe_index_for_evidence]
+                        ),
+                    }
+                )
             effective.update(
                 hierarchical_stage="cross_layer_refinement",
-                cross_layer_revisit=copy.deepcopy(revisit_probe),
+                cross_layer_selection_owner="agent",
+                controller_preselected_layer=None,
+                autonomous_cross_layer=copy.deepcopy(
+                    self.strategy_profile.get("autonomous_cross_layer", {})
+                ),
+                cross_layer_evidence=layer_evidence,
                 ranked_cross_layer_revisits=revisits,
                 hierarchical_observations=hierarchy_state.get("observations", []),
             )
@@ -2918,6 +3264,24 @@ class Controller:
         policy: dict[str, Any] | None = None,
     ) -> None:
         self.validate_candidate_invariants(candidate)
+        for exclusion in self.conditional_search_exclusions:
+            if not isinstance(exclusion, dict):
+                continue
+            conditions = exclusion.get("conditions", {})
+            if not isinstance(conditions, dict):
+                continue
+            # Reject only when the historical record covers the complete
+            # current schema and every value matches. Partial overlap remains
+            # advisory evidence; it never globally bans a parameter value.
+            if self.candidate_schema.issubset(conditions) and all(
+                candidate[name] == conditions[name]
+                for name in self.candidate_schema
+            ):
+                raise ValueError(
+                    "Candidate exactly matches a conditionally excluded "
+                    f"{exclusion.get('failure_classification', 'failed')} combination "
+                    f"from {exclusion.get('trial_id', 'history')}"
+                )
         actual_changes = [key for key in candidate if candidate[key] != previous[key]]
         effective_policy = policy or self.effective_change_policy()
         derived_changes = self.derived_changes(actual_changes, effective_policy)
@@ -2978,6 +3342,26 @@ class Controller:
                 raise ValueError(f"Rationale for {key} is too short to audit")
         if decision is not None:
             self.validate_change_evidence(decision, len(actual_changes))
+            if (
+                self.strategy_profile_name
+                in {
+                    "hierarchical_agentic_frontier_v3",
+                    "hierarchical_agentic_guided_v4",
+                }
+                and previous.get("num_speculative_tokens", 0) > 0
+                and candidate.get("num_speculative_tokens") == 0
+            ):
+                if decision.get("exploration_intent") != "diagnostic_ablation":
+                    raise ValueError(
+                        "Disabling MTP is allowed only as an explicit diagnostic_ablation"
+                    )
+                state = effective_policy.get("measured_exploration_budget_state", {})
+                if int(state.get("diagnostic_ablation_count", 0)) >= int(
+                    state.get("diagnostic_ablation_maximum_per_session", 1)
+                ):
+                    raise ValueError(
+                        "The per-Session MTP diagnostic-ablation budget is exhausted"
+                    )
 
     def submit(
         self,
@@ -3482,8 +3866,7 @@ class Controller:
                     metrics_path.parents[1] / "02_parameters" / "candidate_params.yaml"
                 )
                 params = load_yaml(params_path) if params_path.exists() else {}
-                history.append(
-                    {
+                item = {
                         "round": metrics_path.parents[1].name,
                         "params": params,
                         "metrics": metrics,
@@ -3492,7 +3875,14 @@ class Controller:
                             metrics_path.parents[1],
                         ),
                     }
+                decision_path = (
+                    metrics_path.parents[1] / "06_agent_analysis" / "decision.json"
                 )
+                if decision_path.exists():
+                    decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                    if isinstance(decision, dict):
+                        item["decision"] = decision
+                history.append(item)
             except (OSError, ValueError, yaml.YAMLError):
                 continue
         if not history:
@@ -3528,6 +3918,11 @@ class Controller:
                         "benchmarked" if metrics_path.exists() else "unattributed_failure"
                     ),
                 }
+                decision_path = round_dir / "06_agent_analysis" / "decision.json"
+                if decision_path.exists():
+                    decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                    if isinstance(decision, dict):
+                        item["decision"] = decision
                 if metrics_path.exists():
                     item["metrics"] = json.loads(
                         metrics_path.read_text(encoding="utf-8")
@@ -3576,6 +3971,83 @@ class Controller:
             except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError):
                 continue
         return attempts
+
+    def measured_exploration_budget_state(
+        self,
+        history: list[dict[str, Any]],
+        attempted_history: list[dict[str, Any]],
+        budget: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Measure strategy mix without choosing the Agent's next intent."""
+        targets = {
+            "exploitation": float(budget.get("exploitation_fraction", 0.65)),
+            "cross_layer_interaction": float(
+                budget.get("cross_layer_interaction_fraction", 0.25)
+            ),
+            "frontier_novelty": float(
+                budget.get("frontier_novelty_fraction", 0.10)
+            ),
+        }
+        if any(value < 0 for value in targets.values()) or not math.isclose(
+            sum(targets.values()), 1.0, abs_tol=1e-6
+        ):
+            raise ValueError("Cross-layer exploration budget fractions must sum to 1")
+
+        records: dict[str, dict[str, Any]] = {}
+        for item in [*history, *attempted_history]:
+            decision = item.get("decision")
+            if isinstance(decision, dict):
+                records[str(item.get("round", len(records)))] = decision
+        counts = {intent: 0 for intent in targets}
+        diagnostic_count = 0
+        for decision in records.values():
+            intent = str(decision.get("exploration_intent", ""))
+            if intent in counts:
+                counts[intent] += 1
+            elif intent == "diagnostic_ablation":
+                diagnostic_count += 1
+        measured_rounds = sum(counts.values())
+        actual = {
+            intent: (
+                round(count / measured_rounds, 4) if measured_rounds else 0.0
+            )
+            for intent, count in counts.items()
+        }
+        deficits = {
+            intent: round(targets[intent] - actual[intent], 4)
+            for intent in targets
+        }
+        underrepresented = [
+            intent
+            for intent, deficit in sorted(
+                deficits.items(), key=lambda pair: pair[1], reverse=True
+            )
+            if deficit > 0
+        ]
+        diagnostic_maximum = 1
+        hierarchy = self.strategy_profile.get("hierarchy", {})
+        probes = hierarchy.get("ordered_probes", []) if isinstance(hierarchy, dict) else []
+        for probe in probes:
+            diagnostic = probe.get("diagnostic_ablation", {}) if isinstance(probe, dict) else {}
+            if isinstance(diagnostic, dict) and "maximum_per_session" in diagnostic:
+                diagnostic_maximum = int(diagnostic["maximum_per_session"])
+                break
+        return {
+            "programmatic_tracking": True,
+            "agent_final_choice": bool(budget.get("agent_final_choice", True)),
+            "target_fractions": targets,
+            "measured_round_count": measured_rounds,
+            "counts": counts,
+            "actual_fractions": actual,
+            "fraction_deficits": deficits,
+            "underrepresented_intents": underrepresented,
+            "controller_preselected_intent": None,
+            "diagnostic_ablation_count": diagnostic_count,
+            "diagnostic_ablation_maximum_per_session": diagnostic_maximum,
+            "diagnostic_ablation_remaining": max(
+                0, diagnostic_maximum - diagnostic_count
+            ),
+        }
 
     @staticmethod
     def primary_performance_score(item: dict[str, Any]) -> float | None:
@@ -4143,7 +4615,7 @@ class Controller:
         if not absolute_gate:
             assessment["classification"] = "absolute_gate_failed"
             assessment["violations"].append(
-                "not all required L1 repetitions passed the 12-case evidence gate"
+                "not all required L1 repetitions passed the frozen case evidence gate"
             )
             return assessment
         if len(history) == 1:
@@ -4323,6 +4795,8 @@ class Controller:
         patterns = re.compile(
             r"Address already in use|EADDRINUSE|ZMQError|Traceback|"
             r"out of memory|OutOfMemory|HCCL.*(?:error|failed)|"
+            r"ERR\d+|EI\d+|Vector core execution timed out|aclnn\w+|"
+            r"fused_mlapo|Connection closed by peer|"
             r"Process ApiServer_\d+.*died|benchmark.*(?:error|failed)",
             re.IGNORECASE,
         )
@@ -4360,6 +4834,7 @@ class Controller:
         )
         evidence = {
             "current_candidate": previous,
+            "topology_first_layer": copy.deepcopy(self.topology_plan),
             "scenario": load_yaml(round_dir / "00_context" / "scenario.yaml"),
             "image_identity": load_yaml(
                 round_dir / "00_context" / "image_version_manifest.yaml"
@@ -4465,9 +4940,7 @@ Failure detail: {protocol_failures[-1][-2000:]}
                     result = run_structured_agent(
                         self.agent_config,
                         prompt=protocol_prompt,
-                        schema_path=self.decision_schema_path(
-                            session_dir, "agent_decision.schema.json"
-                        ),
+                        schema_path=self.agent_schema_path(session_dir),
                         output_path=decision_path,
                         cwd=KB_ROOT,
                         allowed_dir=round_dir,
@@ -4639,11 +5112,21 @@ Failure detail: {protocol_failures[-1][-2000:]}
                 "token shapes, per-workload throughput, and run-to-run CV are "
                 "deterministic guardrails."
             )
+            aligned_definition = self.benchmark["aligned_l1"]
+            formal_case_count = int(aligned_definition.get("expected_formal_cases", 12))
+            suite_id = str(aligned_definition.get("suite_id", "tuning-fixed"))
+            concurrency_description = (
+                "fixed C32 concurrency"
+                if formal_case_count == 4
+                else "fixed C1/C16/C32 concurrency"
+            )
             benchmark_goal = f"""Goal: improve the strict aggregate output-token throughput score for the
-frozen ServeBench tuning-fixed v3 L1 matrix. The matrix has four workloads
-(1024/256, 8192/512, 1024/1024, 256/2048), fixed C1/C16/C32 concurrency,
-fixed JSONL prompts, temperature=0, and {repetition_count} complete repetition(s).
-The primary score is {repetition_aggregation} of the C32 workload geometric mean.
+frozen ServeBench {suite_id} L1 matrix. The matrix has four workloads
+(1024/256, 8192/512, 1024/1024, 256/2048), {concurrency_description},
+{formal_case_count} formal cases, fixed JSONL prompts, temperature=0, and
+{repetition_count} complete repetition(s). The primary score is
+{repetition_aggregation} of the C32 workload geometric mean. The final report
+must explicitly surface output throughput, TTFT P50/P90 and TPOT P50/P90.
 {latency_role}"""
         else:
             definition = self.benchmark[self.benchmark_mode]
@@ -4673,7 +5156,22 @@ benchmark identity."""
         hierarchical_probe = selection_policy.get("hierarchical_probe")
         hierarchy_instruction = ""
         if isinstance(hierarchical_probe, dict):
-            hierarchy_instruction = f"""
+            if hierarchical_probe.get("parameter_selection_owner") == "agent":
+                hierarchy_instruction = f"""
+This strategy is in an ordered high-impact layer. The Controller selected only
+the current semantic layer because its prerequisites precede later layers; it
+did not select a parameter, parameter count, value, or coupling for you. You own
+those choices. The coupling_hints are non-binding hypotheses, not an experiment
+queue. Compare plausible alternatives inside the layer and choose one to four
+legal parameters according to evidence and information value. Prefer a coherent
+multi-parameter experiment when known coupling makes it faster and more valid
+than isolated sweeps; choose a single parameter when isolation is genuinely the
+highest-information test. Constraint-required companion parameters may come
+from another layer, but cite why they are mechanical or causally necessary:
+{yaml.safe_dump(hierarchical_probe, allow_unicode=True, sort_keys=False)}
+"""
+            else:
+                hierarchy_instruction = f"""
 This strategy is in an ordered high-impact probe stage. Center the next experiment
 on the active probe below; choose a valid untested value from this parameter family
 before substituting a lower-impact local tweak. You may skip the probe only when
@@ -4682,16 +5180,17 @@ and then you must cite the exact evidence for skipping it. The probe is a genera
 strategy prior, not a hidden historical candidate:
 {yaml.safe_dump(hierarchical_probe, allow_unicode=True, sort_keys=False)}
 """
-        cross_layer_revisit = selection_policy.get("cross_layer_revisit")
-        if isinstance(cross_layer_revisit, dict):
+        if selection_policy.get("cross_layer_selection_owner") == "agent":
             hierarchy_instruction = f"""
-The ordered coverage stage is complete. This is cross-layer refinement, ranked
-from measured incremental output-throughput evidence. Revisit the selected
-parameter family below and test an untried value or a defensible 1-2 parameter
-interaction around best_accepted_anchor. Derived runtime companions do not count
-as independent parameters. Skip this family only if its useful whitelist values
-are exhausted or a hard constraint blocks them, and cite the exact evidence:
-{yaml.safe_dump(cross_layer_revisit, allow_unicode=True, sort_keys=False)}
+The ordered coverage stage is complete. You—not the Controller—own the next
+layer and cross-layer choice. The Controller has supplied measurement summaries
+for every covered family, the full active whitelist, attempted combinations and
+the best accepted anchor. Select the most informative untried layer, or a
+defensible one-to-four parameter cross-layer interaction. Balance exploitation, novel
+high-upside interactions, and frontier exploration according to the frozen
+autonomous_cross_layer policy. Cite the evidence for your choice; no candidate
+family has been preselected for you:
+{yaml.safe_dump(selection_policy.get('cross_layer_evidence', []), allow_unicode=True, sort_keys=False)}
 """
         prompt = f"""You are the tuning analyst for a measured vLLM-Ascend experiment.
 
@@ -4725,8 +5224,10 @@ supports a coherent faster probe; in refinement, prefer a small local change. A 
 parameter changed together with one of its declared drivers does not consume an
 active-parameter slot or grid-step budget, but it must still be declared in changes
 and satisfy every hard invariant. Treat listed high-risk parameters conservatively:
-normally change only one high-risk active parameter in a round, and combine it only
-when a documented prerequisite or inseparable interaction requires the combination.
+use a single high-risk parameter for an isolated probe, but use an approved high-risk
+interaction group up to its stated maximum when the hypothesis and constraint checks
+require the coupled experiment. Other high-risk combinations require equally explicit
+evidence and must remain inside every active-parameter and grid-step budget.
 Use multiple parameters only when knowledge, runtime
 constraints, or a proven interaction makes a joint experiment materially more valid
 than independent trials. Do not bundle unrelated guesses. For multiple changes set
@@ -4737,15 +5238,23 @@ the whitelist below may put the current baseline first for display and must not
 be interpreted as step order. The effective grid-step order is:
 {yaml.safe_dump({key: self.grid_step_order(values) for key, values in self.config['search_limits'].items()}, allow_unicode=True, sort_keys=False)}
 Set action=stop_complete, preserve the current candidate, and return an
-empty changes array, change_strategy=none, and empty interaction_analysis and
-constraint_checks when the useful whitelist search space is exhausted, no safe
+empty changes array, change_strategy=none, exploration_intent=none, and empty
+interaction_analysis and constraint_checks when the useful whitelist search space is exhausted, no safe
 untested change remains, or further testing is not justified by the measurements.
+For a continuing guided decision, set exploration_intent=ordered_probe during ordered
+coverage, or select exploitation, cross_layer_interaction, or frontier_novelty in
+cross-layer refinement using measured_exploration_budget_state as a measured deficit
+signal. The Agent makes the final choice; the Controller does not preselect an intent.
+Use diagnostic_ablation only for an explicit diagnostic hypothesis. Keep MTP enabled
+in normal experiments. Disabling a currently enabled MTP path is allowed only with
+exploration_intent=diagnostic_ablation and at most once per Session.
 Use only values allowed by this whitelist:
 {yaml.safe_dump(self.config['search_limits'], allow_unicode=True, sort_keys=False)}
 
 The frozen runtime contract is: {self.runtime_guardrail}.
-Do not change model, DP/TP, Pod/NPU topology, network, ports, image, benchmark,
-quantization, or fixed Ascend environment.
+Topology was resolved in the topology-first outer stage and frozen into this
+Session. Do not change model, DP/TP, Pod/NPU topology, network, ports, image,
+benchmark, quantization, or fixed Ascend environment inside this Session.
 Do not repeat any successful or failed configuration already present in
 attempted_history/history_input.json. Treat candidates classified parameter_invalid
 or parameter_oom as excluded combinations. Cite concrete metric evidence and
@@ -4772,6 +5281,26 @@ Embedded evidence:
                     )
                 self.validate_no_change_metadata(decision)
                 return
+            if self.strategy_profile_name in {
+                "hierarchical_agentic_frontier_v3",
+                "hierarchical_agentic_guided_v4",
+            }:
+                intent = decision.get("exploration_intent")
+                stage = selection_policy.get("hierarchical_stage")
+                allowed_intents = (
+                    {"ordered_probe", "diagnostic_ablation"}
+                    if stage == "ordered_probe"
+                    else {
+                        "exploitation",
+                        "cross_layer_interaction",
+                        "frontier_novelty",
+                        "diagnostic_ablation",
+                    }
+                )
+                if intent not in allowed_intents:
+                    raise ValueError(
+                        f"exploration_intent={intent!r} is invalid for stage={stage!r}"
+                    )
             self.validate_candidate(
                 previous,
                 decision["candidate"],
@@ -4779,6 +5308,7 @@ Embedded evidence:
                 decision,
                 selection_policy,
             )
+            self.validate_selected_portrait_evidence(decision["changes"])
             if self.candidate_was_attempted(session_dir, decision["candidate"]):
                 raise ValueError(
                     "Codex proposed a configuration already present in experiment history"
@@ -4815,9 +5345,37 @@ Embedded evidence:
     ) -> dict[str, Any]:
         history = self.attempted_history_summary(session_dir)
         save_json(round_dir / "06_agent_analysis" / "history_input.json", history)
+        historical_failure_signatures = []
+        for prior_round in sorted(session_dir.glob("round_*")):
+            if prior_round == round_dir:
+                continue
+            failure_path = prior_round / "05_results" / "failure.yaml"
+            if not failure_path.is_file():
+                continue
+            historical_failure_signatures.append(
+                {
+                    "round": prior_round.name,
+                    "signatures": self.failure_signature_evidence(
+                        prior_round, max_lines=80
+                    ),
+                    "prior_decision": self.evidence_text(
+                        prior_round
+                        / "06_agent_analysis"
+                        / "failure_decision.json",
+                        max_chars=20000,
+                    ),
+                }
+            )
         failure_evidence = {
             "current_candidate": current,
+            "current_runtime_recovery_parameters": copy.deepcopy(
+                self.runtime_recovery_values
+            ),
+            "recovery_parameter_registry": copy.deepcopy(
+                self.recovery_parameter_registry
+            ),
             "history": history,
+            "historical_failure_signatures": historical_failure_signatures,
             "scenario": self.evidence_text(round_dir / "00_context" / "scenario.yaml"),
             "search_space": self.evidence_text(
                 round_dir / "01_query" / "glm5.2_search_space.yaml"
@@ -4872,25 +5430,33 @@ All required evidence is embedded below. You may execute local read-only command
 additional inspection. Never write or edit files, run remote commands, access the
 network, submit jobs, stop jobs, or change external state.
 
-Classify the root cause using only log evidence:
-- parameter_invalid or parameter_oom: adjust_parameters only when the evidence proves
-  a safe correction inside the tuning whitelist; otherwise pause_for_human.
-- model_or_runtime_bug: adjust_parameters only when the evidence proves that a minimal
-  whitelist parameter change safely bypasses the exact failing runtime path; otherwise
-  pause_for_human.
-- transient_infrastructure or network_or_hccl: retry_same only when an identical retry is
-  safe; otherwise pause_for_human.
+You own the recovery decision. The Controller does not choose a layer, parameter, or
+candidate for you. Correlate the earliest actionable exception in the current round with
+historical_failure_signatures; later Gloo/HCCL peer failures may be cascades and must not
+erase an unresolved earlier root cause.
+
+Choose the highest-information legal next action:
+- adjust_parameters may be used for any adjustable classification below. You may choose
+  ordinary Active Search parameters, evidence-gated Recovery Registry controls, or a
+  coupled cross-layer combination. A hypothesis-driven high-risk diagnostic is allowed
+  when it can bypass the failing path or decisively distinguish competing causes; state
+  the hypothesis and constraints explicitly.
+- retry_same is appropriate for a genuinely transient infrastructure/network/HCCL or
+  Benchmark failure when an unchanged rerun provides value.
+- diagnostic_retry_same is appropriate when evidence is incomplete and an unchanged run
+  is the best information-gain experiment.
 - benchmark_failure: when SERVICE_READY exists, the failure is confined to the benchmark
   harness, the candidate is unchanged, and serving logs contain no dangerous OOM, HCCL,
   EngineCore, API-startup, or identity-drift signature, choose retry_same. Uncertainty about
   the exact benchmark-harness trigger is not by itself a reason to pause. Deterministic
-  benchmark recovery is evaluated before this Agent call; pause only when the evidence
-  makes an identical retry unsafe.
-- image_or_dependency, model_or_runtime_bug or unknown: when the evidence cannot
-  prove a parameter correction but an unchanged rerun is non-destructive and may
-  collect decisive evidence or absorb a transient condition, use
-  diagnostic_retry_same. This action has a separate one-run budget. Otherwise use
-  pause_for_human.
+  benchmark recovery is evaluated before this Agent call.
+- pause_for_human is a hard-terminal action only. Use it only when evidence explicitly
+  proves an unavailable/unsupported image or model capability, immutable identity
+  mismatch, missing permission/credential/model artifact, unsatisfied resource/topology
+  contract, or corrupt/inconsistent controller state. Repeated failure, uncertainty,
+  HCCL/network errors, runtime bugs, or lack of an obvious parameter fix are not by
+  themselves sufficient reasons to pause. If no hard terminal condition is proven,
+  choose an adjustment or retry and continue autonomy.
 
 The controller enforces this exact action contract:
 - adjust_parameters classifications: {sorted(FAILURE_ADJUSTABLE_CLASSIFICATIONS)}
@@ -4900,22 +5466,28 @@ The controller enforces this exact action contract:
 Set safe_to_automate=true for adjust_parameters or retry_same. Set it to false for
 pause_for_human.
 
-When choosing adjust_parameters, use the smallest directly corrective change set, up
-to {self.max_parameters_per_round} parameters. Multiple changes are allowed only when
-the logs prove that the correction is coupled. Explain the interaction and give an
+When choosing adjust_parameters, choose the most informative justified change set. Use
+changes for ordinary tuning parameters and recovery_changes for Recovery Registry
+controls. A recovery-only repair must preserve candidate and use changes=[]. Up to
+{self.max_parameters_per_round} tuning parameters and
+{self.max_recovery_parameter_changes} recovery parameters are allowed. Multiple changes are allowed when
+they form a reasoned coupled diagnostic or recovery experiment. Explain the interaction and give an
 explicit constraint check for every changed parameter. Grid-step budgets are:
 {yaml.safe_dump(self.change_policy, allow_unicode=True, sort_keys=False)}
-For retry_same, diagnostic_retry_same or pause_for_human, return the current candidate unchanged, an empty
-changes array, change_strategy=none, and empty interaction_analysis and
+For retry_same, diagnostic_retry_same or pause_for_human, return the current candidate unchanged, empty
+changes and recovery_changes arrays, change_strategy=none, and empty interaction_analysis and
 constraint_checks.
 
 Allowed values:
 {yaml.safe_dump(self.config['search_limits'], allow_unicode=True, sort_keys=False)}
 
+Recovery Registry (failure repair only; not part of Active Search):
+{yaml.safe_dump(self.recovery_parameter_registry, allow_unicode=True, sort_keys=False)}
+
 Never modify topology, model, image, network, paths, benchmark, or system state. Do not
-edit files. Return only schema-valid JSON. If parameter or serving evidence is not
-decisive, do not guess a parameter change. A healthy-service benchmark-harness failure
-must use retry_same as specified above; other inconclusive failures use pause_for_human.
+edit files. Return only schema-valid JSON. You may make an auditable, hypothesis-driven
+parameter experiment inside the allowed values even when evidence is not conclusive.
+A healthy-service benchmark-harness failure must use retry_same as specified above.
 
 Embedded evidence:
 {json.dumps(failure_evidence, ensure_ascii=False)}
@@ -4963,6 +5535,24 @@ Embedded evidence:
                 result.stderr, encoding="utf-8"
             )
             if result.returncode == 0 and decision_path.exists():
+                try:
+                    decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                    self.validate_failure_decision(session_dir, decision, current)
+                except (KeyError, ValueError, json.JSONDecodeError) as exc:
+                    invalid_copy = decision_path.with_name(
+                        f"failure_decision.invalid_semantic_{protocol_attempt:02d}.json"
+                    )
+                    shutil.copyfile(decision_path, invalid_copy)
+                    protocol_failures.append(
+                        f"attempt {protocol_attempt}/{protocol_attempts}: "
+                        f"semantic validation rejected the decision: {exc}"
+                    )
+                    if protocol_attempt < protocol_attempts:
+                        continue
+                    raise AgentProtocolError(
+                        "Failure Agent exhausted semantic reselection attempts: "
+                        + protocol_failures[-1][-2000:]
+                    ) from exc
                 break
             protocol_failures.append(
                 f"attempt {protocol_attempt}/{protocol_attempts}: "
@@ -4980,19 +5570,21 @@ Embedded evidence:
                 f"{result.provider} failure analysis failed after "
                 f"{protocol_attempts} protocol attempts: {result.stderr[-2000:]}"
             )
-        try:
-            decision = json.loads(decision_path.read_text(encoding="utf-8"))
-            self.validate_failure_decision(session_dir, decision, current)
-        except (KeyError, ValueError, json.JSONDecodeError) as exc:
-            raise AgentProtocolError(
-                "Failure Agent returned a structurally readable but semantically "
-                f"invalid recovery decision: {exc}"
-            ) from exc
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
         self.write_selected_portrait_evidence(
             round_dir,
             decision["changes"],
             prefix="failure_selected",
         )
+        if decision.get("recovery_changes"):
+            save_yaml(
+                analysis_dir / "failure_selected_recovery_parameters.yaml",
+                {
+                    "registry": self.recovery_parameter_registry,
+                    "current": self.runtime_recovery_values,
+                    "changes": decision["recovery_changes"],
+                },
+            )
         self.refresh_runtime_rules(session_dir, round_dir)
         return decision
 
@@ -5128,6 +5720,322 @@ Embedded evidence:
             "candidate": current,
         }
 
+    def deterministic_fused_moe_shared_expert_recovery(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Disable only the split shared-expert path after its exact validator fails."""
+        parameter = "additional_config__multistream_overlap_shared_expert"
+        if parameter not in self.recovery_parameter_registry:
+            return None
+        if self.runtime_recovery_values.get(parameter) is not True:
+            return None
+        texts: list[str] = []
+        for path in (
+            round_dir / "04_runtime" / "master.log",
+            round_dir / "04_runtime" / "worker.log",
+            round_dir / "05_results" / "failure.yaml",
+        ):
+            if path.is_file():
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        evidence = "\n".join(texts)
+        signature = (
+            "FusedMoE shared experts split computation does not match "
+            "the integrated computation"
+        )
+        if signature not in evidence:
+            return None
+        return {
+            "summary": (
+                "The exact FusedMoE split/shared-expert consistency validator "
+                "failed; disabling only the multistream split shared-expert path."
+            ),
+            "classification": "model_or_runtime_bug",
+            "root_cause": (
+                "multistream_overlap_shared_expert registers the failing split-versus-"
+                "integrated consistency check during weight processing. The exact "
+                "validator signature proves that this recovery control gates the path."
+            ),
+            "evidence": [
+                f"Archived runtime logs contain the exact validator signature: {signature}.",
+                "The pinned fused_moe.py registers this validator only when "
+                "multistream_overlap_shared_expert is enabled.",
+                "The service failed before SERVICE_READY, so no Benchmark parameter "
+                "change is implicated.",
+            ],
+            "action": "adjust_parameters",
+            "safe_to_automate": True,
+            "change_strategy": "single_parameter",
+            "interaction_analysis": [
+                "The recovery disables the split overlap path while preserving the "
+                "integrated shared-expert computation and every tuning parameter."
+            ],
+            "constraint_checks": [
+                "false is an allowed value in the frozen Recovery Registry and is "
+                "injected through additional_config.multistream_overlap_shared_expert."
+            ],
+            "changes": [],
+            "recovery_changes": [
+                {
+                    "parameter": parameter,
+                    "before": True,
+                    "after": False,
+                    "rationale": (
+                        "The exact failing validator is conditional on this split "
+                        "shared-expert overlap control."
+                    ),
+                }
+            ],
+            "candidate": current,
+        }
+
+    def deterministic_mlapo_vector_timeout_recovery(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Disable MLAPO when its fused weight-processing path times out exactly.
+
+        A worker that dies in this path commonly makes the remaining DP ranks emit
+        Gloo ``Connection closed by peer`` errors.  Those later errors are a
+        consequence, not the root cause, so this signature must be evaluated before
+        generic communication recovery or Agent classification.
+        """
+        if current.get("mlapo") is not True:
+            return None
+        if False not in self.config.get("search_limits", {}).get("mlapo", []):
+            return None
+        texts: list[str] = []
+        for path in (
+            round_dir / "04_runtime" / "master.log",
+            round_dir / "04_runtime" / "worker.log",
+            round_dir / "05_results" / "failure.yaml",
+        ):
+            if path.is_file():
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        evidence = "\n".join(texts)
+        mlapo_path = (
+            "_process_weights_for_fused_mlapo" in evidence
+            or "attention/sfa_v1.py" in evidence
+        )
+        vector_timeout = (
+            "Vector core execution timed out" in evidence
+            and "aclnnMuls" in evidence
+        )
+        if not mlapo_path or not vector_timeout:
+            return None
+
+        candidate = copy.deepcopy(current)
+        candidate["mlapo"] = False
+        return {
+            "summary": (
+                "An NPU vector-core timeout occurred inside the fused MLAPO weight "
+                "processing path; disabling MLAPO while preserving all other "
+                "candidate and recovery parameters."
+            ),
+            "classification": "model_or_runtime_bug",
+            "root_cause": (
+                "The first actionable worker exception is aclnnMuls vector-core "
+                "timeout in _process_weights_for_fused_mlapo. Subsequent Gloo peer "
+                "closures are cascading failures after that worker exits."
+            ),
+            "evidence": [
+                "The archived traceback enters attention/sfa_v1.py "
+                "_process_weights_for_fused_mlapo during process_weights_after_loading.",
+                "That traceback reports aclnnMuls and 'Vector core execution timed out'.",
+                "Gloo connection-closed messages occur only after the MLAPO worker "
+                "exception and therefore do not justify an unchanged retry.",
+            ],
+            "action": "adjust_parameters",
+            "safe_to_automate": True,
+            "change_strategy": "single_parameter",
+            "interaction_analysis": [],
+            "constraint_checks": [
+                "mlapo=false is in the frozen Active Search grid and bypasses only "
+                "the directly implicated fused MLAPO path."
+            ],
+            "changes": [
+                {
+                    "parameter": "mlapo",
+                    "before": True,
+                    "after": False,
+                    "rationale": (
+                        "Bypass the exact fused MLAPO weight-processing path that "
+                        "raised the NPU vector-core timeout."
+                    ),
+                }
+            ],
+            "recovery_changes": [],
+            "candidate": candidate,
+        }
+
+    def pending_historical_deterministic_recovery(
+        self,
+        session_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return an evidenced repair from an earlier failed round still pending.
+
+        Infrastructure failures in a later retry must not erase an actionable
+        parameter/runtime root cause from an earlier attempt.  A repair is pending
+        only while the current candidate/recovery state still has the exact value
+        implicated by that earlier signature.
+        """
+        round_dirs = sorted(
+            (path for path in session_dir.glob("round_*") if path.is_dir()),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        for source_round in round_dirs:
+            decision = self.deterministic_fused_moe_shared_expert_recovery(
+                source_round, current
+            ) or self.deterministic_mlapo_vector_timeout_recovery(
+                source_round, current
+            )
+            if decision is None:
+                continue
+            decision = copy.deepcopy(decision)
+            decision["summary"] = (
+                f"Pending evidenced recovery from {source_round.name}: "
+                + str(decision["summary"])
+            )
+            decision["evidence"] = [
+                f"Cross-round recovery source: {source_round.name}.",
+                *list(decision.get("evidence", [])),
+                "A later independent failure does not mark this earlier corrective "
+                "action as applied or disproven.",
+            ]
+            return decision
+        return None
+
+    def deterministic_hccl_communicator_retry(
+        self,
+        round_dir: Path,
+        current: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Retry a startup failure proven to be HCCL communicator establishment."""
+        runtime_dir = round_dir / "04_runtime"
+        if (runtime_dir / "SERVICE_READY").exists():
+            return None
+        texts: list[str] = []
+        for path in (
+            runtime_dir / "master.log",
+            runtime_dir / "worker.log",
+            round_dir / "05_results" / "failure.yaml",
+        ):
+            if path.is_file():
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        evidence = "\n".join(texts)
+        exact_signature = (
+            "hcclCommInitRootInfoConfig" in evidence
+            and "ERR02200" in evidence
+            and "HcclAllGather" in evidence
+            and "EI0006" in evidence
+        )
+        hard_block = MANUAL_INTERVENTION_SIGNATURES.search(evidence)
+        parameter_failure = re.search(
+            r"(?:NPU|device).*out of memory|\bOOM\b|invalid (?:argument|parameter)",
+            evidence,
+            re.IGNORECASE,
+        )
+        if not exact_signature or hard_block or parameter_failure:
+            return None
+        return {
+            "summary": (
+                "Startup reached model profile_run but HCCL communicator creation "
+                "and its DP all-gather socket establishment timed out; retrying under "
+                "the infrastructure budget instead of terminating autonomous work."
+            ),
+            "classification": "network_or_hccl",
+            "root_cause": (
+                "Cross-node HCCL communicator establishment failed with ERR02200, "
+                "followed by EI0006 socket timeout in HcclAllGather. No image, model, "
+                "permission, OOM, or invalid-parameter hard block is proven."
+            ),
+            "evidence": [
+                "Logs contain hcclCommInitRootInfoConfig and ERR02200.",
+                "The failed collective is HcclAllGather and reports EI0006 socket timeout.",
+                "The service failed before SERVICE_READY without a hard terminal signature.",
+            ],
+            "action": "retry_same",
+            "safe_to_automate": True,
+            "change_strategy": "none",
+            "interaction_analysis": [],
+            "constraint_checks": [],
+            "changes": [],
+            "recovery_changes": [],
+            "candidate": current,
+        }
+
+    def validate_runtime_recovery_values(
+        self, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not isinstance(values, dict):
+            raise ValueError("runtime_recovery_parameters must be a mapping")
+        if set(values) != set(self.recovery_parameter_registry):
+            missing = sorted(set(self.recovery_parameter_registry) - set(values))
+            extra = sorted(set(values) - set(self.recovery_parameter_registry))
+            raise ValueError(
+                "Recovery parameter schema mismatch; "
+                f"missing={missing}, extra={extra}"
+            )
+        resolved = copy.deepcopy(values)
+        for name, value in resolved.items():
+            allowed = self.recovery_parameter_registry[name]["allowed_values"]
+            if value not in allowed:
+                raise ValueError(
+                    f"Recovery parameter {name}={value!r} is outside {allowed!r}"
+                )
+        return resolved
+
+    def validate_recovery_changes(
+        self,
+        changes: list[dict[str, Any]],
+        current_values: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if len(changes) > self.max_recovery_parameter_changes:
+            raise ValueError(
+                "Recovery decision exceeds max_recovery_parameter_changes="
+                f"{self.max_recovery_parameter_changes}"
+            )
+        current = self.validate_runtime_recovery_values(
+            current_values
+            if current_values is not None
+            else self.runtime_recovery_values
+        )
+        updated = copy.deepcopy(current)
+        seen: set[str] = set()
+        for item in changes:
+            name = str(item.get("parameter", "")).removeprefix("--").replace(
+                "-", "_"
+            )
+            if name in seen:
+                raise ValueError(f"Duplicate recovery change for {name}")
+            seen.add(name)
+            if name not in self.recovery_parameter_registry:
+                raise ValueError(
+                    f"{name!r} is not in the evidence-gated Recovery Registry"
+                )
+            before = item.get("before")
+            after = item.get("after")
+            if before != current[name]:
+                raise ValueError(
+                    f"Recovery change before={before!r} does not match {name}="
+                    f"{current[name]!r}"
+                )
+            if after == before:
+                raise ValueError(f"Recovery change for {name} does not change value")
+            allowed = self.recovery_parameter_registry[name]["allowed_values"]
+            if after not in allowed:
+                raise ValueError(
+                    f"Recovery change {name}={after!r} is outside {allowed!r}"
+                )
+            if len(str(item.get("rationale", "")).strip()) < 12:
+                raise ValueError(f"Recovery rationale for {name} is too short")
+            updated[name] = copy.deepcopy(after)
+        return updated
+
     def validate_failure_decision(
         self,
         session_dir: Path,
@@ -5139,6 +6047,7 @@ Embedded evidence:
         classification = decision["classification"]
         candidate = decision["candidate"]
         changes = decision["changes"]
+        recovery_changes = decision.get("recovery_changes", [])
         allowed_classifications = FAILURE_ACTION_CLASSIFICATIONS.get(action)
         if allowed_classifications is None:
             raise ValueError(f"Unsupported failure recovery action: {action!r}")
@@ -5158,18 +6067,41 @@ Embedded evidence:
                 f"{action} requires safe_to_automate=true"
             )
         if action == "adjust_parameters":
-            self.validate_candidate(current, candidate, changes, decision)
+            if not changes and not recovery_changes:
+                raise ValueError(
+                    "adjust_parameters requires a tuning or Recovery Registry change"
+                )
+            if changes:
+                failure_policy = self.effective_change_policy()
+                # Failure recovery is Agent-owned and evidence-driven. Normal
+                # exploration curricula may prefer or require 2+ coordinated
+                # parameters, but must not reject a precise one-parameter repair.
+                failure_policy["minimum_parameters_per_round"] = 1
+                failure_policy["max_parameters_per_round"] = (
+                    self.max_parameters_per_round
+                )
+                self.validate_candidate(
+                    current,
+                    candidate,
+                    changes,
+                    decision,
+                    failure_policy,
+                )
+            elif candidate != current:
+                raise ValueError(
+                    "A recovery-only adjustment must preserve the tuning candidate"
+                )
+            self.validate_recovery_changes(recovery_changes)
+            if recovery_changes:
+                return None
             known_success = self.successful_candidate(session_dir, candidate)
-            if (
-                self.candidate_was_attempted(session_dir, candidate)
-                and not known_success
-            ):
+            if self.candidate_was_attempted(session_dir, candidate) and not known_success:
                 raise ValueError(
                     "Failure recovery proposed a previously failed candidate"
                 )
             return known_success
         else:
-            if candidate != current or changes:
+            if candidate != current or changes or recovery_changes:
                 raise ValueError(
                     f"{action} must preserve the candidate and have no changes"
                 )
@@ -5327,6 +6259,18 @@ Embedded evidence:
             )
             if path.is_file()
         )
+        static_asset_failure = re.search(
+            r"dataset (?:slice|manifest).*(?:missing|mismatch|drift)|"
+            r"数据集缺少切片|suite.*(?:fingerprint|contract).*(?:mismatch|drift)|"
+            r"benchmark.*(?:schema|asset).*(?:missing|mismatch|drift)",
+            evidence,
+            re.IGNORECASE,
+        )
+        if static_asset_failure:
+            # An identical candidate cannot repair a frozen suite/dataset
+            # contract.  Let the Agent/hard-terminal policy produce an
+            # actionable versioned-asset diagnosis instead of wasting NPU time.
+            return None
         dangerous = re.search(
             r"(?:NPU|device).*out of memory|\bOOM\b|HCCL.*(?:error|failed)|"
             r"EngineCore.*(?:error|failed|died)|Application startup failed|"
@@ -5378,14 +6322,41 @@ Embedded evidence:
         if failure.get("action") != "pause_for_human":
             return failure
         classification = str(failure.get("classification", "unknown"))
-        if classification not in FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS:
-            return failure
-        if int(state.get("failure_diagnostic_retries", 0)) >= self.max_agent_diagnostic_retries:
-            return failure
         text = "\n".join(
             str(failure.get(key, "")) for key in ("summary", "root_cause", "evidence")
         )
-        if MANUAL_INTERVENTION_SIGNATURES.search(text):
+        if self.hard_terminal_intervention(failure) is not None:
+            return failure
+        if classification in FAILURE_RETRYABLE_CLASSIFICATIONS:
+            if (
+                not self.hard_terminal_only
+                and int(state.get("failure_retries", 0))
+                >= self.max_same_candidate_retries
+            ):
+                return failure
+            return {
+                **failure,
+                "summary": (
+                    "The Agent requested a pause, but no hard terminal dependency is "
+                    "proven and infrastructure retry budget remains; continuing the "
+                    "autonomous retry. " + str(failure.get("summary", ""))
+                ),
+                "action": "retry_same",
+                "safe_to_automate": True,
+                "change_strategy": "none",
+                "interaction_analysis": [],
+                "constraint_checks": [],
+                "changes": [],
+                "recovery_changes": [],
+                "candidate": state["current_candidate"],
+            }
+        if classification not in FAILURE_DIAGNOSTIC_RETRY_CLASSIFICATIONS:
+            return failure
+        if (
+            not self.hard_terminal_only
+            and int(state.get("failure_diagnostic_retries", 0))
+            >= self.max_agent_diagnostic_retries
+        ):
             return failure
         return {
             **failure,
@@ -5400,7 +6371,88 @@ Embedded evidence:
             "interaction_analysis": [],
             "constraint_checks": [],
             "changes": [],
+            "recovery_changes": [],
             "candidate": state["current_candidate"],
+        }
+
+    @staticmethod
+    def hard_terminal_intervention(failure: dict[str, Any]) -> dict[str, Any] | None:
+        """Return actionable operator guidance only for a proven immutable block."""
+        if str(failure.get("classification", "")) not in {
+            "image_or_dependency",
+            "parameter_invalid",
+            "model_or_runtime_bug",
+            "unknown",
+        }:
+            return None
+        text = "\n".join(
+            str(failure.get(key, ""))
+            for key in ("summary", "root_cause", "evidence")
+        )
+        if not MANUAL_INTERVENTION_SIGNATURES.search(text):
+            return None
+        if re.search(
+            r"\b(?:no|not|without)\b[^\n]{0,80}"
+            r"(?:image|digest|identity|permission|credential|model|topology|state)"
+            r"[^\n]{0,80}(?:mismatch|missing|invalid|corrupt|denied)",
+            text,
+            re.IGNORECASE,
+        ):
+            return None
+        categories = (
+            (
+                "image_or_version_identity",
+                r"image.*(?:digest|identity|mismatch|not approved)|(?:digest|commit).*mismatch",
+                [
+                    "Provide or approve an image whose digest and pinned vLLM/vLLM-Ascend commits match the Session contract.",
+                    "Start a new Session after changing image identity; do not rewrite the frozen Session.",
+                ],
+            ),
+            (
+                "permission_or_credential",
+                r"permission denied|access denied|credential|api key|secret|authentication failed",
+                [
+                    "Restore the missing permission or credential in the server-owned secret/environment file.",
+                    "Run the read-only preflight, then authorize resume of the preserved Session.",
+                ],
+            ),
+            (
+                "missing_model_or_artifact",
+                r"no such file or directory|missing (?:model|image)|model path",
+                [
+                    "Mount or provide the exact missing model/image artifact at the frozen path.",
+                    "Verify its identity, then resume; use a new Session if the path or model identity must change.",
+                ],
+            ),
+            (
+                "immutable_contract_mismatch",
+                r"configuration.*(?:invalid|mismatch)|state.*(?:inconsistent|corrupt)|topology.*mismatch",
+                [
+                    "Inspect the recorded mismatch/corruption evidence and restore the frozen contract from its audited source.",
+                    "If model, topology, search space, or benchmark identity must change, start a new Session.",
+                ],
+            ),
+        )
+        category = "proven_manual_dependency"
+        guidance = [
+            "Resolve the explicit immutable dependency recorded in the evidence bundle.",
+            "Run preflight and resume the preserved Session after the external fix.",
+        ]
+        for name, pattern, instructions in categories:
+            if re.search(pattern, text, re.IGNORECASE):
+                category = name
+                guidance = instructions
+                break
+        return {
+            "required": True,
+            "category": category,
+            "summary": str(failure.get("summary", "")),
+            "evidence": list(failure.get("evidence", [])),
+            "operator_steps": guidance,
+            "resume_condition": (
+                "The external immutable dependency is fixed and the frozen-Session "
+                "read-only preflight passes."
+            ),
         }
 
     def saved_failure_decision(
@@ -5516,9 +6568,7 @@ Embedded evidence:
                 result = run_structured_agent(
                     self.agent_config,
                     prompt=prompt,
-                    schema_path=self.decision_schema_path(
-                        session_dir, "agent_decision.schema.json"
-                    ),
+                    schema_path=self.agent_schema_path(session_dir),
                     output_path=decision_path,
                     cwd=KB_ROOT,
                     allowed_dir=failed_round_dir,
@@ -5606,6 +6656,9 @@ Embedded evidence:
             "round_index": index,
             "round_label": label,
             "candidate": candidate,
+            "runtime_recovery_parameters": copy.deepcopy(
+                self.runtime_recovery_values
+            ),
             "prepared_at": now(),
         }
         self.save_state(state)
@@ -5621,6 +6674,10 @@ Embedded evidence:
         )
         self.run_query(next_dir)
         save_yaml(next_dir / "02_parameters" / "candidate_params.yaml", candidate)
+        save_yaml(
+            next_dir / "02_parameters" / "runtime_recovery_parameters.yaml",
+            self.runtime_recovery_values,
+        )
         task_id, run_id = self.submit(
             next_dir,
             label,
@@ -5688,6 +6745,20 @@ Embedded evidence:
             "executor_identity": self.executor_identity,
             "image_identity": self.image_identity,
             "runtime_identity": self.runtime_identity,
+            "topology_profile": self.config.get("topology", {}).get("profile"),
+            "topology_identity": {
+                name: self.topology.get(name)
+                for name in (
+                    "executor",
+                    "nodes",
+                    "npu_per_node",
+                    "data_parallel_size",
+                    "data_parallel_size_local",
+                    "tensor_parallel_size",
+                    "worker_replicas",
+                    "worker_data_parallel_start_rank",
+                )
+            },
             "search_limits_mode": self.config.get("resolved_search_space", {}).get(
                 "mode", "manual"
             ),
@@ -5711,6 +6782,9 @@ Embedded evidence:
                 self.lab.get("lease_name") if self.execution_mode == "ktp_lab" else None
             ),
             "current_candidate": self.config["baseline"],
+            "runtime_recovery_parameters": copy.deepcopy(
+                self.runtime_recovery_values
+            ),
             "failure_retries": 0,
             "failure_adjustments": 0,
             "failure_diagnostic_retries": 0,
@@ -5936,8 +7010,23 @@ Embedded evidence:
             and state.get("last_failure_classification") == "operator_stop_before_metrics"
             and not state.get("active_task_id")
         )
-        if state.get("active_task_id") or (
+        paused_idle_run = False
+        if state.get("status") == "paused_for_human" and state.get("active_task_id"):
+            snapshot = self.task_snapshot(state.get("active_task_id"))
+            process_counts = snapshot.get("process_counts", {})
+            process_set_idle = bool(process_counts) and not any(
+                int(count or 0) > 0
+                for name, count in process_counts.items()
+                if str(name).lower() not in {"idle", "inactive", "succeeded", "failed"}
+            )
+            paused_idle_run = bool(
+                snapshot.get("terminal")
+                or int(snapshot.get("active_pods") or 0) == 0
+                or process_set_idle
+            )
+        if (state.get("active_task_id") and not paused_idle_run) or (
             state.get("active_run_id") and not retained_audit_run
+            and not paused_idle_run
         ):
             raise RuntimeError("Recovery-policy upgrade requires an archived idle round")
         session_dir = Path(state["session_dir"])
@@ -5956,6 +7045,9 @@ Embedded evidence:
             target[key] = new
 
         frozen.setdefault("failure_recovery", {})
+        source_recovery = source.get("failure_recovery", {})
+        if bool(source_recovery.get("hard_terminal_only", False)):
+            frozen["failure_recovery"]["hard_terminal_only"] = True
         for key in (
             "same_candidate_retries",
             "agent_diagnostic_retries",
@@ -6022,7 +7114,7 @@ Embedded evidence:
             ),
         }
         audit = {
-            "schema_version": "vllmtkb-recovery-policy-upgrade/v1",
+            "schema_version": "vllmtkb-recovery-policy-upgrade/v2",
             "upgraded_at": now(),
             "source": str(source_path.resolve()),
             "session": state.get("session_id"),
@@ -6057,6 +7149,11 @@ Embedded evidence:
         self.assert_state_image_identity(state)
         session_dir = Path(state["session_dir"])
         self.load_session_sidecars(session_dir)
+        self.runtime_recovery_values = self.validate_runtime_recovery_values(
+            state.get(
+                "runtime_recovery_parameters", self.runtime_recovery_values
+            )
+        )
         failed_round = self.round_dir(
             session_dir,
             int(state["round_index"]),
@@ -6239,46 +7336,129 @@ Embedded evidence:
         return state
 
     def auto_retry_paused_current(self) -> dict[str, Any]:
-        """Resume only a paused round matching a deterministic safe signature."""
+        """Reopen a paused round for a fresh Agent-owned autonomous decision."""
         state = load_controller_state()
         if state.get("status") != "paused_for_human":
             raise RuntimeError("Automatic paused recovery requires paused_for_human")
         self.assert_state_image_identity(state)
         session_dir = Path(state["session_dir"])
         self.load_session_sidecars(session_dir)
+        self.runtime_recovery_values = self.validate_runtime_recovery_values(
+            state.get(
+                "runtime_recovery_parameters", self.runtime_recovery_values
+            )
+        )
         failed_round = self.round_dir(
             session_dir, int(state["round_index"]), str(state["round_label"])
         )
-        decision = self.deterministic_engine_frontend_handshake_retry(
-            failed_round, state["current_candidate"]
-        ) or self.deterministic_benchmark_retry(
-            failed_round, state["current_candidate"]
-        ) or self.deterministic_healthy_service_benchmark_retry(
-            failed_round, state["current_candidate"]
-        )
-        if decision is None:
-            raise RuntimeError(
-                "Paused round does not match an approved deterministic auto-recovery"
+        prior_decision = failed_round / "06_agent_analysis" / "failure_decision.json"
+        if prior_decision.is_file():
+            archive = prior_decision.with_name(
+                "failure_decision.pre-agent-autonomy-v3.json"
             )
-        retry_number = int(state.get("failure_retries", 0)) + 1
-        if retry_number > self.max_same_candidate_retries:
-            raise RuntimeError("Paused round exhausted its same-candidate retry budget")
+            if not archive.exists():
+                shutil.copyfile(prior_decision, archive)
+        decision = self.analyze_failure(
+            session_dir, failed_round, state["current_candidate"]
+        )
+        decision = self.prefer_bounded_diagnostic_over_pause(decision, state)
+        if decision["action"] == "pause_for_human":
+            intervention = self.hard_terminal_intervention(decision)
+            if intervention is None:
+                raise RuntimeError(
+                    "Non-terminal pause escaped autonomous recovery policy"
+                )
+            save_json(
+                failed_round / "06_agent_analysis" / "human_intervention_required.json",
+                intervention,
+            )
+            state["human_intervention"] = intervention
+            self.save_state(state)
+            raise RuntimeError(
+                "Fresh Agent analysis proved a hard terminal dependency: "
+                + str(decision["summary"])
+            )
+        self.validate_failure_decision(
+            session_dir, decision, state["current_candidate"]
+        )
         total_recovery_rounds = int(state.get("total_failure_recovery_rounds", 0)) + 1
-        if total_recovery_rounds > self.max_total_failure_recovery_rounds:
+        if (
+            not self.hard_terminal_only
+            and total_recovery_rounds > self.max_total_failure_recovery_rounds
+        ):
             raise RuntimeError("Paused round exhausted its total failure-recovery budget")
         save_json(
-            failed_round / "06_agent_analysis" / "post_pause_recovery_decision.json",
+            failed_round / "06_agent_analysis" / "post_pause_agent_decision.json",
             decision,
         )
         next_index = int(state["round_index"]) + 1
-        next_label = f"a{int(state['candidate_index'])}r{retry_number}"
+        if decision["action"] == "adjust_parameters":
+            failure_adjustments = int(state.get("failure_adjustments", 0)) + 1
+            if (
+                not self.hard_terminal_only
+                and failure_adjustments > self.max_parameter_failure_adjustments
+            ):
+                raise RuntimeError(
+                    "Paused round exhausted its parameter failure-adjustment budget"
+                )
+            retry_number = 0
+            next_candidate = decision["candidate"]
+            next_recovery_values = self.validate_recovery_changes(
+                decision.get("recovery_changes", []),
+                state.get(
+                    "runtime_recovery_parameters", self.runtime_recovery_values
+                ),
+            )
+            self.runtime_recovery_values = copy.deepcopy(next_recovery_values)
+            next_label = f"a{int(state['candidate_index'])}f{failure_adjustments}"
+            next_status = "recovering_parameter_failure"
+        elif decision["action"] == "diagnostic_retry_same":
+            diagnostic_retries = int(state.get("failure_diagnostic_retries", 0)) + 1
+            if (
+                not self.hard_terminal_only
+                and diagnostic_retries > self.max_agent_diagnostic_retries
+            ):
+                raise RuntimeError(
+                    "Paused round exhausted its diagnostic retry budget"
+                )
+            retry_number = int(state.get("failure_retries", 0))
+            failure_adjustments = int(state.get("failure_adjustments", 0))
+            next_candidate = state["current_candidate"]
+            next_recovery_values = state.get(
+                "runtime_recovery_parameters", self.runtime_recovery_values
+            )
+            next_label = f"a{int(state['candidate_index'])}d{diagnostic_retries}"
+            next_status = "retrying_agent_diagnosed_failure"
+        else:
+            diagnostic_retries = int(state.get("failure_diagnostic_retries", 0))
+            retry_number = int(state.get("failure_retries", 0)) + 1
+            if (
+                not self.hard_terminal_only
+                and retry_number > self.max_same_candidate_retries
+            ):
+                raise RuntimeError(
+                    "Paused round exhausted its same-candidate retry budget"
+                )
+            failure_adjustments = int(state.get("failure_adjustments", 0))
+            next_candidate = state["current_candidate"]
+            next_recovery_values = state.get(
+                "runtime_recovery_parameters", self.runtime_recovery_values
+            )
+            next_label = f"a{int(state['candidate_index'])}r{retry_number}"
+            next_status = "retrying_infrastructure_failure"
+        if decision["action"] == "adjust_parameters":
+            diagnostic_retries = int(state.get("failure_diagnostic_retries", 0))
         _, task_id, run_id = self.prepare_and_submit_round(
             session_dir,
             state,
             index=next_index,
             label=next_label,
-            candidate=state["current_candidate"],
-            launch_profile=self.round_launch_profile(failed_round),
+            candidate=next_candidate,
+            launch_profile=(
+                self.round_launch_profile(failed_round)
+                if decision["action"] == "retry_same"
+                else None
+            ),
         )
         state.update(
             round_index=next_index,
@@ -6287,10 +7467,17 @@ Embedded evidence:
             active_run_id=run_id,
             round_submitted_at=now(),
             failure_retries=retry_number,
+            failure_adjustments=failure_adjustments,
+            failure_diagnostic_retries=diagnostic_retries,
             total_failure_recovery_rounds=total_recovery_rounds,
-            status="retrying_infrastructure_failure",
+            current_candidate=next_candidate,
+            runtime_recovery_parameters=next_recovery_values,
+            status=next_status,
             recovery_source_round=failed_round.name,
-            recovery_reason=f"deterministic_{decision['classification']}_retry",
+            recovery_reason=(
+                f"agent_owned_{decision['classification']}_"
+                f"{decision['action']}"
+            ),
             last_failure_classification=decision["classification"],
             last_failure_summary=decision["summary"],
         )
@@ -6370,6 +7557,9 @@ Embedded evidence:
             if not STATE_FILE.exists():
                 raise RuntimeError("No controller state exists to resume")
             state = load_controller_state()
+            self.runtime_recovery_values = self.validate_runtime_recovery_values(
+                state.get("runtime_recovery_parameters", self.runtime_recovery_values)
+            )
             self.assert_state_image_identity(state)
             session_dir = Path(state["session_dir"])
             if not session_dir.is_dir():
@@ -6402,6 +7592,8 @@ Embedded evidence:
                 resumable_statuses = {
                     "stopped_after_current_round",
                     "stopped_after_failed_round",
+                    "budget_paused",
+                    "topology_feasibility_passed",
                 }
                 has_terminal_artifact = (
                     archived_round / "05_results" / "metrics.json"
@@ -6490,6 +7682,12 @@ Embedded evidence:
                     round_dir / "02_parameters" / "candidate_params.yaml",
                     state["current_candidate"],
                 )
+                save_yaml(
+                    round_dir
+                    / "02_parameters"
+                    / "runtime_recovery_parameters.yaml",
+                    self.runtime_recovery_values,
+                )
                 task_id, run_id = self.submit(
                     round_dir, initial_label, state["current_candidate"], dry_run=False
                 )
@@ -6547,6 +7745,30 @@ Embedded evidence:
                     session_dir, round_dir, state
                 )
                 self.save_state(state)
+                pause_status = session_budget_pause_status(
+                    int(state["candidate_index"]),
+                    self.pause_after_candidate_index,
+                    topology_feasibility_only=self.topology_feasibility_only,
+                )
+                if pause_status is not None:
+                    self.write_comparison(session_dir, round_dir)
+                    state.update(
+                        status=pause_status,
+                        active_task_id=None,
+                        active_run_id=None,
+                        budget_pause_after_candidate_index=(
+                            self.pause_after_candidate_index
+                        ),
+                        topology_feasibility=(
+                            "passed" if self.topology_feasibility_only else None
+                        ),
+                    )
+                    self.save_state(state)
+                    log(
+                        f"Session paused at candidate index {state['candidate_index']} "
+                        f"with status={pause_status}; no next experiment was submitted."
+                    )
+                    return
                 log(f"Round {state['round_label']} completed; invoking Codex analysis.")
                 decision = None
                 if state.get("analysis_status") == "ready":
@@ -6565,6 +7787,7 @@ Embedded evidence:
                     state.update(
                         status="completed_by_agent",
                         active_task_id=None,
+                        active_run_id=None,
                         completion_summary=decision["summary"],
                     )
                     self.save_state(state)
@@ -6659,30 +7882,26 @@ Embedded evidence:
                     self.save_state(state)
                     log("Active round failed and was archived; controller stopped.")
                     return
+                if self.topology_feasibility_only:
+                    state.update(
+                        status="topology_feasibility_failed",
+                        active_task_id=None,
+                        active_run_id=None,
+                        topology_feasibility="failed",
+                        last_failure_classification="topology_feasibility_probe_failed",
+                        last_failure_summary="; ".join(reasons),
+                    )
+                    self.save_state(state)
+                    log(
+                        "Experimental topology baseline failed its one-shot "
+                        "startup/Fast-C32 feasibility probe; no parameter recovery "
+                        "or further topology budget will be consumed."
+                    )
+                    return
                 log(
                     f"Round {state['round_label']} failed; invoking Codex failure analysis."
                 )
-                failure = self.deterministic_startup_port_retry(
-                    round_dir, state["current_candidate"]
-                ) or self.deterministic_engine_frontend_handshake_retry(
-                    round_dir, state["current_candidate"]
-                ) or self.deterministic_benchmark_retry(
-                    round_dir, state["current_candidate"]
-                ) or self.deterministic_healthy_service_benchmark_retry(
-                    round_dir, state["current_candidate"]
-                )
-                if failure is not None:
-                    save_json(
-                        round_dir
-                        / "06_agent_analysis"
-                        / "deterministic_recovery_decision.json",
-                        failure,
-                    )
-                    log(
-                        "Deterministic recovery classified the failure as safe for "
-                        "a bounded same-candidate retry: " + failure["summary"]
-                    )
-                else:
+                try:
                     failure = self.saved_failure_decision(
                         session_dir,
                         round_dir,
@@ -6691,6 +7910,40 @@ Embedded evidence:
                         session_dir,
                         round_dir,
                         state["current_candidate"],
+                    )
+                except AgentProtocolError:
+                    # Deterministic decisions are availability fallbacks only. They
+                    # never preselect the Agent's layer or candidate when the Agent
+                    # provider is healthy.
+                    failure = self.deterministic_startup_port_retry(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_engine_frontend_handshake_retry(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_fused_moe_shared_expert_recovery(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_mlapo_vector_timeout_recovery(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_hccl_communicator_retry(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_benchmark_retry(
+                        round_dir, state["current_candidate"]
+                    ) or self.deterministic_healthy_service_benchmark_retry(
+                        round_dir, state["current_candidate"]
+                    )
+                    if failure is None:
+                        raise
+                    self.validate_failure_decision(
+                        session_dir, failure, state["current_candidate"]
+                    )
+                    save_json(
+                        round_dir
+                        / "06_agent_analysis"
+                        / "deterministic_provider_fallback_decision.json",
+                        failure,
+                    )
+                    log(
+                        "Agent provider failed its protocol; deterministic fallback "
+                        f"selected action={failure['action']}: {failure['summary']}"
                     )
                 failure = self.prefer_bounded_diagnostic_over_pause(failure, state)
                 action = failure["action"]
@@ -6712,10 +7965,23 @@ Embedded evidence:
                                 "continuing selection from the known-good anchor."
                             )
                 if action == "pause_for_human" and rollback_success is None:
+                    intervention = self.hard_terminal_intervention(failure)
+                    if self.hard_terminal_only and intervention is None:
+                        raise RuntimeError(
+                            "Non-terminal pause escaped autonomous recovery policy"
+                        )
+                    if intervention is not None:
+                        save_json(
+                            round_dir
+                            / "06_agent_analysis"
+                            / "human_intervention_required.json",
+                            intervention,
+                        )
                     state.update(
                         status="paused_for_human",
                         last_failure_classification=failure["classification"],
                         last_failure_summary=failure["summary"],
+                        human_intervention=intervention,
                     )
                     self.save_state(state)
                     log(
@@ -6724,7 +7990,9 @@ Embedded evidence:
                     )
                     return
 
-                if action == "adjust_parameters":
+                if action == "adjust_parameters" and not failure.get(
+                    "recovery_changes", []
+                ):
                     rollback_success = self.successful_candidate(
                         session_dir,
                         failure["candidate"],
@@ -6813,7 +8081,10 @@ Embedded evidence:
                 total_recovery_rounds = int(
                     state.get("total_failure_recovery_rounds", 0)
                 ) + 1
-                if total_recovery_rounds > self.max_total_failure_recovery_rounds:
+                if (
+                    not self.hard_terminal_only
+                    and total_recovery_rounds > self.max_total_failure_recovery_rounds
+                ):
                     state.update(
                         status="paused_after_total_recovery_budget",
                         last_failure_classification=failure["classification"],
@@ -6827,6 +8098,8 @@ Embedded evidence:
                     state["failure_retries"] = 0
                     state["failure_adjustments"] += 1
                     if (
+                        not self.hard_terminal_only
+                        and
                         state["failure_adjustments"]
                         > self.max_parameter_failure_adjustments
                     ):
@@ -6839,6 +8112,17 @@ Embedded evidence:
                         log("Paused after exhausting the parameter-recovery budget.")
                         return
                     next_candidate = failure["candidate"]
+                    next_recovery_values = self.validate_recovery_changes(
+                        failure.get("recovery_changes", []),
+                        state.get(
+                            "runtime_recovery_parameters",
+                            self.runtime_recovery_values,
+                        ),
+                    )
+                    state["runtime_recovery_parameters"] = next_recovery_values
+                    self.runtime_recovery_values = copy.deepcopy(
+                        next_recovery_values
+                    )
                     next_label = (
                         f"a{state['candidate_index']}f{state['failure_adjustments']}"
                     )
@@ -6848,6 +8132,8 @@ Embedded evidence:
                         state.get("failure_diagnostic_retries", 0)
                     ) + 1
                     if (
+                        not self.hard_terminal_only
+                        and
                         state["failure_diagnostic_retries"]
                         > self.max_agent_diagnostic_retries
                     ):
@@ -6867,7 +8153,10 @@ Embedded evidence:
                     next_status = "retrying_agent_diagnosed_failure"
                 else:
                     state["failure_retries"] += 1
-                    if state["failure_retries"] > self.max_same_candidate_retries:
+                    if (
+                        not self.hard_terminal_only
+                        and state["failure_retries"] > self.max_same_candidate_retries
+                    ):
                         state.update(
                             status="paused_after_repeated_infrastructure_failure",
                             last_failure_classification=failure["classification"],
@@ -7015,7 +8304,7 @@ def parse_args() -> argparse.Namespace:
     group.add_argument(
         "--auto-retry-paused-current",
         action="store_true",
-        help="retry only when a paused round matches an approved deterministic signature",
+        help="reanalyze a paused round with the Agent and resume unless a hard terminal block is proven",
     )
     group.add_argument(
         "--stop-active-task",
@@ -7058,6 +8347,13 @@ def parse_args() -> argparse.Namespace:
         help="benchmark profile for a new Session; resume uses the frozen Session value",
     )
     parser.add_argument(
+        "--topology-profile",
+        help=(
+            "topology profile for a new Session; use topology_advisor.py for "
+            "the novice-safe recommendation"
+        ),
+    )
+    parser.add_argument(
         "--search-space-profile",
         help="search-space profile for a new Session; resume uses the frozen Session value",
     )
@@ -7077,6 +8373,22 @@ def parse_args() -> argparse.Namespace:
         "--allow-active-lease",
         action="store_true",
         help="with --check-only, allow a running Lease for an already-active task",
+    )
+    parser.add_argument(
+        "--pause-after-candidate-index",
+        type=int,
+        help=(
+            "pause after archiving metrics for this candidate index; used by the "
+            "outer topology Campaign to time-slice one frozen Session"
+        ),
+    )
+    parser.add_argument(
+        "--topology-feasibility-only",
+        action="store_true",
+        help=(
+            "new experimental topology only: run candidate index 0 once and stop "
+            "without Agent recovery if startup or Benchmark fails"
+        ),
     )
     return parser.parse_args()
 
@@ -7103,6 +8415,10 @@ def main() -> int:
     )
     if (args.use_frozen_session or args.allow_active_lease) and not args.check_only:
         raise RuntimeError("check-only flags require --check-only")
+    if args.pause_after_candidate_index is not None and not (args.start or args.resume):
+        raise RuntimeError("--pause-after-candidate-index requires --start or --resume")
+    if args.topology_feasibility_only and not (args.start or args.resume):
+        raise RuntimeError("--topology-feasibility-only requires --start or --resume")
     if use_frozen_config and not STATE_FILE.exists():
         raise RuntimeError("No controller state exists for frozen-Session preflight")
     if use_frozen_config and STATE_FILE.exists():
@@ -7110,6 +8426,7 @@ def main() -> int:
             args.strategy_profile
             or args.agent_provider
             or args.benchmark_profile
+            or args.topology_profile
             or args.search_space_profile
             or args.reuse_baseline_session
         ):
@@ -7145,6 +8462,8 @@ def main() -> int:
         raw_config, _ = resolve_runtime_profile(raw_config, KB_ROOT)
         if args.strategy_profile:
             raw_config.setdefault("strategy", {})["profile"] = args.strategy_profile
+        if args.topology_profile:
+            raw_config.setdefault("topology", {})["profile"] = args.topology_profile
         if args.agent_provider:
             raw_config.setdefault("agent", {})["provider"] = args.agent_provider
         if args.benchmark_profile:
@@ -7157,6 +8476,7 @@ def main() -> int:
             raw_config["baseline_reuse"] = {
                 "source_session": args.reuse_baseline_session
             }
+        raw_config = apply_topology_baseline_binding(raw_config)
         raw_config = resolve_initial_baseline_definition(raw_config, KB_ROOT)
         validate_runtime_selections(raw_config)
         config, search_space_result = resolve_search_limits(
@@ -7169,6 +8489,8 @@ def main() -> int:
         dry_run=bool(args.dry_run or args.offline_dry_run),
         offline_dry_run=args.offline_dry_run,
         search_space_result=search_space_result,
+        pause_after_candidate_index=args.pause_after_candidate_index,
+        topology_feasibility_only=args.topology_feasibility_only,
     )
     if args.stop_active_task:
         state = load_controller_state()
@@ -7255,7 +8577,16 @@ def main() -> int:
                         failed_state = json.loads(
                             STATE_FILE.read_text(encoding="utf-8")
                         )
-                        if controller_exception_is_recoverable(exc):
+                        recoverable_controller_error = (
+                            controller_exception_is_recoverable(exc)
+                        )
+                        explicit_manual_block = bool(
+                            MANUAL_INTERVENTION_SIGNATURES.search(str(exc))
+                        ) and not recoverable_controller_error
+                        if recoverable_controller_error or (
+                            controller.hard_terminal_only
+                            and not explicit_manual_block
+                        ):
                             recovery_attempts = int(
                                 failed_state.get("controller_recovery_attempts", 0)
                             ) + 1
@@ -7268,9 +8599,23 @@ def main() -> int:
                             )
                         else:
                             paused_status = "paused_controller_error"
+                        intervention = None
+                        if explicit_manual_block:
+                            intervention = controller.hard_terminal_intervention(
+                                {
+                                    "summary": (
+                                        "Controller encountered an explicit immutable "
+                                        f"dependency: {type(exc).__name__}: {exc}"
+                                    ),
+                                    "root_cause": str(exc),
+                                    "evidence": [f"{type(exc).__name__}: {exc}"],
+                                    "classification": "unknown",
+                                }
+                            )
                         failed_state.update(
                             status=paused_status,
                             controller_error=f"{type(exc).__name__}: {exc}",
+                            human_intervention=intervention,
                             updated_at=now(),
                         )
                         save_json(STATE_FILE, failed_state)

@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+export VLLMTKB_CONFIG="${SCRIPT_DIR}/config.dp4_tp8.yaml"
+export VLLMTKB_RUNTIME_ROOT="${SCRIPT_DIR}/runtime_fixed_dp4_tp8_v1"
+
+COMMAND="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "${COMMAND}" in
+  dry-run) TARGET="${SCRIPT_DIR}/dry_run.sh" ;;
+  seed-assets) TARGET="${SCRIPT_DIR}/seed_assets.sh" ;;
+  prepare-lease) TARGET="${SCRIPT_DIR}/prepare_lease.sh" ;;
+  preflight) TARGET="${SCRIPT_DIR}/preflight.sh" ;;
+  start) TARGET="${SCRIPT_DIR}/start.sh" ;;
+  foreground) TARGET="${SCRIPT_DIR}/run_foreground.sh" ;;
+  status) TARGET="${SCRIPT_DIR}/status.sh" ;;
+  stop) TARGET="${SCRIPT_DIR}/stop.sh" ;;
+  *)
+    echo "usage: $0 {dry-run|seed-assets|prepare-lease|preflight|start|foreground|status|stop} [args...]" >&2
+    exit 2
+    ;;
+esac
+
+exec bash "${TARGET}" "$@"

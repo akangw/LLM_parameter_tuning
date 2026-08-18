@@ -69,6 +69,40 @@ class PortraitRetrieverTests(unittest.TestCase):
         self.assertGreaterEqual(changed["variant_count"], 1)
         self.assertEqual("--max-num-seqs", changed["variants"][0]["portrait"]["name"])
 
+    def test_automatic_nested_axis_resolves_without_legacy_registry_entry(self) -> None:
+        name = "additional_config__ascend_compilation_config__fuse_allreduce_rms"
+        result = self.retriever.retrieve(
+            [name],
+            search_limits={name: [False, True]},
+            include_one_hop=False,
+        )
+        changed = result["changed_parameters"][0]
+        self.assertEqual(name, changed["canonical_name"])
+        self.assertGreaterEqual(changed["variant_count"], 1)
+        self.assertTrue(
+            any(
+                variant["portrait"]["name"]
+                == "additional_config.ascend_compilation_config.fuse_allreduce_rms"
+                for variant in changed["variants"]
+            )
+        )
+
+    def test_speculative_config_axes_resolve_class_named_portraits(self) -> None:
+        names = (
+            "speculative_config__method",
+            "speculative_config__disable_padded_drafter_batch",
+            "speculative_config__attention_backend",
+        )
+        result = self.retriever.retrieve(
+            names,
+            search_limits={name: [None, True] for name in names},
+            include_one_hop=False,
+        )
+        self.assertEqual([], result["unresolved_names"])
+        self.assertTrue(
+            all(item["variant_count"] >= 1 for item in result["changed_parameters"])
+        )
+
     def test_parameter_outside_search_limits_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self.retriever.retrieve(
