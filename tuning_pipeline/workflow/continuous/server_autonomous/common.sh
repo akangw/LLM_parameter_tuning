@@ -18,9 +18,10 @@ fi
   echo "Server-autonomous config does not exist: ${CONFIG}" >&2
   exit 2
 }
-# Never reuse the legacy V1/V2/V3 state directory for the fixed-topology V4
-# chain. An operator may override this path explicitly for a controlled resume.
-RUNTIME_ROOT="${VLLMTKB_RUNTIME_ROOT:-${SCRIPT_DIR}/runtime_fixed_dp4_tp8_v4_guided_agent_live}"
+# The generic service/status entrypoints follow the checked-in Search-V4
+# default. Historical dispatchers always set their own isolated runtime root,
+# and an operator may still override this path for a controlled resume.
+RUNTIME_ROOT="${VLLMTKB_RUNTIME_ROOT:-${SCRIPT_DIR}/runtime_fixed_dp4_tp8_search_v4_live}"
 PROCESS_ROOT="${RUNTIME_ROOT}/process"
 SERVICE_ROOT="${RUNTIME_ROOT}/service"
 SERVICE_ENV_FILE="${VLLMTKB_ENV_FILE:-${SCRIPT_DIR}/.secrets/controller.env}"

@@ -44,6 +44,7 @@ PLACEHOLDER_MARKERS = (
 )
 DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_a8_frontier_v4"
 DEFAULT_STRATEGY_PROFILE = "hierarchical_agentic_guided_v5"
+DEFAULT_SERVER_RUNTIME_ROOT = "runtime_fixed_dp4_tp8_search_v4_live"
 PORTABLE_SEARCH_SPACE_PROFILE = "automatic_registry_v1"
 PORTABLE_STRATEGY_PROFILE = "hierarchical_throughput_v1"
 
@@ -143,6 +144,17 @@ def main() -> int:
             errors.append("search_space_profiles.yaml default_profile drift")
         if strategy_profiles["default_strategy"] != DEFAULT_STRATEGY_PROFILE:
             errors.append("strategy_profiles.yaml default_strategy drift")
+
+        server_common = (continuous / "server_autonomous" / "common.sh").read_text(
+            encoding="utf-8"
+        )
+        expected_runtime_root = (
+            'RUNTIME_ROOT="${VLLMTKB_RUNTIME_ROOT:-${SCRIPT_DIR}/'
+            f'{DEFAULT_SERVER_RUNTIME_ROOT}'
+            '}"'
+        )
+        if expected_runtime_root not in server_common:
+            errors.append("server-autonomous default Runtime Root drift")
 
         runtime_profiles = yaml.safe_load(
             (continuous / "runtime_profiles.yaml").read_text(encoding="utf-8")
