@@ -42,8 +42,10 @@ PLACEHOLDER_MARKERS = (
     "placeholder",
     "your-",
 )
-DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_v1"
-DEFAULT_STRATEGY_PROFILE = "hierarchical_throughput_v1"
+DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_a8_frontier_v3"
+DEFAULT_STRATEGY_PROFILE = "hierarchical_agentic_guided_v4"
+PORTABLE_SEARCH_SPACE_PROFILE = "automatic_registry_v1"
+PORTABLE_STRATEGY_PROFILE = "hierarchical_throughput_v1"
 
 
 def repository_files() -> list[Path]:
@@ -106,18 +108,6 @@ def main() -> int:
                 config["search_space"]["profile"],
                 config["strategy"]["profile"],
             ),
-            "continuous/config.local.example.yaml": (
-                yaml.safe_load(
-                    (continuous / "config.local.example.yaml").read_text(
-                        encoding="utf-8"
-                    )
-                )["search_space"]["profile"],
-                yaml.safe_load(
-                    (continuous / "config.local.example.yaml").read_text(
-                        encoding="utf-8"
-                    )
-                )["strategy"]["profile"],
-            ),
             "continuous/server_autonomous/config.yaml": (
                 yaml.safe_load(
                     (continuous / "server_autonomous" / "config.yaml").read_text(
@@ -128,22 +118,6 @@ def main() -> int:
                     (continuous / "server_autonomous" / "config.yaml").read_text(
                         encoding="utf-8"
                     )
-                )["strategy"]["profile"],
-            ),
-            "continuous/launch_profiles/automatic_v2_b0.example.yaml": (
-                yaml.safe_load(
-                    (
-                        continuous
-                        / "launch_profiles"
-                        / "automatic_v2_b0.example.yaml"
-                    ).read_text(encoding="utf-8")
-                )["search_space"]["profile"],
-                yaml.safe_load(
-                    (
-                        continuous
-                        / "launch_profiles"
-                        / "automatic_v2_b0.example.yaml"
-                    ).read_text(encoding="utf-8")
                 )["strategy"]["profile"],
             ),
         }
@@ -195,15 +169,31 @@ def main() -> int:
             scenario["search_space"]["default_profile"],
             scenario["agent"]["strategy"],
         )
-        if scenario_pair != (DEFAULT_SEARCH_SPACE_PROFILE, DEFAULT_STRATEGY_PROFILE):
-            errors.append(f"default W8A8 Scenario drift: {scenario_pair!r}")
+        if scenario_pair != (
+            PORTABLE_SEARCH_SPACE_PROFILE,
+            PORTABLE_STRATEGY_PROFILE,
+        ):
+            errors.append(f"portable DP2 W8A8 Scenario drift: {scenario_pair!r}")
+
+        portable_overlay = yaml.safe_load(
+            (continuous / "config.local.example.yaml").read_text(encoding="utf-8")
+        )
+        portable_pair = (
+            portable_overlay["search_space"]["profile"],
+            portable_overlay["strategy"]["profile"],
+        )
+        if portable_pair != (
+            PORTABLE_SEARCH_SPACE_PROFILE,
+            PORTABLE_STRATEGY_PROFILE,
+        ):
+            errors.append(f"portable config example drift: {portable_pair!r}")
 
         adapter_cli = (continuous / "runtime_adapter_cli.py").read_text(
             encoding="utf-8"
         )
         expected_cli_default = (
             'create.add_argument("--strategy-profile", '
-            f'default="{DEFAULT_STRATEGY_PROFILE}")'
+            f'default="{PORTABLE_STRATEGY_PROFILE}")'
         )
         if expected_cli_default not in adapter_cli:
             errors.append("Runtime Adapter scaffold strategy default drift")
