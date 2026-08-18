@@ -49,17 +49,20 @@ Runtime Adapter.
 
 ## Search-Space profiles
 
-New W8A8 Sessions default to `automatic_registry_a8_frontier_v3`. It rebuilds a registry
+New W8A8 Sessions default to `automatic_registry_a8_frontier_v4`. It rebuilds a registry
 from tagged portraits, exact pinned source evidence, and the deterministic
 compatibility policy. It imports only identity-matched completed history for
-conditional failure memory and bounded Active/Reserve rotation. `curated_registry_v1` remains an explicit alternative that
+conditional failure memory and cross-Session continuation. The V4 production
+profile freezes 30 curated Active axes and 73 auditable Reserve axes; automatic
+Active/Reserve rotation is disabled so generic novelty scoring cannot displace a
+core serving axis. `curated_registry_v1` remains an explicit alternative that
 compiles the reviewed curated registry and can apply identity-compatible,
 bounded history-aware rotation. Select either only when creating a Session
 with `-SearchSpaceProfile`.
 
 The effective candidate contains:
 
-- 28 active tunable parameters and 75 auditable reserve parameters in the
+- 30 active tunable parameters and 73 auditable reserve parameters in the
   current automatic W8A8 compilation;
 - `async_scheduling` as a coupled derived companion when the curated MTP token
   axis is enabled after B0;
@@ -104,7 +107,7 @@ Ascend runtime does not expose the required upstream CLI contract, so
 fields. A candidate that attempts to enable EPLB is rejected before submission.
 
 Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The current default
-runtime is `glm52_w8a8_a3_dp4_tp8_a8_guided_v4`: DP4/TP8 is frozen before Session
+runtime is `glm52_w8a8_a3_dp4_tp8_search_v4`: DP4/TP8 is frozen before Session
 creation, and the Agent receives a fixed-topology identity rather than a list
 of topology candidates. Only serving parameters consume the active budget.
 
@@ -191,7 +194,7 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-The W8A8 default strategy is `hierarchical_agentic_guided_v4`. The Controller
+The W8A8 default strategy is `hierarchical_agentic_guided_v5`. The Controller
 selects the semantic layer during ordered coverage, while the Agent owns the
 exact parameters, values, parameter count and justified companions; cross-layer
 refinement is fully Agent-owned. It makes `max_model_len` a normal Active axis,

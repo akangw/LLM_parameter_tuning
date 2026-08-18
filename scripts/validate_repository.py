@@ -42,8 +42,8 @@ PLACEHOLDER_MARKERS = (
     "placeholder",
     "your-",
 )
-DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_a8_frontier_v3"
-DEFAULT_STRATEGY_PROFILE = "hierarchical_agentic_guided_v4"
+DEFAULT_SEARCH_SPACE_PROFILE = "automatic_registry_a8_frontier_v4"
+DEFAULT_STRATEGY_PROFILE = "hierarchical_agentic_guided_v5"
 PORTABLE_SEARCH_SPACE_PROFILE = "automatic_registry_v1"
 PORTABLE_STRATEGY_PROFILE = "hierarchical_throughput_v1"
 

@@ -4,12 +4,13 @@ This mode runs the knowledge query, deterministic Controller, DeepSeek Agent,
 ktp-lab submission, Benchmark collection, and Session archive on the Linux
 server.  It is isolated from the default Windows-to-server chain.
 
-The checked-in default runs one fixed DP4/TP8 Session with the A8-derived
-fixed-v3 baseline, automatic_registry_a8_frontier_v3, guided-v4 strategy and
-Fast-C32-v2 benchmark. The topology Campaign remains installed but dormant;
+The checked-in default runs one fixed DP4/TP8 Session with the measured
+Guided-V4 incumbent baseline, `automatic_registry_a8_frontier_v4`,
+`hierarchical_agentic_guided_v5`, and Fast-C32-v2 benchmark. The topology
+Campaign remains installed but dormant;
 the main service does not schedule, compare or spend budget on another topology.
 
-`dp4_tp8_v4.sh` is the explicit dispatcher for the same production identity.
+`dp4_tp8_search_v4.sh` is the explicit dispatcher for the same production identity.
 The older DP4 v1-v3 dispatchers and fixed DP2 package remain reproducible
 historical entrypoints, but are not defaults and never share runtime state.
 
