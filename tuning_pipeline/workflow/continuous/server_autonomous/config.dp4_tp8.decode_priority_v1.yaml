@@ -52,3 +52,11 @@ lab:
   # the paused Search-V4 Lease without an explicit operator decision.
   lease_name: vllmtkb-decode-priority-v1-pending
   output_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/lab_runs_decode_priority_v1
+  blocked_lease_names:
+    - vllmtkb-auto-fixed-dp4tp8-v2-20260817-2x16npu
+    - vllmtkb-auto-fixed-dp4tp8-v1-20260814-2x16npu
+    - vllmtkb-auto-fixed-dp2tp16-v4-20260814-2x16npu
+    - vllmtkb-auto-topology-v4-20260814-2x16npu
+    - vllmtkb-server-auto-418bd627-32c8cf190-glm52-a3-32npu
+    - vllmtkb-418bd627-32c8cf190-glm52-a3-32npu
+    - vllmtkb-senior-migrated-w8a8-dp2tp16-20260806

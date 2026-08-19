@@ -297,6 +297,10 @@ class ServiceRenderTests(unittest.TestCase):
         self.assertEqual("decode_only_c32_v1", config["benchmark"]["profile"])
         self.assertTrue(config["failure_recovery"]["hard_terminal_only"])
         self.assertTrue(config["lab"]["lease_name"].endswith("-pending"))
+        self.assertIn(
+            "vllmtkb-auto-fixed-dp4tp8-v2-20260817-2x16npu",
+            config["lab"]["blocked_lease_names"],
+        )
         for key in ("servebench_root", "spec_root", "dataset_root"):
             self.assertTrue(
                 config["benchmark"]["aligned_l1_decode_only_v1"][key].startswith(
