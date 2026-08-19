@@ -1,0 +1,45 @@
+规范版本: servebench-suite-v1
+测试:
+  名称: Decode单场景调优
+  标识: tuning-decode-only-c32-v1
+  版本: v1
+  状态: 正式
+  层级: 调优
+  说明: 仅保留冻结的256输入、2048输出、C32长Decode工作负载。
+  级别: L1
+请求:
+  接口: /v1/completions
+  温度: 0
+  TopP: 1
+  忽略结束符: true
+  失败重试次数: 0
+  随机种子: 42
+工作负载:
+- 名称: 长内容生成
+  标识: decode-256-2048
+  用途: [代码与推理输出, Decode压力, MTP收益]
+  数据:
+    类型: 冻结JSONL
+    输入Token数: 256
+    输出Token数: 2048
+    清单: datasets/tuning-structured-decode-256-2048-v1/manifest.json
+  提示词模式: 唯一提示词
+阶段:
+- 名称: Decode C32主目标
+  标识: decode-only-c32
+  类型: 固定并发
+  工作负载: [decode-256-2048]
+  缓存状态: 不适用
+  Case角色: 正式测量
+  最大错误数: 0
+  测试点:
+  - 并发: 32
+    正式请求数: 64
+    预热请求数: 4
+    时间上限秒: 300
+公平性:
+- 数据集、Tokenizer、随机种子、温度、请求数和Token形状继承Fast-C32 V2冻结身份。
+- 每个候选必须零错误、零未完成请求并通过精确Token形状检查。
+- 主评分只使用decode-256-2048的聚合输出吞吐。
+- 报告必须同时包含输出吞吐、TTFT P50/P90和TPOT P50/P90。
+- 不使用benchmark时长作为候选硬截断条件；外层round timeout只处理失控任务。

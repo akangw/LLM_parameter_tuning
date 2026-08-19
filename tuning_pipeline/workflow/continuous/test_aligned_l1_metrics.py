@@ -40,11 +40,14 @@ def build_run(
     servebench_1_layout: bool = False,
     c32_shortfall: int = 0,
     c32_only: bool = False,
+    workload_ids: tuple[str, ...] | None = None,
 ) -> Path:
     datasets = []
     cases = []
     report_cases = []
-    for workload, (input_tokens, output_tokens) in WORKLOADS.items():
+    selected = workload_ids or tuple(WORKLOADS)
+    for workload in selected:
+        input_tokens, output_tokens = WORKLOADS[workload]
         snapshot = f"datasets/{workload}.json"
         write_json(
             root / snapshot,
@@ -161,6 +164,28 @@ class AlignedL1MetricsTests(unittest.TestCase):
             result = metrics.consolidate([run], 32, expected_formal_cases=4)
         self.assertEqual(4, len(result["l1"]["cases"]))
         self.assertEqual(256, result["metrics"]["successful_requests"])
+        self.assertAlmostEqual(100.0, result["metrics"]["output_token_throughput"])
+        for name in (
+            "ttft_p50_ms",
+            "ttft_p90_ms",
+            "tpot_p50_ms",
+            "tpot_p90_ms",
+        ):
+            self.assertIn(name, result["metrics"])
+
+    def test_decode_only_case_reports_throughput_ttft_and_tpot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = build_run(
+                Path(directory) / "rep1",
+                c32_only=True,
+                workload_ids=("decode-256-2048",),
+            )
+            result = metrics.consolidate(
+                [run], 32, expected_formal_cases=1
+            )
+        self.assertEqual("ok", result["parse_status"])
+        self.assertEqual(1, len(result["l1"]["cases"]))
+        self.assertEqual(64, result["metrics"]["successful_requests"])
         self.assertAlmostEqual(100.0, result["metrics"]["output_token_throughput"])
         for name in (
             "ttft_p50_ms",

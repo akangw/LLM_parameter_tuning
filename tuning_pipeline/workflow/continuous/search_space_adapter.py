@@ -417,6 +417,36 @@ def resolve_search_limits(
     effective_limits = copy.deepcopy(result["active_search_limits"])
     baseline = copy.deepcopy(config["baseline"])
     compiler_baseline = compiler_scenario.get("baseline", {})
+
+    # Some source defaults are intentionally absent from the process command
+    # line.  They belong in the capability/audit registry, but forcing them
+    # into every Agent candidate turns a non-parameter into a misleading
+    # singleton Search Limit.  Profiles may omit such fields only when the
+    # selected expert baseline and legacy fallback both agree with the exact
+    # declared source default and the field is not Active.
+    implicit_source_defaults = profile.get("implicit_source_defaults", {})
+    if not isinstance(implicit_source_defaults, dict):
+        raise ValueError(
+            "Search-space profile implicit_source_defaults must be an object"
+        )
+    for name, expected in implicit_source_defaults.items():
+        name = str(name)
+        if name in effective_limits:
+            raise ValueError(
+                f"Implicit source-default parameter {name!r} cannot be Active"
+            )
+        if name in baseline and baseline[name] != expected:
+            raise ValueError(
+                f"Baseline {name}={baseline[name]!r} differs from declared "
+                f"source default {expected!r}"
+            )
+        if name in manual_limits and expected not in manual_limits[name]:
+            raise ValueError(
+                f"Fallback Search Limit {name}={manual_limits[name]!r} excludes "
+                f"declared source default {expected!r}"
+            )
+        baseline.pop(name, None)
+        manual_limits.pop(name, None)
     for name, values in effective_limits.items():
         if name not in baseline:
             preferred = compiler_baseline.get(name)
@@ -525,6 +555,9 @@ def resolve_search_limits(
         else "config.search_space.approved_planned_parameters"
     )
     result["integration"]["approved_planned_parameters"] = sorted(approved)
+    result["integration"]["implicit_source_defaults"] = copy.deepcopy(
+        implicit_source_defaults
+    )
     result["integration"]["effective_candidate_parameters"] = list(effective_limits)
     result["integration"]["effective_search_limits"] = copy.deepcopy(
         effective_limits

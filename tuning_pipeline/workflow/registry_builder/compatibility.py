@@ -73,9 +73,13 @@ class CompatibilityValidator:
         ]
 
     def _matching_rules(self, canonical: str) -> list[dict[str, Any]]:
+        rules = [
+            *self.policy.get("parameter_rules", []),
+            *self.policy.get("parameter_rule_overrides", []),
+        ]
         return [
             rule
-            for rule in self.policy.get("parameter_rules", [])
+            for rule in rules
             if fnmatch.fnmatchcase(
                 canonical.lower(), str(rule.get("match", "")).lower()
             )
@@ -440,7 +444,13 @@ class CompatibilityValidator:
 
     def validate_combination(self, candidate: dict[str, Any]) -> list[str]:
         violations: list[str] = []
+        disabled = {
+            str(rule_id)
+            for rule_id in self.policy.get("disabled_combination_constraints", [])
+        }
         for rule in self.policy.get("combination_constraints", []):
+            if str(rule.get("id")) in disabled:
+                continue
             kind = rule.get("kind")
             if kind == "require_if_active":
                 value = candidate.get(str(rule["parameter"]))
@@ -486,4 +496,14 @@ class CompatibilityValidator:
 
     @property
     def combination_constraints(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self.policy.get("combination_constraints", []))
+        disabled = {
+            str(rule_id)
+            for rule_id in self.policy.get("disabled_combination_constraints", [])
+        }
+        return copy.deepcopy(
+            [
+                rule
+                for rule in self.policy.get("combination_constraints", [])
+                if str(rule.get("id")) not in disabled
+            ]
+        )

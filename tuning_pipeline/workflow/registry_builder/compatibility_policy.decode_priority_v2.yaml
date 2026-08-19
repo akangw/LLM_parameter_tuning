@@ -1,0 +1,29 @@
+schema_version: 1
+extends: compatibility_policy.decode_only_v1.yaml
+
+# List 1 values remain expert defaults, but selected switches are admitted as
+# late/conditional Agent axes. The strategy profile—not this compatibility
+# layer—controls when the small secondary budget may be spent.
+candidate_domain_overrides:
+  enable_chunked_prefill: [true, false]
+  async_scheduling: [true, false]
+  enable_expert_parallel: [true, false]
+  fused_mc2: [2, 1, 0]
+  flashcomm1: [true, false]
+  enable_prefix_caching: [false, true]
+  TASK_QUEUE_ENABLE: [1, 0, 2]
+  speculative_config__disable_padded_drafter_batch: [false, true]
+  additional_config__prefill_comm_compute_overlap: [false, true]
+  additional_config__ascend_compilation_config__enable_static_kernel: [false, true]
+  additional_config__ascend_compilation_config__enable_npugraph_ex: [true, false]
+  additional_config__ascend_compilation_config__fuse_allreduce_rms: [true, false]
+
+# Keep only identity/no-effect fields frozen. Other List 1 switches above are
+# tunable but receive a small late-stage budget in decode_priority_agentic_v1.
+parameter_rule_overrides:
+  - {match: speculative_config__method, role: session_fixed}
+  - {match: long_prefill_token_threshold, role: session_fixed}
+  - {match: compilation_enable_sp, role: session_fixed}
+  - {match: mlapo, role: session_fixed}
+  - {match: VLLM_ASCEND_ENABLE_BATCH_MEMCPY, role: session_fixed}
+  - {match: additional_config__ascend_compilation_config__fuse_norm_quant, role: session_fixed}

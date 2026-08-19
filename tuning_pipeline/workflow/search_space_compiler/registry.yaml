@@ -132,13 +132,34 @@ parameters:
     injection: {kind: cli_bool_flag, flag: --enable-eplb}
 
   - canonical_name: eplb_num_redundant_experts
-    knowledge_names: [eplb.num_redundant_experts, additional_config.eplb_config.num_redundant_experts]
+    knowledge_names: [EPLBConfig.num_redundant_experts, eplb.num_redundant_experts]
     candidate_values: [0]
     risk: high
     role: session_fixed
     fixed_reason: dynamic_eplb_is_disabled_for_current_scenario
     integration_status: planned
     injection: {kind: json_field, object: eplb_config, field: num_redundant_experts}
+
+  # Ascend native dynamic EPLB is deliberately a different canonical surface.
+  # It remains fixed off for this scenario and must never be rendered through
+  # the unsupported upstream --enable-eplb/--eplb-config pair above.
+  - canonical_name: additional_config__eplb_config__dynamic_eplb
+    knowledge_names: [additional_config.eplb_config.dynamic_eplb]
+    candidate_values: [false]
+    risk: high
+    role: session_fixed
+    fixed_reason: native_dynamic_eplb_not_enabled_for_current_scenario
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: eplb_config.dynamic_eplb}
+
+  - canonical_name: additional_config__eplb_config__num_redundant_experts
+    knowledge_names: [additional_config.eplb_config.num_redundant_experts]
+    candidate_values: [0]
+    risk: high
+    role: session_fixed
+    fixed_reason: native_dynamic_eplb_not_enabled_for_current_scenario
+    integration_status: planned
+    injection: {kind: json_field, object: additional_config, field: eplb_config.num_redundant_experts}
 
   - canonical_name: block_size
     knowledge_names: [--block-size]

@@ -61,15 +61,15 @@ class ConstraintTests(unittest.TestCase):
             validate_candidate(candidate, self.scenario),
         )
 
-    def test_long_prefill_threshold_is_bounded_by_batch_budget(self) -> None:
+    def test_sequence_count_is_bounded_by_batch_budget(self) -> None:
         candidate = {
-            "max_num_seqs": 8,
+            "max_num_seqs": 8192,
             "max_num_batched_tokens": 4096,
             "num_speculative_tokens": 0,
             "long_prefill_token_threshold": 8192,
         }
         self.assertIn(
-            "long_prefill_within_batch_budget",
+            "sequence_count_within_batch_budget",
             validate_candidate(candidate, self.scenario),
         )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import base64
 import copy
+import hashlib
 import json
 import re
 import shlex
@@ -462,7 +463,40 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "multiples"):
             controller.validate_candidate_invariants(candidate)
 
-    def test_full_decode_only_rejects_unreachable_graph_maximum(self) -> None:
+    def test_flashcomm1_enforces_effective_sequence_parallel_graph_shapes(self) -> None:
+        configured = config()
+        configured["topology"] = {
+            "profile": "a3_dp4_tp8",
+            "profiles_file": "workflow/continuous/topology_profiles.yaml",
+        }
+        configured["baseline"].update(
+            num_speculative_tokens=4,
+            flashcomm1=True,
+            cudagraph_capture_sizes=[40, 80],
+            max_cudagraph_capture_size=80,
+        )
+        configured["search_limits"].update(
+            num_speculative_tokens=[4],
+            flashcomm1=[True, False],
+            cudagraph_capture_sizes=[
+                [5, 10, 20, 60],
+                [5, 10, 20, 40, 60, 80],
+                [40, 80],
+            ],
+            max_cudagraph_capture_size=[60, 80],
+        )
+        controller = tuning.Controller(configured)
+        mixed = dict(controller.config["baseline"])
+        mixed["cudagraph_capture_sizes"] = [5, 10, 20, 40, 60, 80]
+        controller.validate_candidate_invariants(mixed)
+        invalid = dict(controller.config["baseline"])
+        invalid["cudagraph_capture_sizes"] = [5, 10, 20, 60]
+        invalid["max_cudagraph_capture_size"] = 60
+        with self.assertRaisesRegex(ValueError, "Effective sequence-parallel"):
+            controller.validate_candidate_invariants(invalid)
+        controller.validate_candidate_invariants(dict(controller.config["baseline"]))
+
+    def test_full_decode_only_allows_runtime_filtered_unreachable_graph_maximum(self) -> None:
         configured = config()
         configured["baseline"].update(
             max_num_seqs=32,
@@ -484,9 +518,6 @@ class ControllerTests(unittest.TestCase):
             cudagraph_capture_sizes=[32, 64, 128, 256],
             max_cudagraph_capture_size=256,
         )
-        with self.assertRaisesRegex(ValueError, "reachable decode token ceiling"):
-            controller.validate_candidate_invariants(candidate)
-        candidate["max_num_seqs"] = 64
         controller.validate_candidate_invariants(candidate)
 
     def test_task_queue_two_requires_explicit_graph_disabled_diagnostic(self) -> None:
@@ -839,6 +870,70 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             {"exploitation": 0, "cross_layer_interaction": 0, "frontier_novelty": 0},
             cross_layer["measured_exploration_budget_state"]["counts"],
+        )
+
+    def test_guided_v5_completion_gate_requires_layers_and_cross_layer_evidence(self) -> None:
+        configured = config()
+        configured["strategy"] = {
+            "profile": "hierarchical_agentic_guided_v5",
+            "profiles_file": "workflow/continuous/strategy_profiles.yaml",
+        }
+        controller = tuning.Controller(configured)
+        baseline = {"round": "a0", "metrics": {"benchmark_mode": "aligned_l1"}}
+        ordered_history = [baseline]
+        for index in range(1, 7):
+            ordered_history.append(
+                {
+                    "round": f"a{index}",
+                    "metrics": {"benchmark_mode": "aligned_l1"},
+                }
+            )
+        with patch.object(controller, "primary_performance_score", return_value=None):
+            ordered_policy = controller.effective_change_policy(
+                ordered_history, ordered_history
+            )
+            self.assertEqual(
+                "cross_layer_refinement", ordered_policy["hierarchical_stage"]
+            )
+            self.assertFalse(ordered_policy["completion_gate"]["allowed"])
+            with self.assertRaisesRegex(ValueError, "cross-layer evidence floor"):
+                controller.validate_stop_complete_allowed(ordered_policy)
+
+            complete_history = [
+                *ordered_history,
+                *[
+                    {
+                        "round": f"x{index}",
+                        "metrics": {"benchmark_mode": "aligned_l1"},
+                    }
+                    for index in range(1, 5)
+                ],
+            ]
+            complete_policy = controller.effective_change_policy(
+                complete_history, complete_history
+            )
+        self.assertTrue(complete_policy["completion_gate"]["allowed"])
+        controller.validate_stop_complete_allowed(complete_policy)
+
+    def test_ordered_probe_rejects_intent_label_with_only_cross_layer_changes(self) -> None:
+        policy = {
+            "hierarchical_stage": "ordered_probe",
+            "hierarchical_probe": {
+                "name": "moe_routing_and_balance",
+                "parameters": [
+                    "enable_expert_parallel",
+                    "enable_eplb",
+                    "eplb_num_redundant_experts",
+                    "enable_balance_scheduling",
+                ],
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "skip_layer is disabled"):
+            self.controller.validate_ordered_probe_parameter_alignment(
+                ["cudagraph_capture_sizes"], policy
+            )
+        self.controller.validate_ordered_probe_parameter_alignment(
+            ["enable_balance_scheduling", "gpu_memory_utilization"], policy
         )
 
     def test_mtp_method_is_a_portrait_exempt_mechanical_companion(self) -> None:
@@ -1784,6 +1879,211 @@ class ControllerTests(unittest.TestCase):
             ),
         )
 
+    def test_decode_only_profile_focuses_budget_and_separates_eplb_surfaces(
+        self,
+    ) -> None:
+        raw = tuning.load_config(
+            tuning.HERE / "server_autonomous" / "config.dp4_tp8.search_v4.yaml"
+        )
+        raw, _ = tuning.resolve_runtime_profile(raw, tuning.KB_ROOT)
+        raw = tuning.apply_topology_baseline_binding(raw)
+        raw["search_space"]["profile"] = "automatic_registry_decode_only_v1"
+        raw["initial_baseline"]["definition"] = (
+            "workflow/baselines/expert_decode_glm52_w8a8_dp4_tp8_v1.yaml"
+        )
+        raw = tuning.resolve_initial_baseline_definition(raw, tuning.KB_ROOT)
+        with tempfile.TemporaryDirectory() as temporary:
+            history_seed = Path(temporary) / "history.json"
+            history_seed.write_text("[]\n", encoding="utf-8")
+            raw["search_space"]["history_source"] = "explicit"
+            raw["search_space"]["history_path"] = str(history_seed)
+            resolved, result = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+
+        active = set(result["active_search_limits"])
+        self.assertEqual(14, result["summary"]["active_parameters"])
+        self.assertEqual(
+            {True, False},
+            set(resolved["search_limits"]["enable_chunked_prefill"]),
+        )
+        self.assertNotIn("enable_eplb", resolved["search_limits"])
+        self.assertNotIn("eplb_num_redundant_experts", resolved["search_limits"])
+        self.assertNotIn("enable_eplb", resolved["baseline"])
+        self.assertNotIn("eplb_num_redundant_experts", resolved["baseline"])
+        self.assertEqual(
+            {
+                "enable_eplb": False,
+                "eplb_num_redundant_experts": 0,
+                "mlapo": True,
+                "VLLM_ASCEND_ENABLE_BATCH_MEMCPY": None,
+                "additional_config__ascend_compilation_config__fuse_norm_quant": True,
+            },
+            result["integration"]["implicit_source_defaults"],
+        )
+        self.assertNotIn("enable_eplb", active)
+        self.assertNotIn("eplb_num_redundant_experts", active)
+        self.assertIn("max_model_len", active)
+        self.assertIn(2304, resolved["search_limits"]["max_model_len"])
+        self.assertIn("cudagraph_capture_sizes", active)
+        self.assertNotIn("async_scheduling", active)
+        self.assertNotIn("enable_expert_parallel", active)
+        self.assertNotIn("mlapo", resolved["search_limits"])
+        self.assertNotIn("VLLM_ASCEND_ENABLE_BATCH_MEMCPY", resolved["search_limits"])
+        self.assertNotIn(
+            "additional_config__ascend_compilation_config__fuse_norm_quant",
+            resolved["search_limits"],
+        )
+        self.assertEqual([False], resolved["search_limits"]["compilation_enable_sp"])
+
+    def test_decode_priority_package_partitions_all_priority_axes(
+        self,
+    ) -> None:
+        raw = tuning.load_config(
+            tuning.HERE
+            / "server_autonomous"
+            / "config.dp4_tp8.decode_priority_v1.yaml"
+        )
+        raw, runtime = tuning.resolve_runtime_profile(raw, tuning.KB_ROOT)
+        raw = tuning.apply_topology_baseline_binding(raw)
+        raw = tuning.resolve_initial_baseline_definition(raw, tuning.KB_ROOT)
+        with tempfile.TemporaryDirectory() as temporary:
+            resolved, result = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+        resolved["remote_transport"] = "paramiko"
+        resolved["operation_mode"] = "windows_remote"
+        resolved["remote_host"] = "hetao-npu"
+        controller = tuning.Controller(resolved)
+        controller.validate_candidate_invariants(dict(resolved["baseline"]))
+        priority = controller.strategy_profile["priority_search"]
+        primary = set(priority["primary_parameters"])
+        conditional = set(priority["conditional_parameters"])
+        secondary = set(priority["secondary_parameters"])
+        active = set(result["active_search_limits"])
+        self.assertFalse(primary & secondary)
+        self.assertFalse(primary & conditional)
+        self.assertFalse(conditional & secondary)
+        self.assertEqual(10, len(primary))
+        self.assertEqual(4, len(conditional))
+        self.assertEqual(11, len(secondary))
+        self.assertEqual(25, len(active))
+        self.assertEqual(active, primary | conditional | secondary)
+        probes = controller.strategy_profile["hierarchy"]["ordered_probes"]
+        self.assertEqual(
+            [
+                "list2_capacity_geometry",
+                "list2_mtp_graph_joint",
+                "list2_scheduler_capacity_refinement",
+                "list1_3_conditional_switches",
+            ],
+            [probe["name"] for probe in probes],
+        )
+        self.assertEqual(
+            8,
+            controller.strategy_profile["completion_gate"][
+                "minimum_cross_layer_successful_measurements"
+            ],
+        )
+        self.assertEqual(
+            "glm52_w8a8_a3_dp4_tp8_decode_priority_v1", runtime["profile"]
+        )
+        self.assertEqual("decode_only_c32_v1", controller.benchmark_profile_name)
+        self.assertEqual(
+            {"decode-256-2048"},
+            set(controller.benchmark["aligned_l1"]["workloads"]),
+        )
+        self.assertEqual("FULL_DECODE_ONLY", resolved["baseline"]["compilation_mode"])
+        self.assertEqual(3, resolved["baseline"]["num_speculative_tokens"])
+        self.assertTrue(resolved["baseline"]["flashcomm1"])
+        self.assertEqual(2, resolved["baseline"]["fused_mc2"])
+
+    def test_decode_priority_reserves_list1_but_recovery_bypasses_quota(self) -> None:
+        state = {
+            "secondary_parameters": ["flashcomm1", "fused_mc2"],
+            "secondary_successful_measurements_remaining": 2,
+            "failure_recovery_bypasses_phase_priority": True,
+        }
+        early = {
+            "hierarchical_stage": "ordered_probe",
+            "hierarchical_probe": {"name": "list2_capacity_geometry"},
+            "priority_search_budget_state": state,
+        }
+        with self.assertRaisesRegex(ValueError, "reserved for autonomous"):
+            tuning.Controller.validate_priority_search_alignment(
+                ["flashcomm1"], early
+            )
+        recovery = {**early, "failure_recovery_mode": True}
+        tuning.Controller.validate_priority_search_alignment(
+            ["flashcomm1"], recovery
+        )
+        cross_layer = {
+            "hierarchical_stage": "cross_layer_refinement",
+            "priority_search_budget_state": state,
+        }
+        tuning.Controller.validate_priority_search_alignment(
+            ["flashcomm1"], cross_layer
+        )
+        exhausted = {
+            "hierarchical_stage": "cross_layer_refinement",
+            "priority_search_budget_state": {
+                **state,
+                "secondary_successful_measurements_remaining": 0,
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "quota is exhausted"):
+            tuning.Controller.validate_priority_search_alignment(
+                ["fused_mc2"], exhausted
+            )
+
+    def test_decode_priority_counts_only_successful_secondary_measurements(self) -> None:
+        configured = config()
+        configured["strategy"]["profile"] = "decode_priority_agentic_v1"
+        controller = tuning.Controller(configured)
+        history = [
+            {"round": "a0"},
+            {
+                "round": "a1",
+                "decision": {"changes": [{"parameter": "flashcomm1"}]},
+            },
+            {
+                "round": "a2",
+                "decision": {"changes": [{"parameter": "max_num_seqs"}]},
+            },
+        ]
+        state = controller.priority_search_budget_state(history)
+        self.assertEqual(1, state["secondary_successful_measurements_used"])
+        self.assertEqual(3, state["secondary_successful_measurements_remaining"])
+
+    def test_decode_only_benchmark_asset_matches_frozen_definition(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        definition = configured["benchmark"]["aligned_l1_decode_only_v1"]
+        suite_path = (
+            tuning.HERE
+            / "benchmark_assets"
+            / "decode-only-c32-v1"
+            / "spec"
+            / "suites"
+            / definition["suite"]
+        )
+        suite = tuning.load_yaml(suite_path)
+        self.assertEqual(
+            definition["suite_sha256"],
+            hashlib.sha256(suite_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(1, definition["expected_formal_cases"])
+        self.assertEqual(
+            {"decode-256-2048"},
+            {item["标识"] for item in suite["工作负载"]},
+        )
+        self.assertEqual(
+            ["decode-256-2048"], suite["阶段"][0]["工作负载"]
+        )
+
     def test_frozen_continuation_history_is_visible_to_agent_and_dedupe(self) -> None:
         controller = tuning.Controller(config())
         imported = {
@@ -1858,16 +2158,14 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("ADDITIONAL_CONFIG_ENABLE_REDUCE_SAMPLE=true", environment)
         self.assertIn("SPECULATIVE_CONFIG_ENFORCE_EAGER_JSON=true", environment)
 
-        invalid_fused = {**candidate, "enable_expert_parallel": False}
-        with self.assertRaisesRegex(ValueError, "fused_mc2 requires"):
-            controller.validate_candidate_invariants(invalid_fused)
-        invalid_draft = {
+        legal_but_inactive_fused = {**candidate, "enable_expert_parallel": False}
+        controller.validate_candidate_invariants(legal_but_inactive_fused)
+        legal_synchronous_draft = {
             **candidate,
             "num_speculative_tokens": 0,
             "async_scheduling": False,
         }
-        with self.assertRaisesRegex(ValueError, "only applies"):
-            controller.validate_candidate_invariants(invalid_draft)
+        controller.validate_candidate_invariants(legal_synchronous_draft)
 
     def test_automatic_and_curated_profiles_have_auditable_overlap(self) -> None:
         raw = tuning.load_yaml(tuning.HERE / "config.yaml")
@@ -1900,7 +2198,10 @@ class ControllerTests(unittest.TestCase):
         )
         automatic_active = set(automatic_result["active_search_limits"])
         curated_active = set(curated_result["active_search_limits"])
-        self.assertEqual(26, len(registry["parameters"]))
+        # The curated registry carries separate fixed surfaces for upstream
+        # EPLB and Ascend-native dynamic EPLB; they must not collapse by leaf
+        # name even though neither is Active in this scenario.
+        self.assertEqual(28, len(registry["parameters"]))
         self.assertEqual(22, len(automatic_active))
         self.assertEqual(81, automatic_result["summary"]["reserve_parameters"])
         self.assertEqual(14, len(automatic_active & curated_active))

@@ -3,6 +3,15 @@
 default_profile: aligned_fast_c32_v2
 
 profiles:
+  decode_only_c32_v1:
+    status: integrated
+    mode: aligned_l1
+    definition_key: aligned_l1_decode_only_v1
+    purpose: >-
+      Isolated decode-256-2048 C32 benchmark. Output-token throughput is the
+      sole optimization score; TTFT P50/P90 and TPOT P50/P90 remain mandatory
+      report metrics and request correctness remains a hard gate.
+
   aligned_fast_c32_v2:
     status: integrated
     mode: aligned_l1

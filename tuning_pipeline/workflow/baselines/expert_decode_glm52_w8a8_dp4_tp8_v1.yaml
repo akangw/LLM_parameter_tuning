@@ -1,0 +1,59 @@
+schema_version: 1
+baseline_id: expert-decode-glm52-w8a8-dp4-tp8-v1
+status: proposed_decode_only_expert_anchor
+launch_profile: explicit_candidate
+
+purpose: >-
+  Start the isolated decode-only campaign from the measured DP4/TP8 K3 basin.
+  Switch defaults use only decode-256-2048 evidence; the combined anchor must
+  be remeasured before it becomes an accepted incumbent.
+
+source:
+  lineage_session: cjx_glm52_dp4_tp8_a8_guided_v4_20260817_060618
+  lineage_round: round_016_a13
+  adaptation_policy: decode_case_evidence_only
+
+target_identity:
+  model_contract: glm-5.2-w8a8
+  topology_profile: a3_dp4_tp8
+  benchmark_profile: decode_only_c32_v1
+
+reference_parameters:
+  max_num_seqs: 64
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.90
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  async_scheduling: true
+  enable_expert_parallel: true
+  speculative_config__method: mtp
+  long_prefill_token_threshold: 0
+  fused_mc2: 2
+  enable_balance_scheduling: false
+  enable_reduce_sample: false
+  speculative_config__enforce_eager: null
+  speculative_config__disable_padded_drafter_batch: false
+  speculative_config__attention_backend: null
+  cudagraph_capture_sizes: [16, 32, 48, 64]
+  TASK_QUEUE_ENABLE: 1
+  additional_config__ascend_compilation_config__fuse_allreduce_rms: true
+  additional_config__prefill_comm_compute_overlap: false
+  additional_config__ascend_compilation_config__enable_static_kernel: false
+  additional_config__ascend_compilation_config__enable_npugraph_ex: true
+  compilation_enable_sp: false
+  enable_prefix_caching: false
+  flashcomm1: true
+  enable_chunked_prefill: true
+  max_cudagraph_capture_size: 64
+  disable_hybrid_kv_cache_manager: null
+
+acceptance_contract:
+  benchmark_profile: decode_only_c32_v1
+  workload: decode-256-2048
+  concurrency: 32
+  repetitions: 1
+  require_zero_failed_requests: true
+  primary_metric: output_token_throughput
+  reference_metrics: [ttft_p50_ms, ttft_p90_ms, tpot_p50_ms, tpot_p90_ms]
+  remeasure_combined_expert_anchor_before_agent_handoff: true

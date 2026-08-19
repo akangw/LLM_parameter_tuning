@@ -172,6 +172,120 @@ profiles:
       async_scheduling:
         drivers: [num_speculative_tokens]
 
+  automatic_registry_decode_only_v1:
+    # "integrated" means the Search-Limits compiler may resolve it. It still
+    # has no runtime allowlist binding and therefore cannot hot-enter an old
+    # Session or launch without a new decode-only runtime profile.
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      Isolated DP4/TP8 decode-256-2048 search. Measured switches are frozen at
+      the expert baseline, eleven high-dimensional axes receive the main
+      budget, and three additional uncertain switches remain available for
+      explicit coupling hypotheses. Chunked prefill true/false is admitted only because
+      the Controller revalidates it against each model-length/token-budget pair.
+      Upstream and Ascend-native EPLB remain separate semantic surfaces.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-dp4-tp8-decode-only-v1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.decode_only_v1.yaml
+    source_root: ../portrait_pipeline/sources
+    history_rotation:
+      maximum_swaps_per_session: 0
+    # These upstream CLI fields use reliable false/0 source defaults. Omitting
+    # them means the launcher emits neither --enable-eplb nor --eplb-config;
+    # they remain visible only in the source capability/audit registry.
+    implicit_source_defaults:
+      enable_eplb: false
+      eplb_num_redundant_experts: 0
+      # Inert in this exact runtime: MLAPO requires a non-A5 decode-only KV
+      # consumer; batch memcpy is selected while building the extension and
+      # needs KV offload; fuse_norm_quant is not consumed by npugraph_ex=true.
+      mlapo: true
+      VLLM_ASCEND_ENABLE_BATCH_MEMCPY: null
+      additional_config__ascend_compilation_config__fuse_norm_quant: true
+    activation:
+      target_count: 14
+      maximum_count: 14
+      max_per_category: 10
+      additional_core_parameters:
+        # List 2: main high-dimensional search axes.
+        - num_speculative_tokens
+        - cudagraph_capture_sizes
+        - max_cudagraph_capture_size
+        - max_num_seqs
+        - max_num_batched_tokens
+        - gpu_memory_utilization
+        - max_model_len
+        - compilation_mode
+        - disable_hybrid_kv_cache_manager
+        - speculative_config__attention_backend
+        - speculative_config__enforce_eager
+        # List 1.3: additional conditional axes. They are legal but the Agent must
+        # cite a coupling hypothesis before spending a round on them.
+        - enable_chunked_prefill
+        - enable_balance_scheduling
+        - enable_reduce_sample
+    derived_parameters: {}
+
+  automatic_registry_decode_priority_v2:
+    status: integrated
+    mode: automatic_registry
+    purpose: >-
+      Decode-only priority search. List 2 high-dimensional axes are the main
+      search surface; List 1.3 receives compact required coverage, while List
+      1.2/1.1 switches remain available only for evidence-backed optional
+      cross-layer revisits.
+      Failure recovery may use the complete validated Active schema regardless
+      of the normal performance-search phase.
+    knowledge_dir: tag_params/output/params
+    scenario: workflow/search_space_compiler/scenario.glm52-a3-dp4-tp8-decode-only-v1.yaml
+    policy: workflow/search_space_compiler/policy.yaml
+    compatibility_policy: workflow/registry_builder/compatibility_policy.decode_priority_v2.yaml
+    source_root: ../portrait_pipeline/sources
+    history_rotation:
+      maximum_swaps_per_session: 0
+    implicit_source_defaults:
+      enable_eplb: false
+      eplb_num_redundant_experts: 0
+      mlapo: true
+      VLLM_ASCEND_ENABLE_BATCH_MEMCPY: null
+      additional_config__ascend_compilation_config__fuse_norm_quant: true
+    activation:
+      target_count: 25
+      maximum_count: 28
+      max_per_category: 12
+      additional_core_parameters:
+        # List 2 main axes (10).
+        - num_speculative_tokens
+        - cudagraph_capture_sizes
+        - max_cudagraph_capture_size
+        - max_num_seqs
+        - max_num_batched_tokens
+        - gpu_memory_utilization
+        - max_model_len
+        - compilation_mode
+        - disable_hybrid_kv_cache_manager
+        - speculative_config__attention_backend
+        # List 1.3 required conditional axes (4).
+        - speculative_config__enforce_eager
+        - enable_chunked_prefill
+        - enable_balance_scheduling
+        - enable_reduce_sample
+        # Optional List 1.2/1.1 axes (11); stage/quota enforcement belongs to strategy.
+        - async_scheduling
+        - enable_expert_parallel
+        - fused_mc2
+        - flashcomm1
+        - enable_prefix_caching
+        - TASK_QUEUE_ENABLE
+        - speculative_config__disable_padded_drafter_batch
+        - additional_config__prefill_comm_compute_overlap
+        - additional_config__ascend_compilation_config__enable_static_kernel
+        - additional_config__ascend_compilation_config__enable_npugraph_ex
+        - additional_config__ascend_compilation_config__fuse_allreduce_rms
+    derived_parameters: {}
+
   automatic_registry_glm52_w4a8c8_v1:
     status: integrated
     mode: automatic_registry

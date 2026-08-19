@@ -66,6 +66,39 @@ class GenericInjectionTests(unittest.TestCase):
         self.assertEqual(2, len(groups))
         self.assertNotIn("method", groups)
 
+    def test_explicitly_distinct_related_nested_fields_are_not_merged(self) -> None:
+        records = [
+            {
+                "canonical_name": "EPLBConfig.num_redundant_experts",
+                "source_type": "nested",
+                "knowledge_names": ["EPLBConfig.num_redundant_experts"],
+                "related_parameters": [
+                    {
+                        "name": (
+                            "additional_config.eplb_config.num_redundant_experts"
+                        ),
+                        "relation": (
+                            "This distinct Ascend plugin field controls a separate "
+                            "runtime path and must not be assumed to inherit this value."
+                        ),
+                    }
+                ],
+            },
+            {
+                "canonical_name": (
+                    "additional_config.eplb_config.num_redundant_experts"
+                ),
+                "source_type": "nested",
+                "knowledge_names": [
+                    "additional_config.eplb_config.num_redundant_experts"
+                ],
+                "related_parameters": [],
+            },
+        ]
+        groups = semantic_groups(records)
+        self.assertEqual(2, len(groups))
+        self.assertNotIn("num_redundant_experts", groups)
+
     def test_generated_payload_combines_cli_environment_and_json_contracts(
         self,
     ) -> None:
@@ -95,6 +128,30 @@ class GenericInjectionTests(unittest.TestCase):
             {"speculative_config": {"method": "mtp"}},
             payload["json_configs"],
         )
+
+    def test_profile_parameter_rule_override_can_freeze_a_generated_axis(self) -> None:
+        validator = CompatibilityValidator(
+            scenario={"baseline": {"feature": True}},
+            policy={
+                "schema_version": 1,
+                "normalization": {},
+                "parameter_rules": [],
+                "parameter_rule_overrides": [
+                    {"match": "feature", "role": "session_fixed"}
+                ],
+            },
+        )
+        result = validator.validate_parameter(
+            {
+                "canonical_name": "feature",
+                "candidate_values": [False, True],
+                "risk": "low",
+                "injection": {"kind": "env_bool", "name": "FEATURE"},
+            }
+        )
+        self.assertTrue(result["accepted"])
+        self.assertEqual("session_fixed", result["parameter"]["role"])
+        self.assertEqual([True], result["parameter"]["candidate_values"])
 
 
 class CurrentAutomaticPipelineTests(unittest.TestCase):
@@ -248,6 +305,26 @@ class CurrentAutomaticPipelineTests(unittest.TestCase):
                 }
             ),
         )
+
+    def test_decode_only_policy_disables_preferred_path_pseudo_constraints(self) -> None:
+        validator = CompatibilityValidator(
+            scenario=self.pipeline.scenario,
+            policy_path=MODULE_DIR / "compatibility_policy.decode_only_v1.yaml",
+        )
+        violations = validator.validate_combination(
+            {
+                "num_speculative_tokens": 1,
+                "speculative_config__method": "mtp",
+                "async_scheduling": False,
+                "fused_mc2": 1,
+                "enable_expert_parallel": False,
+            }
+        )
+        self.assertNotIn("speculative_tokens_require_async_scheduling", violations)
+        self.assertNotIn("fused_mc2_requires_expert_parallel", violations)
+        exported = {rule["id"] for rule in validator.combination_constraints}
+        self.assertNotIn("speculative_tokens_require_async_scheduling", exported)
+        self.assertNotIn("fused_mc2_requires_expert_parallel", exported)
 
     def test_omit_tokens_are_actions_not_literal_environment_values(self) -> None:
         parameter = next(

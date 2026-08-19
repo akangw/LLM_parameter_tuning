@@ -270,6 +270,47 @@ class ServiceRenderTests(unittest.TestCase):
         self.assertGreaterEqual(preflight.count("from service_runtime import _load_config"), 2)
         self.assertGreaterEqual(preflight.count("config = _load_config(Path(sys.argv[1]))"), 2)
 
+    def test_decode_priority_entrypoint_selects_clean_isolated_package(self) -> None:
+        autonomous = HERE / "server_autonomous"
+        config = service_runtime._load_config(
+            autonomous / "config.dp4_tp8.decode_priority_v1.yaml"
+        )
+        isolated_root = (
+            "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/"
+            "vllmtkb-decode-priority-v1"
+        )
+        self.assertEqual(isolated_root, config["remote_project"])
+        self.assertEqual(
+            isolated_root, config["autonomous"]["allowed_write_root"]
+        )
+        self.assertEqual(
+            "glm52_w8a8_a3_dp4_tp8_decode_priority_v1",
+            config["runtime"]["profile"],
+        )
+        self.assertEqual(
+            "automatic_registry_decode_priority_v2",
+            config["search_space"]["profile"],
+        )
+        self.assertEqual(
+            "decode_priority_agentic_v1", config["strategy"]["profile"]
+        )
+        self.assertEqual("decode_only_c32_v1", config["benchmark"]["profile"])
+        self.assertTrue(config["failure_recovery"]["hard_terminal_only"])
+        self.assertTrue(config["lab"]["lease_name"].endswith("-pending"))
+        for key in ("servebench_root", "spec_root", "dataset_root"):
+            self.assertTrue(
+                config["benchmark"]["aligned_l1_decode_only_v1"][key].startswith(
+                    isolated_root + "/"
+                )
+            )
+        self.assertTrue(config["lab"]["output_root"].startswith(isolated_root + "/"))
+        wrapper = (autonomous / "decode_priority_v1.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("config.dp4_tp8.decode_priority_v1.yaml", wrapper)
+        self.assertIn("runtime_decode_priority_v1_live", wrapper)
+        self.assertIn('service) TARGET=', wrapper)
+
     def test_rendered_configs_have_no_placeholders(self) -> None:
         repo_root = HERE.parents[2]
         with tempfile.TemporaryDirectory() as temp_dir:

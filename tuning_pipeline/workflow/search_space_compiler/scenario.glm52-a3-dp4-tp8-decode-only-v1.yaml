@@ -1,0 +1,81 @@
+schema_version: 1
+scenario_id: glm52-w8a8-a3-dp4-tp8-decode-only-v1
+
+recall_tags:
+  hardware: [a3]
+  model: [moe, mla, quantized]
+  deploy_topology: [multi_node]
+  optimize_target: [throughput]
+  # Parameter portraits are implementation contracts, not workload results;
+  # many valid scheduler/MTP fields have no deploy_scenario tag. Keep recall
+  # unfiltered and impose the decode-only contract in benchmark below.
+  deploy_scenario: []
+
+image:
+  reference: 10.1.30.201:31443/user-cdy-normal/vllm-ascend:glm5.2-a3
+  digest: sha256:37f43036c21c80c9cc6c6656f472df0f1b79d2fce2027168d270a43d725e0305
+  vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
+  vllm_ascend_commit: 32c8cf190f596b47f0d0b965e64aea9f2b789ad4
+  parameter_portrait_exact_match: true
+
+capabilities:
+  source: pinned_source_and_decode_history_2026_08_19
+  verified_canonical_parameters:
+    - max_num_seqs
+    - max_model_len
+    - max_num_batched_tokens
+    - gpu_memory_utilization
+    - enable_chunked_prefill
+    - async_scheduling
+    - enable_expert_parallel
+    - compilation_mode
+    - num_speculative_tokens
+    - cudagraph_capture_sizes
+    - max_cudagraph_capture_size
+
+model:
+  architecture: GlmMoeDsaForCausalLM
+  moe: true
+  mla: true
+  quantized: true
+  encoder_decoder: false
+  uses_kv_cache: true
+  mix_placement_supported: false
+  shared_expert_dp_supported: false
+
+topology:
+  nodes: 2
+  npu_per_node: 16
+  total_npu: 32
+  data_parallel_size: 4
+  data_parallel_size_local: 2
+  tensor_parallel_size: 8
+  pipeline_parallel_size: 1
+  worker_generation: v1
+
+features:
+  mtp: true
+  unpadded_drafter_async_compatible: false
+  pd_disaggregated: false
+  kv_transfer: false
+  lora: false
+  hierarchy_communication: false
+  # Upstream --enable-eplb is invalid on Ascend. Native dynamic EPLB is a
+  # separate additional_config family and remains outside this low-load
+  # decode-only search until routing-skew telemetry justifies a new profile.
+  dynamic_eplb: false
+  # Unlike the old 64k/Fast-C32 profile, the decode-only domain includes
+  # max_model_len values at or below the scheduler budget. False can therefore
+  # be admitted and the Controller validates each complete candidate.
+  chunked_prefill_disable_safe: true
+
+benchmark:
+  mode: aligned_l1
+  identity: decode_only_c32_v1
+  primary_concurrency: 32
+  workloads: [decode-256-2048]
+  maximum_input_tokens: 256
+  maximum_output_tokens: 2048
+  required_max_model_len: 2304
+
+baseline_definition: ../baselines/expert_decode_glm52_w8a8_dp4_tp8_v1.yaml

@@ -2409,10 +2409,10 @@ class Controller:
                 f"max_model_len={candidate['max_model_len']} is below the benchmark "
                 f"input+output requirement {required_tokens}"
             )
-        threshold = candidate["long_prefill_token_threshold"]
-        if threshold and threshold > candidate["max_num_batched_tokens"]:
+        if candidate["max_num_batched_tokens"] < candidate["max_num_seqs"]:
             raise ValueError(
-                "long_prefill_token_threshold cannot exceed " "max_num_batched_tokens"
+                "max_num_batched_tokens must be greater than or equal to "
+                "max_num_seqs"
             )
         if (
             candidate.get("enable_chunked_prefill") is False
@@ -2422,18 +2422,6 @@ class Controller:
                 "Disabling chunked prefill requires max_num_batched_tokens "
                 "to be at least max_model_len in the pinned vLLM image"
             )
-        speculative_tokens = candidate["num_speculative_tokens"]
-        if speculative_tokens > 0:
-            if not candidate["async_scheduling"]:
-                raise ValueError(
-                    "MTP speculative decoding requires async_scheduling in this workflow"
-                )
-            minimum_budget = candidate["max_num_seqs"] * (speculative_tokens + 1)
-            if candidate["max_num_batched_tokens"] < minimum_budget:
-                raise ValueError(
-                    "max_num_batched_tokens is too small for max_num_seqs and "
-                    f"num_speculative_tokens; require at least {minimum_budget}"
-                )
         resolved_mode = self.config.get("resolved_search_space", {}).get("mode")
         if resolved_mode in {"automated", "curated_registry"}:
             profile = self.config.get("search_space", {}).get("resolved_profile", {})
@@ -2479,25 +2467,44 @@ class Controller:
                 "Ascend platform. Native dynamic EPLB requires a separately "
                 "reviewed additional_config integration."
             )
-        if candidate.get("fused_mc2", 0) and not candidate.get(
-            "enable_expert_parallel", False
+        if candidate.get("fused_mc2", 0) and candidate.get(
+            "additional_config__enable_mc2_hierarchy_comm",
+            candidate.get("enable_mc2_hierarchy_comm", False),
         ):
-            raise ValueError("fused_mc2 requires enable_expert_parallel=true")
-        if candidate.get("fused_mc2") == 2 and candidate.get(
-            "num_speculative_tokens", 0
-        ) <= 0:
-            raise ValueError("fused_mc2=2 requires speculative decoding")
+            raise ValueError(
+                "fused_mc2 cannot be combined with MC2 hierarchy communication"
+            )
         if candidate.get("enable_balance_scheduling", False):
             data_parallel_size = int(self.topology["data_parallel_size"])
             if data_parallel_size <= 1:
                 raise ValueError("enable_balance_scheduling requires DP > 1")
-        draft_eager = candidate.get("speculative_config__enforce_eager")
-        if draft_eager is True and candidate.get("num_speculative_tokens", 0) <= 0:
-            raise ValueError(
-                "speculative draft enforce_eager only applies when speculative decoding is enabled"
+        if candidate.get("flashcomm1") is True:
+            tensor_parallel_size = int(self.topology["tensor_parallel_size"])
+            if tensor_parallel_size <= 1:
+                raise ValueError("flashcomm1 requires tensor_parallel_size > 1")
+            scenario_contract = (
+                self.automatic_registry_validation.get("scenario", {})
+                if self.automatic_registry_validation
+                else {}
             )
+            if (
+                scenario_contract.get("model", {}).get("moe") is True
+                and not candidate.get("enable_expert_parallel", False)
+            ):
+                raise ValueError(
+                    "flashcomm1 requires enable_expert_parallel=true for MoE models"
+                )
         capture_sizes = candidate.get("cudagraph_capture_sizes")
         maximum_capture = candidate.get("max_cudagraph_capture_size")
+        graph_mode = candidate.get("compilation_mode")
+        if (
+            isinstance(capture_sizes, list)
+            and not capture_sizes
+            and graph_mode != "NONE"
+        ):
+            raise ValueError(
+                "Explicit cudagraph_capture_sizes cannot be empty when graph mode is enabled"
+            )
         if isinstance(capture_sizes, list) and capture_sizes:
             if any(
                 isinstance(value, bool) or not isinstance(value, int) or value <= 0
@@ -2506,14 +2513,9 @@ class Controller:
                 raise ValueError(
                     "cudagraph_capture_sizes must contain positive integers"
                 )
-            if capture_sizes != sorted(set(capture_sizes)):
-                raise ValueError(
-                    "cudagraph_capture_sizes must be strictly increasing and unique"
-                )
             mtp_depth = int(candidate.get("num_speculative_tokens") or 0)
-            graph_mode = candidate.get("compilation_mode")
             if (
-                mtp_depth > 0
+                mtp_depth > 1
                 and graph_mode
                 in {"FULL", "FULL_DECODE_ONLY", "FULL_AND_PIECEWISE"}
                 and any(value % (mtp_depth + 1) != 0 for value in capture_sizes)
@@ -2522,24 +2524,22 @@ class Controller:
                     "Full-graph MTP cudagraph_capture_sizes must be multiples "
                     "of num_speculative_tokens + 1"
                 )
-            if candidate.get("compilation_enable_sp") is True:
+            # flashcomm1 activates the same sequence-parallel graph-shape
+            # contract on the pinned Ascend runtime even when the explicit
+            # compilation_enable_sp override is unset. Validate the effective
+            # runtime path, not only the user-facing compilation switch.
+            sequence_parallel_graph_active = (
+                candidate.get("compilation_enable_sp") is True
+                or candidate.get("flashcomm1") is True
+            )
+            if sequence_parallel_graph_active:
                 tensor_parallel_size = int(self.topology["tensor_parallel_size"])
-                if any(
-                    value % tensor_parallel_size != 0 for value in capture_sizes
-                ):
+                if not any(value % tensor_parallel_size == 0 for value in capture_sizes):
                     raise ValueError(
-                        "Sequence-parallel cudagraph_capture_sizes must be "
-                        "multiples of tensor_parallel_size"
-                    )
-            if candidate.get("compilation_mode") == "FULL_DECODE_ONLY":
-                decode_token_ceiling = int(candidate["max_num_seqs"]) * (
-                    mtp_depth + 1
-                )
-                if max(capture_sizes) > decode_token_ceiling:
-                    raise ValueError(
-                        "FULL_DECODE_ONLY cudagraph_capture_sizes exceed the "
-                        "reachable decode token ceiling max_num_seqs * "
-                        "(num_speculative_tokens + 1)"
+                        "Effective sequence-parallel cudagraph_capture_sizes must "
+                        "contain at least one multiple of tensor_parallel_size when "
+                        "compilation_enable_sp=true or flashcomm1=true; the pinned "
+                        "runtime filters the other sizes"
                     )
         if (
             isinstance(capture_sizes, list)
@@ -3219,6 +3219,9 @@ class Controller:
                 }
             ),
         }
+        priority_budget_state = self.priority_search_budget_state(history or [])
+        if priority_budget_state:
+            effective["priority_search_budget_state"] = priority_budget_state
         autonomous = self.strategy_profile.get("autonomous_cross_layer", {})
         budget = (
             autonomous.get("exploration_budget", {})
@@ -3317,7 +3320,200 @@ class Controller:
                 ranked_cross_layer_revisits=revisits,
                 hierarchical_observations=hierarchy_state.get("observations", []),
             )
+        if ordered_probes:
+            effective.update(
+                hierarchical_completed_probe_count=min(
+                    probe_index, len(ordered_probes)
+                ),
+                hierarchical_total_probe_count=len(ordered_probes),
+                cross_layer_successful_measurements=int(
+                    hierarchy_state.get("cross_layer_rounds", 0)
+                ),
+            )
+        effective["completion_gate"] = self.completion_gate_status(effective)
         return effective
+
+    def completion_gate_status(
+        self, selection_policy: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return the deterministic evidence floor for Agent completion.
+
+        Older frozen Guided V4/V5 Sessions predate the serialized gate. The
+        fallback keeps those Sessions resumable while applying the corrected
+        safety contract to their next decision.
+        """
+        configured = self.strategy_profile.get("completion_gate", {})
+        if not isinstance(configured, dict):
+            configured = {}
+        guided_fallback = self.strategy_profile_name in {
+            "hierarchical_agentic_guided_v4",
+            "hierarchical_agentic_guided_v5",
+            "decode_priority_agentic_v1",
+        }
+        enabled = bool(configured.get("enabled", guided_fallback))
+        require_ordered = bool(
+            configured.get("require_all_ordered_probes", guided_fallback)
+        )
+        minimum_cross_layer = int(
+            configured.get(
+                "minimum_cross_layer_successful_measurements",
+                4 if guided_fallback else 0,
+            )
+        )
+        if minimum_cross_layer < 0:
+            raise ValueError(
+                "minimum_cross_layer_successful_measurements must be non-negative"
+            )
+        completed = int(selection_policy.get("hierarchical_completed_probe_count", 0))
+        total = int(selection_policy.get("hierarchical_total_probe_count", 0))
+        cross_layer = int(
+            selection_policy.get("cross_layer_successful_measurements", 0)
+        )
+        reasons: list[str] = []
+        if enabled and require_ordered and completed < total:
+            reasons.append(
+                f"ordered probe coverage incomplete ({completed}/{total})"
+            )
+        if enabled and completed >= total and cross_layer < minimum_cross_layer:
+            reasons.append(
+                "cross-layer evidence floor incomplete "
+                f"({cross_layer}/{minimum_cross_layer})"
+            )
+        return {
+            "enabled": enabled,
+            "allowed": not reasons,
+            "require_all_ordered_probes": require_ordered,
+            "ordered_probes_completed": completed,
+            "ordered_probes_total": total,
+            "minimum_cross_layer_successful_measurements": minimum_cross_layer,
+            "cross_layer_successful_measurements": cross_layer,
+            "post_floor_stop_requirements": copy.deepcopy(
+                configured.get("post_floor_stop_requirements", [])
+            ),
+            "blocking_reasons": reasons,
+            "failed_or_incomplete_rounds_do_not_consume_evidence_floor": True,
+        }
+
+    def validate_stop_complete_allowed(
+        self, selection_policy: dict[str, Any]
+    ) -> None:
+        gate = selection_policy.get("completion_gate")
+        if not isinstance(gate, dict):
+            gate = self.completion_gate_status(selection_policy)
+        if gate.get("enabled") and not gate.get("allowed"):
+            reasons = "; ".join(
+                str(item) for item in gate.get("blocking_reasons", [])
+            )
+            raise ValueError(
+                "stop_complete is blocked by the deterministic completion gate: "
+                + (reasons or "required tuning evidence is incomplete")
+            )
+
+    @staticmethod
+    def validate_ordered_probe_parameter_alignment(
+        actual_changes: list[str], selection_policy: dict[str, Any]
+    ) -> None:
+        """Keep Agent-owned choices centered on the Controller-selected layer."""
+        if selection_policy.get("hierarchical_stage") != "ordered_probe":
+            return
+        probe = selection_policy.get("hierarchical_probe")
+        if not isinstance(probe, dict):
+            raise ValueError("ordered_probe stage is missing its frozen probe definition")
+        probe_parameters = {
+            str(parameter) for parameter in probe.get("parameters", [])
+        }
+        selected_in_layer = sorted(set(actual_changes) & probe_parameters)
+        if not selected_in_layer:
+            raise ValueError(
+                "Ordered-probe candidate must change at least one parameter from "
+                f"the active layer {probe.get('name')!r}; actual={actual_changes}, "
+                f"allowed_layer_parameters={sorted(probe_parameters)}. Cross-layer "
+                "parameters are allowed only as companions to a real in-layer change; "
+                "skip_layer is disabled."
+            )
+
+    def priority_search_budget_state(
+        self, history: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        configured = self.strategy_profile.get("priority_search", {})
+        if not isinstance(configured, dict) or not configured:
+            return {}
+        secondary = {
+            str(name) for name in configured.get("secondary_parameters", [])
+        }
+        cap = int(configured.get("secondary_successful_measurement_cap", 0))
+        if cap < 0:
+            raise ValueError(
+                "secondary_successful_measurement_cap must be non-negative"
+            )
+        used = 0
+        measured_rounds: list[str] = []
+        for item in history[1:]:
+            decision = item.get("decision", {})
+            changes = decision.get("changes", []) if isinstance(decision, dict) else []
+            changed = {
+                str(change.get("parameter", ""))
+                .removeprefix("--")
+                .replace("-", "_")
+                for change in changes
+                if isinstance(change, dict)
+            }
+            if changed & secondary:
+                used += 1
+                measured_rounds.append(str(item.get("round", "unknown")))
+        return {
+            "primary_label": configured.get("primary_label"),
+            "primary_parameters": copy.deepcopy(
+                configured.get("primary_parameters", [])
+            ),
+            "conditional_label": configured.get("conditional_label"),
+            "conditional_parameters": copy.deepcopy(
+                configured.get("conditional_parameters", [])
+            ),
+            "secondary_label": configured.get("secondary_label"),
+            "secondary_parameters": sorted(secondary),
+            "secondary_groups": copy.deepcopy(
+                configured.get("secondary_groups", {})
+            ),
+            "secondary_successful_measurement_cap": cap,
+            "secondary_successful_measurements_used": used,
+            "secondary_successful_measurements_remaining": max(cap - used, 0),
+            "secondary_measured_rounds": measured_rounds,
+            "failure_recovery_bypasses_phase_priority": bool(
+                configured.get("failure_recovery_bypasses_phase_priority", False)
+            ),
+        }
+
+    @staticmethod
+    def validate_priority_search_alignment(
+        actual_changes: list[str], selection_policy: dict[str, Any]
+    ) -> None:
+        state = selection_policy.get("priority_search_budget_state")
+        if not isinstance(state, dict) or not state:
+            return
+        if selection_policy.get("failure_recovery_mode") is True and state.get(
+            "failure_recovery_bypasses_phase_priority"
+        ):
+            return
+        changed_secondary = sorted(
+            set(actual_changes) & set(state.get("secondary_parameters", []))
+        )
+        if not changed_secondary:
+            return
+        stage = selection_policy.get("hierarchical_stage")
+        if stage == "ordered_probe":
+            raise ValueError(
+                "Optional List 1.2/1.1 switches are reserved for autonomous "
+                "cross-layer refinement and are not mandatory ordered-probe "
+                f"coverage; changed={changed_secondary}"
+            )
+        elif stage == "cross_layer_refinement" and int(
+            state.get("secondary_successful_measurements_remaining", 0)
+        ) <= 0:
+            raise ValueError(
+                "The bounded List 1 secondary measurement quota is exhausted; "
+                f"changed={changed_secondary}"
+            )
 
     def derived_changes(
         self,
@@ -3361,6 +3557,15 @@ class Controller:
                 )
         actual_changes = [key for key in candidate if candidate[key] != previous[key]]
         effective_policy = policy or self.effective_change_policy()
+        if self.strategy_profile_name in {
+            "hierarchical_agentic_guided_v4",
+            "hierarchical_agentic_guided_v5",
+            "decode_priority_agentic_v1",
+        }:
+            self.validate_ordered_probe_parameter_alignment(
+                actual_changes, effective_policy
+            )
+        self.validate_priority_search_alignment(actual_changes, effective_policy)
         derived_changes = self.derived_changes(actual_changes, effective_policy)
         active_changes = [key for key in actual_changes if key not in derived_changes]
         min_parameters = int(effective_policy.get("minimum_parameters_per_round", 1))
@@ -3424,6 +3629,8 @@ class Controller:
                 in {
                     "hierarchical_agentic_frontier_v3",
                     "hierarchical_agentic_guided_v4",
+                    "hierarchical_agentic_guided_v5",
+                    "decode_priority_agentic_v1",
                 }
                 and previous.get("num_speculative_tokens", 0) > 0
                 and candidate.get("num_speculative_tokens") == 0
@@ -5279,6 +5486,27 @@ autonomous_cross_layer policy. Cite the evidence for your choice; no candidate
 family has been preselected for you:
 {yaml.safe_dump(selection_policy.get('cross_layer_evidence', []), allow_unicode=True, sort_keys=False)}
 """
+        completion_gate = selection_policy.get("completion_gate", {})
+        if completion_gate.get("enabled") and not completion_gate.get("allowed"):
+            stop_completion_instruction = f"""
+The deterministic completion gate is not yet satisfied. action=stop_complete is
+forbidden in this decision. You must return action=continue with a legal, untested,
+evidence-based experiment. If the first proposal violates a frozen constraint, use
+the Controller rejection feedback to reselect rather than ending the Session. The
+remaining evidence requirements are:
+{yaml.safe_dump(completion_gate, allow_unicode=True, sort_keys=False)}
+"""
+        else:
+            stop_completion_instruction = f"""
+action=stop_complete is available only when the useful whitelist search space is
+exhausted, no safe untested change remains, or further testing is not justified by
+the measurements. The summary must explicitly address every configured post-floor
+stop requirement; merely reaching the numeric floor is insufficient:
+{yaml.safe_dump(completion_gate.get('post_floor_stop_requirements', []), allow_unicode=True, sort_keys=False)}
+Preserve the current candidate and return empty changes,
+change_strategy=none, exploration_intent=none, and empty interaction_analysis and
+constraint_checks.
+"""
         prompt = f"""You are the tuning analyst for a measured vLLM-Ascend experiment.
 
 The controller has embedded all required read-only evidence below. Treat it as
@@ -5324,10 +5552,7 @@ For numeric parameters, grid distance is computed in ascending numeric order;
 the whitelist below may put the current baseline first for display and must not
 be interpreted as step order. The effective grid-step order is:
 {yaml.safe_dump({key: self.grid_step_order(values) for key, values in self.config['search_limits'].items()}, allow_unicode=True, sort_keys=False)}
-Set action=stop_complete, preserve the current candidate, and return an
-empty changes array, change_strategy=none, exploration_intent=none, and empty
-interaction_analysis and constraint_checks when the useful whitelist search space is exhausted, no safe
-untested change remains, or further testing is not justified by the measurements.
+{stop_completion_instruction}
 For a continuing guided decision, set exploration_intent=ordered_probe during ordered
 coverage, or select exploitation, cross_layer_interaction, or frontier_novelty in
 cross-layer refinement using measured_exploration_budget_state as a measured deficit
@@ -5367,10 +5592,13 @@ Embedded evidence:
                         "stop_complete must preserve the current candidate and have no changes"
                     )
                 self.validate_no_change_metadata(decision)
+                self.validate_stop_complete_allowed(selection_policy)
                 return
             if self.strategy_profile_name in {
                 "hierarchical_agentic_frontier_v3",
                 "hierarchical_agentic_guided_v4",
+                "hierarchical_agentic_guided_v5",
+                "decode_priority_agentic_v1",
             }:
                 intent = decision.get("exploration_intent")
                 stage = selection_policy.get("hierarchical_stage")
@@ -6167,6 +6395,7 @@ Embedded evidence:
                 failure_policy["max_parameters_per_round"] = (
                     self.max_parameters_per_round
                 )
+                failure_policy["failure_recovery_mode"] = True
                 self.validate_candidate(
                     current,
                     candidate,
@@ -6271,7 +6500,9 @@ Embedded evidence:
                 }
             case_exits = re.findall(r"CASE COMPLETED .*? runner_exit=(\d+)", text)
             repetitions = int(self.benchmark["aligned_l1"]["repetitions"])
-            expected_case_exits = 24 * repetitions
+            expected_case_exits = int(
+                self.benchmark["aligned_l1"].get("expected_formal_cases", 24)
+            ) * repetitions
             if len(case_exits) != expected_case_exits or any(
                 code != "0" for code in case_exits
             ):
@@ -7586,6 +7817,11 @@ Embedded evidence:
                 if decision["candidate"] != previous or decision["changes"]:
                     return None
                 self.validate_no_change_metadata(decision)
+                selection_policy = self.effective_change_policy(
+                    self.history_summary(session_dir),
+                    self.attempted_history_summary(session_dir),
+                )
+                self.validate_stop_complete_allowed(selection_policy)
             else:
                 selection_policy = self.effective_change_policy(
                     self.history_summary(session_dir),

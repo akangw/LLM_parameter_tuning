@@ -260,7 +260,7 @@ class RuntimeRuleStoreTests(unittest.TestCase):
             {item["id"] for item in result["violations"]},
         )
 
-    def test_migration_accelerators_keep_their_coupled_prerequisites(self) -> None:
+    def test_legal_inactive_accelerator_combinations_are_not_hard_rejected(self) -> None:
         fused_without_ep = self.store.evaluate(
             {
                 **self.candidate,
@@ -271,11 +271,7 @@ class RuntimeRuleStoreTests(unittest.TestCase):
             },
             scenario=self.scenario,
         )
-        self.assertFalse(fused_without_ep["allowed"])
-        self.assertIn(
-            "fused_mc2_requires_expert_parallel",
-            {item["id"] for item in fused_without_ep["violations"]},
-        )
+        self.assertTrue(fused_without_ep["allowed"])
 
         draft_eager_without_mtp = self.store.evaluate(
             {
@@ -287,11 +283,7 @@ class RuntimeRuleStoreTests(unittest.TestCase):
             },
             scenario=self.scenario,
         )
-        self.assertFalse(draft_eager_without_mtp["allowed"])
-        self.assertIn(
-            "draft_eager_requires_speculation",
-            {item["id"] for item in draft_eager_without_mtp["violations"]},
-        )
+        self.assertTrue(draft_eager_without_mtp["allowed"])
 
 
 if __name__ == "__main__":

@@ -227,16 +227,9 @@ def stable_unique(values: Iterable[Any]) -> list[Any]:
 def machine_constraints() -> list[dict[str, Any]]:
     return [
         {
-            "id": "long_prefill_within_batch_budget",
-            "kind": "lte_or_disabled",
-            "left": "long_prefill_token_threshold",
-            "right": "max_num_batched_tokens",
-            "disabled_value": 0,
-        },
-        {
-            "id": "mtp_scheduler_budget",
+            "id": "sequence_count_within_batch_budget",
             "kind": "product_lte",
-            "factors": ["max_num_seqs", {"add": ["num_speculative_tokens", 1]}],
+            "factors": ["max_num_seqs"],
             "right": "max_num_batched_tokens",
         },
         {
@@ -258,13 +251,6 @@ def machine_constraints() -> list[dict[str, Any]]:
             "right_scenario": "topology.total_npu",
             "only_if_present": True,
             "required_candidate_parameters": ["prefill_context_parallel_size"],
-        },
-        {
-            "id": "cudagraph_sizes_match_speculation_factor",
-            "kind": "all_multiples",
-            "values": "cudagraph_capture_sizes",
-            "factor": {"add": ["num_speculative_tokens", 1]},
-            "only_if_present": True,
         },
     ]
 
@@ -468,9 +454,7 @@ class SearchSpaceCompiler:
         # proposal when that companion changes, so keep it in the frozen domain
         # and enforce the complete combination at Controller preflight.
         deferred_combination_constraints = {
-            "long_prefill_within_batch_budget",
-            "mtp_scheduler_budget",
-            "cudagraph_sizes_match_speculation_factor",
+            "sequence_count_within_batch_budget",
         }
         for value in values:
             candidate = {**baseline, canonical: value}

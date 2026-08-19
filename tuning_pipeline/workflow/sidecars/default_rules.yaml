@@ -14,32 +14,13 @@ rules:
       vllm_commit: 418bd6273c03bf48d5066733769e0a74bdc51694
       observed_run: a0_20260731_132813
 
-  - id: long_prefill_within_batch_budget
-    status: active
-    severity: hard
-    kind: lte_or_disabled
-    left: long_prefill_token_threshold
-    right: max_num_batched_tokens
-    disabled_value: 0
-    source: {type: existing_controller_contract}
-
-  - id: mtp_scheduler_budget
+  - id: sequence_count_within_batch_budget
     status: active
     severity: hard
     kind: product_lte
-    factors:
-      - max_num_seqs
-      - {add: [num_speculative_tokens, 1]}
+    factors: [max_num_seqs]
     right: max_num_batched_tokens
-    source: {type: existing_controller_contract}
-
-  - id: mtp_requires_async_scheduling
-    status: active
-    severity: hard
-    kind: implies
-    if: {parameter: num_speculative_tokens, op: gt, value: 0}
-    then: {parameter: async_scheduling, op: eq, value: true}
-    source: {type: existing_controller_contract}
+    source: {type: pinned_vllm_scheduler_validation}
 
   - id: eplb_redundant_experts_requires_eplb
     status: active
@@ -56,38 +37,6 @@ rules:
     values: cudagraph_capture_sizes
     right: max_cudagraph_capture_size
     source: {type: existing_controller_contract}
-
-  - id: cudagraph_sizes_match_speculation_factor
-    status: active
-    severity: hard
-    kind: all_multiples
-    values: cudagraph_capture_sizes
-    factor: {add: [num_speculative_tokens, 1]}
-    source: {type: existing_compiler_contract}
-
-  - id: fused_mc2_requires_expert_parallel
-    status: active
-    severity: hard
-    kind: implies
-    if: {parameter: fused_mc2, op: gt, value: 0}
-    then: {parameter: enable_expert_parallel, op: eq, value: true}
-    source: {type: pinned_ascend_runtime_contract}
-
-  - id: fused_mc2_mode2_requires_speculation
-    status: active
-    severity: hard
-    kind: implies
-    if: {parameter: fused_mc2, op: eq, value: 2}
-    then: {parameter: num_speculative_tokens, op: gt, value: 0}
-    source: {type: pinned_ascend_runtime_contract}
-
-  - id: draft_eager_requires_speculation
-    status: active
-    severity: hard
-    kind: implies
-    if: {parameter: speculative_config__enforce_eager, op: eq, value: true}
-    then: {parameter: num_speculative_tokens, op: gt, value: 0}
-    source: {type: pinned_ascend_runtime_contract}
 
 quarantines: []
 proposals: []

@@ -159,8 +159,6 @@ def dataset_shapes(
             "input_tokens": int(input_tokens),
             "output_tokens": int(output_tokens),
         }
-    if len(result) != 4:
-        raise ValueError(f"aligned L1 requires 4 workloads, got {len(result)}")
     return result
 
 

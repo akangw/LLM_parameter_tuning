@@ -85,6 +85,26 @@ def semantic_groups(
         for index, item in enumerate(bucket):
             for relation in item.get("related_parameters", []):
                 if isinstance(relation, dict):
+                    relation_text = str(relation.get("relation", "")).lower()
+                    # A portrait may mention a similarly named field precisely
+                    # to state that it is a distinct runtime surface.  Such a
+                    # negative relation is evidence against semantic merging,
+                    # not evidence for it.  This matters for upstream
+                    # EPLBConfig and Ascend additional_config.eplb_config,
+                    # which share a leaf name but have different validators,
+                    # injection paths and enablement gates.
+                    if any(
+                        marker in relation_text
+                        for marker in (
+                            "distinct ",
+                            "separate setting",
+                            "separate configuration",
+                            "must not be assumed",
+                            "does not configure",
+                            "not configure",
+                        )
+                    ):
+                        continue
                     target = knowledge_owner.get(str(relation.get("name", "")))
                     if target is not None:
                         union(index, target)

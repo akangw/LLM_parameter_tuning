@@ -3,6 +3,232 @@
 default_strategy: hierarchical_agentic_guided_v5
 
 strategies:
+  decode_priority_agentic_v1:
+    extends: hierarchical_agentic_guided_v5
+    status: integrated
+    purpose: >-
+      Decode-only expert-anchor strategy. First measure the List 1 expert
+      switches plus the measured List 2 anchor unchanged. If startup fails,
+      normal autonomous failure recovery may change any validated Active
+      parameter or evidence-gated Recovery Registry parameter. After a healthy
+      baseline, spend the main budget on high-dimensional List 2 geometry,
+      require compact coverage of conditional List 1.3 axes, and leave List
+      1.2/1.1 revisits to evidence-backed Agent judgment during cross-layer work.
+    structured_candidate_guidance:
+      cudagraph_capture_sizes:
+        decision_owner: agent
+        semantics: frozen_categorical_shape_template
+        required_checks:
+          - nonempty_positive_integer_list_when_explicit_graph_capture_is_used
+          - maximum_matches_max_cudagraph_capture_size
+          - full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one
+          - effective_sequence_parallel_list_retains_at_least_one_tp_multiple
+        normalization_notes:
+          - vllm_sorts_and_deduplicates_explicit_sizes
+          - ascend_filters_non_tp_sequence_parallel_sizes
+          - full_decode_only_filters_unreachable_decode_sizes
+        normal_mode: graph_enabled
+        graph_disabled_mode: diagnostic_ablation_only
+      mtp_graph_joint_experiment:
+        encouraged: true
+        parameters:
+          - num_speculative_tokens
+          - cudagraph_capture_sizes
+          - max_cudagraph_capture_size
+          - compilation_mode
+          - max_num_seqs
+        maximum_independent_parameters: 4
+        intent: Let the Agent choose coherent K, graph mode and capture coverage jointly.
+    measurement_policy:
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+        minimum_throughput_gain_percent: 1.0
+        maximum_single_workload_throughput_regression_percent: 100.0
+    exploration:
+      independent_parameters_per_round: [1, 4]
+      max_grid_steps_per_parameter: 3
+      max_total_grid_steps: 10
+    priority_search:
+      baseline_must_be_measured_first: true
+      failure_recovery_bypasses_phase_priority: true
+      primary_label: list2_high_dimensional_axes
+      primary_parameters:
+        - num_speculative_tokens
+        - cudagraph_capture_sizes
+        - max_cudagraph_capture_size
+        - max_num_seqs
+        - max_num_batched_tokens
+        - gpu_memory_utilization
+        - max_model_len
+        - compilation_mode
+        - disable_hybrid_kv_cache_manager
+        - speculative_config__attention_backend
+      conditional_label: list1_3_required_conditional_axes
+      conditional_parameters:
+        - speculative_config__enforce_eager
+        - enable_chunked_prefill
+        - enable_balance_scheduling
+        - enable_reduce_sample
+      secondary_label: list1_2_then_list1_1_optional_revisit
+      secondary_parameters:
+        - enable_prefix_caching
+        - TASK_QUEUE_ENABLE
+        - speculative_config__disable_padded_drafter_batch
+        - additional_config__prefill_comm_compute_overlap
+        - additional_config__ascend_compilation_config__enable_static_kernel
+        - async_scheduling
+        - enable_expert_parallel
+        - fused_mc2
+        - flashcomm1
+        - additional_config__ascend_compilation_config__enable_npugraph_ex
+        - additional_config__ascend_compilation_config__fuse_allreduce_rms
+      secondary_groups:
+        list1_2_default_off_optional:
+          - enable_prefix_caching
+          - TASK_QUEUE_ENABLE
+          - speculative_config__disable_padded_drafter_batch
+          - additional_config__prefill_comm_compute_overlap
+          - additional_config__ascend_compilation_config__enable_static_kernel
+        list1_1_default_on_optional:
+          - async_scheduling
+          - enable_expert_parallel
+          - fused_mc2
+          - flashcomm1
+          - additional_config__ascend_compilation_config__enable_npugraph_ex
+          - additional_config__ascend_compilation_config__fuse_allreduce_rms
+      secondary_successful_measurement_cap: 4
+      rationale: >-
+        List 2 is the main search budget and List 1.3 receives mandatory compact
+        coverage. List 1.2 and List 1.1 are never mandatory: the Agent may spend
+        up to four successful cross-layer measurements on them, preferring List
+        1.2 before List 1.1 when evidence supports a high-upside interaction.
+        Every such proposal needs a mechanism hypothesis, history or portrait
+        evidence, constraint checks and expected payoff. Failed recovery rounds
+        do not consume this performance-search quota.
+    hierarchy:
+      selection_contract: controller_selects_layer_agent_selects_experiment
+      cross_layer_selection: agent_autonomous
+      controller_candidate_parameter_selection: disabled
+      coupling_hints_are_binding: false
+      promising_incremental_gain_percent: 0.0
+      ordered_probes:
+        - name: list2_capacity_geometry
+          order: 1
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 2
+          maximum_successful_measurements: 3
+          parameters:
+            - max_model_len
+            - gpu_memory_utilization
+            - max_num_seqs
+            - max_num_batched_tokens
+          coupling_hints:
+            - parameters: [max_model_len, gpu_memory_utilization, max_num_seqs, max_num_batched_tokens]
+              hypothesis: Jointly approach the KV/scheduler saturation boundary instead of sweeping four axes independently.
+          intent: Establish the fastest stable decode capacity and memory envelope.
+        - name: list2_mtp_graph_joint
+          order: 2
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [2, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 2
+          maximum_successful_measurements: 4
+          parameters:
+            - num_speculative_tokens
+            - compilation_mode
+            - cudagraph_capture_sizes
+            - max_cudagraph_capture_size
+            - speculative_config__attention_backend
+          coupling_hints:
+            - parameters: [num_speculative_tokens, compilation_mode, cudagraph_capture_sizes, max_cudagraph_capture_size]
+              hypothesis: K changes the decode query shape, so graph coverage should be selected jointly.
+          intent: Search the highest-upside MTP and graph-shape combinations.
+        - name: list2_scheduler_capacity_refinement
+          order: 3
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [1, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 1
+          maximum_successful_measurements: 2
+          parameters:
+            - disable_hybrid_kv_cache_manager
+            - max_num_seqs
+            - max_num_batched_tokens
+            - gpu_memory_utilization
+          coupling_hints:
+            - parameters: [disable_hybrid_kv_cache_manager, max_model_len, gpu_memory_utilization, max_num_seqs]
+              hypothesis: KV policy value appears only under meaningful capacity pressure.
+          intent: Refine the scheduler-capacity and KV envelope after the main geometry is measured.
+        - name: list1_3_conditional_switches
+          order: 4
+          parameter_selection_owner: agent
+          independent_parameters_per_round: [1, 4]
+          minimum_independent_parameters: 1
+          minimum_successful_measurements: 2
+          maximum_successful_measurements: 3
+          parameters:
+            - enable_chunked_prefill
+            - enable_balance_scheduling
+            - enable_reduce_sample
+            - speculative_config__enforce_eager
+          coupling_hints:
+            - parameters: [enable_chunked_prefill, max_model_len, max_num_batched_tokens]
+              hypothesis: Chunking value depends on the model-length and token-budget legality boundary.
+            - parameters: [enable_balance_scheduling, max_num_seqs, gpu_memory_utilization]
+              hypothesis: DP balancing value depends on queue and memory saturation.
+            - parameters: [enable_reduce_sample, num_speculative_tokens]
+              hypothesis: Sampling-communication savings can change with accepted speculative width.
+            - parameters: [speculative_config__enforce_eager, num_speculative_tokens, compilation_mode]
+              hypothesis: Speculative eager execution is useful only at a graph-compatibility boundary.
+          intent: >-
+            Obtain compact evidence for the four conditional switches after the
+            List 2 basin is known. The Agent chooses single or coupled changes;
+            hints are non-binding and List 2 companions remain allowed.
+    autonomous_cross_layer:
+      decision_owner: agent
+      controller_supplies:
+        - per_layer_measurement_summary
+        - complete_active_whitelist
+        - attempted_combinations
+        - conditional_failure_exclusions
+        - parameter_portraits_and_constraints
+        - best_accepted_anchor
+        - measured_exploration_budget_state
+        - priority_search_budget_state
+      controller_must_not_supply: preselected_candidate_layer_or_parameters
+      objectives:
+        - exploit the best measured List 2 basin with coherent local moves
+        - compose high-upside List 2 cross-layer combinations humans rarely test
+        - continue evidence-backed List 1.3 interactions where they remain promising
+        - optionally test List 1.2 before List 1.1 when a concrete coupling hypothesis justifies it
+        - require mechanism, history or portrait evidence, constraint checks and expected payoff for every high-risk proposal
+        - avoid blind random combinations, independent switch rescans and exact repeated failed candidates
+      exploration_budget:
+        programmatic_tracking: true
+        agent_final_choice: true
+        exploitation_fraction: 0.60
+        cross_layer_interaction_fraction: 0.30
+        frontier_novelty_fraction: 0.10
+    completion_gate:
+      enabled: true
+      require_all_ordered_probes: true
+      minimum_cross_layer_successful_measurements: 8
+      post_floor_stop_requirements:
+        - no_promising_untested_list2_hypothesis_remains
+        - list1_3_results_are_sufficiently_resolved_or_consistently_negative
+        - optional_list1_2_and_list1_1_opportunities_were_assessed_and_any_skip_is_explained
+        - remaining_frontier_uncertainty_is_unlikely_to_repay_another_measurement
+      rationale: >-
+        Require compact List 2 and List 1.3 coverage plus eight autonomous
+        cross-layer measurements before normal completion. List 1.2/1.1 remain
+        optional, and reaching this floor only permits completion: the Agent
+        should continue while justified untested hypotheses or meaningful
+        frontier uncertainty remain. Startup failures and incomplete benchmark
+        rounds do not satisfy this floor.
+
   hierarchical_agentic_guided_v5:
     extends: hierarchical_agentic_guided_v4
     status: integrated
@@ -45,6 +271,14 @@ strategies:
       coupled_domain_policy:
         defer_baseline_only_pruning: true
         controller_validates_complete_candidate: true
+    completion_gate:
+      enabled: true
+      require_all_ordered_probes: true
+      minimum_cross_layer_successful_measurements: 4
+      rationale: >-
+        The Agent cannot terminate during compact layer coverage or before four
+        successful autonomous cross-layer measurements. Failed startup and
+        incomplete benchmark rounds never satisfy this evidence floor.
 
   hierarchical_agentic_guided_v4:
     status: integrated

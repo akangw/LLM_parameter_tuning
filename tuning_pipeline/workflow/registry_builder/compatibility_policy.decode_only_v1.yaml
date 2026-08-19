@@ -1,0 +1,88 @@
+schema_version: 1
+extends: compatibility_policy.frontier_v4.yaml
+
+# These inherited rules describe the old preferred execution path, not pinned
+# engine illegality. Keep the expert baseline values, but do not prevent a
+# future high-risk profile from testing a legal fallback path.
+disabled_combination_constraints:
+  - speculative_tokens_require_async_scheduling
+  - unpadded_drafter_requires_async_disabled
+  - fused_mc2_requires_expert_parallel
+
+# Decode-only capacity domains retain the measured 64k anchor but expose the
+# actual 256+2048 service floor and useful intermediate KV geometries.
+numeric_candidate_domains:
+  max_model_len:
+    kind: fixed
+    values: [2304, 3072, 4096, 8192, 16384, 32768, 64000]
+    include_source_values: false
+    minimum: 2304
+    maximum: 64000
+    integer: true
+  max_num_seqs:
+    kind: fixed
+    values: [32, 48, 64, 80, 96, 128]
+    include_source_values: false
+    minimum: 32
+    maximum: 128
+    integer: true
+  max_num_batched_tokens:
+    kind: fixed
+    values: [2048, 2304, 3072, 4096, 6144, 8192, 12288, 16384]
+    include_source_values: false
+    minimum: 2048
+    maximum: 16384
+    integer: true
+  gpu_memory_utilization:
+    kind: fixed
+    values: [0.88, 0.90, 0.92, 0.94, 0.95, 0.96, 0.97]
+    include_source_values: false
+    minimum: 0.80
+    maximum: 0.98
+    precision: 2
+  max_cudagraph_capture_size:
+    kind: fixed
+    values: [32, 48, 64, 80, 96, 128, 160, 192, 256]
+    include_source_values: false
+    minimum: 16
+    maximum: 256
+    integer: true
+  num_speculative_tokens:
+    kind: fixed
+    values: [1, 2, 3, 4]
+    include_source_values: false
+    minimum: 1
+    maximum: 4
+    integer: true
+  long_prefill_token_threshold:
+    kind: fixed
+    values: [0]
+    include_source_values: false
+    minimum: 0
+    maximum: 0
+    integer: true
+
+candidate_domain_overrides:
+  enable_chunked_prefill: [true, false]
+
+# These switches have either decode-specific positive evidence, a hard runtime
+# prerequisite, or a measured negative direction. They remain in the complete
+# candidate schema at their expert-baseline value but consume no Active slot.
+parameter_rule_overrides:
+  - {match: async_scheduling, role: session_fixed}
+  - {match: enable_expert_parallel, role: session_fixed}
+  - {match: speculative_config__method, role: session_fixed}
+  - {match: long_prefill_token_threshold, role: session_fixed}
+  - {match: fused_mc2, role: session_fixed}
+  - {match: flashcomm1, role: session_fixed}
+  - {match: enable_prefix_caching, role: session_fixed}
+  - {match: TASK_QUEUE_ENABLE, role: session_fixed}
+  - {match: speculative_config__disable_padded_drafter_batch, role: session_fixed}
+  - {match: additional_config__prefill_comm_compute_overlap, role: session_fixed}
+  - {match: additional_config__ascend_compilation_config__enable_static_kernel, role: session_fixed}
+  - {match: additional_config__ascend_compilation_config__enable_npugraph_ex, role: session_fixed}
+  - {match: additional_config__ascend_compilation_config__fuse_allreduce_rms, role: session_fixed}
+  - {match: mlapo, role: session_fixed}
+  - {match: VLLM_ASCEND_ENABLE_BATCH_MEMCPY, role: session_fixed}
+  - {match: compilation_enable_sp, role: session_fixed}
+  - {match: additional_config__ascend_compilation_config__fuse_norm_quant, role: session_fixed}
