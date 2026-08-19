@@ -268,7 +268,7 @@ benchmark:
     guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
     spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-decode-only-c32-v1/spec
     dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v2/datasets
-    suite_sha256: 3765bbc0281a1a6fdfee2d5f42d1aadbec98c2940dbd2a61640b5d203ca5cb47
+    suite_sha256: dba87d7434a37938511508cd4b95cf239a5bb5791c867f7cbed8430180221b18
     schema_files_sha256:
       schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
     tokenizer_files_sha256:
