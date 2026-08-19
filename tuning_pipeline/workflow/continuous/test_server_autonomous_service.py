@@ -296,6 +296,7 @@ class ServiceRenderTests(unittest.TestCase):
         )
         self.assertEqual("decode_only_c32_v1", config["benchmark"]["profile"])
         self.assertTrue(config["failure_recovery"]["hard_terminal_only"])
+        self.assertEqual(10, config["max_controller_recovery_attempts"])
         self.assertTrue(config["lab"]["lease_name"].endswith("-pending"))
         self.assertIn(
             "vllmtkb-auto-fixed-dp4tp8-v2-20260817-2x16npu",

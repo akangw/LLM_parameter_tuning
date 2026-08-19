@@ -20,6 +20,11 @@ search_space:
 strategy:
   profile: decode_priority_agentic_v1
 
+# Process-level Controller failures are retried independently from candidate
+# recovery. Use the framework maximum for unattended operation while retaining
+# a finite guard against an identical code crash loop.
+max_controller_recovery_attempts: 10
+
 benchmark:
   profile: decode_only_c32_v1
   aligned_l1_decode_only_v1:
