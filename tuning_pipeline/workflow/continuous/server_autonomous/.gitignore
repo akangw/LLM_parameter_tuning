@@ -1,2 +1,3 @@
 runtime/
 .secrets/
+config.dp4_tp8.decode_priority_v1.local.yaml

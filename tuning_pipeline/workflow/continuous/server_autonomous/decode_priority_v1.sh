@@ -2,7 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-export VLLMTKB_CONFIG="${SCRIPT_DIR}/config.dp4_tp8.decode_priority_v1.yaml"
+TRACKED_CONFIG="${SCRIPT_DIR}/config.dp4_tp8.decode_priority_v1.yaml"
+LOCAL_CONFIG="${SCRIPT_DIR}/config.dp4_tp8.decode_priority_v1.local.yaml"
+if [[ -n "${VLLMTKB_DECODE_CONFIG:-}" ]]; then
+  export VLLMTKB_CONFIG="${VLLMTKB_DECODE_CONFIG}"
+elif [[ -f "${LOCAL_CONFIG}" ]]; then
+  export VLLMTKB_CONFIG="${LOCAL_CONFIG}"
+else
+  export VLLMTKB_CONFIG="${TRACKED_CONFIG}"
+fi
 export VLLMTKB_RUNTIME_ROOT="${SCRIPT_DIR}/runtime_decode_priority_v1_live"
 
 COMMAND="${1:-}"

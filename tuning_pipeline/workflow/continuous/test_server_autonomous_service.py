@@ -312,8 +312,12 @@ class ServiceRenderTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("config.dp4_tp8.decode_priority_v1.yaml", wrapper)
+        self.assertIn("config.dp4_tp8.decode_priority_v1.local.yaml", wrapper)
+        self.assertIn("VLLMTKB_DECODE_CONFIG", wrapper)
         self.assertIn("runtime_decode_priority_v1_live", wrapper)
         self.assertIn('service) TARGET=', wrapper)
+        ignored = (autonomous / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("config.dp4_tp8.decode_priority_v1.local.yaml", ignored)
 
     def test_rendered_configs_have_no_placeholders(self) -> None:
         repo_root = HERE.parents[2]

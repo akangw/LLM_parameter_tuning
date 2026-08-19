@@ -53,8 +53,11 @@ The package is intentionally not running. Before launch:
 
 1. Synchronize the reviewed local payload to the isolated server project
    `vllmtkb-decode-priority-v1`.
-2. Create a fresh Lease and replace the fail-closed `-pending` lease name in
-   `config.dp4_tp8.decode_priority_v1.yaml`.
+2. Create a fresh Lease identity without editing tracked configuration. Write
+   the real name into the Git-ignored server-local overlay
+   `config.dp4_tp8.decode_priority_v1.local.yaml`, which must extend
+   `config.dp4_tp8.decode_priority_v1.yaml`. The tracked file permanently keeps
+   its fail-closed `-pending` value.
 3. Run `prepare_decode_only_benchmark.py` to copy the validated Fast-C32 V2
    schema/tokenizer spec tree into a new decode-only spec root and overlay the
    new suite. The operation is additive and does not delete or edit Fast-C32 V2.
@@ -67,4 +70,12 @@ All lifecycle commands must use the dedicated dispatcher, for example:
 bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh preflight
 bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh start new
 bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh status
+```
+
+The server-local Lease overlay has this minimal shape:
+
+```yaml
+base_config: config.dp4_tp8.decode_priority_v1.yaml
+lab:
+  lease_name: REAL_FRESH_LEASE_NAME
 ```
