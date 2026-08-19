@@ -68,9 +68,13 @@ All lifecycle commands must use the dedicated dispatcher, for example:
 
 ```bash
 bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh preflight
-bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh start new
+bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh service systemd-start
 bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v1.sh status
 ```
+
+正式无人值守运行只允许使用 systemd user service；如果主机不支持 user
+systemd，可先安装并使用 `service supervisor-start`。Decode 专用入口会拒绝
+旧的 `start` 后台方式，避免 Controller 自身异常后无人拉起。
 
 The server-local Lease overlay has this minimal shape:
 

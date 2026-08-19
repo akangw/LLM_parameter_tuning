@@ -21,6 +21,7 @@ import os
 import re
 import shlex
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -1261,6 +1262,27 @@ class Controller:
             self.config["measurement_policy"] = copy.deepcopy(
                 self.measurement_policy
             )
+        confirmation = self.measurement_policy.get("aligned_l1", {}).get(
+            "confirmation", {}
+        )
+        if confirmation:
+            if not isinstance(confirmation, dict):
+                raise ValueError("aligned_l1 confirmation policy must be a mapping")
+            required = int(confirmation.get("required_successful_measurements", 2))
+            if not 2 <= required <= 3:
+                raise ValueError(
+                    "aligned_l1 confirmation required_successful_measurements must be 2..3"
+                )
+            lower = float(
+                self.measurement_policy.get("aligned_l1", {}).get(
+                    "minimum_throughput_gain_percent", 3.0
+                )
+            )
+            upper = float(confirmation.get("upper_gain_percent", lower))
+            if upper < lower:
+                raise ValueError(
+                    "aligned_l1 confirmation upper_gain_percent must be >= the minimum gain"
+                )
         self.config.setdefault("strategy", {})["profile"] = self.strategy_profile_name
         self.config["strategy"]["resolved_profile"] = dict(self.strategy_profile)
         # Keep the legacy policy label synchronized with the selected frozen
@@ -2003,6 +2025,8 @@ class Controller:
                     "benchmark_profile", self.benchmark_profile_name
                 ),
                 "image_identity": state.get("image_identity", self.image_identity),
+                "measurement_role": state.get("measurement_role", "search"),
+                "confirmation_parent_round": state.get("confirmation_parent_round"),
             },
         )
 
@@ -2558,6 +2582,15 @@ class Controller:
             raise ValueError(
                 "TASK_QUEUE_ENABLE=2 is allowed only with graph mode NONE and "
                 "no explicit cudagraph capture list on the pinned torch_npu runtime"
+            )
+        if candidate.get(
+            "additional_config__ascend_compilation_config__enable_static_kernel"
+        ) is True and candidate.get(
+            "additional_config__ascend_compilation_config__enable_npugraph_ex"
+        ) is not True:
+            raise ValueError(
+                "enable_static_kernel=true requires enable_npugraph_ex=true on "
+                "the pinned Ascend compiler"
             )
         rule_evaluation = self.runtime_rule_evaluation(candidate)
         if rule_evaluation and not rule_evaluation["allowed"]:
@@ -3556,6 +3589,20 @@ class Controller:
                     f"from {exclusion.get('trial_id', 'history')}"
                 )
         actual_changes = [key for key in candidate if candidate[key] != previous[key]]
+        fuse_norm_quant = (
+            "additional_config__ascend_compilation_config__fuse_norm_quant"
+        )
+        if (
+            fuse_norm_quant in actual_changes
+            and candidate.get(
+                "additional_config__ascend_compilation_config__enable_npugraph_ex"
+            )
+            is not False
+        ):
+            raise ValueError(
+                "fuse_norm_quant is consumed only when enable_npugraph_ex=false; "
+                "rejecting a no-effect performance experiment"
+            )
         effective_policy = policy or self.effective_change_policy()
         if self.strategy_profile_name in {
             "hierarchical_agentic_guided_v4",
@@ -4159,6 +4206,15 @@ class Controller:
                             metrics_path.parents[1],
                         ),
                     }
+                manifest_path = metrics_path.parents[1] / "00_context" / "round_manifest.json"
+                if manifest_path.is_file():
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    item["measurement_role"] = manifest.get(
+                        "measurement_role", "search"
+                    )
+                    item["confirmation_parent_round"] = manifest.get(
+                        "confirmation_parent_round"
+                    )
                 decision_path = (
                     metrics_path.parents[1] / "06_agent_analysis" / "decision.json"
                 )
@@ -4212,6 +4268,18 @@ class Controller:
                         "benchmarked" if metrics_path.exists() else "unattributed_failure"
                     ),
                 }
+                manifest_path = round_dir / "00_context" / "round_manifest.json"
+                if manifest_path.is_file():
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    item["measurement_role"] = manifest.get(
+                        "measurement_role", "search"
+                    )
+                    item["confirmation_parent_round"] = manifest.get(
+                        "confirmation_parent_round"
+                    )
+                    if item["measurement_role"] == "confirmation":
+                        item["counts_as_parameter_experiment"] = False
+                        item["experiment_evidence_status"] = "confirmation_measurement"
                 decision_path = round_dir / "06_agent_analysis" / "decision.json"
                 if decision_path.exists():
                     decision = json.loads(decision_path.read_text(encoding="utf-8"))
@@ -4355,6 +4423,82 @@ class Controller:
             return float(value)
         return None
 
+    def aligned_confirmation_policy(self) -> dict[str, Any]:
+        """Return the normalized selective confirmation contract."""
+        if self.benchmark_mode != "aligned_l1":
+            return {"enabled": False}
+        policy = self.measurement_policy.get("aligned_l1", {})
+        raw = policy.get("confirmation", {})
+        if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "lower_gain_percent": float(
+                policy.get("minimum_throughput_gain_percent", 3.0)
+            ),
+            "upper_gain_percent": float(raw.get("upper_gain_percent", 3.0)),
+            "required_successful_measurements": int(
+                raw.get("required_successful_measurements", 2)
+            ),
+        }
+
+    @staticmethod
+    def candidate_identity(candidate: dict[str, Any]) -> str:
+        return json.dumps(
+            candidate,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def confirmation_requirement(
+        self, history: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """Request one extra run only for a marginal candidate that could be best."""
+        confirmation = self.aligned_confirmation_policy()
+        if not confirmation.get("enabled") or len(history) < 2:
+            return None
+        baseline, current = history[0], history[-1]
+        if current.get("measurement_role") == "confirmation":
+            return None
+        assessment = self.assess_aligned_l1([baseline, current])
+        if not assessment.get("eligible_as_improvement"):
+            return None
+        gain = float(assessment["throughput_gain_percent"])
+        if gain >= float(confirmation["upper_gain_percent"]):
+            return None
+        current_score = self.primary_performance_score(current)
+        prior_anchor = self.best_accepted_anchor(history[:-1])
+        prior_score = prior_anchor.get("primary_score") if prior_anchor else None
+        if current_score is None or (
+            isinstance(prior_score, (int, float)) and current_score <= float(prior_score)
+        ):
+            return None
+        identity = self.candidate_identity(current.get("params", {}))
+        matching = [
+            item
+            for item in history[1:]
+            if self.candidate_identity(item.get("params", {})) == identity
+            and self.assess_aligned_l1([baseline, item]).get(
+                "eligible_as_improvement"
+            )
+        ]
+        if len(matching) >= int(confirmation["required_successful_measurements"]):
+            return None
+        return {
+            "candidate_round": current.get("round"),
+            "gain_percent": gain,
+            "primary_score": current_score,
+            "prior_best_score": prior_score,
+            "required_successful_measurements": confirmation[
+                "required_successful_measurements"
+            ],
+            "reason": (
+                "candidate is a new best but its gain lies inside the selective "
+                "confirmation band"
+            ),
+        }
+
     def best_accepted_anchor(
         self,
         history: list[dict[str, Any]],
@@ -4364,6 +4508,12 @@ class Controller:
             return None
         baseline = history[0]
         accepted = [baseline]
+        scored: list[tuple[float, dict[str, Any], list[str]]] = []
+        baseline_score = self.primary_performance_score(baseline)
+        if baseline_score is not None:
+            scored.append((baseline_score, baseline, [str(baseline.get("round"))]))
+        confirmation = self.aligned_confirmation_policy()
+        grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
         for item in history[1:]:
             if item.get("metrics", {}).get("benchmark_mode") == "aligned_l1":
                 assessment = self.assess_aligned_l1([baseline, item])
@@ -4371,10 +4521,32 @@ class Controller:
                 assessment = self.assess_measurement(
                     [baseline, item], self.pairwise_metric_comparison(baseline, item)
                 )
-            if assessment.get("eligible_as_improvement"):
-                accepted.append(item)
-        scored = [(self.primary_performance_score(item), item) for item in accepted]
-        scored = [(score, item) for score, item in scored if score is not None]
+            if not assessment.get("eligible_as_improvement"):
+                continue
+            grouped.setdefault(
+                self.candidate_identity(item.get("params", {})), []
+            ).append((item, assessment))
+
+        for measurements in grouped.values():
+            representative = measurements[-1][0]
+            gain = float(measurements[-1][1].get("throughput_gain_percent", math.inf))
+            required = 1
+            if confirmation.get("enabled") and gain < float(
+                confirmation["upper_gain_percent"]
+            ):
+                required = int(confirmation["required_successful_measurements"])
+            if len(measurements) < required:
+                continue
+            selected = measurements[-required:]
+            scores = [
+                self.primary_performance_score(item) for item, _ in selected
+            ]
+            if any(score is None for score in scores):
+                continue
+            aggregate = float(statistics.median(float(score) for score in scores))
+            supporting_rounds = [str(item.get("round")) for item, _ in selected]
+            accepted.extend(item for item, _ in selected)
+            scored.append((aggregate, representative, supporting_rounds))
         if not scored:
             return {
                 "round": baseline.get("round"),
@@ -4382,15 +4554,17 @@ class Controller:
                 "primary_score": None,
                 "selection_reason": "baseline fallback; no comparable score",
             }
-        score, best = max(scored, key=lambda pair: pair[0])
+        score, best, supporting_rounds = max(scored, key=lambda entry: entry[0])
         return {
             "round": best.get("round"),
             "params": best.get("params", {}),
             "primary_score": score,
+            "supporting_rounds": supporting_rounds,
             "accepted_rounds": [item.get("round") for item in accepted],
             "selection_reason": (
                 "highest primary score among baseline and candidates accepted "
-                "by the deterministic baseline-relative measurement gate"
+                "by the deterministic baseline-relative measurement gate; marginal "
+                "gains use the median of their required confirmation measurements"
             ),
         }
 
@@ -7108,6 +7282,8 @@ Embedded evidence:
             "failure_diagnostic_retries": 0,
             "total_failure_recovery_rounds": 0,
             "round_submitted_at": None,
+            "measurement_role": "search",
+            "confirmation_parent_round": None,
             "created_at": now(),
             "updated_at": now(),
         }
@@ -7766,6 +7942,12 @@ Embedded evidence:
             next_status = "retrying_infrastructure_failure"
         if decision["action"] == "adjust_parameters":
             diagnostic_retries = int(state.get("failure_diagnostic_retries", 0))
+        if next_candidate != state.get("current_candidate"):
+            state.update(
+                measurement_role="search",
+                confirmation_parent_round=None,
+                confirmation_reason=None,
+            )
         _, task_id, run_id = self.prepare_and_submit_round(
             session_dir,
             state,
@@ -8068,6 +8250,49 @@ Embedded evidence:
                     session_dir, round_dir, state
                 )
                 self.save_state(state)
+                self.write_comparison(session_dir, round_dir)
+                confirmation = self.confirmation_requirement(
+                    self.history_summary(session_dir)
+                )
+                if confirmation is not None:
+                    if stop_was_requested_before_submission():
+                        state.update(
+                            status="stopped_after_current_round",
+                            active_task_id=None,
+                        )
+                        self.save_state(state)
+                        return
+                    parent_round = round_dir.name
+                    next_index = int(state["round_index"]) + 1
+                    next_label = f"{state['round_label']}c1"
+                    state.update(
+                        measurement_role="confirmation",
+                        confirmation_parent_round=parent_round,
+                        confirmation_reason=confirmation,
+                    )
+                    next_dir, task_id, run_id = self.prepare_and_submit_round(
+                        session_dir,
+                        state,
+                        index=next_index,
+                        label=next_label,
+                        candidate=state["current_candidate"],
+                    )
+                    save_json(
+                        next_dir / "00_context" / "confirmation.json",
+                        confirmation,
+                    )
+                    state.update(
+                        status="confirming_marginal_new_best",
+                        controller_recovery_attempts=0,
+                        controller_error=None,
+                    )
+                    self.save_state(state)
+                    log(
+                        f"Submitted selective confirmation {next_label} for "
+                        f"{parent_round}; task={task_id} run={run_id}"
+                    )
+                    time.sleep(self.poll_seconds)
+                    continue
                 pause_status = session_budget_pause_status(
                     int(state["candidate_index"]),
                     self.pause_after_candidate_index,
@@ -8129,6 +8354,11 @@ Embedded evidence:
                 next_candidate_index = state["candidate_index"] + 1
                 next_label = f"a{next_candidate_index}"
                 next_candidate = decision["candidate"]
+                state.update(
+                    measurement_role="search",
+                    confirmation_parent_round=None,
+                    confirmation_reason=None,
+                )
                 _, task_id, run_id = self.prepare_and_submit_round(
                     session_dir,
                     state,
@@ -8369,6 +8599,11 @@ Embedded evidence:
                     next_candidate_index = state["candidate_index"] + 1
                     next_label = f"a{next_candidate_index}"
                     next_candidate = recovery["candidate"]
+                    state.update(
+                        measurement_role="search",
+                        confirmation_parent_round=None,
+                        confirmation_reason=None,
+                    )
                     _, task_id, run_id = self.prepare_and_submit_round(
                         session_dir,
                         state,
@@ -8493,6 +8728,13 @@ Embedded evidence:
                         f"a{state['candidate_index']}r{state['failure_retries']}"
                     )
                     next_status = "retrying_infrastructure_failure"
+
+                if next_candidate != state.get("current_candidate"):
+                    state.update(
+                        measurement_role="search",
+                        confirmation_parent_round=None,
+                        confirmation_reason=None,
+                    )
 
                 if stop_was_requested_before_submission():
                     state.update(

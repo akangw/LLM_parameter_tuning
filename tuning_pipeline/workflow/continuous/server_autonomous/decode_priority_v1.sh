@@ -23,7 +23,12 @@ case "${COMMAND}" in
   seed-assets) TARGET="${SCRIPT_DIR}/seed_assets.sh" ;;
   prepare-lease) TARGET="${SCRIPT_DIR}/prepare_lease.sh" ;;
   preflight) TARGET="${SCRIPT_DIR}/preflight.sh" ;;
-  start) TARGET="${SCRIPT_DIR}/start.sh" ;;
+  start)
+    echo "decode_priority_v1 refuses the legacy background start entrypoint." >&2
+    echo "Use: $0 service systemd-start  (preferred)" >&2
+    echo " or: $0 service supervisor-start" >&2
+    exit 2
+    ;;
   foreground) TARGET="${SCRIPT_DIR}/run_foreground.sh" ;;
   service) TARGET="${SCRIPT_DIR}/service.sh" ;;
   status) TARGET="${SCRIPT_DIR}/status.sh" ;;

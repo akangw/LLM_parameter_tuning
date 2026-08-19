@@ -250,13 +250,15 @@ profiles:
       eplb_num_redundant_experts: 0
       mlapo: true
       VLLM_ASCEND_ENABLE_BATCH_MEMCPY: null
-      additional_config__ascend_compilation_config__fuse_norm_quant: true
+      speculative_config__attention_backend: null
     activation:
       target_count: 25
       maximum_count: 28
       max_per_category: 12
       additional_core_parameters:
-        # List 2 main axes (10).
+        # List 2 main axes (9). The explicit speculative FLASH_ATTN selector is
+        # fixed to null because this profile does not enable the batch-invariant
+        # FA3 prerequisites; searching it would normally reproduce auto-selection.
         - num_speculative_tokens
         - cudagraph_capture_sizes
         - max_cudagraph_capture_size
@@ -266,13 +268,12 @@ profiles:
         - max_model_len
         - compilation_mode
         - disable_hybrid_kv_cache_manager
-        - speculative_config__attention_backend
         # List 1.3 required conditional axes (4).
         - speculative_config__enforce_eager
         - enable_chunked_prefill
         - enable_balance_scheduling
         - enable_reduce_sample
-        # Optional List 1.2/1.1 axes (11); stage/quota enforcement belongs to strategy.
+        # Optional List 1.2/1.1 axes (12); stage/quota enforcement belongs to strategy.
         - async_scheduling
         - enable_expert_parallel
         - fused_mc2
@@ -284,6 +285,7 @@ profiles:
         - additional_config__ascend_compilation_config__enable_static_kernel
         - additional_config__ascend_compilation_config__enable_npugraph_ex
         - additional_config__ascend_compilation_config__fuse_allreduce_rms
+        - additional_config__ascend_compilation_config__fuse_norm_quant
     derived_parameters: {}
 
   automatic_registry_glm52_w4a8c8_v1:

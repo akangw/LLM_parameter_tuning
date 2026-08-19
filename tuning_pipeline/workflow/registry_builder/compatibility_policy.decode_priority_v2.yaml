@@ -17,6 +17,7 @@ candidate_domain_overrides:
   additional_config__ascend_compilation_config__enable_static_kernel: [false, true]
   additional_config__ascend_compilation_config__enable_npugraph_ex: [true, false]
   additional_config__ascend_compilation_config__fuse_allreduce_rms: [true, false]
+  additional_config__ascend_compilation_config__fuse_norm_quant: [true, false]
 
 # Keep only identity/no-effect fields frozen. Other List 1 switches above are
 # tunable but receive a small late-stage budget in decode_priority_agentic_v1.
@@ -26,4 +27,8 @@ parameter_rule_overrides:
   - {match: compilation_enable_sp, role: session_fixed}
   - {match: mlapo, role: session_fixed}
   - {match: VLLM_ASCEND_ENABLE_BATCH_MEMCPY, role: session_fixed}
-  - {match: additional_config__ascend_compilation_config__fuse_norm_quant, role: session_fixed}
+  # Explicit FLASH_ATTN only activates the Ascend FA3 path with batch-invariant
+  # prerequisites that this frozen decode profile does not enable. Keep the
+  # capability-aware null selector instead of spending rounds on an equivalent
+  # fallback path.
+  - {match: speculative_config__attention_backend, role: session_fixed}

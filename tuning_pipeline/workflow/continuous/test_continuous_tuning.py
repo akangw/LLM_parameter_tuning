@@ -1968,11 +1968,21 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(primary & secondary)
         self.assertFalse(primary & conditional)
         self.assertFalse(conditional & secondary)
-        self.assertEqual(10, len(primary))
+        self.assertEqual(9, len(primary))
         self.assertEqual(4, len(conditional))
-        self.assertEqual(11, len(secondary))
+        self.assertEqual(12, len(secondary))
         self.assertEqual(25, len(active))
         self.assertEqual(active, primary | conditional | secondary)
+        self.assertNotIn("speculative_config__attention_backend", active)
+        self.assertIn(
+            "additional_config__ascend_compilation_config__fuse_norm_quant",
+            active,
+        )
+        self.assertIsNone(
+            result["integration"]["implicit_source_defaults"][
+                "speculative_config__attention_backend"
+            ]
+        )
         probes = controller.strategy_profile["hierarchy"]["ordered_probes"]
         self.assertEqual(
             [
@@ -2001,6 +2011,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(3, resolved["baseline"]["num_speculative_tokens"])
         self.assertTrue(resolved["baseline"]["flashcomm1"])
         self.assertEqual(2, resolved["baseline"]["fused_mc2"])
+        invalid_static = dict(resolved["baseline"])
+        invalid_static[
+            "additional_config__ascend_compilation_config__enable_static_kernel"
+        ] = True
+        invalid_static[
+            "additional_config__ascend_compilation_config__enable_npugraph_ex"
+        ] = False
+        with self.assertRaisesRegex(ValueError, "static_kernel_requires_npugraph_ex"):
+            controller.validate_candidate_invariants(invalid_static)
+        no_effect_fusion = dict(resolved["baseline"])
+        no_effect_fusion[
+            "additional_config__ascend_compilation_config__fuse_norm_quant"
+        ] = False
+        with self.assertRaisesRegex(ValueError, "no-effect performance experiment"):
+            controller.validate_candidate(
+                dict(resolved["baseline"]),
+                no_effect_fusion,
+                [],
+            )
 
     def test_decode_priority_reserves_list1_but_recovery_bypasses_quota(self) -> None:
         state = {
@@ -2389,6 +2418,85 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertFalse(noisy["eligible_as_improvement"])
         self.assertEqual(noisy["noise_adjusted_required_gain_percent"], 6.0)
+
+    def test_decode_priority_selectively_confirms_marginal_new_best(self) -> None:
+        configured = config()
+        configured["strategy"]["profile"] = "decode_priority_agentic_v1"
+        configured.setdefault("measurement_policy", {}).setdefault(
+            "aligned_l1", {}
+        )["minimum_repetitions"] = 1
+        controller = tuning.Controller(configured)
+        workloads = list(controller.benchmark["aligned_l1"]["workloads"])
+
+        def payload(score: float) -> dict:
+            cases = [
+                {
+                    "workload": workload,
+                    "concurrency": 32,
+                    "aggregate_output_tps": score,
+                    "ttft_p50_ms": 100.0,
+                    "ttft_p90_ms": 120.0,
+                    "tpot_p50_ms": 10.0,
+                    "tpot_p90_ms": 12.0,
+                }
+                for workload in workloads
+            ]
+            return {
+                "benchmark_mode": "aligned_l1",
+                "l1": {
+                    "all_repetitions_gate_passed": True,
+                    "repetition_count": controller.benchmark["aligned_l1"][
+                        "repetitions"
+                    ],
+                    "primary_concurrency": 32,
+                    "primary_aggregate_output_tps_geomean": score,
+                    "primary_score_cv_percent": 0.0,
+                    "cases": cases,
+                },
+            }
+
+        baseline = {
+            "round": "round_000_b0",
+            "params": {"axis": 0},
+            "metrics": payload(100.0),
+            "measurement_role": "search",
+        }
+        marginal = {
+            "round": "round_001_a1",
+            "params": {"axis": 1},
+            "metrics": payload(102.0),
+            "measurement_role": "search",
+        }
+        requirement = controller.confirmation_requirement([baseline, marginal])
+        self.assertIsNotNone(requirement)
+        self.assertEqual(
+            "round_000_b0",
+            controller.best_accepted_anchor([baseline, marginal])["round"],
+        )
+
+        confirmation = {
+            "round": "round_002_a1c1",
+            "params": {"axis": 1},
+            "metrics": payload(102.4),
+            "measurement_role": "confirmation",
+            "confirmation_parent_round": "round_001_a1",
+        }
+        history = [baseline, marginal, confirmation]
+        self.assertIsNone(controller.confirmation_requirement(history))
+        anchor = controller.best_accepted_anchor(history)
+        self.assertEqual({"axis": 1}, anchor["params"])
+        self.assertAlmostEqual(102.2, anchor["primary_score"])
+        self.assertEqual(
+            ["round_001_a1", "round_002_a1c1"], anchor["supporting_rounds"]
+        )
+
+        strong = {
+            "round": "round_003_a2",
+            "params": {"axis": 2},
+            "metrics": payload(104.0),
+            "measurement_role": "search",
+        }
+        self.assertIsNone(controller.confirmation_requirement([baseline, strong]))
 
     def test_hierarchical_strategy_treats_aligned_latency_as_advisory(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")

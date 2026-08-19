@@ -45,6 +45,10 @@ strategies:
         latency_guardrail_mode: advisory
         minimum_throughput_gain_percent: 1.0
         maximum_single_workload_throughput_regression_percent: 100.0
+        confirmation:
+          enabled: true
+          upper_gain_percent: 3.0
+          required_successful_measurements: 2
     exploration:
       independent_parameters_per_round: [1, 4]
       max_grid_steps_per_parameter: 3
@@ -63,7 +67,6 @@ strategies:
         - max_model_len
         - compilation_mode
         - disable_hybrid_kv_cache_manager
-        - speculative_config__attention_backend
       conditional_label: list1_3_required_conditional_axes
       conditional_parameters:
         - speculative_config__enforce_eager
@@ -83,6 +86,7 @@ strategies:
         - flashcomm1
         - additional_config__ascend_compilation_config__enable_npugraph_ex
         - additional_config__ascend_compilation_config__fuse_allreduce_rms
+        - additional_config__ascend_compilation_config__fuse_norm_quant
       secondary_groups:
         list1_2_default_off_optional:
           - enable_prefix_caching
@@ -97,6 +101,7 @@ strategies:
           - flashcomm1
           - additional_config__ascend_compilation_config__enable_npugraph_ex
           - additional_config__ascend_compilation_config__fuse_allreduce_rms
+          - additional_config__ascend_compilation_config__fuse_norm_quant
       secondary_successful_measurement_cap: 4
       rationale: >-
         List 2 is the main search budget and List 1.3 receives mandatory compact
@@ -141,7 +146,6 @@ strategies:
             - compilation_mode
             - cudagraph_capture_sizes
             - max_cudagraph_capture_size
-            - speculative_config__attention_backend
           coupling_hints:
             - parameters: [num_speculative_tokens, compilation_mode, cudagraph_capture_sizes, max_cudagraph_capture_size]
               hypothesis: K changes the decode query shape, so graph coverage should be selected jointly.
@@ -204,6 +208,7 @@ strategies:
         - compose high-upside List 2 cross-layer combinations humans rarely test
         - continue evidence-backed List 1.3 interactions where they remain promising
         - optionally test List 1.2 before List 1.1 when a concrete coupling hypothesis justifies it
+        - test fuse_norm_quant only with enable_npugraph_ex=false, where the pinned compiler actually consumes it
         - require mechanism, history or portrait evidence, constraint checks and expected payoff for every high-risk proposal
         - avoid blind random combinations, independent switch rescans and exact repeated failed candidates
       exploration_budget:
