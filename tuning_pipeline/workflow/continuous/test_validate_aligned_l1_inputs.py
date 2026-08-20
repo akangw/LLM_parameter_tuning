@@ -6,10 +6,42 @@ from pathlib import Path
 
 import yaml
 
-from .remote.validate_aligned_l1_inputs import validate_suite_dataset_contract
+from .remote.validate_aligned_l1_inputs import (
+    validate_suite_dataset_contract,
+    validate_suite_schema,
+)
 
 
 class ValidateAlignedL1InputsTests(unittest.TestCase):
+    def test_suite_schema_is_checked_before_model_launch(self) -> None:
+        schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "阶段": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "最大错误数": {"type": "integer", "minimum": 1}
+                        },
+                    },
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            suite_path = root / "suite.yaml"
+            schema_path = root / "schema.json"
+            suite_path.write_text("阶段:\n- 最大错误数: 0\n", encoding="utf-8")
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            with self.assertRaisesRegex(
+                SystemExit, "Benchmark suite schema validation failed"
+            ):
+                validate_suite_schema(suite_path, schema_path)
+            suite_path.write_text("阶段:\n- 最大错误数: 1\n", encoding="utf-8")
+            validate_suite_schema(suite_path, schema_path)
+
     def _fixture(self, root: Path, phase_id: str) -> tuple[Path, Path]:
         dataset_root = root / "datasets"
         manifest_dir = dataset_root / "workload-v1"

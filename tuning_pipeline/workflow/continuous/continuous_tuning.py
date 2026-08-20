@@ -241,6 +241,28 @@ def controller_exception_is_recoverable(exc: BaseException) -> bool:
     )
 
 
+def record_controller_recovery_attempt(
+    state: dict[str, Any],
+    exc: BaseException,
+    *,
+    max_attempts: int,
+) -> str:
+    """Record restart policy without exhausting it on lease-state lag."""
+    if isinstance(exc, LeaseNotReadyError):
+        state["lease_wait_recoveries"] = (
+            int(state.get("lease_wait_recoveries", 0)) + 1
+        )
+        # Lease state is owned by the scheduler. It is not an identical
+        # Controller code crash, so it must not consume that bounded budget.
+        state["controller_recovery_attempts"] = 0
+        return "recovering_controller_error"
+    recovery_attempts = int(state.get("controller_recovery_attempts", 0)) + 1
+    state["controller_recovery_attempts"] = recovery_attempts
+    if recovery_attempts <= max_attempts:
+        return "recovering_controller_error"
+    return "paused_after_repeated_controller_error"
+
+
 ALL_PARAM_TO_ENV = {
     "max_num_seqs": "MAX_NUM_SEQS",
     "max_model_len": "MAX_MODEL_LEN",
@@ -5224,15 +5246,31 @@ class Controller:
         if not str(task_id).isdigit():
             # MASTER_DONE is written immediately before the master exits. Wait
             # for both declared processes to release their lease slots, while
-            # deliberately keeping the lease itself allocated.
-            for _ in range(12):
+            # deliberately keeping the lease itself allocated. KTP can keep
+            # reporting a terminating process for minutes, so a fixed
+            # 60-second loop would misclassify scheduler lag as a code crash.
+            wait_seconds = max(600, self.lease_readiness_wait_seconds)
+            poll_seconds = max(5, min(self.lease_readiness_poll_seconds, 30))
+            deadline = time.monotonic() + wait_seconds
+            attempts = 0
+            while True:
                 snapshot = self.task_snapshot(task_id)
                 if snapshot.get("terminal") or snapshot.get("active_pods") == 0:
                     return
-                time.sleep(5)
-            raise RuntimeError(
-                f"Lease {task_id} still reports active processes; refusing overlap"
-            )
+                if time.monotonic() >= deadline:
+                    raise LeaseNotReadyError(
+                        f"Lease {task_id} still reports "
+                        f"{snapshot.get('active_pods')} active processes after "
+                        f"{wait_seconds} seconds; keep autonomous recovery active "
+                        "and refuse an overlapping launch"
+                    )
+                attempts += 1
+                if attempts == 1 or attempts % max(1, 300 // poll_seconds) == 0:
+                    log(
+                        f"Lease {task_id} still releasing managed processes "
+                        f"(active={snapshot.get('active_pods')}); waiting safely."
+                    )
+                time.sleep(poll_seconds)
         for _ in range(60):
             snapshot = self.task_snapshot(task_id)
             if snapshot["terminal"]:
@@ -6168,6 +6206,17 @@ Embedded evidence:
             "Did not receive response from front-end process within 5 minutes"
             in evidence
         )
+        restarted_engine_handshake = (
+            "Unexpected HELLO message for remote engine" in evidence
+            and bool(
+                re.search(
+                    r"Pod is evicted|because of reclaim|Connection closed by peer|"
+                    r"LeaseProcessesPartialFailure",
+                    evidence,
+                    re.IGNORECASE,
+                )
+            )
+        )
         partial_process_set = bool(
             re.search(
                 r"LeaseProcessesPartialFailure|active.?[=:] ?1.*inactive.?[=:] ?1",
@@ -6181,25 +6230,49 @@ Embedded evidence:
             evidence,
             re.IGNORECASE | re.DOTALL,
         )
-        if not handshake_timeout or not partial_process_set or unsafe_signature:
+        proven_transient = (
+            (handshake_timeout and partial_process_set)
+            or restarted_engine_handshake
+        )
+        if not proven_transient or (unsafe_signature and not restarted_engine_handshake):
             return None
-        return {
-            "summary": (
+        if restarted_engine_handshake:
+            summary = (
+                "A reclaimed Pod rejoined an already-connected DP run and produced "
+                "an unexpected EngineCore HELLO; retrying the identical candidate "
+                "from a clean two-role process set."
+            )
+            root_cause = (
+                "The platform replaced a role Pod during distributed startup. The "
+                "new remote EngineCore generation cannot safely join the master's "
+                "existing connection state."
+            )
+            decision_evidence = [
+                "SERVICE_READY was never created.",
+                "Logs contain 'Unexpected HELLO message for remote engine'.",
+                "Lease evidence records Pod eviction/reclaim or peer disconnect.",
+            ]
+        else:
+            summary = (
                 "EngineCore timed out before SERVICE_READY while waiting for the "
                 "DP front-end and the Lease reported a partial process set; retrying "
                 "the identical candidate within the infrastructure budget."
-            ),
-            "classification": "transient_infrastructure",
-            "root_cause": (
+            )
+            root_cause = (
                 "The DP engine/front-end startup coordination did not complete "
                 "within five minutes; no parameter, OOM, or HCCL signature proves "
                 "that changing the serving candidate is corrective."
-            ),
-            "evidence": [
+            )
+            decision_evidence = [
                 "SERVICE_READY was never created.",
                 "Logs contain the exact five-minute front-end response timeout.",
                 "The Lease reported one active and one inactive process.",
-            ],
+            ]
+        return {
+            "summary": summary,
+            "classification": "transient_infrastructure",
+            "root_cause": root_cause,
+            "evidence": decision_evidence,
             "action": "retry_same",
             "safe_to_automate": True,
             "change_strategy": "none",
@@ -8088,6 +8161,40 @@ Embedded evidence:
                 )
                 state.update(active_task_id=task_id, active_run_id=run_id)
                 self.save_state(state)
+            elif (
+                state.get("status") == "recovering_controller_error"
+                and int(state.get("round_index", -1)) == 0
+                and int(state.get("candidate_index", -1)) == 0
+                and not state.get("active_task_id")
+                and not state.get("active_run_id")
+                and state.get("round_submitted_at") is None
+            ):
+                # A transient failure can occur during the initial baseline's
+                # read-only remote preflight, before submit() has created an
+                # external task identity or a pending-submission ledger.  Such
+                # a state is safe to replay in-place: the frozen Session,
+                # candidate, round directory, and recovery budget are retained,
+                # while submit() still provides its normal transaction guard
+                # before any external mutation is attempted.
+                retry_label = str(state["round_label"])
+                retry_round = self.round_dir(session_dir, 0, retry_label)
+                retry_candidate = dict(state["current_candidate"])
+                task_id, run_id = self.submit(
+                    retry_round,
+                    retry_label,
+                    retry_candidate,
+                    dry_run=False,
+                )
+                state.update(
+                    active_task_id=task_id,
+                    active_run_id=run_id,
+                    round_submitted_at=now(),
+                )
+                self.save_state(state)
+                log(
+                    "Recovered the initial baseline after a pre-submission "
+                    f"Controller error: task={task_id} run={run_id}"
+                )
             if not state.get("active_task_id") or not state.get("active_run_id"):
                 archived_round = self.round_dir(
                     session_dir,
@@ -8625,6 +8732,8 @@ Embedded evidence:
                         last_failure_classification=failure["classification"],
                         last_failure_summary=failure["summary"],
                         recovered_best_round=rollback_success["round"],
+                        controller_recovery_attempts=0,
+                        controller_error=None,
                     )
                     self.save_state(state)
                     log(
@@ -8766,6 +8875,11 @@ Embedded evidence:
                     status=next_status,
                     last_failure_classification=failure["classification"],
                     last_failure_summary=failure["summary"],
+                    # A completed release/analysis/submission transaction proves
+                    # the Controller is making progress. Reset only its crash-loop
+                    # guard; Agent failure-recovery counters remain untouched.
+                    controller_recovery_attempts=0,
+                    controller_error=None,
                 )
                 self.save_state(state)
                 log(
@@ -9152,15 +9266,12 @@ def main() -> int:
                             controller.hard_terminal_only
                             and not explicit_manual_block
                         ):
-                            recovery_attempts = int(
-                                failed_state.get("controller_recovery_attempts", 0)
-                            ) + 1
-                            failed_state["controller_recovery_attempts"] = recovery_attempts
-                            paused_status = (
-                                "recovering_controller_error"
-                                if recovery_attempts
-                                <= controller.max_controller_recovery_attempts
-                                else "paused_after_repeated_controller_error"
+                            paused_status = record_controller_recovery_attempt(
+                                failed_state,
+                                exc,
+                                max_attempts=(
+                                    controller.max_controller_recovery_attempts
+                                ),
                             )
                         else:
                             paused_status = "paused_controller_error"

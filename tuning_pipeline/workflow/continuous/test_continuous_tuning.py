@@ -2112,6 +2112,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             ["decode-256-2048"], suite["阶段"][0]["工作负载"]
         )
+        self.assertEqual("core-fixed-matrix", suite["阶段"][0]["标识"])
+        self.assertEqual(1, suite["阶段"][0]["最大错误数"])
 
     def test_frozen_continuation_history_is_visible_to_agent_and_dedupe(self) -> None:
         controller = tuning.Controller(config())
@@ -2731,6 +2733,48 @@ NOTE  running means a managed process is alive.
             snapshot = self.controller.task_snapshot("example-lease")
         self.assertFalse(snapshot["active_pods"])
         self.assertTrue(snapshot["terminal"])
+
+    def test_persistent_lease_release_waits_past_old_sixty_second_limit(self) -> None:
+        self.controller.lease_readiness_wait_seconds = 7200
+        self.controller.lease_readiness_poll_seconds = 30
+        active = {"terminal": False, "active_pods": 2}
+        released = {"terminal": True, "active_pods": 0}
+        # Three sleeps represent 90 seconds, beyond the old hard-coded limit.
+        with (
+            patch.object(
+                self.controller,
+                "task_snapshot",
+                side_effect=[active, active, active, released],
+            ) as snapshot,
+            patch.object(tuning.time, "sleep") as sleep,
+        ):
+            self.controller.wait_for_task_release("example-lease")
+        self.assertEqual(4, snapshot.call_count)
+        self.assertEqual(3, sleep.call_count)
+
+    def test_lease_wait_does_not_exhaust_controller_crash_budget(self) -> None:
+        state = {
+            "controller_recovery_attempts": 10,
+            "lease_wait_recoveries": 2,
+        }
+        status = tuning.record_controller_recovery_attempt(
+            state,
+            tuning.LeaseNotReadyError("lease is still releasing"),
+            max_attempts=10,
+        )
+        self.assertEqual("recovering_controller_error", status)
+        self.assertEqual(0, state["controller_recovery_attempts"])
+        self.assertEqual(3, state["lease_wait_recoveries"])
+
+    def test_identical_controller_errors_remain_bounded(self) -> None:
+        state = {"controller_recovery_attempts": 10}
+        status = tuning.record_controller_recovery_attempt(
+            state,
+            RuntimeError("repeatable controller bug"),
+            max_attempts=10,
+        )
+        self.assertEqual("paused_after_repeated_controller_error", status)
+        self.assertEqual(11, state["controller_recovery_attempts"])
 
     def test_active_idle_lease_is_available(self) -> None:
         output = """\
@@ -3930,6 +3974,40 @@ SLOT  service
                     round_dir, self.baseline
                 )
             )
+
+    def test_reclaimed_pod_engine_hello_gets_identical_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            round_dir = Path(temporary)
+            runtime_dir = round_dir / "04_runtime"
+            results_dir = round_dir / "05_results"
+            runtime_dir.mkdir(parents=True)
+            results_dir.mkdir(parents=True)
+            (runtime_dir / "master.log").write_text(
+                "RuntimeError: Unexpected HELLO message for remote engine 2 "
+                "in CoreEngineState.CONNECTED state.\n",
+                encoding="utf-8",
+            )
+            (results_dir / "failure.yaml").write_text(
+                "reason: Pod is evicted, because of reclaim\n",
+                encoding="utf-8",
+            )
+
+            decision = self.controller.deterministic_engine_frontend_handshake_retry(
+                round_dir, self.baseline
+            )
+
+            self.assertIsNotNone(decision)
+            self.assertEqual("retry_same", decision["action"])
+            self.assertEqual("transient_infrastructure", decision["classification"])
+            self.assertEqual(self.baseline, decision["candidate"])
+
+    def test_master_loop_fails_fast_on_rejoined_engine_generation(self) -> None:
+        script = (
+            tuning.HERE / "remote" / "run_master_loop.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("fatal_startup_reason", script)
+        self.assertIn("Unexpected HELLO message for remote engine", script)
+        self.assertIn("startup_fatal_log", script)
 
     def test_b0_retry_preserves_launch_profile_and_reconciliation(self) -> None:
         configured = production_b0_config()

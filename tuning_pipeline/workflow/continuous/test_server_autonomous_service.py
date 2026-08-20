@@ -86,6 +86,25 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             action, _ = service_runtime.decide(runtime, "auto")
             self.assertEqual(action, "--resume")
 
+    def test_legacy_repeated_lease_release_pause_is_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(
+                runtime,
+                status="paused_after_repeated_controller_error",
+                round_index=7,
+                round_label="a4c1",
+                active_task_id="example-lease",
+                active_run_id="a4c1_20260819_144521",
+                controller_error=(
+                    "RuntimeError: Lease example still reports active processes; "
+                    "refusing overlap"
+                ),
+            )
+            action, reason = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+            self.assertIn("lease-release", reason)
+
     def test_unclassified_controller_pause_still_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime = Path(temp_dir)
@@ -160,6 +179,19 @@ class ServiceRecoveryDecisionTests(unittest.TestCase):
             action, reason = service_runtime.decide(runtime, "auto")
             self.assertEqual(action, "--resume")
             self.assertIn("submission", reason)
+
+    def test_initial_pre_submission_controller_error_is_resumable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime = Path(temp_dir)
+            self.write_state(
+                runtime,
+                status="recovering_controller_error",
+                candidate_index=0,
+                round_submitted_at=None,
+            )
+            action, reason = service_runtime.decide(runtime, "auto")
+            self.assertEqual(action, "--resume")
+            self.assertIn("initial baseline", reason)
 
     def test_corrupt_primary_state_uses_last_known_good_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

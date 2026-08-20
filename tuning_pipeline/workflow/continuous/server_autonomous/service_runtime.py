@@ -27,6 +27,10 @@ LEGACY_RECOVERABLE_AGENT_MARKERS = (
     "Structured output error",
     "schema-valid JSON",
 )
+LEGACY_RECOVERABLE_LEASE_RELEASE_MARKERS = (
+    "still reports active processes; refusing overlap",
+    "still has active Pods; refusing overlap",
+)
 
 
 def _merge(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
@@ -141,6 +145,15 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
     # duplicating the Agent decision or asking an operator to reconstruct it.
     if isinstance(state.get("pending_submission"), dict):
         return "--resume", "recovering an interrupted submission transaction"
+    if (
+        status in RECOVERABLE_CONTROLLER_STATUSES
+        and int(state.get("round_index", -1)) == 0
+        and int(state.get("candidate_index", -1)) == 0
+        and not state.get("active_task_id")
+        and not state.get("active_run_id")
+        and state.get("round_submitted_at") is None
+    ):
+        return "--resume", "replaying initial baseline pre-submission preflight"
     if status in RECOVERABLE_CONTROLLER_STATUSES and terminal_artifact_exists(state):
         return "--resume", f"retrying bounded recoverable Controller error: {status}"
     if (
@@ -152,6 +165,24 @@ def decide(runtime_root: Path, requested_mode: str) -> tuple[str, str]:
         )
     ):
         return "--resume", "migrating legacy Agent protocol pause into recovery"
+    if (
+        status in {
+            "paused_controller_error",
+            "paused_after_repeated_controller_error",
+        }
+        and (
+            terminal_artifact_exists(state)
+            or (
+                bool(state.get("active_task_id"))
+                and bool(state.get("active_run_id"))
+            )
+        )
+        and any(
+            marker in str(state.get("controller_error", ""))
+            for marker in LEGACY_RECOVERABLE_LEASE_RELEASE_MARKERS
+        )
+    ):
+        return "--resume", "migrating legacy lease-release pause into recovery"
     if status.startswith("paused_"):
         return "blocked", f"Session requires operator review: {status}"
 

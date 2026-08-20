@@ -147,9 +147,36 @@ rfork_fell_back() {
   grep -Fq 'RFork transfer failed:' "${RUN_DIR}/master.log" 2>/dev/null || \
     grep -Fq 'RFork transfer failed:' "${RUN_DIR}/worker.log" 2>/dev/null
 }
+fatal_startup_reason() {
+  local combined_log="${RUN_DIR}/master.log"
+  local worker_log="${RUN_DIR}/worker.log"
+  local pattern='Unexpected HELLO message for remote engine|Worker proc .* died unexpectedly|RuntimeError: Worker failed with error|Connection closed by peer|Process ApiServer_[0-9]+ .*died with exit code|EngineCore.*failed|NPU OOM|[Oo]ut of memory'
+  local role_starts
+  if grep -Eiq "${pattern}" "${combined_log}" "${worker_log}" 2>/dev/null; then
+    grep -Eim1 "${pattern}" "${combined_log}" "${worker_log}" 2>/dev/null || true
+    return 0
+  fi
+  # A reclaimed Pod re-enters the persistent service request and appends a
+  # second role banner to the same run log. Continuing that mixed generation
+  # corrupts DP/EngineCore state even when both outer slots look 'running'.
+  role_starts=$(
+    (grep -Fh "EXPERIMENT_RUN_ID=${EXPERIMENT_RUN_ID}" \
+      "${worker_log}" 2>/dev/null || true) | wc -l
+  )
+  if (( role_starts > 1 )); then
+    echo "worker role restarted ${role_starts} times inside one run after Pod rescheduling"
+    return 0
+  fi
+  return 1
+}
 for attempt in $(seq 1 "${READY_MAX_ATTEMPTS}"); do
   if bool_flag "${REQUIRE_RFORK_TRANSFER}" && rfork_fell_back; then
     echo "Required RFork transfer fell back to storage loading; refusing benchmark." >&2
+    exit 1
+  fi
+  if startup_failure=$(fatal_startup_reason); then
+    echo "Fatal pre-service startup evidence detected; ending this run for a clean autonomous retry: ${startup_failure}" >&2
+    write_status "startup_fatal_log" "failed"
     exit 1
   fi
   if curl --fail --silent "http://127.0.0.1:${SERVICE_PORT}/v1/models" > "${RUN_DIR}/models_response.json"; then

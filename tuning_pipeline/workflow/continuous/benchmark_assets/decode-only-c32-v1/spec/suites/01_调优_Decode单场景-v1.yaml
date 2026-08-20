@@ -26,12 +26,19 @@
   提示词模式: 唯一提示词
 阶段:
 - 名称: Decode C32主目标
-  标识: decode-only-c32
+  # The frozen Fast-C32 V2 manifest namespaces its C32 slices under this
+  # phase identifier. Keep the Decode-only suite name/identity independent,
+  # but preserve the dataset key contract so ServeBench can resolve the
+  # warmup and formal request slices.
+  标识: core-fixed-matrix
   类型: 固定并发
   工作负载: [decode-256-2048]
   缓存状态: 不适用
   Case角色: 正式测量
-  最大错误数: 0
+  # ServeBench v1 requires this stop threshold to be at least 1. Acceptance
+  # remains stricter: the fairness/metrics contract below rejects any case
+  # with an error or unfinished request.
+  最大错误数: 1
   测试点:
   - 并发: 32
     正式请求数: 64

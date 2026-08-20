@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import yaml
+from jsonschema import Draft202012Validator
 
 
 def digest(path: Path) -> str:
@@ -23,6 +24,28 @@ def _dataset_manifest_path(dataset_root: Path, reference: str) -> Path:
     if relative.parts and relative.parts[0] == "datasets":
         relative = Path(*relative.parts[1:])
     return dataset_root / relative
+
+
+def validate_suite_schema(suite_path: Path, schema_path: Path) -> None:
+    """Validate the complete suite before any model resources are allocated."""
+    suite_data = yaml.safe_load(suite_path.read_text(encoding="utf-8"))
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(suite_data),
+        key=lambda item: tuple(str(part) for part in item.absolute_path),
+    )
+    if not errors:
+        return
+    error = errors[0]
+    location = "$"
+    for part in error.absolute_path:
+        location += f"[{part}]" if isinstance(part, int) else f".{part}"
+    details = [child.message for child in error.context[:4]]
+    suffix = f" ({'; '.join(details)})" if details else ""
+    raise SystemExit(
+        f"Benchmark suite schema validation failed at {location}: "
+        f"{error.message}{suffix}"
+    )
 
 
 def validate_suite_dataset_contract(suite_path: Path, dataset_root: Path) -> int:
@@ -116,6 +139,11 @@ def main() -> None:
         if digest(path) != wanted:
             raise SystemExit(f"Schema fingerprint drift: {path}")
 
+    suite_schema = spec_root / "schemas" / "servebench-suite-v1.schema.json"
+    if not suite_schema.is_file():
+        raise SystemExit(f"Benchmark suite schema missing: {suite_schema}")
+    validate_suite_schema(suite, suite_schema)
+
     tokenizer = Path(os.environ["BENCHMARK_TOKENIZER"])
     for relative, wanted in expected["tokenizer_files_sha256"].items():
         path = tokenizer / relative
@@ -130,7 +158,7 @@ def main() -> None:
 
     verified_slices = validate_suite_dataset_contract(suite, datasets)
     print(
-        "Aligned L1 immutable-input fingerprint and suite/dataset contract verified "
+        "Aligned L1 immutable-input fingerprint, suite schema, and dataset contract verified "
         f"({verified_slices} slices)."
     )
 
