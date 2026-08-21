@@ -49,7 +49,7 @@ flowchart LR
 → 42 Fixed + 0 Compiler Rejected
 ```
 
-新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。生产 V2 的
+新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。生产 V3 使用的 Decode Priority V2 Search Limits 中，
 25 个 Active 是：
 
 ```text
@@ -80,13 +80,13 @@ flashcomm1
 disable_hybrid_kv_cache_manager
 ```
 
-`automatic_registry_decode_priority_v2` 从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 选择；在 Full Decode Graph 且有效 SP（显式 `compilation_enable_sp` 或 FlashComm1）生效时，Controller 提交前强制校验 `K+1` 与 TP 必须互相整除，并校验归一化后的图列表至少保留一个 TP 倍数、图上限与 scheduler budget。历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时才能导入。通用 `automatic_registry_a8_frontier_v4`、人工 `curated_registry_v1` 和休眠 Topology Campaign 仍可显式选择，但不介入生产 V2。
+`automatic_registry_decode_priority_v2` 从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 选择；在 Full Decode Graph 且有效 SP（显式 `compilation_enable_sp` 或 FlashComm1）生效时，Controller 提交前强制校验 `K+1` 与 TP 必须互相整除，并校验归一化后的图列表至少保留一个 TP 倍数、图上限与 scheduler budget。历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时才能导入。通用 `automatic_registry_a8_frontier_v4`、人工 `curated_registry_v1` 和休眠 Topology Campaign 仍可显式选择，但不介入当前生产 V3 Session。
 
 探索预算按成功测量轮的实际候选参数差异计数，不读取该轮结束后为下一轮生成的 Agent 决策。负收益分支回到 `best_accepted_anchor` 只更新 Controller 状态，不消耗探索配额，也不重复提交 Benchmark；从该锚点提出的新变化才计入参数数目和网格步长。Session 停止时写出 `final_selection.json`，并把历史最优已接受候选固化为最终配置，同时保留最后测量轮用于审计。
 
 Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量总配额。Agent 可在跨层阶段自主回访，也可在有明确耦合依据时把次级参数作为当前有序层的 companion；有序层本身仍必须至少包含一个层内变化。该开放只移除探索治理限制，不绕过候选值域、完整配置不变量、确定性非法组合过滤和重复失败候选隔离。
 
-生产 V2 当前 Controller 冻结结果为：100 Tunable（25 Active + 75 Reserve）→ 42 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
+当前生产 V3 Session 使用的 V2 Search Limits 冻结结果为：100 Tunable（25 Active + 75 Reserve）→ 42 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
 
 当前正式 decode-only 自治任务由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v3.yaml` 显式固定：DP4/TP8 runtime、A10F1 基线、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v2`、`decode_only_c32_v2` 和 V3 历史种子。V2 Benchmark移除无效串行长预热，同服务执行3次C32正式测量并取中位数；旧口径指标不得参与新Session判优。
 

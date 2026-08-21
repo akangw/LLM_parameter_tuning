@@ -62,7 +62,7 @@ TP=8 且显式 `compilation_enable_sp=true` 或 FlashComm1=true 时，G04 示例
 
 1. 新 Session 必须先成功测量冻结基线，之后才进入性能搜索；失败恢复不受正常分层优先级限制。
 2. 分层阶段由 Controller 给出当前层，但层内参数和值由 Agent 决定。候选至少要改变当前层的一个参数，允许携带跨层 companion；当前未启用 `skip_layer`。
-3. `decode_priority_agentic_v1` 正常探索每轮允许 1–4 个独立参数；单参数最多跨 3 个网格步，合计最多 10 个网格步。具体有序层可以进一步收紧参数数量。
+3. `decode_priority_agentic_v2` 正常探索每轮允许 1–4 个独立参数；单参数最多跨 3 个网格步，合计最多 10 个网格步。具体有序层可以进一步收紧参数数量。
 4. List 1.2/1.1 不要求独立完成有序层，也没有 Controller 成功测量总额度。Agent 可以在自主跨层阶段基于证据选择；在有明确机制或耦合依据时，也可把它们作为当前有序层的 companion，但候选仍必须至少包含一个当前层参数变化。失败恢复不受分层优先级限制。
 5. Agent 声明的 changes 必须与候选实际差异完全一致；每项 before/after 必须正确且理由可审计。多参数候选必须给出耦合关系、参数证据和约束检查，不能只提交结论。
 6. 关闭已启用的 MTP 只能标记为 `diagnostic_ablation`，且每个 Session 最多一次；不能伪装成常规性能优化。
@@ -77,7 +77,7 @@ TP=8 且显式 `compilation_enable_sp=true` 或 FlashComm1=true 时，G04 示例
 3. Recovery Registry 只能修改登记字段，并且只能使用登记值域；变更数量不能超过配置上限，before/after 和理由必须真实完整。
 4. 失败修复不能再次提交一个已经失败且没有已知成功证据的完整候选；已知成功候选可以作为回滚目标。
 5. 运行时规则库只隔离具有完整条件和证据的精确组合；Agent 提议的新规则在达到晋升条件前只是 proposal，不能直接变成全局硬禁令。
-6. HCCL、节点、benchmark harness 等可恢复基础设施故障按类型计数并进入 Agent 诊断；生产 V2 的 `hard_terminal_only=true` 不会因旧软预算阈值而暂停，也不会把相关调优参数永久移出 Search Limits。
+6. HCCL、节点、benchmark harness 等可恢复基础设施故障按类型计数并进入 Agent 诊断；生产 V3 的 `hard_terminal_only=true` 不会因旧软预算阈值而暂停，也不会把相关调优参数永久移出 Search Limits。
 
 ## 7. 部署、Benchmark 与版本身份硬门槛
 
@@ -110,7 +110,7 @@ TP=8 且显式 `compilation_enable_sp=true` 或 FlashComm1=true 时，G04 示例
 - 失败恢复约束：`continuous_tuning.py::validate_failure_decision`
 - 机器约束：`tuning_pipeline/workflow/search_space_compiler/compiler.py::machine_constraints`
 - 组合兼容约束：`tuning_pipeline/workflow/registry_builder/compatibility_policy.decode_only_v1.yaml`
-- 当前策略门槛：`tuning_pipeline/workflow/continuous/strategy_profiles.yaml::decode_priority_agentic_v1`
+- 当前策略门槛：`tuning_pipeline/workflow/continuous/strategy_profiles.yaml::decode_priority_agentic_v2`
 - MTP draft 配置预检：`tuning_pipeline/workflow/continuous/remote/validate_mtp_model.py`
 - pinned vLLM 图形状实现：`portrait_pipeline/sources/vllm/vllm/config/compilation.py::adjust_cudagraph_sizes_for_spec_decode`
 - pinned vLLM SP 尺寸过滤：`portrait_pipeline/sources/vllm/vllm/config/vllm.py::update_sizes_for_sequence_parallelism`

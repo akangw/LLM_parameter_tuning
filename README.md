@@ -164,7 +164,7 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 | Agent 协议 | API/CLI 瞬断、空响应、非 JSON，或输出附带 Schema 禁止的说明性字段 | 同一决策最多重试 4 次；仅剥离明确禁止的多余元数据并记录审计，不改参数值、不补字段 | 转为可恢复 Controller 错误；连续控制面崩溃由独立的 10 次环保护停止，避免程序自身无限崩溃 |
 | Benchmark | 单 Case、完整运行或指标编译发生已知可恢复错误（含未知 GuideLLM/ServeBench 错误） | 只要 `SERVICE_READY` 且无服务侧危险签名，先在仍运行的同一服务上：Case 最多 2 次、运行/指标各最多 3 次、完整矩阵共享最多 3 次；退出后仍由 Controller 保持同候选恢复 | 保存每次失败产物；仅 OOM/HCCL/EngineCore、参数非法、身份/权限/路径错误等禁止误套 Benchmark 重试 |
 | 未知实验故障 | 确定性规则无法归类或无法给出修复 | Agent 读取完整证据；若它想暂停但没有证明人工依赖，Controller 改为原参数诊断重跑，或接受 Search Limits/Recovery Registry 内有证据的修正 | 禁止 Agent 改镜像、拓扑、路径、Benchmark 或系统文件；只有证明硬终止条件才暂停 |
-| 恢复计数 | 多种恢复策略连续触发 | 同候选、诊断、参数修正和总恢复轮均独立计数并写入审计 | 生产 V2 的 `hard_terminal_only=true` 使这些计数不构成人工暂停条件；它们用于解释失败链，不截断自治 |
+| 恢复计数 | 多种恢复策略连续触发 | 同候选、诊断、参数修正和总恢复轮均独立计数并写入审计 | 生产 V3 自治配置的 `hard_terminal_only=true` 使这些计数不构成人工暂停条件；它们用于解释失败链，不截断自治 |
 | Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变并继续重试；每轮重新收集证据，允许 Agent 改走有依据的参数修复 | 只有硬终止证据或连续 10 次 Controller 自身崩溃环才停止；基础设施失败不淘汰候选 |
 | 服务守护 | Controller 进程意外退出 | systemd/Supervisor 按服务策略重启；已有运行轮次从冻结状态恢复；已完成 Benchmark 的轮次从 Agent 分析处续接，不重跑测评 | 明确硬终止的 `paused_for_human`、连续 10 次 Controller 崩溃环、终态、状态不一致或保留 STOP 标记时停止盲目重启 |
 | 状态与提交事务 | 写状态时掉电、状态文件损坏，或远端提交成功后 Controller 突然退出 | `state.json` 原子替换并保留同版本备份；提交前持久化 intent，提交后立即落盘 task/run 身份；重启时先对账再继续 | 主状态与备份都损坏，或无法证明远端提交身份时失败关闭，禁止猜测性重复提交 |
@@ -381,7 +381,7 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
   -SearchSpaceProfile curated_registry_v1
 ```
 
-当前配置的新 Session 从 `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml` 冻结的显式基线开始；基线通过相同 Benchmark 门禁后，Controller 自动进入 Agent 选参和后续实验闭环。`round_000_b0_deployable` 只属于显式选择旧 B0 Runtime 的 Session。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
+当前生产 V3 的新 Session 从 `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml` 冻结的 A10F1 显式基线开始；基线先用 `decode_only_c32_v2` 重新测量，随后 Controller 才进入 Agent 选参和实验闭环。旧 A8/B0 基线只属于显式选择相应旧 Runtime 的 Session。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
 
 如果本地已经存在旧 Session，先用相同选择执行新 Session 预检，避免普通
 `-CheckOnly` 自动检查旧 Session：
