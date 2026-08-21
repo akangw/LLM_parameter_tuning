@@ -23,9 +23,12 @@ strategies:
           - maximum_matches_max_cudagraph_capture_size
           - full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one
           - effective_sequence_parallel_list_retains_at_least_one_tp_multiple
+          - explicit_sequence_parallel_k_plus_one_and_tp_are_mutually_divisible
+          - explicit_sequence_parallel_maximum_covers_max_of_k_plus_one_and_tp
         normalization_notes:
           - vllm_sorts_and_deduplicates_explicit_sizes
-          - ascend_filters_non_tp_sequence_parallel_sizes
+          - vllm_rounds_effective_sequence_parallel_sizes_to_max_of_k_plus_one_and_tp
+          - ascend_late_filter_removes_remaining_non_tp_aligned_sizes_and_updates_the_effective_maximum
           - full_decode_only_filters_unreachable_decode_sizes
         normal_mode: graph_enabled
         graph_disabled_mode: diagnostic_ablation_only
@@ -102,15 +105,16 @@ strategies:
           - additional_config__ascend_compilation_config__enable_npugraph_ex
           - additional_config__ascend_compilation_config__fuse_allreduce_rms
           - additional_config__ascend_compilation_config__fuse_norm_quant
-      secondary_successful_measurement_cap: 4
+      secondary_successful_measurement_cap: null
+      secondary_allowed_during_ordered_probe_as_companion: true
       rationale: >-
         List 2 is the main search budget and List 1.3 receives mandatory compact
-        coverage. List 1.2 and List 1.1 are never mandatory: the Agent may spend
-        up to four successful cross-layer measurements on them, preferring List
-        1.2 before List 1.1 when evidence supports a high-upside interaction.
-        Every such proposal needs a mechanism hypothesis, history or portrait
-        evidence, constraint checks and expected payoff. Failed recovery rounds
-        do not consume this performance-search quota.
+        coverage. List 1.2 and List 1.1 are never mandatory, but they have no
+        Controller-enforced Session quota. The Agent may revisit them whenever
+        mechanism, history or portrait evidence supports a high-upside interaction,
+        including as a reasoned companion to the active ordered layer. Every such
+        proposal still needs constraint checks and expected payoff; exact repeats
+        and deterministically invalid combinations remain prohibited.
     hierarchy:
       selection_contract: controller_selects_layer_agent_selects_experiment
       cross_layer_selection: agent_autonomous

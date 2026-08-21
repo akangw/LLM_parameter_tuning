@@ -95,6 +95,14 @@ esac
 source "${INIT_ENV_SCRIPT}"
 source "${CANN_ENV_SCRIPT}"
 
+if (( NUM_SPECULATIVE_TOKENS > 0 )); then
+  python3 "${AUTO_DIR}/validate_mtp_model.py" \
+    --model-path "${MTP_DRAFT_MODEL_PATH}" \
+    --num-speculative-tokens "${NUM_SPECULATIVE_TOKENS}" \
+    --identity-output "${RUN_DIR}/mtp_model_identity.${VLLMTKB_ROLE}.json" \
+    --frozen-identity "${AUTO_DIR}/mtp_model_identity_frozen.json"
+fi
+
 # A persistent Lease may be rescheduled onto new physical nodes while retaining
 # an old MASTER_IP in the process environment. Resolve the endpoint anew inside
 # every unique Run directory before constructing any vLLM DP arguments.

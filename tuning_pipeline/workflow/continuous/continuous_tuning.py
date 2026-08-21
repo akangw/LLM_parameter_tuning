@@ -101,6 +101,8 @@ REMOTE_ARTIFACTS = (
     "candidate.env",
     "task.yaml",
     "effective_config.yaml",
+    "mtp_model_identity.master.json",
+    "mtp_model_identity.worker.json",
     "vllm_common_command.txt",
     "models_response.json",
     "run_status.json",
@@ -132,6 +134,7 @@ REMOTE_SCRIPT_NAMES = (
     "WORKSPACE_MANIFEST.md",
     "ARTIFACT_LAYOUT.md",
     "common_runtime_loop.sh",
+    "validate_mtp_model.py",
     "node_checkpoint_prefetch.py",
     "run_master_loop.sh",
     "run_worker_loop.sh",
@@ -2543,6 +2546,59 @@ class Controller:
         capture_sizes = candidate.get("cudagraph_capture_sizes")
         maximum_capture = candidate.get("max_cudagraph_capture_size")
         graph_mode = candidate.get("compilation_mode")
+        mtp_depth = int(candidate.get("num_speculative_tokens") or 0)
+        full_decode_graph_active = graph_mode in {
+            "FULL",
+            "FULL_DECODE_ONLY",
+            "FULL_AND_PIECEWISE",
+        }
+        # The pinned Ascend v1 runner temporarily maps enable_sp(vllm_config)
+        # onto vLLM's pass_config.enable_sp before the first-stage MTP graph
+        # check. Because enable_sp() includes FlashComm1, either explicit
+        # compilation SP or FlashComm1 reaches vLLM's max(K + 1, TP) check.
+        # That implementation uses max rather than an LCM and therefore
+        # requires K + 1 and TP to be mutually divisible.
+        explicit_sequence_parallel_graph_active = (
+            candidate.get("compilation_enable_sp") is True
+        )
+        sequence_parallel_graph_active = (
+            explicit_sequence_parallel_graph_active
+            or candidate.get("flashcomm1") is True
+        )
+        tensor_parallel_size = int(self.topology["tensor_parallel_size"])
+        if (
+            mtp_depth > 0
+            and full_decode_graph_active
+            and sequence_parallel_graph_active
+            and tensor_parallel_size > 1
+        ):
+            decode_query_length = mtp_depth + 1
+            if not (
+                decode_query_length % tensor_parallel_size == 0
+                or tensor_parallel_size % decode_query_length == 0
+            ):
+                raise ValueError(
+                    "Full-graph speculative decode with effective sequence "
+                    "parallelism (FlashComm1 or explicit compilation SP) "
+                    "requires K+1 and tensor_parallel_size to be "
+                    "mutually divisible (one must evenly divide the other); "
+                    f"got K={mtp_depth}, K+1={decode_query_length}, "
+                    f"TP={tensor_parallel_size}"
+                )
+            runtime_graph_multiple = max(
+                decode_query_length, tensor_parallel_size
+            )
+            if (
+                isinstance(maximum_capture, int)
+                and maximum_capture < runtime_graph_multiple
+            ):
+                raise ValueError(
+                    "max_cudagraph_capture_size must be at least "
+                    "max(K+1, tensor_parallel_size) for full-graph "
+                    "speculative decode with effective sequence parallelism; "
+                    f"got maximum={maximum_capture}, required="
+                    f"{runtime_graph_multiple}"
+                )
         if (
             isinstance(capture_sizes, list)
             and not capture_sizes
@@ -2559,34 +2615,64 @@ class Controller:
                 raise ValueError(
                     "cudagraph_capture_sizes must contain positive integers"
                 )
-            mtp_depth = int(candidate.get("num_speculative_tokens") or 0)
             if (
                 mtp_depth > 1
-                and graph_mode
-                in {"FULL", "FULL_DECODE_ONLY", "FULL_AND_PIECEWISE"}
+                and full_decode_graph_active
                 and any(value % (mtp_depth + 1) != 0 for value in capture_sizes)
             ):
                 raise ValueError(
                     "Full-graph MTP cudagraph_capture_sizes must be multiples "
                     "of num_speculative_tokens + 1"
                 )
-            # flashcomm1 activates the same sequence-parallel graph-shape
-            # contract on the pinned Ascend runtime even when the explicit
-            # compilation_enable_sp override is unset. Validate the effective
-            # runtime path, not only the user-facing compilation switch.
-            sequence_parallel_graph_active = (
-                candidate.get("compilation_enable_sp") is True
-                or candidate.get("flashcomm1") is True
-            )
-            if sequence_parallel_graph_active:
-                tensor_parallel_size = int(self.topology["tensor_parallel_size"])
-                if not any(value % tensor_parallel_size == 0 for value in capture_sizes):
-                    raise ValueError(
-                        "Effective sequence-parallel cudagraph_capture_sizes must "
-                        "contain at least one multiple of tensor_parallel_size when "
-                        "compilation_enable_sp=true or flashcomm1=true; the pinned "
-                        "runtime filters the other sizes"
+            effective_capture_sizes = list(capture_sizes)
+            if full_decode_graph_active and mtp_depth + 1 > 1:
+                runtime_multiple = mtp_depth + 1
+                if (
+                    sequence_parallel_graph_active
+                    and tensor_parallel_size > 1
+                ):
+                    runtime_multiple = max(
+                        runtime_multiple, tensor_parallel_size
                     )
+                capture_ceiling = (
+                    maximum_capture
+                    if isinstance(maximum_capture, int)
+                    else max(capture_sizes)
+                )
+                effective_capture_sizes = sorted(
+                    {
+                        ((value + runtime_multiple - 1) // runtime_multiple)
+                        * runtime_multiple
+                        for value in capture_sizes
+                        if (
+                            ((value + runtime_multiple - 1) // runtime_multiple)
+                            * runtime_multiple
+                            <= capture_ceiling
+                        )
+                    }
+                )
+                if (
+                    not effective_capture_sizes
+                    and runtime_multiple <= capture_ceiling
+                ):
+                    effective_capture_sizes = [runtime_multiple]
+            if (
+                sequence_parallel_graph_active
+                and tensor_parallel_size > 1
+                and graph_mode != "NONE"
+                and not any(
+                    value % tensor_parallel_size == 0
+                    for value in effective_capture_sizes
+                )
+            ):
+                raise ValueError(
+                    "Effective sequence-parallel graph capture requires the "
+                    "runtime-normalized cudagraph list to retain at least one "
+                    "value divisible by "
+                    f"tensor_parallel_size={tensor_parallel_size}; the pinned "
+                    "runtime removes non-TP-aligned sizes and rejects an empty "
+                    "result"
+                )
         if (
             isinstance(capture_sizes, list)
             and capture_sizes
@@ -3277,6 +3363,9 @@ class Controller:
         priority_budget_state = self.priority_search_budget_state(history or [])
         if priority_budget_state:
             effective["priority_search_budget_state"] = priority_budget_state
+        effective["best_accepted_anchor"] = (
+            copy.deepcopy(self.best_accepted_anchor(history)) if history else None
+        )
         autonomous = self.strategy_profile.get("autonomous_cross_layer", {})
         budget = (
             autonomous.get("exploration_budget", {})
@@ -3496,26 +3585,26 @@ class Controller:
         secondary = {
             str(name) for name in configured.get("secondary_parameters", [])
         }
-        cap = int(configured.get("secondary_successful_measurement_cap", 0))
-        if cap < 0:
+        cap_value = configured.get("secondary_successful_measurement_cap", 0)
+        cap = None if cap_value is None else int(cap_value)
+        if cap is not None and cap < 0:
             raise ValueError(
                 "secondary_successful_measurement_cap must be non-negative"
             )
         used = 0
         measured_rounds: list[str] = []
+        previous_params = history[0].get("params", {}) if history else {}
         for item in history[1:]:
-            decision = item.get("decision", {})
-            changes = decision.get("changes", []) if isinstance(decision, dict) else []
+            current_params = item.get("params", {})
             changed = {
-                str(change.get("parameter", ""))
-                .removeprefix("--")
-                .replace("-", "_")
-                for change in changes
-                if isinstance(change, dict)
+                name
+                for name in set(previous_params) | set(current_params)
+                if previous_params.get(name) != current_params.get(name)
             }
             if changed & secondary:
                 used += 1
                 measured_rounds.append(str(item.get("round", "unknown")))
+            previous_params = current_params
         return {
             "primary_label": configured.get("primary_label"),
             "primary_parameters": copy.deepcopy(
@@ -3532,8 +3621,15 @@ class Controller:
             ),
             "secondary_successful_measurement_cap": cap,
             "secondary_successful_measurements_used": used,
-            "secondary_successful_measurements_remaining": max(cap - used, 0),
+            "secondary_successful_measurements_remaining": (
+                None if cap is None else max(cap - used, 0)
+            ),
             "secondary_measured_rounds": measured_rounds,
+            "secondary_allowed_during_ordered_probe_as_companion": bool(
+                configured.get(
+                    "secondary_allowed_during_ordered_probe_as_companion", False
+                )
+            ),
             "failure_recovery_bypasses_phase_priority": bool(
                 configured.get("failure_recovery_bypasses_phase_priority", False)
             ),
@@ -3556,19 +3652,38 @@ class Controller:
         if not changed_secondary:
             return
         stage = selection_policy.get("hierarchical_stage")
-        if stage == "ordered_probe":
+        if stage == "ordered_probe" and not state.get(
+            "secondary_allowed_during_ordered_probe_as_companion", False
+        ):
             raise ValueError(
                 "Optional List 1.2/1.1 switches are reserved for autonomous "
                 "cross-layer refinement and are not mandatory ordered-probe "
                 f"coverage; changed={changed_secondary}"
             )
-        elif stage == "cross_layer_refinement" and int(
-            state.get("secondary_successful_measurements_remaining", 0)
-        ) <= 0:
+        remaining = state.get("secondary_successful_measurements_remaining")
+        if (
+            stage == "cross_layer_refinement"
+            and remaining is not None
+            and int(remaining) <= 0
+        ):
             raise ValueError(
                 "The bounded List 1 secondary measurement quota is exhausted; "
                 f"changed={changed_secondary}"
             )
+
+    @staticmethod
+    def exact_best_anchor_restoration(
+        previous: dict[str, Any],
+        candidate: dict[str, Any],
+        selection_policy: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Identify a state-only return to an already measured best candidate."""
+        anchor = selection_policy.get("best_accepted_anchor")
+        if not isinstance(anchor, dict) or not isinstance(anchor.get("params"), dict):
+            return None
+        if candidate == anchor["params"] and candidate != previous:
+            return anchor
+        return None
 
     def derived_changes(
         self,
@@ -3611,35 +3726,39 @@ class Controller:
                     f"from {exclusion.get('trial_id', 'history')}"
                 )
         actual_changes = [key for key in candidate if candidate[key] != previous[key]]
-        fuse_norm_quant = (
-            "additional_config__ascend_compilation_config__fuse_norm_quant"
-        )
-        if (
-            fuse_norm_quant in actual_changes
-            and candidate.get(
-                "additional_config__ascend_compilation_config__enable_npugraph_ex"
-            )
-            is not False
-        ):
-            raise ValueError(
-                "fuse_norm_quant is consumed only when enable_npugraph_ex=false; "
-                "rejecting a no-effect performance experiment"
-            )
         effective_policy = policy or self.effective_change_policy()
+        restored_anchor = self.exact_best_anchor_restoration(
+            previous, candidate, effective_policy
+        )
+        anchor = effective_policy.get("best_accepted_anchor")
+        anchor_params = (
+            anchor.get("params")
+            if isinstance(anchor, dict) and isinstance(anchor.get("params"), dict)
+            else previous
+        )
+        # Budgets constrain novelty relative to the best accepted configuration.
+        # Differences that only undo a rejected branch are rollback bookkeeping,
+        # not new parameter exploration.
+        budget_changes = [
+            key for key in candidate if candidate[key] != anchor_params.get(key)
+        ]
         if self.strategy_profile_name in {
             "hierarchical_agentic_guided_v4",
             "hierarchical_agentic_guided_v5",
             "decode_priority_agentic_v1",
-        }:
+        } and restored_anchor is None:
             self.validate_ordered_probe_parameter_alignment(
-                actual_changes, effective_policy
+                budget_changes, effective_policy
             )
-        self.validate_priority_search_alignment(actual_changes, effective_policy)
-        derived_changes = self.derived_changes(actual_changes, effective_policy)
-        active_changes = [key for key in actual_changes if key not in derived_changes]
+        if restored_anchor is None:
+            self.validate_priority_search_alignment(budget_changes, effective_policy)
+        derived_changes = self.derived_changes(budget_changes, effective_policy)
+        active_changes = [key for key in budget_changes if key not in derived_changes]
         min_parameters = int(effective_policy.get("minimum_parameters_per_round", 1))
         max_parameters = int(effective_policy["max_parameters_per_round"])
-        if not min_parameters <= len(active_changes) <= max_parameters:
+        if restored_anchor is None and not (
+            min_parameters <= len(active_changes) <= max_parameters
+        ):
             raise ValueError(
                 f"Each {effective_policy.get('phase', 'active')} round must change "
                 f"between {min_parameters} and "
@@ -3647,11 +3766,11 @@ class Controller:
                 f"derived={sorted(derived_changes)}"
             )
         total_grid_steps = 0
-        for key in actual_changes:
+        for key in budget_changes:
             grid = self.config["search_limits"][key]
             step_distance = self.grid_step_distance(
                 grid,
-                previous[key],
+                anchor_params[key],
                 candidate[key],
             )
             if key in derived_changes:
@@ -5717,7 +5836,9 @@ stop requirement; merely reaching the numeric floor is insufficient:
 {yaml.safe_dump(completion_gate.get('post_floor_stop_requirements', []), allow_unicode=True, sort_keys=False)}
 Preserve the current candidate and return empty changes,
 change_strategy=none, exploration_intent=none, and empty interaction_analysis and
-constraint_checks.
+constraint_checks. The Controller will deterministically publish the historical
+best_accepted_anchor as the final configuration, even when the last measured branch
+is worse.
 """
         prompt = f"""You are the tuning analyst for a measured vLLM-Ascend experiment.
 
@@ -5732,7 +5853,10 @@ an improvement unless eligible_as_improvement=true. Use exploration_memory as th
 cross-round decision memory. Anchor new proposals on best_accepted_anchor instead
 of blindly continuing from a rejected branch; because the submitted candidate is
 expressed relative to the exact current candidate, declare any required rollback
-changes explicitly. Prefer informative untested values of high-impact active
+changes explicitly. Rollback differences are not charged to exploration quotas or
+grid budgets. If you return exactly to best_accepted_anchor with no novel change,
+the Controller performs a state-only re-anchor without rerunning the benchmark and
+asks you for the next decision from that anchor. Prefer informative untested values of high-impact active
 parameters. Down-rank a directly measured negative single-parameter direction, and
 do not repeat a measured negative multi-parameter combination unless a concrete new
 interaction hypothesis justifies it. Never infer that each value in a confounded
@@ -5836,7 +5960,12 @@ Embedded evidence:
                 selection_policy,
             )
             self.validate_selected_portrait_evidence(decision["changes"])
-            if self.candidate_was_attempted(session_dir, decision["candidate"]):
+            restores_anchor = self.exact_best_anchor_restoration(
+                previous, decision["candidate"], selection_policy
+            )
+            if restores_anchor is None and self.candidate_was_attempted(
+                session_dir, decision["candidate"]
+            ):
                 raise ValueError(
                     "Codex proposed a configuration already present in experiment history"
                 )
@@ -5849,6 +5978,13 @@ Embedded evidence:
         )
         if decision["action"] == "stop_complete":
             return decision
+        restored_anchor = self.exact_best_anchor_restoration(
+            previous, decision["candidate"], selection_policy
+        )
+        if restored_anchor is not None:
+            decision["_controller_restore_best_anchor"] = copy.deepcopy(
+                restored_anchor
+            )
         self.write_selected_portrait_evidence(
             round_dir,
             decision["changes"],
@@ -8089,14 +8225,101 @@ Embedded evidence:
                     decision,
                     selection_policy,
                 )
-                if self.candidate_was_attempted(
+                restored_anchor = self.exact_best_anchor_restoration(
+                    previous, decision["candidate"], selection_policy
+                )
+                if restored_anchor is None and self.candidate_was_attempted(
                     session_dir,
                     decision["candidate"],
                 ):
                     return None
+                if restored_anchor is not None:
+                    decision["_controller_restore_best_anchor"] = copy.deepcopy(
+                        restored_anchor
+                    )
             return decision
         except (KeyError, OSError, ValueError, json.JSONDecodeError):
             return None
+
+    def resolve_state_only_anchor_restoration(
+        self,
+        session_dir: Path,
+        round_dir: Path,
+        state: dict[str, Any],
+        decision: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Re-anchor Agent state without submitting a duplicate benchmark."""
+        restoration = decision.get("_controller_restore_best_anchor")
+        if not isinstance(restoration, dict):
+            return decision
+        params = restoration.get("params")
+        if not isinstance(params, dict):
+            raise ValueError("Best-anchor restoration is missing candidate parameters")
+        save_json(
+            round_dir / "06_agent_analysis" / "best_anchor_restore_decision.json",
+            {
+                **decision,
+                "restored_at": now(),
+                "submission_required": False,
+            },
+        )
+        state.update(
+            current_candidate=copy.deepcopy(params),
+            restored_best_round=restoration.get("round"),
+            restored_best_primary_score=restoration.get("primary_score"),
+            restored_best_at=now(),
+        )
+        self.save_state(state)
+        log(
+            "Restored the measured best accepted anchor in Controller state "
+            f"without a duplicate benchmark: round={restoration.get('round')}"
+        )
+        return self.analyze(session_dir, round_dir, state["current_candidate"])
+
+    def complete_with_best_anchor(
+        self,
+        session_dir: Path,
+        state: dict[str, Any],
+        decision: dict[str, Any],
+        *,
+        status: str = "completed_by_agent",
+    ) -> None:
+        """Commit completion while publishing the best measured accepted candidate."""
+        history = self.history_summary(session_dir)
+        anchor = self.best_accepted_anchor(history)
+        last_measured_candidate = copy.deepcopy(state.get("current_candidate"))
+        last_measured_round = state.get("round_label")
+        final_candidate = (
+            copy.deepcopy(anchor["params"])
+            if isinstance(anchor, dict) and isinstance(anchor.get("params"), dict)
+            else last_measured_candidate
+        )
+        state.update(
+            status=status,
+            active_task_id=None,
+            active_run_id=None,
+            completion_summary=decision["summary"],
+            last_measured_round=last_measured_round,
+            last_measured_candidate=last_measured_candidate,
+            current_candidate=final_candidate,
+            final_candidate=copy.deepcopy(final_candidate),
+            final_candidate_round=(anchor or {}).get("round"),
+            final_primary_score=(anchor or {}).get("primary_score"),
+            final_selection_reason=(anchor or {}).get("selection_reason"),
+        )
+        save_json(
+            session_dir / "final_selection.json",
+            {
+                "selected_at": now(),
+                "status": status,
+                "last_measured_round": last_measured_round,
+                "last_measured_candidate": last_measured_candidate,
+                "best_accepted_anchor": anchor,
+                "final_candidate": final_candidate,
+                "agent_completion_summary": decision["summary"],
+            },
+        )
+        self.save_state(state)
 
     def dry_run_validation(self) -> None:
         session_dir, state = self.create_session()
@@ -8258,12 +8481,15 @@ Embedded evidence:
                 decision = self.analyze(
                     session_dir, round_dir, state["current_candidate"]
                 )
+                decision = self.resolve_state_only_anchor_restoration(
+                    session_dir, round_dir, state, decision
+                )
                 if decision["action"] == "stop_complete":
-                    state.update(
-                        status="completed_by_agent",
-                        completion_summary=decision["summary"],
+                    self.complete_with_best_anchor(
+                        session_dir,
+                        state,
+                        decision,
                     )
-                    self.save_state(state)
                     return
                 next_label = "a1"
                 next_candidate = decision["candidate"]
@@ -8438,16 +8664,18 @@ Embedded evidence:
                     decision = self.analyze(
                         session_dir, round_dir, state["current_candidate"]
                     )
+                decision = self.resolve_state_only_anchor_restoration(
+                    session_dir, round_dir, state, decision
+                )
                 if decision["action"] == "stop_complete":
-                    state.update(
-                        status="completed_by_agent",
-                        active_task_id=None,
-                        active_run_id=None,
-                        completion_summary=decision["summary"],
+                    self.complete_with_best_anchor(
+                        session_dir,
+                        state,
+                        decision,
                     )
-                    self.save_state(state)
                     log(
-                        "Codex determined that tuning is complete; no new round submitted."
+                        "Codex determined that tuning is complete; the measured best "
+                        "accepted anchor was published and no new round was submitted."
                     )
                     return
                 if stop_was_requested_before_submission():

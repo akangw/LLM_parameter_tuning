@@ -470,31 +470,124 @@ class ControllerTests(unittest.TestCase):
             "profiles_file": "workflow/continuous/topology_profiles.yaml",
         }
         configured["baseline"].update(
-            num_speculative_tokens=4,
+            num_speculative_tokens=3,
             flashcomm1=True,
-            cudagraph_capture_sizes=[40, 80],
-            max_cudagraph_capture_size=80,
+            compilation_enable_sp=False,
+            cudagraph_capture_sizes=[32, 64],
+            max_cudagraph_capture_size=64,
         )
         configured["search_limits"].update(
-            num_speculative_tokens=[4],
+            compilation_mode=["FULL_DECODE_ONLY", "PIECEWISE"],
+            num_speculative_tokens=[1, 2, 3, 4],
             flashcomm1=[True, False],
+            compilation_enable_sp=[False, True],
             cudagraph_capture_sizes=[
+                [2, 4],
+                [3, 6, 12],
+                [4, 12, 20],
                 [5, 10, 20, 60],
                 [5, 10, 20, 40, 60, 80],
-                [40, 80],
+                [8, 16],
+                [32, 64],
             ],
-            max_cudagraph_capture_size=[60, 80],
+            max_cudagraph_capture_size=[4, 12, 16, 20, 60, 64, 80],
         )
         controller = tuning.Controller(configured)
-        mixed = dict(controller.config["baseline"])
-        mixed["cudagraph_capture_sizes"] = [5, 10, 20, 40, 60, 80]
-        controller.validate_candidate_invariants(mixed)
-        invalid = dict(controller.config["baseline"])
-        invalid["cudagraph_capture_sizes"] = [5, 10, 20, 60]
-        invalid["max_cudagraph_capture_size"] = 60
-        with self.assertRaisesRegex(ValueError, "Effective sequence-parallel"):
-            controller.validate_candidate_invariants(invalid)
         controller.validate_candidate_invariants(dict(controller.config["baseline"]))
+
+        flashcomm_common_multiple = dict(
+            controller.config["baseline"],
+            num_speculative_tokens=4,
+            cudagraph_capture_sizes=[5, 10, 20, 40, 60, 80],
+            max_cudagraph_capture_size=80,
+        )
+        # The pinned Ascend v1 runner maps FlashComm1 to effective SP before
+        # vLLM's first-stage full-decode graph check. K+1=5 and TP=8 are not
+        # mutually divisible, so even an explicit common-multiple list cannot
+        # bypass the deterministic startup failure.
+        with self.assertRaisesRegex(ValueError, "mutually divisible"):
+            controller.validate_candidate_invariants(flashcomm_common_multiple)
+
+        no_effective_sp = dict(
+            flashcomm_common_multiple,
+            flashcomm1=False,
+            compilation_enable_sp=False,
+        )
+        # K/TP mutual divisibility is not an MTP algorithm invariant. Without
+        # effective SP, K=4 full-decode graphs remain legal when shapes follow
+        # the K+1=5 verification granularity.
+        controller.validate_candidate_invariants(no_effective_sp)
+
+        piecewise_effective_sp = dict(
+            flashcomm_common_multiple,
+            compilation_mode="PIECEWISE",
+            cudagraph_capture_sizes=[8, 16],
+            max_cudagraph_capture_size=16,
+        )
+        # Effective SP still needs TP-aligned shapes in PIECEWISE mode, but the
+        # full-decode K+1 mutual-divisibility guard must not be applied there.
+        controller.validate_candidate_invariants(piecewise_effective_sp)
+
+        flashcomm_without_common_multiple = dict(
+            flashcomm_common_multiple,
+            cudagraph_capture_sizes=[5, 10, 20, 60],
+            max_cudagraph_capture_size=60,
+        )
+        with self.assertRaisesRegex(ValueError, "mutually divisible"):
+            controller.validate_candidate_invariants(
+                flashcomm_without_common_multiple
+            )
+
+        undersized_maximum = dict(
+            controller.config["baseline"],
+            num_speculative_tokens=1,
+            compilation_enable_sp=True,
+            cudagraph_capture_sizes=[2, 4],
+            max_cudagraph_capture_size=4,
+        )
+        with self.assertRaisesRegex(ValueError, "must be at least"):
+            controller.validate_candidate_invariants(undersized_maximum)
+
+        rounded_to_tp_aligned_shape = dict(
+            controller.config["baseline"],
+            cudagraph_capture_sizes=[4, 12, 20],
+            max_cudagraph_capture_size=20,
+        )
+        # With K=3 and TP=8, the pinned first-stage normalization rounds these
+        # shapes to 8/16 before Ascend's TP filter, leaving a non-empty list.
+        controller.validate_candidate_invariants(rounded_to_tp_aligned_shape)
+
+        piecewise_no_tp_shape = dict(
+            controller.config["baseline"],
+            num_speculative_tokens=2,
+            compilation_mode="PIECEWISE",
+            cudagraph_capture_sizes=[3, 6, 12],
+            max_cudagraph_capture_size=12,
+        )
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            controller.validate_candidate_invariants(piecewise_no_tp_shape)
+
+        explicit_sp = dict(
+            flashcomm_common_multiple,
+            flashcomm1=False,
+            compilation_enable_sp=True,
+        )
+        with self.assertRaisesRegex(ValueError, "mutually divisible"):
+            controller.validate_candidate_invariants(explicit_sp)
+
+        # For K=1, the upstream full-decode pass can round 7 to 8 before the
+        # Ascend TP filter. Validate the effective list instead of over-rejecting
+        # the raw user list.
+        rounded_then_tp_aligned = dict(
+            controller.config["baseline"],
+            num_speculative_tokens=1,
+            cudagraph_capture_sizes=[7, 9],
+            max_cudagraph_capture_size=9,
+        )
+        configured["search_limits"]["cudagraph_capture_sizes"].append([7, 9])
+        configured["search_limits"]["max_cudagraph_capture_size"].append(9)
+        controller = tuning.Controller(configured)
+        controller.validate_candidate_invariants(rounded_then_tp_aligned)
 
     def test_full_decode_only_allows_runtime_filtered_unreachable_graph_maximum(self) -> None:
         configured = config()
@@ -2024,12 +2117,9 @@ class ControllerTests(unittest.TestCase):
         no_effect_fusion[
             "additional_config__ascend_compilation_config__fuse_norm_quant"
         ] = False
-        with self.assertRaisesRegex(ValueError, "no-effect performance experiment"):
-            controller.validate_candidate(
-                dict(resolved["baseline"]),
-                no_effect_fusion,
-                [],
-            )
+        # This is an Agent guidance/no-effect warning, not an engine-invalid
+        # complete candidate. Deterministic invariants must not hard-reject it.
+        controller.validate_candidate_invariants(no_effect_fusion)
 
     def test_decode_priority_reserves_list1_but_recovery_bypasses_quota(self) -> None:
         state = {
@@ -2069,24 +2159,208 @@ class ControllerTests(unittest.TestCase):
                 ["fused_mc2"], exhausted
             )
 
+    def test_decode_priority_v2_continues_from_a10f1_with_complete_history(self) -> None:
+        raw = tuning.load_config(
+            tuning.HERE
+            / "server_autonomous"
+            / "config.dp4_tp8.decode_priority_v2.yaml"
+        )
+        raw, runtime = tuning.resolve_runtime_profile(raw, tuning.KB_ROOT)
+        raw = tuning.apply_topology_baseline_binding(raw)
+        raw = tuning.resolve_initial_baseline_definition(raw, tuning.KB_ROOT)
+        tuning.validate_runtime_selections(raw)
+        with tempfile.TemporaryDirectory() as temporary:
+            resolved, result = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+        self.assertEqual(
+            "glm52_w8a8_a3_dp4_tp8_decode_priority_v2", runtime["profile"]
+        )
+        self.assertEqual(80, resolved["baseline"]["max_num_seqs"])
+        self.assertFalse(
+            resolved["baseline"]["additional_config__prefill_comm_compute_overlap"]
+        )
+        self.assertEqual(
+            list(range(8, 129, 8)),
+            resolved["baseline"]["cudagraph_capture_sizes"],
+        )
+        self.assertEqual(25, len(result["active_search_limits"]))
+        history_path = Path(resolved["resolved_search_space"]["history"])
+        history = json.loads(history_path.read_text(encoding="utf-8"))
+        self.assertEqual(28, len(history))
+        self.assertTrue(
+            any(item.get("round") == "round_012_a10f1" for item in history)
+        )
+        self.assertTrue(
+            any(item.get("round") == "round_017_a15" for item in history)
+        )
+
     def test_decode_priority_counts_only_successful_secondary_measurements(self) -> None:
         configured = config()
         configured["strategy"]["profile"] = "decode_priority_agentic_v1"
         controller = tuning.Controller(configured)
         history = [
-            {"round": "a0"},
+            {
+                "round": "a0",
+                "params": {"flashcomm1": True, "max_num_seqs": 64},
+            },
             {
                 "round": "a1",
-                "decision": {"changes": [{"parameter": "flashcomm1"}]},
+                "params": {"flashcomm1": False, "max_num_seqs": 64},
+                # Deliberately describes the next proposal. Budget accounting
+                # must use measured params, not this one-round-ahead decision.
+                "decision": {"changes": [{"parameter": "max_num_seqs"}]},
             },
             {
                 "round": "a2",
-                "decision": {"changes": [{"parameter": "max_num_seqs"}]},
+                "params": {"flashcomm1": False, "max_num_seqs": 80},
+                "decision": {"changes": [{"parameter": "flashcomm1"}]},
             },
         ]
         state = controller.priority_search_budget_state(history)
         self.assertEqual(1, state["secondary_successful_measurements_used"])
-        self.assertEqual(3, state["secondary_successful_measurements_remaining"])
+        self.assertIsNone(state["secondary_successful_measurement_cap"])
+        self.assertIsNone(state["secondary_successful_measurements_remaining"])
+        self.assertTrue(
+            state["secondary_allowed_during_ordered_probe_as_companion"]
+        )
+        self.assertEqual(["a1"], state["secondary_measured_rounds"])
+
+        ordered_companion = {
+            "hierarchical_stage": "ordered_probe",
+            "priority_search_budget_state": state,
+        }
+        tuning.Controller.validate_priority_search_alignment(
+            ["flashcomm1"], ordered_companion
+        )
+
+    def test_exact_best_anchor_restore_bypasses_exhausted_secondary_quota(self) -> None:
+        configured = config()
+        configured["strategy"]["profile"] = "decode_priority_agentic_v1"
+        controller = tuning.Controller(configured)
+        anchor = dict(controller.config["baseline"])
+        previous = dict(anchor)
+        alternative = next(
+            value
+            for value in controller.config["search_limits"]["max_num_seqs"]
+            if value != anchor["max_num_seqs"]
+        )
+        previous["max_num_seqs"] = alternative
+        changes = [
+            {
+                "parameter": "max_num_seqs",
+                "before": previous["max_num_seqs"],
+                "after": anchor["max_num_seqs"],
+                "rationale": "Restore the already measured best accepted anchor.",
+            }
+        ]
+        policy = {
+            **controller.effective_change_policy(),
+            "hierarchical_stage": "cross_layer_refinement",
+            "best_accepted_anchor": {"round": "a10f1", "params": anchor},
+            "priority_search_budget_state": {
+                "secondary_parameters": ["max_num_seqs"],
+                "secondary_successful_measurements_remaining": 0,
+            },
+        }
+        controller.validate_candidate(previous, anchor, changes, policy=policy)
+        restored = controller.exact_best_anchor_restoration(previous, anchor, policy)
+        self.assertEqual("a10f1", restored["round"])
+
+    def test_completion_publishes_best_anchor_not_last_measured_candidate(self) -> None:
+        configured = config()
+        controller = tuning.Controller(configured)
+        best = dict(controller.config["baseline"])
+        last = dict(best)
+        last["max_num_seqs"] = controller.config["search_limits"]["max_num_seqs"][-1]
+        anchor = {
+            "round": "round_012_a10f1",
+            "params": best,
+            "primary_score": 952.21,
+            "selection_reason": "test best",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            session_dir = Path(temporary)
+            state_file = session_dir / "controller_state.json"
+            state = {
+                "round_label": "a15",
+                "current_candidate": last,
+                "active_task_id": "task",
+                "active_run_id": "run",
+            }
+            with (
+                patch.object(controller, "history_summary", return_value=[{"round": "a0"}]),
+                patch.object(controller, "best_accepted_anchor", return_value=anchor),
+                patch.object(tuning, "STATE_FILE", state_file),
+            ):
+                controller.complete_with_best_anchor(
+                    session_dir,
+                    state,
+                    {"summary": "done"},
+                )
+            self.assertEqual(best, state["current_candidate"])
+            self.assertEqual(best, state["final_candidate"])
+            self.assertEqual("round_012_a10f1", state["final_candidate_round"])
+            self.assertEqual(last, state["last_measured_candidate"])
+            artifact = json.loads(
+                (session_dir / "final_selection.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(best, artifact["final_candidate"])
+
+    def test_exact_anchor_restore_is_state_only_and_requests_next_decision(self) -> None:
+        configured = config()
+        controller = tuning.Controller(configured)
+        anchor = dict(controller.config["baseline"])
+        last = dict(anchor)
+        last["max_num_seqs"] = next(
+            value
+            for value in controller.config["search_limits"]["max_num_seqs"]
+            if value != anchor["max_num_seqs"]
+        )
+        restoration = {
+            "round": "round_012_a10f1",
+            "params": anchor,
+            "primary_score": 952.21,
+        }
+        first_decision = {
+            "action": "continue",
+            "summary": "restore best",
+            "candidate": anchor,
+            "changes": [],
+            "_controller_restore_best_anchor": restoration,
+        }
+        next_decision = {
+            "action": "stop_complete",
+            "summary": "done",
+            "candidate": anchor,
+            "changes": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            session_dir = Path(temporary)
+            round_dir = session_dir / "round_017_a15"
+            (round_dir / "06_agent_analysis").mkdir(parents=True)
+            state_file = session_dir / "controller_state.json"
+            state = {"current_candidate": last, "round_label": "a15"}
+            with (
+                patch.object(controller, "analyze", return_value=next_decision) as analyze,
+                patch.object(tuning, "STATE_FILE", state_file),
+            ):
+                resolved = controller.resolve_state_only_anchor_restoration(
+                    session_dir, round_dir, state, first_decision
+                )
+            self.assertEqual(next_decision, resolved)
+            self.assertEqual(anchor, state["current_candidate"])
+            analyze.assert_called_once_with(session_dir, round_dir, anchor)
+            audit = json.loads(
+                (
+                    round_dir
+                    / "06_agent_analysis"
+                    / "best_anchor_restore_decision.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertFalse(audit["submission_required"])
 
     def test_decode_only_benchmark_asset_matches_frozen_definition(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")

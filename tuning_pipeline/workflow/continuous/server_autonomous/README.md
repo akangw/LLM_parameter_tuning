@@ -4,6 +4,11 @@ This mode runs the knowledge query, deterministic Controller, DeepSeek Agent,
 ktp-lab submission, Benchmark collection, and Session archive on the Linux
 server.  It is isolated from the default Windows-to-server chain.
 
+The decode-only A10F1 continuation uses `decode_priority_v2.sh`,
+`config.dp4_tp8.decode_priority_v2.yaml`, and the isolated
+`runtime_decode_priority_v2_live` root. It imports the complete compatible V1
+attempted history and never mutates the frozen V1 Session.
+
 The checked-in default runs one fixed DP4/TP8 Session with the measured
 Guided-V4 incumbent baseline, `automatic_registry_a8_frontier_v4`,
 `hierarchical_agentic_guided_v5`, and Fast-C32-v2 benchmark. The topology
@@ -249,8 +254,12 @@ The provided `systemd-restart` and `supervisor-restart` commands perform this
 stop-marker archival automatically because invoking restart is itself explicit
 authorization to continue the same Session.
 
-An offline dry-run intentionally leaves a terminal `state.json`. Before the
-first real service start, archive that state without deleting its evidence:
+An offline dry-run intentionally leaves a terminal `state.json`. The same
+explicit command is used when a graceful operator stop must become a new
+Session boundary after a rules/strategy migration. It accepts
+`stopped_after_current_round` or `stopped_after_failed_round` only after the
+Controller has cleared the active task; the old run id and state are archived
+as audit evidence. Before the new service start, run:
 
 ```bash
 bash "$AUTO/service.sh" authorize-new-session

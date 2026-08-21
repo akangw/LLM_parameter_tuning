@@ -1,1 +1,1948 @@
-[]
+[
+  {
+    "round": "round_000_expert_decode_priority_v1",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "speculative_config__method": "mtp",
+      "long_prefill_token_threshold": 0,
+      "fused_mc2": 2,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "speculative_config__enforce_eager": null,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "cudagraph_capture_sizes": [
+        16,
+        32,
+        48,
+        64
+      ],
+      "TASK_QUEUE_ENABLE": 1,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "compilation_enable_sp": false,
+      "enable_prefix_caching": false,
+      "flashcomm1": true,
+      "enable_chunked_prefill": true,
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "benchmarked",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "decision": {
+      "action": "continue",
+      "summary": "Round_000 baseline measured 880.66 aggregate output TPS (decode-256-2048 @ C32, 64/64 requests, 0 errors/incomplete, CV 0.0%). First list2_capacity_geometry probe: raise max_num_batched_tokens 4096->8192 and gpu_memory_utilization 0.9->0.95 to jointly relieve the measured MTP scheduler token clamp and approach the measured memory envelope; all other 27 parameters frozen.",
+      "result_assessment": "Baseline-only anchor measurement (eligible_as_improvement=false, classification=baseline_only). Primary aggregate output-token throughput geomean = 880.66 TPS; advisory diagnostics: TTFT P50=1012.1ms, TTFT P90=5554.7ms, TPOT P50=26.55ms, TPOT P90=33.60ms; formal duration 148.83s, benchmark wall 414s; MTP acceptance 0.752 with 2.256 accepted tokens per 3-token draft. The log evidence gives two concrete, measured levers inside this probe: (1) both master and worker emit 'max_num_scheduled_tokens is set to 4096 based on the speculative decoding settings... Consider increasing max_num_batched_tokens' under MTP K=3, and (2) the worker memory profile shows 61.12/61.28 GiB free at init, ~33.13 GiB fixed non-KV usage, 22.25 GiB KV at 0.9 utilization, and up to 27.83 GiB KV feasible, i.e. real memory headroom. The proposed 8192/0.95 combination is untested and stays inside the probe's approved context_capacity_geometry interaction group.",
+      "knowledge_evidence": [
+        "Round_000 runtime log (master and worker): 'max_num_scheduled_tokens is set to 4096 based on the speculative decoding settings. This may lead to suboptimal performance. Consider increasing max_num_batched_tokens to accommodate the additional draft token slots, or decrease num_speculative_tokens or max_num_seqs.'",
+        "Round_000 worker memory profile: 'Free memory on device (61.12/61.28 GiB) on startup. Desired GPU memory utilization is (0.9, 55.15 GiB). Actual usage: 30.68 GiB for weights, 0.33 GiB for peak activation, 1.88 GiB for non-torch memory, 0.24 GiB for NPU graph memory... --kv-cache-memory=29884698624 (27.83 GiB) to fully utilize NPU free memory. Current KV cache memory: 22.25 GiB.'",
+        "Portrait max_num_batched_tokens: FLASHCOMM1/TP8 scenario suggests 8192 (divisible by 16, avoiding Ascend upward adjustment); caveat 'Larger values can increase token-dependent runtime memory and Ascend static buffer allocation', so the memory fraction should move jointly.",
+        "Portrait gpu_memory_utilization: 0.95 is the suggested value when 'Workload needs more KV-cache capacity after confirming memory headroom'; hard constraint is free memory at init >= total x value, which holds per the measured log (61.12 >= 0.95 x 61.28 = 58.22 GiB).",
+        "Portrait max_num_seqs/speculative constraints: with speculative decoding, max_num_batched_tokens must leave room for max_num_new_slots_for_drafting x max_num_seqs plus scheduled tokens (8192 >= 64 x 4 = 256 holds).",
+        "Attempted history contains only round_000 (max_num_batched_tokens=4096, gpu_memory_utilization=0.9); the 8192/0.95 combination is untested and no parameter_invalid/parameter_oom exclusion applies."
+      ],
+      "change_strategy": "coupled_parameters",
+      "exploration_intent": "ordered_probe",
+      "interaction_analysis": [
+        "max_num_batched_tokens=8192 directly targets the measured scheduler clamp warning emitted under MTP K=3; the max_num_batched_tokens portrait caveat says larger token budgets increase token-dependent runtime memory and Ascend static buffers, so the coupled gpu_memory_utilization raise prevents those buffers from squeezing the KV-cache allocation.",
+        "gpu_memory_utilization=0.95 is the memory-side companion per the probe coupling hint ('jointly approach the KV/scheduler saturation boundary instead of sweeping four axes independently'): measured headroom caps the risk (27.83 GiB KV feasible vs 22.25 GiB current), while KV demand at C32 with 2304-token contexts is tiny, so the expected gain is scheduler/token-buffer behavior with cache capacity as insurance for larger batches.",
+        "Both parameters belong to the approved high-risk interaction group context_capacity_geometry (max_model_len, gpu_memory_utilization, max_num_seqs, max_num_batched_tokens; maximum 4 per round), so the coupled 2-parameter move is inside the approved high-risk interaction policy.",
+        "max_model_len=64000, max_num_seqs=64, capture sizes [16,32,48,64] and max_cudagraph_capture_size=64 are deliberately left unchanged: at C32/DP4 (~8 concurrent seqs per DP rank) neither the seq cap nor the context cap is binding, so changing them now would add confounds without a mechanism.",
+        "The change is 2 independent parameters (preferred range 2-4), 5 total grid steps (2 for token budget, 3 for memory fraction) within max_total_grid_steps=10, leaving budget for 1-2 more capacity-geometry measurements and later probes."
+      ],
+      "constraint_checks": [
+        "max_num_batched_tokens=8192 >= max_num_seqs=64 (sequence_count_within_batch_budget hard rule).",
+        "enable_chunked_prefill=true, so the non_chunked_prefill_requires_full_model_token_budget rule is not triggered; max_num_batched_tokens>=max_num_seqs still holds.",
+        "Speculative K=3: max_num_batched_tokens=8192 leaves room for draft slots max_num_seqs x (K+1) = 64 x 4 = 256 plus scheduled tokens.",
+        "cudagraph_sizes_within_maximum: max(cudagraph_capture_sizes)=64 <= max_cudagraph_capture_size=64; all capture sizes are multiples of K+1=4, satisfying the full-graph MTP alignment requirement.",
+        "gpu_memory_utilization=0.95 is in (0,1]; startup free-memory check passes per round_000 worker log (61.12 GiB >= 0.95 x 61.28 = 58.22 GiB).",
+        "No derived-parameter edits: speculative_config__method=mtp (driver num_speculative_tokens=3 unchanged), max_cudagraph_capture_size=64 and cudagraph_capture_sizes=[16,32,48,64] remain consistent with unchanged drivers.",
+        "Grid steps: max_num_batched_tokens 4096->8192 = 2 steps, gpu_memory_utilization 0.9->0.95 = 3 steps; total 5 <= max_total_grid_steps=10 and each <= max_grid_steps_per_parameter=3.",
+        "TASK_QUEUE_ENABLE=1 is valid with graph mode FULL_DECODE_ONLY (graph_enabled_values include 1); enable_npugraph_ex=true is retained only under this full-only graph mode; compilation_mode, fused_mc2=2, flashcomm1=true, enable_expert_parallel=true, async_scheduling=true, enable_balance_scheduling=false are all unchanged.",
+        "No topology, model, quantization, image, port, or benchmark changes; only serving-parameter Search Limits are modified."
+      ],
+      "changes": [
+        {
+          "parameter": "max_num_batched_tokens",
+          "before": 4096,
+          "after": 8192,
+          "rationale": "Directly addresses the measured round_000 runtime warning that max_num_scheduled_tokens is clamped to 4096 under MTP K=3 and that increasing max_num_batched_tokens is the recommended remedy; 8192 is also the portrait-suggested token budget for FLASHCOMM1/TP8 deployments and is divisible by both 8 (TP8 x PCP1) and 16, avoiding Ascend upward adjustment."
+        },
+        {
+          "parameter": "gpu_memory_utilization",
+          "before": 0.9,
+          "after": 0.95,
+          "rationale": "Uses the measured memory envelope (61.12/61.28 GiB free at init, ~33.13 GiB fixed non-KV usage, 22.25 GiB KV at 0.9, 27.83 GiB KV feasible) to raise the cache budget to ~25 GiB with the startup free-memory check passing; this is the portrait-suggested 0.95 headroom value and is the required companion that keeps the larger 8192-token buffers from squeezing KV allocation (probe coupling hint: jointly approach the KV/scheduler saturation boundary)."
+        }
+      ],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 8192,
+        "gpu_memory_utilization": 0.95,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          16,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      },
+      "expected_tradeoffs": [
+        "The larger 8192-token budget may increase Ascend static buffer/allocation memory; the 0.95 memory fraction mitigates this, and if startup OOM occurs only this exact conditional combination is excluded, not either individual value globally.",
+        "Chunked prefill at 8192 tokens schedules prefill in fewer, larger chunks, so TTFT P50/P90 may shift modestly; TTFT/TPOT remain advisory diagnostics and cannot veto a valid output-throughput gain.",
+        "If decode batches stay small at C32/DP4 (~8 concurrent seqs per DP rank), the scheduler clamp may not bind and the throughput gain could be small; the measurement still establishes the capacity envelope and directly informs the next probe-0 step (max_num_seqs/max_model_len geometry) using best_accepted_anchor as the decision base.",
+        "Raising gpu_memory_utilization to 0.95 reduces OOM headroom relative to 0.9, but the measured 61.12 GiB free vs 58.22 GiB requested leaves ~2.9 GiB margin per NPU at startup."
+      ]
+    },
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 64,
+        "failed_requests": 0,
+        "output_token_throughput": 880.6559498402644,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 1012.1264457702637,
+        "ttft_p90_ms": 5554.673194885254,
+        "tpot_p50_ms": 26.5549001051113,
+        "tpot_p90_ms": 33.60309358686209,
+        "benchmark_wall_time_seconds": 414
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 880.6559498402644,
+        "primary_score_values": [
+          880.6559498402644
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 880.6559498402643,
+            "aggregate_output_tps_values": [
+              880.6559498402643
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 883.4451262536678,
+            "guidellm_output_tps_mean_values": [
+              883.4451262536678
+            ],
+            "ttft_p50_ms": 1012.1264457702637,
+            "ttft_p50_ms_values": [
+              1012.1264457702637
+            ],
+            "ttft_p90_ms": 5554.673194885254,
+            "ttft_p90_ms_values": [
+              5554.673194885254
+            ],
+            "tpot_p50_ms": 26.5549001051113,
+            "tpot_p50_ms_values": [
+              26.5549001051113
+            ],
+            "tpot_p90_ms": 33.60309358686209,
+            "tpot_p90_ms_values": [
+              33.60309358686209
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/expert_decode_priority_v1_20260819_084303/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/expert_decode_priority_v1_20260819_084303/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "1f6ed8f8bc485688e3a833720234b4fe35a47850b02af202e8ba68876f4ad7ed",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 880.6559498402644,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 64,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 64,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 1.0
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 148.8345136642456,
+                "aggregate_output_tps": 880.6559498402643,
+                "guidellm_output_tps_mean": 883.4451262536678,
+                "ttft_p50_ms": 1012.1264457702637,
+                "ttft_p90_ms": 5554.673194885254,
+                "tpot_p50_ms": 26.5549001051113,
+                "tpot_p90_ms": 33.60309358686209,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 40253.0,
+                    "draft_tokens": 120759.0,
+                    "accepted_tokens": 90831.0
+                  },
+                  "token_acceptance_rate": 0.7521675403075547,
+                  "mean_accepted_tokens_per_draft": 2.256502620922664,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36096.0,
+                    "1": 30133.0,
+                    "2": 24602.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.896728194171863,
+                    "1": 0.7485901671925074,
+                    "2": 0.6111842595582938
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_001_a1",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 8192,
+      "gpu_memory_utilization": 0.95,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        16,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "failed",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "parameter_attributed_startup_failure",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "failure": {
+      "detected_at": "2026-08-19T10:17:26+00:00",
+      "reason": "MASTER_DONE exists but metrics.json is absent; platform task is terminal: status=LeaseProcessesTerminal, active_pods=0",
+      "task": {
+        "status": "LeaseProcessesTerminal",
+        "active_pods": 0,
+        "terminal": true,
+        "partial_failure": false,
+        "process_counts": {
+          "active": 0,
+          "inactive": 2
+        },
+        "raw": "LEASE  vllmtkb-decode-priority-v1-20260819-1620-2x16npu\nRESOURCE  status=active  nodes=2/2 Ready  npu=32/32\nROLES     master=1 worker=1\nPLATFORM  ktp=Running  job-id=14758  active-pods=2/2\nEVENTS    none\nNODES\n  rank-000  master[0]    Ready    npu=16  ip=10.1.30.23  nic=bond4.3000\n  rank-001  worker[0]    Ready    npu=16  ip=10.1.30.4  nic=bond4.3000\n\nSLOT  service\n  status   idle=2\n  nodes    master[0]/rank-000=idle worker[0]/rank-001=idle\n  run-id   a1_20260819_093546\n  runtime  declared_task\n  target   all\n  profile  /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace/tools/ktp-lab/runtime/plans/vllmtkb-decode-priority-v1-20260819-1620-2x16npu.json\n  resources npu=all ports=none exclusive=yes\n\nNOTE  running 表示受管进程仍存活；模型可用性还需检查 /health。"
+      }
+    },
+    "failure_decision": {
+      "summary": "Round_001_a1 failed pre-service with a deterministic NPU OOM: the coupled raise of max_num_batched_tokens 4096->8192 and gpu_memory_utilization 0.9->0.95 exhausted device memory during the MTP drafter dummy run for size 8192 (torch.OutOfMemoryError, 58.20/61.27 GiB allocated, 661.62 MiB free when requesting 578 MiB). Round_000 at 4096/0.9 benchmarked successfully (880.66 TPS, 64/64) with a measured ~22.25 GiB KV cache and ~5.6 GiB headroom, so the image/model/topology are proven capable. Recovery: keep max_num_batched_tokens=8192 (the measured scheduler-clamp fix from round_000) and restore gpu_memory_utilization=0.9 (the round_000-proven memory envelope) to free ~2.7 GiB for the 8192-token warmup; this single-parameter change cleanly distinguishes whether the OOM driver was the 0.95 memory fraction or the larger token budget.",
+      "classification": "parameter_oom",
+      "root_cause": "The round_001_a1 coupled change (max_num_batched_tokens=8192, gpu_memory_utilization=0.95) left no device-memory headroom: after KV-cache allocation (24.92 GiB at 0.95) and compilation through the 513-8192 range, the MTP drafter dummy run for size 8192 requested a 578 MiB MoE unpermute buffer with only 661.62 MiB free (58.20 GiB active of 61.27 GiB total, 58.33 GiB reserved). Round_000 with 4096/0.9 completed the identical workload, proving the failure is the parameter combination, not the image, model, or topology.",
+      "evidence": [
+        "worker.log:853: torch_npu.memory: [ERROR] NPU out of memory. Tried to allocate 578.00 MiB (NPU 2; 61.27 GiB total capacity; 58.20 GiB already allocated; 58.20 GiB current active; 661.62 MiB free; 58.33 GiB reserved in total by PyTorch).",
+        "worker.log:955-1060: torch.OutOfMemoryError raised in WorkerProc (DP3_TP2_EP26 pid=76004) inside compile_or_warm_up_model -> model_runner_v1._dummy_run(size) -> llm_base_proposer.dummy_run -> _run_merged_draft -> npu_moe_token_unpermute, i.e. the MTP drafter 8192-token warmup path.",
+        "master.log:1412: Fatal pre-service startup evidence detected ... a1_20260819_093546/worker.log ... NPU out of memory; run aborted before benchmark start (no metrics.json), consistent with MASTER_DONE-without-metrics.",
+        "Worker/EngineCore logs: Available KV cache memory: 24.92 GiB (0.95 fraction) immediately before the 8192 dummy run OOM; round_000 at 0.9 used 22.25 GiB KV and finished 64/64 requests with 0 errors.",
+        "Round_000 worker memory profile: 61.12/61.28 GiB free at init, ~33.13 GiB fixed non-KV usage, 22.25 GiB KV at 0.9, up to 27.83 GiB KV feasible - the 0.9 envelope is measured safe for this workload.",
+        "Round_000 runtime warning (unchanged in round_001): max_num_scheduled_tokens clamped to 4096 under MTP K=3 with recommendation to raise max_num_batched_tokens, which is why the token budget is retained at 8192."
+      ],
+      "action": "adjust_parameters",
+      "safe_to_automate": true,
+      "change_strategy": "single_parameter",
+      "interaction_analysis": [
+        "Lowering gpu_memory_utilization from 0.95 to 0.9 shrinks the KV cache from the observed 24.92 GiB back to the round_000-proven 22.25 GiB, freeing roughly 2.7 GiB of device memory so the MTP drafter 8192-token dummy run (which failed requesting only 578 MiB with 661 MiB free) has real headroom.",
+        "Keeping max_num_batched_tokens=8192 preserves the intended scheduler-clamp fix identified in round_000; a successful run attributes the OOM to the 0.95 memory fraction, while a repeat OOM would exclude 8192 even at the proven 0.9 fraction and point to a token-budget reduction next - either outcome is decisive and informative.",
+        "The change is single-parameter and minimal (0.95 -> 0.9), preserving every other axis (token budget, graph capture sizes, speculative K=3, communication flags) so attribution of the OOM remains clean; no Recovery Registry control (multistream_overlap_shared_expert) is relevant because this is a device-memory-capacity failure, not a shared-expert overlap issue."
+      ],
+      "constraint_checks": [
+        "gpu_memory_utilization=0.9 is in (0,1] and is an allowed value; startup free-memory check is satisfied by the round_000 measurement (61.12 GiB free >= 0.9 x 61.28 = 55.15 GiB).",
+        "KV capacity at 0.9 is proven sufficient for this exact workload: round_000 ran decode-256-2048 at C32, 64/64 requests, 0 errors/incomplete with 22.25 GiB KV (smaller than the current 24.92 GiB).",
+        "max_num_batched_tokens=8192 >= max_num_seqs=64 (sequence_count_within_batch_budget) and the speculative draft-slot demand 64 x (K+1) = 256 tokens fits within the 8192 budget.",
+        "No derived-parameter edits: num_speculative_tokens=3, cudagraph_capture_sizes=[16,32,48,64] and max_cudagraph_capture_size=64 are unchanged and remain consistent (max capture 64 <= 64, all sizes multiples of K+1=4).",
+        "Grid budget: single step on gpu_memory_utilization (0.95 -> 0.9) stays within max_grid_steps_per_parameter and total grid-step limits for this refinement/exploration phase.",
+        "High-risk policy: gpu_memory_utilization is inside the approved context_capacity_geometry interaction group; this is an explicit memory check (measured 0.9 envelope) for a one-parameter move, and OOM excludes only the exact 8192/0.95 combination, not the 0.9 value."
+      ],
+      "changes": [
+        {
+          "parameter": "gpu_memory_utilization",
+          "before": 0.95,
+          "after": 0.9,
+          "rationale": "Round_001 OOM'd during the MTP drafter warmup at size 8192 because 0.95 left only 661 MiB free (58.20/61.27 GiB allocated). Reverting to the round_000-proven 0.9 fraction reduces KV cache from 24.92 to ~22.25 GiB (freeing ~2.7 GiB) while retaining the max_num_batched_tokens=8192 scheduler-clamp fix, giving the failing 578 MiB allocation ample headroom and cleanly testing whether the 0.95 fraction or the 8192 budget is the OOM driver."
+        }
+      ],
+      "recovery_changes": [],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 8192,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          16,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      }
+    }
+  },
+  {
+    "round": "round_002_a1f1",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 8192,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        16,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "benchmarked",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "decision": {
+      "action": "continue",
+      "summary": "Round_002 (max_num_batched_tokens=8192, gpu_memory_utilization=0.9) measured 861.64 TPS, -2.16% vs the 880.66 anchor, a directly measured negative single-parameter direction for the 4096->8192 token-budget raise. Next probe-0 measurement: roll max_num_batched_tokens back to the proven 4096 and raise gpu_memory_utilization 0.9->0.92 (portrait CacheConfig default, untested at the proven budget) to complete the memory-envelope picture; all other parameters frozen.",
+      "result_assessment": "Round_002 benchmarked cleanly (64/64 requests, 0 errors/incomplete, exact 256-in/2048-out token shapes, CV 0.0%) at 861.64 aggregate output TPS, which is -2.16% vs best_accepted_anchor round_000 (880.66 TPS at 4096/0.9) and fails the 1.0% minimum-gain gate (eligible_as_improvement=false). Advisory diagnostics improved: TTFT P50 986.2ms (vs 1012.1), TTFT P90 1665.1ms (vs 5554.7), TPOT P50 25.67ms (vs 26.55), TPOT P90 32.40ms (vs 33.60), but primary aggregate throughput fell and MTP acceptance dipped to 0.7436 (vs 0.7522). Because round_002 differs from the anchor in exactly one independent parameter (max_num_batched_tokens 4096->8192 at fixed 0.9), it records a direct single-parameter effect of -2.16%; the upward token-budget direction is down-ranked and the budget must be rolled back before any new experiment. This is the 2nd successful probe-0 measurement, enabling the probe's early-exit rule (incremental gain vs entry anchor already -2.16% < 0.0%) if the new envelope test does not improve.",
+      "knowledge_evidence": [
+        "Round_002 metrics: output_token_throughput=861.64, TTFT P50/P90=986.2/1665.1ms, TPOT P50/P90=25.67/32.40ms, 64/64 successful requests, 0 failed/incomplete, primary_score_cv_percent=0.0, MTP token_acceptance_rate=0.7436, formal_duration 152.12s.",
+        "exploration_memory.direct_single_parameter_effects: round_002 changed only max_num_batched_tokens 4096->8192 vs baseline and measured gain_vs_baseline_percent=-2.1598, a directly measured negative single-parameter direction to down-rank and not repeat.",
+        "best_accepted_anchor = round_000 (max_num_batched_tokens=4096, gpu_memory_utilization=0.9, 880.66 TPS); the submitted candidate is expressed relative to the exact current candidate, so the 8192->4096 rollback must be declared explicitly.",
+        "round_001_a1 (8192/0.95) failed with parameter_oom during the MTP drafter 8192-token dummy run (578 MiB request vs 661 MiB free); only that exact combination is excluded, and the runtime quarantine for gpu_memory_utilization=0.95 is scoped to the TP16/DP2 scenario, not this DP4/TP8 profile.",
+        "Portrait gpu_memory_utilization: 0.92 is the current CacheConfig default ('uses most, but not all, device memory'); hard constraint is free memory at init >= total x value, and measured round_000 free 61.12 GiB >= 0.92 x 61.28 = 56.38 GiB holds with ~4.7 GiB margin.",
+        "Portrait max_num_batched_tokens: 4096 is the suggested general Ascend chunked-prefill budget; round_000 proved 4096/0.9 runs the full workload at 880.66 TPS, and the round_000 'max_num_scheduled_tokens is set to 4096' warning proved non-binding for throughput because 8192 measured -2.16%.",
+        "Probe list2_capacity_geometry coupling hint: 'Jointly approach the KV/scheduler saturation boundary instead of sweeping four axes independently'; intent is to establish the fastest stable decode capacity and memory envelope with 2-3 successful measurements (currently 1).",
+        "Probe early-exit policy: early_exit_after_minimum_when_incremental_gain_below_percent=0.0 and round_002's -2.16% incremental gain vs entry anchor is below the threshold, so one more successful probe-0 measurement reaches the 2-measurement minimum and permits exit to list2_mtp_graph_joint."
+      ],
+      "change_strategy": "coupled_parameters",
+      "exploration_intent": "ordered_probe",
+      "interaction_analysis": [
+        "The token-budget rollback is required, not exploratory: round_002's direct single-parameter measurement (4096->8192, -2.16%) down-ranks the upward direction, and restoring 4096 re-anchors the candidate on best_accepted_anchor so the only remaining delta vs anchor is gpu_memory_utilization.",
+        "gpu_memory_utilization=0.92 is the informative untested probe-0 value: it is the portrait-documented current CacheConfig default, one grid step above the measured 0.9 envelope, and below the 0.95 that OOM'd only in the 8192/0.95 combination; with the 4096 budget the warmup peak drops back to 4096 tokens, so the memory raise cannot re-trigger the 8192-token drafter OOM.",
+        "Coupling rationale: the probe hint explicitly treats the four capacity axes jointly; at the proven 4096 budget, 0.92 tests whether a slightly larger memory/cache fraction changes the envelope at all, and because the rollback restores the exact anchor configuration, any deviation from 880.66 TPS is attributable solely to the memory fraction.",
+        "At C32/DP4 (~8 concurrent sequences per DP rank), neither max_num_seqs=64 nor KV capacity (22.25 GiB cache vs ~144 blocks/rank demand) is binding, so max_num_seqs, max_model_len, and larger token budgets stay at anchor values to avoid confounded guesses.",
+        "Both changes are inside the approved context_capacity_geometry interaction group (max 4 per round); grid steps total 4 (2 for the rollback, 2 for the memory fraction) within max_total_grid_steps=10 and max_grid_steps_per_parameter=3."
+      ],
+      "constraint_checks": [
+        "max_num_batched_tokens=4096 >= max_num_seqs=64 (sequence_count_within_batch_budget hard rule); round_000 proved this exact pair runs the workload to completion.",
+        "enable_chunked_prefill=true, so non_chunked_prefill_requires_full_model_token_budget is not triggered; max_num_batched_tokens=4096 < max_model_len=64000 is legal with chunked prefill.",
+        "Speculative K=3: max_num_batched_tokens=4096 leaves room for draft slots max_num_seqs x (K+1) = 64 x 4 = 256 plus scheduled tokens.",
+        "cudagraph_sizes_within_maximum: max(cudagraph_capture_sizes)=64 <= max_cudagraph_capture_size=64; all capture sizes are multiples of K+1=4, satisfying full-graph MTP alignment.",
+        "gpu_memory_utilization=0.92 is in (0,1]; startup free-memory check passes (measured 61.12 GiB free >= 0.92 x 61.28 = 56.38 GiB); below the 0.95 value that OOM'd only in the 8192/0.95 combination, which is not repeated.",
+        "No derived-parameter edits: speculative_config__method=mtp (driver num_speculative_tokens=3 unchanged), max_cudagraph_capture_size=64 and cudagraph_capture_sizes=[16,32,48,64] unchanged and consistent.",
+        "Grid steps: max_num_batched_tokens 8192->4096 = 2 steps, gpu_memory_utilization 0.9->0.92 = 2 steps; total 4 <= max_total_grid_steps=10 and each <= max_grid_steps_per_parameter=3.",
+        "Attempted-history check: (8192, 0.9) = round_002 measured; (8192, 0.95) = round_001_a1 failed and not repeated; (4096, 0.92) is untested and not excluded; the 0.95 quarantine is scoped to TP16/DP2, not this DP4/TP8 session.",
+        "Runtime contract unchanged: model, DP4/TP8 topology, image, quantization, benchmark, TASK_QUEUE_ENABLE=1 under FULL_DECODE_ONLY, enable_npugraph_ex=true retained under the full-only graph mode, fuse_norm_quant=true unchanged with npugraph_ex=true."
+      ],
+      "changes": [
+        {
+          "parameter": "max_num_batched_tokens",
+          "before": 8192,
+          "after": 4096,
+          "rationale": "Declared rollback to best_accepted_anchor: round_002 measured a direct single-parameter -2.16% for 4096->8192 at fixed gpu_memory_utilization=0.9 (861.64 vs 880.66 TPS), down-ranking the upward token-budget direction; 4096 is the proven round_000 budget and restores the exact anchor comparison so the only delta vs anchor is the memory fraction."
+        },
+        {
+          "parameter": "gpu_memory_utilization",
+          "before": 0.9,
+          "after": 0.92,
+          "rationale": "Probe-0 memory-envelope test at the proven token budget: 0.92 is the portrait-documented current CacheConfig default and an untested value on this profile; startup free-memory check passes (61.12 >= 56.38 GiB) and the 4096-token warmup peak removes any risk of re-triggering the 8192/0.95 drafter OOM."
+        }
+      ],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.92,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          16,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      },
+      "expected_tradeoffs": [
+        "If the memory fraction is genuinely non-binding at C32/DP4, this measurement lands near the 880.66 anchor, confirming the capacity envelope is not the throughput lever and triggering the probe's early-exit rule (incremental gain below 0.0%) after the 2nd successful measurement.",
+        "Restoring the 4096 budget reverts prefill chunking, so the improved TTFT P90 seen at 8192 (1665ms) may move back toward ~5555ms; TTFT/TPOT are advisory diagnostics and cannot veto a valid output-throughput gain.",
+        "Raising the memory fraction to 0.92 reduces per-NPU startup headroom vs 0.9 by ~1.2 GiB, small relative to the measured ~4.7 GiB margin, and the 4096-token warmup peak keeps startup-OOM risk negligible.",
+        "Completing probe-0 coverage here lets the search budget move to list2_mtp_graph_joint (num_speculative_tokens / graph coverage), where the higher-upside MTP and capture-geometry combinations await."
+      ]
+    },
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 64,
+        "failed_requests": 0,
+        "output_token_throughput": 861.6353948773304,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 986.2337112426758,
+        "ttft_p90_ms": 1665.0798320770264,
+        "tpot_p50_ms": 25.66915494389832,
+        "tpot_p90_ms": 32.40049502346665,
+        "benchmark_wall_time_seconds": 441
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 861.6353948773304,
+        "primary_score_values": [
+          861.6353948773304
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 861.6353948773304,
+            "aggregate_output_tps_values": [
+              861.6353948773304
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 864.3499601533737,
+            "guidellm_output_tps_mean_values": [
+              864.3499601533737
+            ],
+            "ttft_p50_ms": 986.2337112426758,
+            "ttft_p50_ms_values": [
+              986.2337112426758
+            ],
+            "ttft_p90_ms": 1665.0798320770264,
+            "ttft_p90_ms_values": [
+              1665.0798320770264
+            ],
+            "tpot_p50_ms": 25.66915494389832,
+            "tpot_p50_ms_values": [
+              25.66915494389832
+            ],
+            "tpot_p90_ms": 32.40049502346665,
+            "tpot_p90_ms_values": [
+              32.40049502346665
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a1f1_20260819_101958/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a1f1_20260819_101958/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "63b4e88ce8adda359903c7c192a74ae15e121c7f2fa2f491ef075649c34a527c",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 861.6353948773304,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 64,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 64,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 1.0
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 152.12002754211426,
+                "aggregate_output_tps": 861.6353948773304,
+                "guidellm_output_tps_mean": 864.3499601533737,
+                "ttft_p50_ms": 986.2337112426758,
+                "ttft_p90_ms": 1665.0798320770264,
+                "tpot_p50_ms": 25.66915494389832,
+                "tpot_p90_ms": 32.40049502346665,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 40571.0,
+                    "draft_tokens": 121713.0,
+                    "accepted_tokens": 90509.0
+                  },
+                  "token_acceptance_rate": 0.7436263998093876,
+                  "mean_accepted_tokens_per_draft": 2.230879199428163,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36160.0,
+                    "1": 30014.0,
+                    "2": 24335.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.891277020531907,
+                    "1": 0.7397895048187129,
+                    "2": 0.599812674077543
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_003_a2",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.92,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        16,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "benchmarked",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "decision": {
+      "action": "continue",
+      "summary": "Probe-1 (list2_mtp_graph_joint) first measurement: reduce num_speculative_tokens 3->2 with the graph geometry re-aligned to multiples of K+1=3 ([3,6,12,24,36,48], max_cudagraph_capture_size 64->48), and roll gpu_memory_utilization 0.92->0.9 back to best_accepted_anchor round_000 so the resulting candidate equals the anchor plus only the K/graph delta (clean attribution); all other 24 parameters frozen.",
+      "result_assessment": "Round_003_a2 measured cleanly (64/64 requests, 0 errors/incomplete, exact 256-in/2048-out shapes, CV 0.0%) at 858.00 aggregate output TPS, -2.57% vs anchor 880.66, failing the 1.0% gain gate (eligible_as_improvement=false). Advisory diagnostics: TTFT P50/P90 = 986.4/1614.9 ms, TPOT P50/P90 = 26.80/31.87 ms. It records a directly measured negative single-parameter direction for gpu_memory_utilization 0.9->0.92, so probe-0 capacity geometry is closed as negative (round_002 -2.16%, round_003 -2.57%) and the current candidate must be re-anchored on round_000 before testing K. Probe-1 has 0/2 minimum successful measurements; this proposal is its first evidence-based MTP/graph-coverage test: K=3 measures per-position acceptance 0.883/0.723/0.577 with the runtime warning that repeated same-MTP-layer forwards lower acceptance, so K=2 removes the least-accepted draft position and one of three drafter forwards while K+1=3 forces the joint graph realignment the probe coupling hint prescribes.",
+      "knowledge_evidence": [
+        "Round_003_a2 metrics: output_token_throughput=857.999, TTFT P50/P90=986.36/1614.94 ms, TPOT P50/P90=26.80/31.87 ms, 64/64 requests, 0 failed/incomplete, primary_score_cv_percent=0.0, MTP token_acceptance_rate=0.7274 with per-position acceptance pos0=0.883, pos1=0.723, pos2=0.577 (mean 2.182 accepted per 3-token draft).",
+        "exploration_memory.direct_single_parameter_effects: round_003 (gpu_memory_utilization 0.9->0.92, all else equal) measured gain_vs_baseline_percent=-2.5727, a directly measured negative single-parameter direction to down-rank; best_accepted_anchor is round_000 (880.66 TPS at max_num_batched_tokens=4096, gpu_memory_utilization=0.9, num_speculative_tokens=3, cudagraph_capture_sizes=[16,32,48,64], max_cudagraph_capture_size=64), so the 0.92->0.9 rollback is declared explicitly before the K change.",
+        "Portrait num_speculative_tokens: single-layer MTP suggested value 1 'avoids repeatedly executing the same exposed MTP layer, which current source warns can lower acceptance for depths above one'; K=2 is the conservative multi-token starting point in the Ascend guide and the informative untested middle value between measured K=3 and the low-acceptance K=1 boundary.",
+        "Measured runtime warning repeated in round_000/002/003 master and worker logs: 'Enabling num_speculative_tokens > 1 will run multiple times of forward on same MTP layer, which may result in lower acceptance rate'; the measured per-position decay (0.883 -> 0.723 -> 0.577) shows the 3rd draft token is accepted only ~58% of the time while costing a full MTP-layer forward on every step.",
+        "Portrait cudagraph_capture_sizes: speculative decoding requires sizes compatible with the uniform decode-query length (K+1), and the Ascend full-graph MTP constraint requires every capture size to be an integer multiple of K+1, so K=2 mechanically forces capture sizes to multiples of 3 and max_cudagraph_capture_size equal to the largest retained size.",
+        "Probe list2_mtp_graph_joint coupling hint: 'K changes the decode query shape, so graph coverage should be selected jointly'; the whitelist template [3,6,12,24,36,48] with max_cudagraph_capture_size=48 covers the C32/DP4 decode batch (~8 concurrent seqs x 3 tokens = 24 tokens per DP rank) and retains TP8 multiples (24, 48)."
+      ],
+      "change_strategy": "coupled_parameters",
+      "exploration_intent": "ordered_probe",
+      "interaction_analysis": [
+        "num_speculative_tokens 3->2 is the independent driver of this probe: decode query length drops from 4 to 3 tokens, which is the causal reason cudagraph_capture_sizes must become multiples of 3 and max_cudagraph_capture_size must drop to the largest retained size 48; the two graph edits are derived/mechanical companions, not independent guesses, and are declared to satisfy the hard invariants.",
+        "gpu_memory_utilization 0.92->0.9 is the required rollback to best_accepted_anchor: round_003 directly measured -2.57% for the 0.9->0.92 direction, and restoring 0.9 makes the proposed candidate identical to the anchor except for the K/graph delta, so any throughput difference vs 880.66 TPS is attributable solely to the MTP/graph change; the smaller capture set (max 48 vs 64) also keeps graph memory at or below the anchor level, complementing the lower memory fraction inside the proven envelope.",
+        "Expected-gain mechanism: dropping to K=2 removes the least-accepted draft position (0.577) and one of three MTP-layer forwards per step; if the saved drafter and draft-slot work exceeds the ~0.577 marginal accepted tokens lost, per-step decode throughput rises, and the measured MTP counters will show whether acceptance per position holds near 0.883/0.723 with only two same-layer forwards.",
+        "At C32/DP4 (~8 concurrent sequences, 24-32 decode tokens per DP rank), the new capture coverage (24, 36, 48) still brackets the observed batch, so no graph-coverage regression is expected and the K effect stays isolated from graph-availability effects; max_num_seqs=64, max_model_len=64000, max_num_batched_tokens=4096, and compilation_mode=FULL_DECODE_ONLY remain at anchor values (the 4096->8192 token-budget raise was already measured negative at -2.16%).",
+        "Two independent parameters (num_speculative_tokens, gpu_memory_utilization) fit the probe's preferred 2-4 range; grid steps total 3 (K 3->2 = 1, gpu 0.92->0.9 = 1, max_cudagraph_capture_size 64->48 = 1 derived) within max_total_grid_steps=10 and max_grid_steps_per_parameter=3."
+      ],
+      "constraint_checks": [
+        "num_speculative_tokens=2 is whitelisted, integer > 0, and below the Ascend fused-TND bound K+1<=16; speculative_config__method=mtp remains valid with K=2 (derived driver unchanged in value, method stays mtp).",
+        "cudagraph_sizes_within_maximum: max([3,6,12,24,36,48])=48 <= max_cudagraph_capture_size=48, and maximum_matches_max_cudagraph_capture_size holds (48 == 48), satisfying the frozen categorical template checks.",
+        "full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one: K+1=3 and 3,6,12,24,36,48 are all multiples of 3; effective_sequence_parallel_list_retains_at_least_one_tp_multiple holds with TP=8 (24 and 48 are multiples of 8).",
+        "sequence_count_within_batch_budget: max_num_seqs=64 <= max_num_batched_tokens=4096; speculative draft-slot demand (K+1)*max_num_seqs = 3*64 = 192 <= 4096; non_chunked_prefill_requires_full_model_token_budget not triggered (enable_chunked_prefill=true).",
+        "gpu_memory_utilization=0.9 is whitelisted and in (0,1]; round_000 startup free-memory check passed (61.12 GiB >= 0.9 x 61.28 = 55.15 GiB) and the exact anchor pair (4096 tokens, 0.9) ran 64/64 requests at 880.66 TPS.",
+        "Attempted-history check: (K=2, cudagraph_capture_sizes=[3,6,12,24,36,48], max_cudagraph_capture_size=48, gpu_memory_utilization=0.9) is untested; no parameter_invalid or parameter_oom exclusion applies; the 8192/0.95 OOM combination and the 4096/0.92 rejected branch are not repeated.",
+        "Async scheduling with MTP is supported (proven in all prior rounds), speculative_config__disable_padded_drafter_batch=false is compatible with async_scheduling, and no topology/model/quantization/image/benchmark changes are made."
+      ],
+      "changes": [
+        {
+          "parameter": "num_speculative_tokens",
+          "before": 3,
+          "after": 2,
+          "rationale": "Highest-information untested MTP value in probe-1: measured per-position acceptance decays 0.883->0.723->0.577 under K=3 and the runtime warns that repeated same-MTP-layer forwards lower acceptance, so removing the 3rd draft position (and one of three drafter forwards per step) is the coherent MTP/graph experiment the probe coupling hint prescribes; K=2 also matches the Ascend guide's conservative multi-token starting point."
+        },
+        {
+          "parameter": "cudagraph_capture_sizes",
+          "before": [
+            16,
+            32,
+            48,
+            64
+          ],
+          "after": [
+            3,
+            6,
+            12,
+            24,
+            36,
+            48
+          ],
+          "rationale": "Derived companion of the K change: full-graph MTP requires every capture size to be an integer multiple of K+1=3, and [16,32,48,64] violates that for K=2; the whitelist template [3,6,12,24,36,48] exactly brackets the C32/DP4 decode batch (~24 tokens/rank) and retains TP8 multiples (24, 48)."
+        },
+        {
+          "parameter": "max_cudagraph_capture_size",
+          "before": 64,
+          "after": 48,
+          "rationale": "Derived companion required by the maximum_matches_max_cudagraph_capture_size invariant: the largest retained capture size becomes 48, and vLLM validation requires an explicit bound to equal the largest capture size; 48 remains above the observed per-rank decode batch so no graph-coverage regression is introduced."
+        },
+        {
+          "parameter": "gpu_memory_utilization",
+          "before": 0.92,
+          "after": 0.9,
+          "rationale": "Declared rollback to best_accepted_anchor: round_003 directly measured -2.57% for 0.9->0.92, down-ranking that direction; restoring the proven 0.9 envelope (22.25 GiB KV, 61.12 GiB free >= 55.15 GiB requested) re-anchors the candidate on round_000 so the K/graph change is the only tested performance delta."
+        }
+      ],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 2,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          3,
+          6,
+          12,
+          24,
+          36,
+          48
+        ],
+        "max_cudagraph_capture_size": 48,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      },
+      "expected_tradeoffs": [
+        "If the ~0.577 accepted tokens/draft lost from position 2 exceed the saved MTP-layer forward work, K=2 lands below the 880.66 anchor; that measurement would close the downward K direction and leave K=4 or graph-coverage variants for the next probe-1 step.",
+        "MTP acceptance may improve at K=2 because only two same-layer forwards run per step (the runtime warning attributes lower acceptance to repeated forwards), with pos0/pos1 expected near 0.883/0.723; the measured speculative counters will confirm.",
+        "TTFT/TPOT are advisory diagnostics and may shift slightly with the decode query length change (4->3 tokens/step); they cannot veto a valid output-throughput gain.",
+        "Restoring gpu_memory_utilization to 0.9 reduces KV budget by ~1.2 GiB vs the rejected 0.92 branch, but round_000 proved 22.25 GiB KV completes the full workload at 64/64 requests with 0 errors."
+      ]
+    },
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 64,
+        "failed_requests": 0,
+        "output_token_throughput": 857.9992472098002,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 986.3638877868652,
+        "ttft_p90_ms": 1614.9427890777588,
+        "tpot_p50_ms": 26.799372513778508,
+        "tpot_p90_ms": 31.870448729023337,
+        "benchmark_wall_time_seconds": 352
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 857.9992472098002,
+        "primary_score_values": [
+          857.9992472098002
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 857.9992472098004,
+            "aggregate_output_tps_values": [
+              857.9992472098004
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 860.3511403499166,
+            "guidellm_output_tps_mean_values": [
+              860.3511403499166
+            ],
+            "ttft_p50_ms": 986.3638877868652,
+            "ttft_p50_ms_values": [
+              986.3638877868652
+            ],
+            "ttft_p90_ms": 1614.9427890777588,
+            "ttft_p90_ms_values": [
+              1614.9427890777588
+            ],
+            "tpot_p50_ms": 26.799372513778508,
+            "tpot_p50_ms_values": [
+              26.799372513778508
+            ],
+            "tpot_p90_ms": 31.870448729023337,
+            "tpot_p90_ms_values": [
+              31.870448729023337
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a2_20260819_111214/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a2_20260819_111214/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "93bc04dafd6600e6749d0750e28308c0529d29a4e65c4a4151ec55329f5137f6",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 857.9992472098002,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 64,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 64,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 1.0
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 152.76470279693604,
+                "aggregate_output_tps": 857.9992472098004,
+                "guidellm_output_tps_mean": 860.3511403499166,
+                "ttft_p50_ms": 986.3638877868652,
+                "ttft_p90_ms": 1614.9427890777588,
+                "tpot_p50_ms": 26.799372513778508,
+                "tpot_p90_ms": 31.870448729023337,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 41198.0,
+                    "draft_tokens": 123594.0,
+                    "accepted_tokens": 89900.0
+                  },
+                  "token_acceptance_rate": 0.7273815881029824,
+                  "mean_accepted_tokens_per_draft": 2.182144764308947,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36367.0,
+                    "1": 29773.0,
+                    "2": 23760.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.8827370260692267,
+                    "1": 0.7226807126559541,
+                    "2": 0.5767270255837662
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_004_a3",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 2,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        3,
+        6,
+        12,
+        24,
+        36,
+        48
+      ],
+      "max_cudagraph_capture_size": 48,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "failed",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "parameter_attributed_startup_failure",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "failure": {
+      "detected_at": "2026-08-19T12:43:22+00:00",
+      "reason": "MASTER_DONE exists but metrics.json is absent; platform task is terminal: status=LeaseProcessesTerminal, active_pods=0",
+      "task": {
+        "status": "LeaseProcessesTerminal",
+        "active_pods": 0,
+        "terminal": true,
+        "partial_failure": false,
+        "process_counts": {
+          "active": 0,
+          "inactive": 2
+        },
+        "raw": "LEASE  vllmtkb-decode-priority-v1-20260819-1620-2x16npu\nRESOURCE  status=active  nodes=2/2 Ready  npu=32/32\nROLES     master=1 worker=1\nPLATFORM  ktp=Running  job-id=14758  active-pods=2/2\nEVENTS    none\nNODES\n  rank-000  master[0]    Ready    npu=16  ip=10.1.30.23  nic=bond4.3000\n  rank-001  worker[0]    Ready    npu=16  ip=10.1.30.4  nic=bond4.3000\n\nSLOT  service\n  status   idle=2\n  nodes    master[0]/rank-000=idle worker[0]/rank-001=idle\n  run-id   a3_20260819_120252\n  runtime  declared_task\n  target   all\n  profile  /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace/tools/ktp-lab/runtime/plans/vllmtkb-decode-priority-v1-20260819-1620-2x16npu.json\n  resources npu=all ports=none exclusive=yes\n\nNOTE  running 表示受管进程仍存活；模型可用性还需检查 /health。"
+      }
+    },
+    "failure_decision": {
+      "summary": "round_004_a3 failed pre-service with a deterministic config-validation ValueError in adjust_cudagraph_sizes_for_spec_decode (vllm/config/compilation.py:1457): with num_speculative_tokens=2 (K+1=3) and sequence parallelism active (flashcomm1=true, TP8), no cudagraph capture geometry can satisfy both the spec-decode multiple-of-3 and the SP multiple-of-8 requirement; all four DP groups aborted during worker initialize_from_config before the benchmark started, so metrics.json is absent. Recovery: restore the anchor-proven K=3 speculative graph (num_speculative_tokens 2->3, cudagraph_capture_sizes [3,6,12,24,36,48]->[16,32,48,64], max_cudagraph_capture_size 48->64) per the runtime's explicit remedy 'adjust num_speculative_tokens', and run the required list2_capacity_geometry in-layer probe on the only untested axis, max_num_seqs 64->32 (non-binding at ~8 concurrent sequences per DP rank, but reduces Ascend sequence-sized metadata/static-kernel shapes). The resulting candidate equals best_accepted_anchor round_000 (880.66 TPS) in every parameter except max_num_seqs, so any delta is directly attributable.",
+      "classification": "parameter_invalid",
+      "root_cause": "The round_004_a3 candidate's speculative-graph geometry is invalid for this profile: num_speculative_tokens=2 makes K+1=3, while sequence parallelism (flashcomm1=true, TP8) additionally requires graph capture sizes to be TP8 multiples; the SP filter first stripped [3,6,12,36] leaving [24,48], and the validator in vllm/config/compilation.py:1457 (adjust_cudagraph_sizes_for_spec_decode, called from resolve_cudagraph_mode_and_sizes during initialize_from_config) still rejected the combination, raising ValueError with the explicit remedy 'adjust num_speculative_tokens or disable sequence parallelism'. The failure is deterministic across all four DP groups (DP0-DP3), pre-service, and not attributable to image, model, topology, memory capacity, or transient infrastructure: rounds 000/002/003 ran the identical profile successfully with K=3 and capture sizes [16,32,48,64]/64 (880.66/861.64/858.00 TPS), proving that geometry is valid; the later Gloo/HCCL peer warnings are cascades of the worker crash. Since [24,48] already satisfies 'multiples of both 3 and 8' yet the error still fired, the runtime's own guidance confirms the fix is the K or SP axis, not a capture-size patch.",
+      "evidence": [
+        "master.log/worker.log: ValueError: Can't determine cudagraph shapes that are both a multiple of 3 (num_speculative_tokens + 1) required by spec-decode and 8 (tensor_parallel_size) required by sequence parallelism please adjust num_speculative_tokens or disable sequence parallelism (vllm/config/compilation.py:1457, adjust_cudagraph_sizes_for_spec_decode)",
+        "master.log: WARNING Batch sizes [3, 6, 12, 36] are removed because they are not multiple of tp_size 8 when sequence parallelism is enabled; EngineCore config dump then shows effective cudagraph_capture_sizes=[24,48] and the validator still aborts, confirming the error path is the K=2/SP combination, not the raw size list",
+        "Same ValueError raised in all four DP groups (Worker_DP0..DP3, all TP ranks) inside initialize_from_config -> initialize_kv_cache -> resolve_cudagraph_mode_and_sizes -> adjust_cudagraph_sizes_for_spec_decode at 20:42:24-26; MASTER_DONE present, metrics.json absent, terminal LeaseProcessesTerminal",
+        "rounds 000/002/003 all ran the same image/model/DP4-TP8/flashcomm1=true profile successfully with num_speculative_tokens=3 and cudagraph_capture_sizes=[16,32,48,64], max_cudagraph_capture_size=64 (880.66/861.64/858.00 TPS, 64/64 requests, 0 errors), proving the restored geometry is valid and the failure is candidate-parameter-induced",
+        "round_004_a3 counts_as_parameter_experiment=false with experiment_evidence_status=unattributed_failure: the K=2 branch produced zero successful probe measurements, so reverting K to the anchor-proven value loses no measured information",
+        "No OOM, HCCL/network, image, model-load, or identity-drift signature precedes the ValueError; the failure is a deterministic configuration validation error with an explicit parameter remedy"
+      ],
+      "action": "adjust_parameters",
+      "safe_to_automate": true,
+      "change_strategy": "coupled_parameters",
+      "interaction_analysis": [
+        "num_speculative_tokens 2->3 restores K+1=4, applying the runtime error's first recommended remedy ('adjust num_speculative_tokens'); K=3 with capture sizes [16,32,48,64]/64 is exactly the geometry that passed startup and benchmarked in rounds 000/002/003 under the same flashcomm1/SP profile, so the failed K=2 branch is abandoned rather than patched with size guesses the validator already rejected even for [24,48].",
+        "cudagraph_capture_sizes and max_cudagraph_capture_size are mechanical derived companions of the K change, not independent guesses: full-graph MTP requires every capture size to be a multiple of K+1=4, and SP requires TP8 multiples; [16,32,48,64] with bound 64 satisfies both (all sizes are multiples of 8, max equals bound), restoring the maximum_matches_max_cudagraph_capture_size invariant.",
+        "max_num_seqs 64->32 is the required in-layer list2_capacity_geometry probe on the only untested axis: with C32 total concurrency across DP4 (~8 concurrent sequences per DP rank), 32 is not an admission or scheduling constraint, while it reduces Ascend sequence-sized metadata and the implicit static-kernel/graph shape bound (32*(K+1)=128 vs 64*4=256), testing whether the sequence-capacity axis carries any measurable effect at the proven anchor envelope.",
+        "Attribution stays clean: after the K-geometry restoration, the candidate differs from best_accepted_anchor round_000 (4096 tokens, 0.9 memory, K=3, [16,32,48,64]/64, 880.66 TPS) in exactly one independent parameter (max_num_seqs), so a flat result closes the capacity probe and any gain/loss is directly attributable to the sequence cap."
+      ],
+      "constraint_checks": [
+        "num_speculative_tokens=3 is whitelisted, integer > 0, and K+1=4 <= the Ascend fused-TND bound of 16; speculative_config__method=mtp remains valid at K=3 with the draft model unchanged.",
+        "cudagraph_sizes_within_maximum: max([16,32,48,64])=64 == max_cudagraph_capture_size=64; every capture size is a multiple of K+1=4 and of tp_size=8, satisfying both spec-decode and sequence-parallel filtering exactly as in the three successful prior rounds.",
+        "sequence_count_within_batch_budget: max_num_seqs=32 <= max_num_batched_tokens=4096; speculative draft-slot demand (K+1)*max_num_seqs = 4*32 = 128 <= 4096; enable_chunked_prefill=true so the non_chunked_prefill_requires_full_model_token_budget rule is not triggered.",
+        "max_num_seqs=32 is whitelisted; workload-shape check: suite concurrency C32 over DP4 yields ~8 concurrent sequences per DP rank, so 32 cannot throttle the benchmark; KV demand for 256-in/2048-out contexts is tiny and gpu_memory_utilization stays at the round_000-proven 0.9 envelope (61.12 GiB free >= 0.9*61.28), with lowering max_num_seqs only shrinking allocations.",
+        "Grid budget: num_speculative_tokens (1 step), cudagraph_capture_sizes (1 derived step), max_cudagraph_capture_size (1 derived step), max_num_seqs (1 step) totals well within max_total_grid_steps=10 and max_grid_steps_per_parameter=3; no parameter is quarantined (the gpu_memory_utilization=0.95 quarantine is scoped to TP16/DP2 and is untouched).",
+        "No topology, model, image, quantization, port, benchmark, or state changes: flashcomm1=true (SP) is retained with the TP8-compatible capture geometry, TASK_QUEUE_ENABLE=1 remains valid under FULL_DECODE_ONLY, and enable_npugraph_ex=true stays consistent with the full-only graph mode."
+      ],
+      "changes": [
+        {
+          "parameter": "num_speculative_tokens",
+          "before": 2,
+          "after": 3,
+          "rationale": "Directly applies the runtime error's explicit remedy 'adjust num_speculative_tokens': with K=3 (K+1=4) the capture sizes reconcile with the TP8/SP multiple requirement, and this restores the exact speculative graph proven across rounds 000/002/003 (880.66/861.64/858.00 TPS) under the same flashcomm1=true profile; the K=2 branch produced zero successful measurements and its [3,6,12,24,36,48] geometry was deterministically rejected."
+        },
+        {
+          "parameter": "cudagraph_capture_sizes",
+          "before": [
+            3,
+            6,
+            12,
+            24,
+            36,
+            48
+          ],
+          "after": [
+            16,
+            32,
+            48,
+            64
+          ],
+          "rationale": "Derived companion of the K change: full-graph MTP requires every capture size to be an integer multiple of K+1=4 and SP requires TP8 multiples; [16,32,48,64] satisfies both (all multiples of 8, hence of 4), replacing the K=2 list that the SP filter stripped to [24,48] and the validator still rejected."
+        },
+        {
+          "parameter": "max_cudagraph_capture_size",
+          "before": 48,
+          "after": 64,
+          "rationale": "Derived companion required by the maximum_matches_max_cudagraph_capture_size invariant: the largest retained capture size becomes 64, so the explicit bound must equal 64; 64 also matches the anchor-proven bound and exceeds the observed per-rank decode batch (~32 tokens/step), preserving graph coverage."
+        },
+        {
+          "parameter": "max_num_seqs",
+          "before": 64,
+          "after": 32,
+          "rationale": "In-layer probe-0 completing the list2_capacity_geometry envelope on the only untested axis: 32 stays above the ~8 concurrent sequences per DP rank at C32/DP4 (no admission impact) while reducing Ascend sequence-sized metadata and the implicit static-kernel shape bound (32*(K+1)=128 vs 256), giving a clean single-axis measurement against the 880.66 anchor with every other parameter restored."
+        }
+      ],
+      "recovery_changes": [],
+      "candidate": {
+        "max_num_seqs": 32,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          16,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      }
+    }
+  },
+  {
+    "round": "round_005_a3f1",
+    "params": {
+      "max_num_seqs": 32,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        16,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "benchmarked",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "decision": {
+      "action": "continue",
+      "summary": "Probe-1 (list2_mtp_graph_joint) second measurement: roll max_num_seqs 32->64 back to best_accepted_anchor round_000 (round_005 directly measured -2.25% for 64->32, a down-ranked single-parameter direction) and densify cudagraph_capture_sizes [16,32,48,64]->[8,16,24,32,48,64] at fixed K=3 and max_cudagraph_capture_size=64, so the candidate equals the anchor plus only a graph-coverage delta that cuts ACL-graph padding for the observed ~5-8-seq per-rank decode batches; all other 26 parameters frozen.",
+      "result_assessment": "Round_005_a3f1 benchmarked cleanly (63/64 requests, 0 errored/incomplete, exact 256-in/2048-out shapes, CV 0.0%, completion_ratio 0.984375 above the 63 minimum) at 860.82 aggregate output TPS, -2.25% vs anchor 880.66, so eligible_as_improvement=false. Advisory diagnostics improved vs anchor: TTFT P50/P90=909.4/1207.3ms (vs 1012.1/5554.7), TPOT P50/P90=26.11/32.45ms (vs 26.55/33.60). It records the third direct single-parameter negative direction (max_num_seqs 64->32=-2.2519%; token budget 4096->8192=-2.1598%; gpu_memory_utilization 0.9->0.92=-2.5727%), so all capacity-geometry axes are closed negative and round_000 remains best_accepted_anchor. Probe-1 has 1/2 minimum successful measurements; round_004 proved K=2 (K+1=3) is parameter_invalid under flashcomm1/SP at TP8, pinning K=3, so the remaining legal high-information probe-1 axis is graph coverage. This proposal is the second successful probe-1 measurement: restore anchor max_num_seqs=64 and add capture sizes 8/24 that exactly bracket the observed per-rank decode batches (~5-8 concurrent seqs -> 20-32 tokens), which currently round up to 32 and waste up to 12 padded tokens per step.",
+      "knowledge_evidence": [
+        "Round_005 metrics: output_token_throughput=860.824, TTFT P50/P90=909.38/1207.34ms, TPOT P50/P90=26.11/32.45ms, 63/64 successful (1 unissued, 0 incomplete/error), primary_score_cv_percent=0.0, MTP token_acceptance_rate=0.7397 with per-position 0.891/0.734/0.594 and mean 2.219 accepted per 3-token draft, formal_duration 149.88s.",
+        "exploration_memory.direct_single_parameter_effects: round_005 (max_num_seqs 64->32)=-2.2519%, round_002 (max_num_batched_tokens 4096->8192)=-2.1598%, round_003 (gpu_memory_utilization 0.9->0.92)=-2.5727%; best_accepted_anchor is round_000 (64/64000/4096/0.9, K=3, [16,32,48,64]/64, 880.66 TPS), so the max_num_seqs 32->64 rollback is declared explicitly before the graph change.",
+        "Round_004_a3 runtime evidence: vllm/config/compilation.py:1457 adjust_cudagraph_sizes_for_spec_decode raised ValueError with K=2 (K+1=3) under sequence parallelism (flashcomm1=true, TP8), with the explicit remedy 'adjust num_speculative_tokens or disable sequence parallelism'; therefore K is pinned to 3 (K+1=4) while flashcomm1=true, and probe-1 must search graph geometry at K=3.",
+        "Portrait cudagraph_capture_sizes: 'choose capture sizes that cover common decode batch sizes closely enough to limit padding'; Ascend's static-kernel path retains only sizes compatible with the uniform decode-query length (K+1) and SP requires TP8 multiples, so only sizes that are multiples of both 4 and 8 survive the platform filters.",
+        "Portrait max_cudagraph_capture_size: Ascend implicit bound is min(max_num_seqs * decode_query_len, 512); graph capture memory and capture work grow with the number and size of capture buckets, and the round_000 worker profile measured only 0.24 GiB NPU graph memory for 4 sizes with ~5.6 GiB headroom at gpu_memory_utilization=0.9.",
+        "Whitelist template [8,16,24,32,48,64] is an allowed value with max 64==max_cudagraph_capture_size; every size is a positive integer multiple of K+1=4 and of tp_size=8, so the SP filter retains the full effective list and the frozen categorical template checks (nonempty, maximum_matches_max_cudagraph_capture_size, full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one, effective_sequence_parallel_list_retains_at_least_one_tp_multiple) all pass.",
+        "Round_000/002/003/005 all ran the identical profile at K=3 with [16,32,48,64]/64 successfully (880.66/861.64/858.00/860.82 TPS), proving the K=3 graph geometry is valid and that the only untested probe-1 variation with a concrete mechanism is capture-size density at fixed max 64."
+      ],
+      "change_strategy": "coupled_parameters",
+      "exploration_intent": "ordered_probe",
+      "interaction_analysis": [
+        "max_num_seqs 32->64 is the required rollback to best_accepted_anchor: round_005 directly measured -2.2519% for 64->32 as the only independent delta, down-ranking the 32 value; restoring 64 makes the proposed candidate identical to the 880.66-TPS anchor except for the capture-list delta, so any throughput difference is attributable solely to graph coverage (the same clean-attribution pattern used for the round_002/003 token-budget and memory-fraction rollbacks).",
+        "cudagraph_capture_sizes is the actual probe-1 experiment with a concrete padding mechanism: ACL-graph decode steps pad each batch up to the next capture size; at C32/DP4 (~8 concurrent sequences per DP rank) decode batches land at ~5-8 seqs = 20-32 tokens, and the current list rounds 20-24-token batches up to 32, wasting 8-12 padded tokens (25-37% of that step's decode work); adding 24 and 8 cuts padding to at most 4 tokens for those steps while keeping max 64.",
+        "The rollback and the density change interact causally: max_num_seqs=64 restores the scheduler's ability to admit up to 16 seqs/rank (64 tokens, fully covered by the explicit list), the exact batch-size range in which the added 24/8 buckets act; at the rejected 32-seq cap batches truncate at 32 tokens, which would mute the density effect and confound the test with the measured-negative 32-cap state.",
+        "K stays pinned at 3 by round_004's deterministic parameter_invalid result (K=2/SP invalid); num_speculative_tokens, compilation_mode=FULL_DECODE_ONLY (Ascend-recommended decode-only mode that keeps npugraph_ex=true), max_cudagraph_capture_size=64, max_num_batched_tokens=4096 and gpu_memory_utilization=0.9 are all left at anchor values so no other axis is confounded.",
+        "Two independent parameters (max_num_seqs, cudagraph_capture_sizes) fit the probe's preferred 2-4 range; grid steps total 2 (1 for the seq-cap rollback, 1 for the capture list) within max_total_grid_steps=10 and max_grid_steps_per_parameter=3, and graph-memory growth from 4->6 capture sizes stays inside the measured ~5.6 GiB headroom."
+      ],
+      "constraint_checks": [
+        "max_num_seqs=64 is whitelisted, >=1, and <= max_num_batched_tokens=4096 (sequence_count_within_batch_budget); speculative draft-slot demand (K+1)*max_num_seqs = 4*64 = 256 <= 4096; round_000 proved this exact pair runs 64/64 requests at 880.66 TPS.",
+        "cudagraph_capture_sizes=[8,16,24,32,48,64] is whitelisted, nonempty, all positive integers; max=64 == max_cudagraph_capture_size=64 (maximum_matches_max_cudagraph_capture_size); all sizes are multiples of K+1=4 (full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one) and of TP8 (effective_sequence_parallel_list_retains_at_least_one_tp_multiple), so SP filtering retains the full list.",
+        "Attempted-history check: (max_num_seqs=64, K=3, cudagraph_capture_sizes=[8,16,24,32,48,64], max_cudagraph_capture_size=64) is untested; it is not the round_004 forbidden combination (K=2, [3,6,12,24,36,48]/48) and no parameter_invalid or parameter_oom exclusion applies; the 8192/0.95 OOM and rejected 4096/0.92 branch are not repeated.",
+        "No derived-parameter edits: speculative_config__method=mtp (driver num_speculative_tokens=3 unchanged) and max_cudagraph_capture_size=64 remain consistent with unchanged drivers; enable_chunked_prefill=true keeps the non_chunked_prefill_requires_full_model_token_budget rule inactive.",
+        "gpu_memory_utilization=0.9 stays at the proven envelope (61.12 GiB free >= 0.9*61.28=55.15 GiB); the 6-size capture list only slightly increases the measured 0.24 GiB graph allocation and stays within the ~5.6 GiB startup headroom.",
+        "Grid budget: 2 total grid steps <= max_total_grid_steps=10 and each parameter <= max_grid_steps_per_parameter=3; compilation_mode=FULL_DECODE_ONLY unchanged keeps TASK_QUEUE_ENABLE=1 valid (graph_enabled_values) and enable_npugraph_ex=true consistent; no topology/model/quantization/image/benchmark changes."
+      ],
+      "changes": [
+        {
+          "parameter": "max_num_seqs",
+          "before": 32,
+          "after": 64,
+          "rationale": "Declared rollback to best_accepted_anchor: round_005 directly measured -2.2519% for 64->32 as a single-parameter delta, down-ranking the 32 value; restoring the proven 64-seq cap (which admits up to 16 seqs/rank = 64 tokens, fully covered by the capture list) re-anchors the candidate on round_000 so the capture-density change is the only tested performance delta, and it is causally required for the padding experiment to act over the full observed batch range."
+        },
+        {
+          "parameter": "cudagraph_capture_sizes",
+          "before": [
+            16,
+            32,
+            48,
+            64
+          ],
+          "after": [
+            8,
+            16,
+            24,
+            32,
+            48,
+            64
+          ],
+          "rationale": "Probe-1 graph-coverage experiment at fixed K=3 and max 64: ACL-graph decode steps pad each batch up to the next capture size, and the observed ~5-8-seq per-rank decode batches (20-32 tokens) currently round 20-24-token steps up to 32, wasting up to 12 padded tokens per step; adding 24 and 8 cuts that padding to <=4 tokens. All sizes are whitelist-valid multiples of K+1=4 and TP8, so the SP filter retains the full list and the frozen categorical template checks pass."
+        }
+      ],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          8,
+          16,
+          24,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      },
+      "expected_tradeoffs": [
+        "If graph padding is not the dominant decode overhead, the measurement lands near the 880.66 anchor; with incremental gain still below 0.0%, probe-1 can early-exit after this second successful measurement and the search moves to list2_scheduler_capacity_refinement anchored on round_000.",
+        "The 6-size capture list slightly increases graph capture/warm-up work and graph memory over the measured 0.24 GiB baseline; the ~5.6 GiB startup headroom covers it, but benchmark wall time may rise by a few seconds of capture.",
+        "Adding small capture sizes 8/24 mainly benefits low-batch tail steps (1-2 and 5-6 seqs); the dominant 8-seq/32-token steady state is already exactly captured, so the expected gain is modest and honestly bounded by the padding hypothesis.",
+        "TTFT/TPOT are advisory: denser small-batch coverage can lower TTFT P50/P90 and TPOT variance at low concurrency, but they cannot veto a valid output-throughput gain; if a >=1% gain appears, the confirmation policy requires a second measurement before acceptance."
+      ]
+    },
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 63,
+        "failed_requests": 0,
+        "output_token_throughput": 860.8244259219961,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 909.3842506408691,
+        "ttft_p90_ms": 1207.3414325714111,
+        "tpot_p50_ms": 26.10934851691127,
+        "tpot_p90_ms": 32.44831692427397,
+        "benchmark_wall_time_seconds": 348
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 860.8244259219961,
+        "primary_score_values": [
+          860.8244259219961
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 860.8244259219962,
+            "aggregate_output_tps_values": [
+              860.8244259219962
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 864.15040982234,
+            "guidellm_output_tps_mean_values": [
+              864.15040982234
+            ],
+            "ttft_p50_ms": 909.3842506408691,
+            "ttft_p50_ms_values": [
+              909.3842506408691
+            ],
+            "ttft_p90_ms": 1207.3414325714111,
+            "ttft_p90_ms_values": [
+              1207.3414325714111
+            ],
+            "tpot_p50_ms": 26.10934851691127,
+            "tpot_p50_ms_values": [
+              26.10934851691127
+            ],
+            "tpot_p90_ms": 32.44831692427397,
+            "tpot_p90_ms_values": [
+              32.44831692427397
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a3f1_20260819_130623/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a3f1_20260819_130623/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "c18d8c17b92cea96860fee60c19a33f7c1cf01647cdafe117d7e2dc6560d9864",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 860.8244259219961,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 63,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 63,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 0.984375
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 149.88422274589539,
+                "aggregate_output_tps": 860.8244259219962,
+                "guidellm_output_tps_mean": 864.15040982234,
+                "ttft_p50_ms": 909.3842506408691,
+                "ttft_p90_ms": 1207.3414325714111,
+                "tpot_p50_ms": 26.10934851691127,
+                "tpot_p90_ms": 32.44831692427397,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 40717.0,
+                    "draft_tokens": 122151.0,
+                    "accepted_tokens": 90360.0
+                  },
+                  "token_acceptance_rate": 0.7397401576736989,
+                  "mean_accepted_tokens_per_draft": 2.219220473021097,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36297.0,
+                    "1": 29888.0,
+                    "2": 24175.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.8914458334356657,
+                    "1": 0.7340422919173809,
+                    "2": 0.5937323476680502
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_006_a4",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        8,
+        16,
+        24,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": true,
+    "experiment_evidence_status": "benchmarked",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 64,
+        "failed_requests": 0,
+        "output_token_throughput": 892.0368383189983,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 665.0011539459229,
+        "ttft_p90_ms": 1647.0816135406494,
+        "tpot_p50_ms": 26.013745577074587,
+        "tpot_p90_ms": 31.585272517986596,
+        "benchmark_wall_time_seconds": 332
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 892.0368383189983,
+        "primary_score_values": [
+          892.0368383189983
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 892.0368383189985,
+            "aggregate_output_tps_values": [
+              892.0368383189985
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 895.6196775775294,
+            "guidellm_output_tps_mean_values": [
+              895.6196775775294
+            ],
+            "ttft_p50_ms": 665.0011539459229,
+            "ttft_p50_ms_values": [
+              665.0011539459229
+            ],
+            "ttft_p90_ms": 1647.0816135406494,
+            "ttft_p90_ms_values": [
+              1647.0816135406494
+            ],
+            "tpot_p50_ms": 26.013745577074587,
+            "tpot_p50_ms_values": [
+              26.013745577074587
+            ],
+            "tpot_p90_ms": 31.585272517986596,
+            "tpot_p90_ms_values": [
+              31.585272517986596
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a4_20260819_135833/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a4_20260819_135833/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "fafa4bd48d88af8aebc9ba6356dc8bb5b764d87d2bf074e17c6a36b1235b18f6",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 892.0368383189983,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 64,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 64,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 1.0
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 146.93563580513,
+                "aggregate_output_tps": 892.0368383189985,
+                "guidellm_output_tps_mean": 895.6196775775294,
+                "ttft_p50_ms": 665.0011539459229,
+                "ttft_p90_ms": 1647.0816135406494,
+                "tpot_p50_ms": 26.013745577074587,
+                "tpot_p90_ms": 31.585272517986596,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 40329.0,
+                    "draft_tokens": 120987.0,
+                    "accepted_tokens": 90774.0
+                  },
+                  "token_acceptance_rate": 0.75027895559027,
+                  "mean_accepted_tokens_per_draft": 2.2508368667708103,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36243.0,
+                    "1": 30207.0,
+                    "2": 24324.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.8986833296139255,
+                    "1": 0.7490143569143792,
+                    "2": 0.6031391802425053
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_007_a4c1",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        8,
+        16,
+        24,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "failed",
+    "counts_as_parameter_experiment": false,
+    "experiment_evidence_status": "infrastructure_or_unattributed_failure",
+    "measurement_role": "confirmation",
+    "confirmation_parent_round": "round_006_a4",
+    "failure": {
+      "detected_at": "2026-08-20T02:25:46+00:00",
+      "reason": "MASTER_DONE exists but metrics.json is absent; platform task is terminal: status=LeaseProcessesTerminal, active_pods=0",
+      "task": {
+        "status": "LeaseProcessesTerminal",
+        "active_pods": 0,
+        "terminal": true,
+        "partial_failure": false,
+        "process_counts": {
+          "active": 0,
+          "inactive": 2
+        },
+        "raw": "LEASE  vllmtkb-decode-priority-v1-20260819-1620-2x16npu\nRESOURCE  status=active  nodes=2/2 Ready  npu=32/32\nROLES     master=1 worker=1\nPLATFORM  ktp=Running  job-id=14758  active-pods=2/2\nEVENT     [WARN] [Running] 2026-08-20T01:51:24Z 2/2 tasks in gang unschedulable: pod group is not ready, 2 Pending, 2 minAvailable; Pending: 2 Unschedulable\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:51:24Z 2/2 tasks in gang unschedulable: pod group is not ready, 2 Pending, 2 minAvailable; Pending: 2 Unschedulable\nEVENT     [WARN] [Running] 2026-08-20T01:51:01Z 0/2 tasks in gang unschedulable: pod group is not ready, 2 Pipelined, 2 minAvailable\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:50:55Z Pod user-1-wangakang-1477/training-job-1787127545-ba33ea-worker-0 can possibly be assigned to atlas-15, once resource is released\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:50:22Z Pod user-1-wangakang-1477/training-job-1787127545-ba33ea-master-0 can possibly be assigned to atlas-32, once resource is released\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:45:56Z Pod user-1-wangakang-1477/training-job-1787127545-ba33ea-worker-0 can possibly be assigned to atlas-32, once resource is released\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:45:26Z Pod user-1-wangakang-1477/training-job-1787127545-ba33ea-master-0 can possibly be assigned to atlas-27, once resource is released\nEVENT     [ERROR] [Scheduling] 2026-08-20T01:40:57Z Pod user-1-wangakang-1477/training-job-1787127545-ba33ea-worker-0 can possibly be assigned to atlas-27, once resource is released\nNODES\n  rank-000  master[0]    Ready    npu=16  ip=10.1.30.2  nic=bond4.3000\n  rank-001  worker[0]    Ready    npu=16  ip=10.1.30.23  nic=bond4.3000\n\nSLOT  service\n  status   idle=2\n  nodes    master[0]/rank-000=idle worker[0]/rank-001=idle\n  run-id   -\n  runtime  -\n  target   -\n  profile  -\n  resources legacy/undeclared\n\nNOTE  running 表示受管进程仍存活；模型可用性还需检查 /health。"
+      }
+    },
+    "failure_decision": {
+      "summary": "round_007_a4c1 (confirmation measurement of round_006_a4, candidate byte-identical) failed pre-service with a distributed-init rendezvous timeout, not a candidate failure: EngineCore_DP0 and DP1 aborted after the 1800000ms (30 min) Gloo/TCPStore wait (DP0 '2/4 clients joined', DP1 wait timeout on key /tcp://10.1.30.23:33969/0/0), and the worker-node log stops immediately after NODE_CHECKPOINT_PREFETCH_STARTED with no COMPLETED line, so the worker-side engines never joined the DP group. No OOM, no cudagraph ValueError, and no HCCL error precedes the timeout; the identical candidate benchmarked successfully in round_006_a4 (892.04 TPS, 64/64, 0 errors, CV 0.0%), proving image/model/topology/parameters are capable. Task events additionally show gang-scheduling churn (pods Pending/Unschedulable, 'can possibly be assigned ... once resource is released', and lease NODES differ from the run's placement), consistent with node/resource reassignment during startup. This matches no historical failure signature (round_001 parameter_oom, round_004 parameter_invalid) and is attributed to transient infrastructure. Recovery: unchanged rerun of the confirmation candidate (retry_same), which is exactly the information needed to confirm or refute round_006_a4's +1.29% gain.",
+      "classification": "transient_infrastructure",
+      "root_cause": "The worker-side distributed processes never participated in the DP-group TCPStore rendezvous, causing the master-side EngineCore DP groups to hit the 1800000ms Gloo wait timeout (DistStoreError: 'Timed out after 1801 seconds waiting for clients. 2/4 clients joined.' for DP0; 'wait timeout after 1800000ms, keys: /tcp://10.1.30.23:33969/0/0' for DP1). The worker log contains only EXPERIMENT_RUN_ID/NODE_CHECKPOINT_PREFETCH_STARTED and no prefetch completion or vLLM startup, indicating the worker engines never launched or never connected; gang-scheduling events (unschedulable/pending pods, 'can possibly be assigned ... once resource is released', and a final lease placement different from the run's master/worker IPs) corroborate node/resource churn during startup. Because the candidate is identical to round_006_a4, which benchmarked 892.04 TPS with 64/64 requests and zero errors, the failure is not parameter-, image-, model-, or topology-attributable, and there is no earlier OOM/config/HCCL root cause for this round to cascade from.",
+      "evidence": [
+        "master.log: EngineCore_DP1 (pid=426548) 08-19 23:18:44 torch.distributed.DistStoreError: wait timeout after 1800000ms, keys: /tcp://10.1.30.23:33969/0/0, raised in DPEngineCoreProc._init_data_parallel -> stateless_init_dp_group -> init_gloo_process_group.",
+        "master.log: EngineCore_DP0 (pid=426517) 08-19 23:18:45 torch.distributed.DistStoreError: Timed out after 1801 seconds waiting for clients. 2/4 clients joined., raised in _tcp_rendezvous_handler/TCPStore during stateless_init_torch_distributed_process_group.",
+        "master.log: [W819 23:18:44 socket.cpp:469] [c10d] waitForInput: poll for socket ... returned 0, likely a timeout; socket timed out after 1800000ms - the master-side store server waited the full 30-minute budget for peer clients.",
+        "worker.log: only EXPERIMENT_RUN_ID, ROLE=worker NODE_IP=10.1.30.4, and NODE_CHECKPOINT_PREFETCH_STARTED; no NODE_CHECKPOINT_PREFETCH_COMPLETED and no vLLM/EngineCore startup lines, i.e. the worker-side engines never joined the rendezvous (contrast master.log prefetch completed in 144.16s).",
+        "Failure task.raw events: [ERROR]/[WARN] gang scheduling '2/2 tasks in gang unschedulable: pod group is not ready, 2 Pending' and 'Pod ... can possibly be assigned to atlas-27/32, once resource is released' at 01:40-01:51Z, showing cluster scheduling pressure/resource reassignment around this run.",
+        "Failure task.raw NODES: rank-000 master[0] ip=10.1.30.2 / rank-001 worker[0] ip=10.1.30.23 differs from the run's own master log (NODE_IP=10.1.30.23, TCPStore at 10.1.30.23:33969), consistent with post-failure re-placement rather than an immutable topology contract issue.",
+        "round_006_a4 (confirmation_parent_round, identical candidate): metrics 892.0368 output_token_throughput, 64/64 successful, 0 failed/incomplete, primary_score_cv_percent=0.0, gate_passed=true - the exact parameter set is proven to start and benchmark on this image/model/topology.",
+        "Historical failure signatures round_001_a1 (NPU OOM, parameter_oom) and round_004_a3 (cudagraph ValueError, parameter_invalid) do not match this round's failure; no torch_npu OOM, no vllm/config ValueError, and no HCCL error appears before the rendezvous timeout.",
+        "Best_accepted_anchor context: round_006_a4 measured +1.29% vs round_000 (880.66 TPS), and round_007_a4c1 is the required confirmation measurement; an unchanged rerun directly provides that confirmation data."
+      ],
+      "action": "retry_same",
+      "safe_to_automate": true,
+      "change_strategy": "none",
+      "interaction_analysis": [],
+      "constraint_checks": [],
+      "changes": [],
+      "recovery_changes": [],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 3,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          8,
+          16,
+          24,
+          32,
+          48,
+          64
+        ],
+        "max_cudagraph_capture_size": 64,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      }
+    }
+  },
+  {
+    "round": "round_008_a4r1",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 3,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        8,
+        16,
+        24,
+        32,
+        48,
+        64
+      ],
+      "max_cudagraph_capture_size": 64,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "success",
+    "counts_as_parameter_experiment": false,
+    "experiment_evidence_status": "confirmation_measurement",
+    "measurement_role": "confirmation",
+    "confirmation_parent_round": "round_006_a4",
+    "decision": {
+      "action": "continue",
+      "summary": "Probe-1 (list2_mtp_graph_joint) 4th and final measurement: raise num_speculative_tokens 3->4 (the only untested K with upside after K=2 proved parameter_invalid under SP/TP8), with the mechanically required joint graph re-alignment cudagraph_capture_sizes [8,16,24,32,48,64]->[40,80,120,160] and max_cudagraph_capture_size 64->160, so the candidate equals the confirmed 899.36-TPS anchor plus only the K/graph delta; all other 25 parameters frozen.",
+      "result_assessment": "Round_008_a4r1 confirmed the dense capture list [8,16,24,32,48,64] at 899.36 aggregate output TPS (+2.12% vs baseline 880.66, measurement_assessment eligible_as_improvement=true, CV 0.0%, 64/64 requests, 0 errors/incomplete, exact 256-in/2048-out shapes), making it best_accepted_anchor (median 895.70 over supporting rounds 006/008). Advisory diagnostics at anchor: TTFT P50/P90 = 975.5/1910.4 ms, TPOT P50/P90 = 26.88/32.79 ms, MTP acceptance 0.7537 with per-position 0.899/0.750/0.613 and 2.261 accepted per 3-token draft. Probe list2_mtp_graph_joint has 3/4 successful measurements (round_005 -2.25%, round_006 +1.29%, round_008 +2.12%) and exits at the maximum of 4, so this proposal is the last probe-1 slot: K=4 extends the measured gentle per-position acceptance decay (0.899->0.750->0.613) to a ~0.50 marginal 4th position (~2.76 accepted/draft), cutting scheduler steps per 2048-token request from ~906 to ~742 (-18%) while the 5-token verify query amortizes per-step fixed overhead; the graph [40,80,120,160]/160 is the only SP-compatible K=4 geometry (multiples of lcm(5,8)=40) and captures the C32/DP4 steady-state 8-seq/rank decode batch (40 tokens) exactly.",
+      "knowledge_evidence": [
+        "Round_008_a4r1 metrics: output_token_throughput=899.356, TTFT P50/P90=975.50/1910.37 ms, TPOT P50/P90=26.88/32.79 ms, 64/64 successful, 0 failed/incomplete, primary_score_cv_percent=0.0, MTP token_acceptance_rate=0.7537 with per-position 0.899/0.750/0.613 and mean 2.261 accepted per 3-token draft; measurement_assessment classifies candidate, passes_guardrails=true, eligible_as_improvement=true (gain +2.123% vs 880.656 baseline).",
+        "Round_004_a3 runtime evidence: vllm/config/compilation.py:1457 adjust_cudagraph_sizes_for_spec_decode raised ValueError for K=2 (K+1=3) under sequence parallelism (flashcomm1=true, TP8) with remedy 'adjust num_speculative_tokens or disable sequence parallelism'; K is pinned to SP-compatible values and the round_004 forbidden combination (K=2, [3,6,12,24,36,48]/48) is not repeated.",
+        "Portrait num_speculative_tokens: 'Increase K only while the extra accepted tokens repay the additional draft and verification work'; 'In Ascend full-graph EAGLE or MTP operation, each supported graph capture size must be an integer multiple of K+1'; K+1 cannot exceed 16 (fused TND path); K=1 'avoids repeatedly executing the same exposed MTP layer, which current source warns can lower acceptance for depths above one' - K=1's per-forward economics (0.90 accepted per 1 draft + 2-token verify = 2.22 forward-equivalents/token) are clearly worse than measured K=3 (4 forward-equivalents/2.261 = 1.77/token), so K=4 is the highest-information untested K.",
+        "Portrait cudagraph_capture_sizes: speculative decoding requires sizes compatible with the uniform decode-query length (K+1); Ascend sequence parallelism requires retained sizes compatible with tensor-parallel filtering (TP8 multiples); the whitelist [40,80,120,160] is the sole K=4 template where every size is a multiple of both K+1=5 and TP8 (i.e., multiples of 40), so the SP filter retains the full list and the round_004 conflict cannot recur.",
+        "Portrait max_cudagraph_capture_size: Ascend implicit bound is min(max_num_seqs * decode_query_len, 512) = min(64*5, 512) = 320 at K=4; the MTP large-EP workaround guidance is max_concurrency*(K+1)=320; an explicit bound must equal the largest capture size (160), which stays below both bounds.",
+        "Attempted-history coverage: num_speculative_tokens attempted {3,2}; untested {1,4}. cudagraph_capture_sizes attempted {[16,32,48,64],[3,6,12,24,36,48],[8,16,24,32,48,64]}; [40,80,120,160] with max 160 is untested. max_cudagraph_capture_size attempted {64,48}; 160 untested. Whitelist permits num_speculative_tokens=4, cudagraph_capture_sizes=[40,80,120,160], max_cudagraph_capture_size=160.",
+        "Round_000/008 worker memory profile: 61.12/61.28 GiB free at init, ~33.13 GiB fixed non-KV usage (incl. 0.27 GiB graph for 6 sizes up to 64), 22.25 GiB KV at 0.9, up to 27.83 GiB KV feasible; the 4-size 160-token graph set adds only modest graph memory well inside the ~5.6 GiB startup headroom, and the warmup peak stays at 4096 tokens so the round_001 8192/0.95 OOM signature cannot recur."
+      ],
+      "change_strategy": "coupled_parameters",
+      "exploration_intent": "ordered_probe",
+      "interaction_analysis": [
+        "num_speculative_tokens 3->4 is the independent MTP driver of this probe-1 final measurement: measured per-position acceptance decays gently (0.899->0.750->0.613), so the marginal 4th draft position adds ~0.50 accepted tokens (~2.76/draft vs 2.261), reducing scheduler steps per 2048-token request by ~18% while the 5-token uniform decode query amortizes per-step fixed overhead (graph dispatch, sampling, DP sync); K=2 was proven parameter_invalid under SP/TP8 and K=1's per-forward economics are clearly below K=3, making K=4 the only untested high-upside K value.",
+        "cudagraph_capture_sizes [40,80,120,160] is the mechanical companion required by the probe coupling hint ('K changes the decode query shape, so graph coverage should be selected jointly'): full-graph MTP mandates multiples of K+1=5 and SP mandates TP8 multiples, so only multiples of 40 are legal and this whitelist template is the unique SP-compatible K=4 list; the C32/DP4 steady-state decode batch (~8 concurrent seqs/rank x 5 tokens = 40 tokens) is captured exactly by the first bucket, so the dominant phase runs unpadded.",
+        "max_cudagraph_capture_size 64->160 is the derived bound enforced by maximum_matches_max_cudagraph_capture_size (largest capture size 160 == bound); it stays below the Ascend implicit bound min(64x5,512)=320 and the MTP workaround guidance max_concurrency*(K+1)=320, and the 4-bucket set (up to 160 tokens) raises graph memory only modestly over the measured 0.27 GiB baseline inside the ~5.6 GiB headroom at the proven 0.9 memory fraction.",
+        "The tail-padding tradeoff is honestly bounded: at K=4 the minimum capture bucket is 40 tokens (vs 8 at K=3), so low-batch ramp-up/down steps pad more, but the identical 2048-token outputs keep each DP rank near 8 seqs (40 tokens, exact capture) for the dominant steady state and the -18% step count offsets the coarse granularity, making the net expectation genuinely uncertain and therefore the highest-information remaining probe-1 measurement.",
+        "Deliberate exclusions keep attribution clean: compilation_mode stays FULL_DECODE_ONLY because the runtime logs show 'Breakable cudagraph is force disabled on Ascend because DeepSeek V4 PIECEWISE cudagraph is not supported yet' (piecewise modes would be downgraded and would force enable_npugraph_ex=false); K=1 is deferred because measured per-forward acceptance already favors K=3 (1.77 vs 2.22 forward-equivalents per accepted token); all other parameters stay at the confirmed 899.36 anchor so any delta is attributable solely to the K/graph change."
+      ],
+      "constraint_checks": [
+        "num_speculative_tokens=4 is whitelisted, integer > 0, and K+1=5 <= 16 (Ascend fused-TND attention bound); speculative_config__method=mtp remains valid (derived driver num_speculative_tokens changed, method value unchanged).",
+        "cudagraph_sizes_within_maximum: max([40,80,120,160])=160 <= max_cudagraph_capture_size=160; maximum_matches_max_cudagraph_capture_size holds (160 == 160); list is nonempty with all positive integers.",
+        "full_graph_mtp_k_gt_one_sizes_are_multiples_of_k_plus_one: K+1=5 and 40,80,120,160 are all multiples of 5; effective_sequence_parallel_list_retains_at_least_one_tp_multiple holds (every size is a TP8 multiple, hence a multiple of lcm(5,8)=40), so the SP filter retains the full list and the round_004 K=2/SP validator conflict cannot recur.",
+        "sequence_count_within_batch_budget: max_num_seqs=64 <= max_num_batched_tokens=4096; speculative draft-slot demand (K+1)*max_num_seqs = 5*64 = 320 <= 4096; enable_chunked_prefill=true keeps the non_chunked_prefill_requires_full_model_token_budget rule inactive.",
+        "gpu_memory_utilization=0.9 unchanged at the proven envelope (measured 61.12 GiB free >= 0.9*61.28=55.15 GiB); warmup peak remains 4096 tokens so the round_001 8192/0.95 OOM signature cannot recur, and the gpu_memory_utilization=0.95 quarantine is scoped to TP16/DP2 and untouched.",
+        "Grid budget: num_speculative_tokens 3->4 = 1 grid step (cudagraph_capture_sizes and max_cudagraph_capture_size are derived companions of a changed driver and consume no independent slot or grid step); total 1 <= max_total_grid_steps=10 and per-parameter <= max_grid_steps_per_parameter=3.",
+        "Attempted-history check: (K=4, cudagraph_capture_sizes=[40,80,120,160], max_cudagraph_capture_size=160) is untested and is not the round_004 forbidden combination (K=2/[3,6,12,24,36,48]/48); no parameter_oom or parameter_invalid exclusion applies to this exact candidate.",
+        "Runtime contract unchanged: async_scheduling=true with MTP remains supported (proven at K=3), speculative_config__disable_padded_drafter_batch=false is compatible with async scheduling, TASK_QUEUE_ENABLE=1 remains valid under FULL_DECODE_ONLY, enable_npugraph_ex=true stays consistent with the full-only graph mode, and no topology/model/image/quantization/benchmark changes are made."
+      ],
+      "changes": [
+        {
+          "parameter": "num_speculative_tokens",
+          "before": 3,
+          "after": 4,
+          "rationale": "Highest-information untested MTP value in the final probe-1 slot: measured per-position acceptance decays gently (0.899->0.750->0.613), so the marginal 4th draft position adds ~0.50 accepted tokens (~2.76/draft), cutting scheduler steps ~18% while the 5-token verify query amortizes fixed per-step overhead; K=2 was proven parameter_invalid under SP/TP8 and K=1 has clearly worse per-forward economics, leaving K=4 as the only upward-K frontier test consistent with the portrait guidance to 'increase K only while the extra accepted tokens repay the additional draft and verification work'."
+        },
+        {
+          "parameter": "cudagraph_capture_sizes",
+          "before": [
+            8,
+            16,
+            24,
+            32,
+            48,
+            64
+          ],
+          "after": [
+            40,
+            80,
+            120,
+            160
+          ],
+          "rationale": "Derived companion of the K change per the probe coupling hint: full-graph MTP requires every capture size to be a multiple of K+1=5 and SP/TP8 requires multiples of 8, so only multiples of 40 are valid; [40,80,120,160] is the whitelist-legal SP-compatible K=4 template whose first bucket exactly captures the C32/DP4 steady-state 8-seq/rank decode batch (40 tokens), and all four sizes pass the frozen categorical template checks."
+        },
+        {
+          "parameter": "max_cudagraph_capture_size",
+          "before": 64,
+          "after": 160,
+          "rationale": "Derived companion required by the maximum_matches_max_cudagraph_capture_size invariant: the largest retained capture size is 160, so the explicit bound must equal 160; 160 stays below the Ascend implicit bound min(64*5,512)=320 and the MTP large-EP workaround guidance max_concurrency*(K+1)=320, and the modest graph-memory increase fits the measured ~5.6 GiB startup headroom at gpu_memory_utilization=0.9."
+        }
+      ],
+      "candidate": {
+        "max_num_seqs": 64,
+        "max_model_len": 64000,
+        "max_num_batched_tokens": 4096,
+        "gpu_memory_utilization": 0.9,
+        "compilation_mode": "FULL_DECODE_ONLY",
+        "num_speculative_tokens": 4,
+        "enable_chunked_prefill": true,
+        "async_scheduling": true,
+        "enable_expert_parallel": true,
+        "cudagraph_capture_sizes": [
+          40,
+          80,
+          120,
+          160
+        ],
+        "max_cudagraph_capture_size": 160,
+        "disable_hybrid_kv_cache_manager": null,
+        "speculative_config__enforce_eager": null,
+        "enable_balance_scheduling": false,
+        "enable_reduce_sample": false,
+        "fused_mc2": 2,
+        "flashcomm1": true,
+        "enable_prefix_caching": false,
+        "TASK_QUEUE_ENABLE": 1,
+        "speculative_config__disable_padded_drafter_batch": false,
+        "additional_config__prefill_comm_compute_overlap": false,
+        "additional_config__ascend_compilation_config__enable_static_kernel": false,
+        "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+        "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+        "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+        "long_prefill_token_threshold": 0,
+        "compilation_enable_sp": false,
+        "speculative_config__method": "mtp"
+      },
+      "expected_tradeoffs": [
+        "K=4 adds a ~0.50-acceptance 4th draft position: if the extra draft+verify work exceeds the ~18% step-count saving, throughput lands below the 899.36 anchor; that measurement would close the upward K frontier with evidence, after which K=3 remains the confirmed basin for later cross-layer work.",
+        "Coarse graph granularity at K=4 (minimum capture bucket 40 tokens vs 8 now) increases padding waste during batch ramp-up/down tails; this is partially offset by exact 40-token capture of the steady-state 8-seq/rank decode batch, and the measured MTP counters will reveal the marginal position-3 acceptance rate.",
+        "If the config validator still rejected the K=4/SP geometry it would be a parameter_invalid round (unlikely: every size is a multiple of lcm(5,8)=40, unlike round_004's K=2 failure), which does not consume the probe's successful-measurement budget and failure recovery would reselect.",
+        "TTFT/TPOT remain advisory diagnostics and may shift with the longer 5-token decode query; they cannot veto a valid output-throughput gain, and the confirmation policy (upper_gain_percent=3.0, required_successful_measurements=2) applies if a >=1% gain appears.",
+        "Graph capture memory rises modestly with the 160-token bucket and capture work grows slightly; the measured ~5.6 GiB startup headroom at gpu_memory_utilization=0.9 covers it, and benchmark wall time is not the scored metric."
+      ]
+    },
+    "metrics": {
+      "benchmark_mode": "aligned_l1",
+      "parse_status": "ok",
+      "metrics": {
+        "successful_requests": 64,
+        "failed_requests": 0,
+        "output_token_throughput": 899.3559794058083,
+        "primary_score_cv_percent": 0.0,
+        "ttft_p50_ms": 975.4996299743652,
+        "ttft_p90_ms": 1910.3710651397705,
+        "tpot_p50_ms": 26.880422607064247,
+        "tpot_p90_ms": 32.78639377094805,
+        "benchmark_wall_time_seconds": 366
+      },
+      "l1": {
+        "suite": "tuning-decode-only-c32-v1",
+        "all_repetitions_gate_passed": true,
+        "repetition_count": 1,
+        "primary_concurrency": 32,
+        "primary_aggregate_output_tps_geomean": 899.3559794058083,
+        "primary_score_values": [
+          899.3559794058083
+        ],
+        "primary_score_cv_percent": 0.0,
+        "cases": [
+          {
+            "workload": "decode-256-2048",
+            "concurrency": 32,
+            "repetition_count": 1,
+            "aggregate_output_tps": 899.3559794058084,
+            "aggregate_output_tps_values": [
+              899.3559794058084
+            ],
+            "aggregate_output_tps_cv_percent": 0.0,
+            "guidellm_output_tps_mean": 903.0605018298651,
+            "guidellm_output_tps_mean_values": [
+              903.0605018298651
+            ],
+            "ttft_p50_ms": 975.4996299743652,
+            "ttft_p50_ms_values": [
+              975.4996299743652
+            ],
+            "ttft_p90_ms": 1910.3710651397705,
+            "ttft_p90_ms_values": [
+              1910.3710651397705
+            ],
+            "tpot_p50_ms": 26.880422607064247,
+            "tpot_p50_ms_values": [
+              26.880422607064247
+            ],
+            "tpot_p90_ms": 32.78639377094805,
+            "tpot_p90_ms_values": [
+              32.78639377094805
+            ]
+          }
+        ],
+        "repetitions": [
+          {
+            "run_dir": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a4r1_20260820_022732/servebench/results/l1-rep1",
+            "report_path": "/mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1/workflow/auto/runs/a4r1_20260820_022732/servebench/results/l1-rep1/result.json",
+            "manifest_path": "embedded:result.json.manifest",
+            "suite": "01_调优_Decode单场景-v1.yaml",
+            "execution_fingerprint": "97b07ac99ae2a8e11ad4166ca97b40eb869c4841c99db6b6ecb7231be005e6a2",
+            "gate_passed": true,
+            "formal_case_count": 1,
+            "primary_concurrency": 32,
+            "primary_aggregate_output_tps_geomean": 899.3559794058083,
+            "cases": [
+              {
+                "workload": "decode-256-2048",
+                "concurrency": 32,
+                "expected_requests": 64,
+                "config": "artifacts/cases/core-fixed-matrix/decode-256-2048/c32/guidellm.yaml",
+                "request_totals": {
+                  "successful": 64,
+                  "incomplete": 0,
+                  "errored": 0,
+                  "total": 64,
+                  "planned": 64,
+                  "minimum_successful": 63,
+                  "completion_ratio": 1.0
+                },
+                "prompt_tokens_mean": 256.0,
+                "output_tokens_mean": 2048.0,
+                "formal_duration_seconds": 145.73984384536743,
+                "aggregate_output_tps": 899.3559794058084,
+                "guidellm_output_tps_mean": 903.0605018298651,
+                "ttft_p50_ms": 975.4996299743652,
+                "ttft_p90_ms": 1910.3710651397705,
+                "tpot_p50_ms": 26.880422607064247,
+                "tpot_p90_ms": 32.78639377094805,
+                "speculative_decode_metrics": {
+                  "counter_delta": {
+                    "drafts": 40203.0,
+                    "draft_tokens": 120609.0,
+                    "accepted_tokens": 90904.0
+                  },
+                  "token_acceptance_rate": 0.753708263894071,
+                  "mean_accepted_tokens_per_draft": 2.261124791682213,
+                  "mean_draft_tokens_per_draft": 3.0,
+                  "accepted_tokens_per_position_delta": {
+                    "0": 36126.0,
+                    "1": 30143.0,
+                    "2": 24635.0
+                  },
+                  "acceptance_rate_per_position": {
+                    "0": 0.8985896574882472,
+                    "1": 0.7497699176678357,
+                    "2": 0.6127652165261299
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "schema_version": "vllmtkb-benchmark-result/v1",
+      "benchmark_profile": "aligned_l1_v4"
+    }
+  },
+  {
+    "round": "round_009_a5",
+    "params": {
+      "max_num_seqs": 64,
+      "max_model_len": 64000,
+      "max_num_batched_tokens": 4096,
+      "gpu_memory_utilization": 0.9,
+      "compilation_mode": "FULL_DECODE_ONLY",
+      "num_speculative_tokens": 4,
+      "enable_chunked_prefill": true,
+      "async_scheduling": true,
+      "enable_expert_parallel": true,
+      "cudagraph_capture_sizes": [
+        40,
+        80,
+        120,
+        160
+      ],
+      "max_cudagraph_capture_size": 160,
+      "disable_hybrid_kv_cache_manager": null,
+      "speculative_config__enforce_eager": null,
+      "enable_balance_scheduling": false,
+      "enable_reduce_sample": false,
+      "fused_mc2": 2,
+      "flashcomm1": true,
+      "enable_prefix_caching": false,
+      "TASK_QUEUE_ENABLE": 1,
+      "speculative_config__disable_padded_drafter_batch": false,
+      "additional_config__prefill_comm_compute_overlap": false,
+      "additional_config__ascend_compilation_config__enable_static_kernel": false,
+      "additional_config__ascend_compilation_config__enable_npugraph_ex": true,
+      "additional_config__ascend_compilation_config__fuse_allreduce_rms": true,
+      "additional_config__ascend_compilation_config__fuse_norm_quant": true,
+      "long_prefill_token_threshold": 0,
+      "compilation_enable_sp": false,
+      "speculative_config__method": "mtp"
+    },
+    "outcome": "failed",
+    "counts_as_parameter_experiment": false,
+    "experiment_evidence_status": "unattributed_failure",
+    "measurement_role": "search",
+    "confirmation_parent_round": null,
+    "failure": {
+      "detected_at": "2026-08-20T04:02:30+00:00",
+      "reason": "MASTER_DONE exists but metrics.json is absent; platform task is terminal: status=LeaseProcessesTerminal, active_pods=0",
+      "task": {
+        "status": "LeaseProcessesTerminal",
+        "active_pods": 0,
+        "terminal": true,
+        "partial_failure": false,
+        "process_counts": {
+          "active": 0,
+          "inactive": 2
+        },
+        "raw": "LEASE  vllmtkb-decode-priority-v1-20260819-1620-2x16npu\nRESOURCE  status=active  nodes=2/2 Ready  npu=32/32\nROLES     master=1 worker=1\nPLATFORM  ktp=Running  job-id=14758  active-pods=2/2\nEVENTS    none\nNODES\n  rank-000  master[0]    Ready    npu=16  ip=10.1.30.2  nic=bond4.3000\n  rank-001  worker[0]    Ready    npu=16  ip=10.1.30.23  nic=bond4.3000\n\nSLOT  service\n  status   idle=2\n  nodes    master[0]/rank-000=idle worker[0]/rank-001=idle\n  run-id   -\n  runtime  -\n  target   -\n  profile  -\n  resources legacy/undeclared\n\nNOTE  running 表示受管进程仍存活；模型可用性还需检查 /health。"
+      }
+    }
+  }
+]

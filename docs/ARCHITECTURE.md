@@ -83,9 +83,15 @@ flashcomm1
 disable_hybrid_kv_cache_manager
 ```
 
-`automatic_registry_a8_frontier_v4` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 30 Active + 73 Reserve。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 联合选择，Controller 校验 K+1、TP8、图上限与 scheduler budget；历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界轮换 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
+`automatic_registry_a8_frontier_v4` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 30 Active + 73 Reserve。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 联合选择；在 Full Decode Graph 且有效 SP（显式 `compilation_enable_sp` 或 FlashComm1）生效时，Controller 提交前强制校验 `K+1` 与 TP 必须互相整除，并校验归一化后的图列表至少保留一个 TP 倍数、图上限与 scheduler budget。历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界轮换 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
+
+探索预算按成功测量轮的实际候选参数差异计数，不读取该轮结束后为下一轮生成的 Agent 决策。负收益分支回到 `best_accepted_anchor` 只更新 Controller 状态，不消耗探索配额，也不重复提交 Benchmark；从该锚点提出的新变化才计入参数数目和网格步长。Session 停止时写出 `final_selection.json`，并把历史最优已接受候选固化为最终配置，同时保留最后测量轮用于审计。
+
+Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量总配额。Agent 可在跨层阶段自主回访，也可在有明确耦合依据时把次级参数作为当前有序层的 companion；有序层本身仍必须至少包含一个层内变化。该开放只移除探索治理限制，不绕过候选值域、完整配置不变量、确定性非法组合过滤和重复失败候选隔离。
 
 自动替代路径当前 Controller 编译结果为：103 Tunable（28 Active + 75 Reserve）→ 39 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
+
+当前正式 decode-only 自治任务不使用上述通用 V4 默认，而由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v1.yaml` 显式固定：DP4/TP8 runtime、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 与 `decode_only_c32_v1`。恢复同一 Session 时继续使用其冻结身份；规则或策略版本发生变化时，先优雅结束旧轮次，再建立继承兼容历史的新 Session，不能把新旧冻结配置混在同一个 Session 中。
 
 历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 

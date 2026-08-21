@@ -81,7 +81,10 @@ candidate_domain_overrides:
     - [5, 10, 20, 40, 80, 120, 160]
     - [10, 20, 40, 80, 160]
     - [5, 10, 15, 20, 30, 40, 60, 70, 80, 90, 105, 120, 135, 140, 160]
-    # Sequence-parallel templates: multiples of TP8 and K+1.
+    # TP8-aligned templates. Explicit compilation SP additionally requires K+1
+    # and TP8 to be mutually divisible. Under the pinned Ascend FlashComm1-only
+    # compatibility path, common-multiple lists can remain legal after the late
+    # TP filter even when K+1 and TP8 are not mutually divisible.
     - [8, 16, 24, 32, 48, 64]
     - [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128]
     - [24, 48, 72, 96, 120, 144, 168, 192]

@@ -18,7 +18,6 @@ HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parent.parent
 CONTINUOUS_DIR = PROJECT_ROOT / "workflow" / "continuous"
 DEFAULT_RULES = HERE / "default_rules.yaml"
-HARD_VALUE_FAILURES = {"parameter_invalid", "parameter_oom"}
 PROPOSAL_FAILURES = {
     "parameter_invalid",
     "parameter_oom",
@@ -272,7 +271,8 @@ class RuntimeRuleStore:
             timespec="seconds"
         )
         value["safety_policy"] = {
-            "auto_activate": "single_parameter_hard_value_quarantine_only",
+            "auto_activate": "static_source_proven_rules_only",
+            "history_failures": "exact_candidate_proposal_only",
             "generalized_rules": "proposal_only",
             "remote_execution": "none",
         }
@@ -422,55 +422,29 @@ class RuntimeRuleStore:
             if not attributed:
                 continue
             evidence_id = f"{session_id}:{trial['trial_id']}"
-            values = {
+            attributed_values = {
                 name: trial["params"].get(name)
                 for name in attributed
                 if name in trial["params"]
             }
-            if (
-                classification in HARD_VALUE_FAILURES
-                and len(attributed) == 1
-                and len(values) == 1
-            ):
-                name = attributed[0]
-                value = values[name]
-                existing = next(
-                    (
-                        item
-                        for item in self.data["quarantines"]
-                        if item.get("parameter") == name
-                        and item.get("value") == value
-                        and item.get("scope", {}) == scope
-                    ),
-                    None,
-                )
-                if existing is None:
-                    existing = {
-                        "id": f"quarantine:{name}:{hashlib.sha256(_render(value).encode()).hexdigest()[:12]}",
-                        "status": "active",
-                        "parameter": name,
-                        "value": value,
-                        "scope": scope,
-                        "reason": classification,
-                        "evidence": [],
-                        "activation": "automatic_exact_value_fact",
-                    }
-                    self.data["quarantines"].append(existing)
-                    quarantines_added += 1
-                if evidence_id not in existing["evidence"]:
-                    existing["evidence"].append(evidence_id)
-                continue
-
-            if len(values) >= 2:
-                key = _render({"scope": scope, "values": values})
+            # A single attributed value is not automatically a universal fact:
+            # OOM and most runtime-invalid outcomes depend on the complete
+            # capacity/graph/communication combination.  Preserve the exact
+            # failed candidate as a non-blocking proposal; only checked-in,
+            # source-proven rules are active without explicit review.
+            if attributed_values:
+                exact_values = dict(trial.get("params", {}))
+                key = _render({"scope": scope, "values": exact_values})
                 record = combination_evidence.setdefault(
                     key,
                     {
-                        "values": values,
+                        "values": exact_values,
+                        "attributed_parameters": set(),
                         "classifications": set(),
                         "evidence": set(),
                     },
                 )
+                record["attributed_parameters"].update(attributed)
                 record["classifications"].add(str(classification))
                 record["evidence"].add(evidence_id)
 
@@ -504,6 +478,10 @@ class RuntimeRuleStore:
             )
             existing["classifications"] = sorted(
                 set(existing["classifications"]) | record["classifications"]
+            )
+            existing["attributed_parameters"] = sorted(
+                set(existing.get("attributed_parameters", []))
+                | record["attributed_parameters"]
             )
             existing["evidence_threshold_met"] = (
                 len(existing["evidence"]) >= max(2, proposal_threshold)

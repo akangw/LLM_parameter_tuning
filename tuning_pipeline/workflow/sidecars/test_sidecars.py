@@ -162,7 +162,7 @@ class RuntimeRuleStoreTests(unittest.TestCase):
             self.store.evaluate(self.candidate, scenario=self.scenario)["allowed"]
         )
 
-    def test_single_parameter_hard_failure_auto_quarantines_exact_value(self) -> None:
+    def test_single_parameter_oom_creates_exact_candidate_proposal_only(self) -> None:
         history = self.root / "history.json"
         history.write_text(
             json.dumps(
@@ -186,15 +186,27 @@ class RuntimeRuleStoreTests(unittest.TestCase):
             encoding="utf-8",
         )
         audit = self.store.ingest_history(history, scenario=self.scenario)
-        self.assertEqual(1, audit["quarantines_added"])
+        self.assertEqual(0, audit["quarantines_added"])
+        self.assertEqual(1, audit["proposals_added"])
         result = self.store.evaluate(
             {**self.candidate, "max_num_batched_tokens": 16384},
             scenario=self.scenario,
         )
-        self.assertFalse(result["allowed"])
-        self.assertTrue(
-            any(item["source"] == "history_quarantine" for item in result["violations"])
+        self.assertTrue(result["allowed"])
+        self.assertTrue(result["warnings"])
+        # The same high-risk value remains explorable with a different
+        # companion geometry; history must not globally ban it.
+        alternative = {
+            **self.candidate,
+            "max_num_batched_tokens": 16384,
+            "max_num_seqs": 32,
+        }
+        alternative_result = self.store.evaluate(
+            alternative,
+            scenario=self.scenario,
         )
+        self.assertTrue(alternative_result["allowed"])
+        self.assertFalse(alternative_result["warnings"])
         repeated = self.store.ingest_history(history, scenario=self.scenario)
         self.assertEqual("already_processed", repeated["status"])
 

@@ -81,13 +81,15 @@
 
 # List 3：核心约束与实现状态
 
+本节只保留核心摘要；完整、可审计的硬规则以 [`DECODE_ONLY_HARD_RULES.md`](DECODE_ONLY_HARD_RULES.md) 为唯一总表。
+
 ## 3.1 硬约束：明确会启动失败或不满足固定服务契约
 
 1. 固定 `decode-256-2048` workload 要求 `max_model_len >= 2304`；低于该值无法承载本场景请求。
 2. pinned vLLM 要求 `max_num_batched_tokens >= max_num_seqs`；若关闭 chunked prefill，还要求 `max_num_batched_tokens >= max_model_len`。
 3. 图模式下若显式提供 capture list，它必须非空且只含正整数；显式 `max_cudagraph_capture_size` 必须等于列表最大值。
-4. Full Graph 且 `K>1` 时，每个 capture size 必须能被 `K+1` 整除，这是 pinned vLLM-Ascend 的 MTP 图限制；不能扩大成所有图模式或 K=1 的通用禁令。
-5. FlashComm1 要求 `TP>1`；当前模型是 MoE，因此还要求 EP=true。有效 SP/FlashComm1 capture list 至少要保留一个 TP 整除 shape，否则 Ascend 初始化断言失败。
+4. Full Graph 且 `K>1` 时，Controller 要求显式 capture size 都能被 `K+1` 整除。运行时本可向上取整，但这会静默改变 Agent 提交的实验画像；因此这是保证实验可解释性的显式列表规范，不应扩大成所有图模式或 K=1 的引擎通用禁令。
+5. FlashComm1 要求 `TP>1`；当前模型是 MoE，因此还要求 EP=true。在 Full Decode Graph + MTP 下，显式 `compilation_enable_sp=true` 或 FlashComm1=true 都会让 pinned Ascend v1 runner 在上游图检查期间启用有效 SP，进而触发 vLLM 的 `max(K+1, TP)` 互整除检查；共同倍数列表不能绕过该检查。归一化并经过 Ascend TP 过滤后的图列表还必须非空。
 6. fused MC2 与 MC2 hierarchy communication 不能同时开启；pinned Ascend 会直接抛出启动错误。
 7. 当前已观测的 torch_npu 路径中，`TASK_QUEUE_ENABLE=2` 与图捕获冲突，因此值 2 只允许无图且无显式 capture list。
 8. 上游 `enable_eplb/eplb_num_redundant_experts` 不是当前 Ascend 原生 dynamic EPLB 接口，已从候选 schema 移除，启动器不得误发对应 CLI。
@@ -97,7 +99,7 @@
 
 ## 3.2 归一化与无效候选剪枝：不是非法，也不代表高风险
 
-1. capture list 的乱序和重复会被 vLLM 去重排序；SP/FlashComm1 会过滤不能被 TP 整除的 shape。它们不应标成非法，但 Agent 应优先提交归一化后的有效列表，避免候选画像与实际执行配置不一致。
+1. capture list 的乱序和重复会被 vLLM 去重排序。Full Decode Graph + MTP + 有效 SP 时，vLLM 先把 shape 向上取整到 `max(K+1, TP)` 的倍数；Ascend 随后还会过滤剩余的非 TP 倍数，并同步更新有效最大值。最终列表为空才是硬失败。Agent 应优先提交已经对齐的列表，避免候选画像与实际执行配置不一致。
 2. `FULL_DECODE_ONLY` 会过滤低于 `K+1` 或高于 `max_num_seqs×(K+1)` 的不可达 shape。超界值不是启动错误，只是没有独立实验意义；推荐组合应避免浪费预算。
 3. `disable_padded_drafter_batch=true` 会让 pinned vLLM 关闭 async scheduling，而不是必然报错；当前固定 `false` 是为了保持专家基线执行路径一致。
 4. `fused_mc2=2` 在没有 speculative decode 时可能不激活相应 fused 路径，但这属于无效/退化配置，不是通用非法组合；当前 decode profile 已固定 MTP 且 K≥1。

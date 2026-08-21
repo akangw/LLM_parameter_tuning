@@ -27,8 +27,8 @@ Code, benchmark assets, Controller state and experiment output are contained by
 
 1. Submit the expert baseline unchanged.
 2. If startup or benchmark fails, collect evidence and run the existing
-   deterministic/Agent recovery chain. Recovery may change any of the 25
-   validated Active parameters or an evidence-gated Recovery Registry field;
+   deterministic/Agent recovery chain. Recovery may change any validated Active
+   parameter or an evidence-gated Recovery Registry field;
    normal List 2/List 1 phase limits do not apply to failure repair.
 3. After a healthy baseline, spend the main budget on List 2:
    capacity geometry, MTP/graph shapes, then scheduler-capacity/KV refinement.
@@ -37,8 +37,10 @@ Code, benchmark assets, Controller state and experiment output are contained by
    List 2 companions; coupling hints are not a whitelist.
 5. Enter Agent-owned cross-layer refinement. List 2 remains the main budget and
    promising List 1.3 interactions may continue. List 1.2 and then List 1.1 are
-   optional: the Agent decides whether evidence justifies them, with at most
-   four successful secondary measurements across the Session.
+   optional: the Agent decides whether evidence justifies them, without a
+   Controller-enforced Session quota. A reasoned secondary parameter may also
+   accompany an ordered-layer experiment; it cannot replace the required
+   in-layer change.
 6. Every high-risk proposal must state a mechanism hypothesis, history or
    portrait evidence, passed constraints and expected payoff. Random novelty
    without a causal argument is not accepted.
@@ -83,3 +85,13 @@ base_config: config.dp4_tp8.decode_priority_v1.yaml
 lab:
   lease_name: REAL_FRESH_LEASE_NAME
 ```
+
+## V2 continuation after A15
+
+The reviewed continuation uses `decode_priority_v2.sh` and the isolated
+`runtime_decode_priority_v2_live` root. It starts from measured best anchor
+`round_012_a10f1` rather than the inferior final A15 branch, and freezes all 28
+compatible attempted-history entries in `decode_priority_history_seed_v2.json`.
+The V1 Session remains immutable. V2 remeasures A10F1 as its own baseline, then
+lets the updated Agent strategy explore List 2 and evidence-backed List 1
+companions without the obsolete four-measurement secondary quota.
