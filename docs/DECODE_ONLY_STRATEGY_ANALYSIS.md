@@ -1,6 +1,6 @@
 # Decode-only Agent 策略：参数清单与约束
 
-> 状态：decode-only V1 已作为独立配置落地、进入 runtime allowlist 并通过测试。它必须与固定 decode benchmark 一起创建新 Session，不能热迁移或改写旧 Session；当前尚未创建真实 Lease 或启动实验。
+> 状态：Decode Priority V2 已作为独立服务器自治 Session 运行。它从 A10F1 重新建立基线，冻结 A1–A15 的兼容历史，并使用固定 decode benchmark。V1 保持只读；任何后续策略或规则变化仍必须创建新 Session，不能热改活动 Session。
 >
 > 本文只关注固定场景 `decode-256-2048`、并发 32、DP4/TP8。首要指标为输出吞吐，TTFT/TPOT 为参考指标。
 

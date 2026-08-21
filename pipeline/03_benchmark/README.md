@@ -2,10 +2,11 @@
 
 这一层只负责回答：同一场景下，这个候选是否比基线或当前最佳 Anchor 更好。
 
-## 三种接入路线
+## 当前生产与三种通用接入路线
 
 | Profile | 适用情况 | 要提供什么 |
 |---|---|---|
+| `decode_only_c32_v1` | 当前生产 Decode 吞吐调优 | 固定 `decode-256-2048`、C32 请求集；输出吞吐主指标及 TTFT/TPOT P50/P90 |
 | `aligned_l1_v4` | 有内部 ServeBench/GuideLLM 权限 | 内部 Benchmark 环境和数据 |
 | `vllm_bench_public_v1` | 没有内部权限 | 镜像中可用的公开 `vllm bench serve` |
 | `custom_adapter_v1` | 使用自有 Benchmark | 输出 result-v1 的适配器 |

@@ -1,6 +1,6 @@
 # Decode-only 自治调优硬规则总表
 
-本文汇总当前 `decode-256-2048`、DP=4/TP=8、固定 Ascend 镜像自治链路中，会在提交前、进程启动前或状态迁移前**强制拦截**的规则。生产入口是 `server_autonomous/config.dp4_tp8.decode_priority_v1.yaml`：runtime=`glm52_w8a8_a3_dp4_tp8_decode_priority_v1`、Search Limits=`automatic_registry_decode_priority_v2`、策略=`decode_priority_agentic_v1`、Benchmark=`decode_only_c32_v1`。它不收录收益倾向、推荐组合和 Agent 软提示。
+本文汇总当前 `decode-256-2048`、DP=4/TP=8、固定 Ascend 镜像自治链路中，会在提交前、进程启动前或状态迁移前**强制拦截**的规则。生产入口是 `server_autonomous/config.dp4_tp8.decode_priority_v2.yaml`：runtime=`glm52_w8a8_a3_dp4_tp8_decode_priority_v2`、Search Limits=`automatic_registry_decode_priority_v2`、策略=`decode_priority_agentic_v1`、Benchmark=`decode_only_c32_v1`。V2 继承 V1 配置并替换 A10F1 基线与完整历史；它不收录收益倾向、推荐组合和 Agent 软提示。
 
 `K` 表示 MTP 每轮预生成的候选 token 数，`K+1` 表示一次验证 decode 实际处理的 token 位置数。
 
@@ -63,7 +63,7 @@ TP=8 且显式 `compilation_enable_sp=true` 或 FlashComm1=true 时，G04 示例
 1. 新 Session 必须先成功测量冻结基线，之后才进入性能搜索；失败恢复不受正常分层优先级限制。
 2. 分层阶段由 Controller 给出当前层，但层内参数和值由 Agent 决定。候选至少要改变当前层的一个参数，允许携带跨层 companion；当前未启用 `skip_layer`。
 3. `decode_priority_agentic_v1` 正常探索每轮允许 1–4 个独立参数；单参数最多跨 3 个网格步，合计最多 10 个网格步。具体有序层可以进一步收紧参数数量。
-4. List 1.2/1.1 可选开关不能在有序分层阶段消耗轮次，只能在自主跨层阶段由 Agent 基于证据选择；成功测量总额度为 4 次。失败恢复不消耗该额度。
+4. List 1.2/1.1 不要求独立完成有序层，也没有 Controller 成功测量总额度。Agent 可以在自主跨层阶段基于证据选择；在有明确机制或耦合依据时，也可把它们作为当前有序层的 companion，但候选仍必须至少包含一个当前层参数变化。失败恢复不受分层优先级限制。
 5. Agent 声明的 changes 必须与候选实际差异完全一致；每项 before/after 必须正确且理由可审计。多参数候选必须给出耦合关系、参数证据和约束检查，不能只提交结论。
 6. 关闭已启用的 MTP 只能标记为 `diagnostic_ablation`，且每个 Session 最多一次；不能伪装成常规性能优化。
 7. 与历史中完整失败候选完全相同的组合会被隔离；只有部分字段相同不会全局封禁单参数或单值。
@@ -77,7 +77,7 @@ TP=8 且显式 `compilation_enable_sp=true` 或 FlashComm1=true 时，G04 示例
 3. Recovery Registry 只能修改登记字段，并且只能使用登记值域；变更数量不能超过配置上限，before/after 和理由必须真实完整。
 4. 失败修复不能再次提交一个已经失败且没有已知成功证据的完整候选；已知成功候选可以作为回滚目标。
 5. 运行时规则库只隔离具有完整条件和证据的精确组合；Agent 提议的新规则在达到晋升条件前只是 proposal，不能直接变成全局硬禁令。
-6. HCCL、节点、benchmark harness 等可恢复基础设施故障使用各自有界重试预算；预算耗尽后进入 Agent 诊断，而不是把相关调优参数永久移出 Search Limits。
+6. HCCL、节点、benchmark harness 等可恢复基础设施故障按类型计数并进入 Agent 诊断；生产 V2 的 `hard_terminal_only=true` 不会因旧软预算阈值而暂停，也不会把相关调优参数永久移出 Search Limits。
 
 ## 7. 部署、Benchmark 与版本身份硬门槛
 

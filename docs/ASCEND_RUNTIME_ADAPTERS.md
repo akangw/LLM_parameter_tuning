@@ -1,5 +1,9 @@
 # Ascend 模型、镜像与拓扑适配包
 
+> 本文描述通用适配机制。当前生产 Runtime Adapter 是
+> `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`，见 [CURRENT_DEFAULTS.md](CURRENT_DEFAULTS.md)；
+> 下文出现的 DP2/TP16 “默认”仅指早期通用适配示例。
+
 运行适配包把一次可比较实验所依赖的兼容性边界组合成单一身份：
 
 ```text

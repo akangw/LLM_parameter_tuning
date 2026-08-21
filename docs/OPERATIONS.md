@@ -1,10 +1,10 @@
 # 运行与恢复
 
-> 当前默认：固定 `DP4/TP8` 的 `glm52_w8a8_a3_dp4_tp8_search_v4`；使用
-> Guided-V4 实测 incumbent + `automatic_registry_a8_frontier_v4` +
-> `hierarchical_agentic_guided_v5` + `aligned_fast_c32_v2`。Topology
-> Campaign V4 已实现但默认休眠，旧 `automatic_registry_v1` 和
-> `aligned_l1_v4` 只用于显式历史回退。
+> 当前生产任务：固定 `DP4/TP8` 的
+> `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`；使用 A10F1 基线、
+> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 和
+> `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 与 Topology Campaign 只用于
+> 显式历史/框架路线，不能管理活动 V2 Session。
 
 ## 前置条件
 
@@ -18,6 +18,17 @@
 
 ## 常用命令
 
+当前服务器自治生产命令：
+
+```bash
+cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+bash "$AUTO/decode_priority_v2.sh" service supervisor-status
+bash "$AUTO/decode_priority_v2.sh" status
+```
+
+下面的 PowerShell 命令属于通用 Windows→服务器框架路线，不用于恢复活动 V2：
+
 ```powershell
 # 无远端提交的前置检查
 .\一键启动.ps1 -CheckOnly
@@ -28,7 +39,7 @@
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
-# 默认 automatic_registry_a8_frontier_v4；下面两条演示显式历史/人工回退
+# 以下是通用框架的显式历史/人工 Profile 示例，不用于当前生产 V2
 .\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
 .\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 
@@ -76,7 +87,8 @@ Agent Provider。发现可续跑状态时优先使用 `--resume`。
 
 模型位于 DTFS。固定 vLLM 版本的自动识别只把 NFS/Lustre 当作网络文件系统，
 因此默认会退回 Safetensors lazy mmap；在当前 182-shard、TP16/节点的部署中，
-历史日志显示权重加载约需 22～29 分钟。
+历史日志显示 182 个 shard 的权重加载通常需要较长时间，具体以
+`startup_timeline.jsonl` 和 rank 日志为准。
 
 项目现已把以下设置冻结为服务启动契约：
 
@@ -109,7 +121,7 @@ ImagePull/ContainerCreating。
 ## 远端只读检查
 
 ```powershell
-ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190 && ktp-lab status --lease vllmtkb-418bd627-32c8cf190-glm52-a3-32npu"
+ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1 && bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v2.sh status"
 ```
 
 远端正式运行目录之外的 `/mnt/host-model/slai/user-1-wangakang/wangakang` 内容只允许读取。

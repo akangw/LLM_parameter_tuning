@@ -29,7 +29,7 @@
 - 召回：与场景相关的知识集合，可以偏宽。
 - Search Limits：Controller 最终允许 Agent 使用的边界，必须严格。
 
-因此当前 W8A8 默认链路的 `340 份画像 → 109 份召回 → 自动注册表 22 个 Active`
+因此当前 Decode-only V2 生产链路的 `340 份画像 → 225 份召回 → 自动注册表 25 个 Active`
 是逐层收紧，不是画像丢失。人工审计的 `curated_registry_v1` 仍是显式可选路径，
 其 Active 数量不代表默认 Session 的实际边界；实际权威值始终以 Session 冻结的
 `00_search_space/search_space.compiled.yaml` 为准。

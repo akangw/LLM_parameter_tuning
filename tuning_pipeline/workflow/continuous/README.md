@@ -49,21 +49,18 @@ Runtime Adapter.
 
 ## Search-Space profiles
 
-New W8A8 Sessions default to `automatic_registry_a8_frontier_v4`. It rebuilds a registry
-from tagged portraits, exact pinned source evidence, and the deterministic
-compatibility policy. It imports only identity-matched completed history for
-conditional failure memory and cross-Session continuation. The V4 production
-profile freezes 30 curated Active axes and 73 auditable Reserve axes; automatic
-Active/Reserve rotation is disabled so generic novelty scoring cannot displace a
-core serving axis. `curated_registry_v1` remains an explicit alternative that
-compiles the reviewed curated registry and can apply identity-compatible,
-bounded history-aware rotation. Select either only when creating a Session
-with `-SearchSpaceProfile`.
+The production V2 dispatcher selects `automatic_registry_decode_priority_v2`.
+It freezes 25 Active axes, 75 Reserve axes and 42 Fixed contracts from tagged
+portraits, pinned source evidence and deterministic Decode compatibility policy,
+then imports only identity-matched A1-A15 history. The generic Search-V4 config
+still selects `automatic_registry_a8_frontier_v4` (30 Active, 73 Reserve), and
+`curated_registry_v1` remains an explicit alternative. A profile may be selected
+only when creating a Session.
 
 The effective candidate contains:
 
-- 30 active tunable parameters and 73 auditable reserve parameters in the
-  current automatic W8A8 compilation;
+- 25 active tunable parameters and 75 auditable reserve parameters in the
+  production Decode V2 compilation;
 - `async_scheduling` as a coupled derived companion when the curated MTP token
   axis is enabled after B0;
 - the remaining single-value runtime-contract parameters as fixed fields;
@@ -106,10 +103,11 @@ Ascend runtime does not expose the required upstream CLI contract, so
 `enable_eplb=false` and `eplb_num_redundant_experts=0` remain fixed runtime
 fields. A candidate that attempts to enable EPLB is rejected before submission.
 
-Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The current default
-runtime is `glm52_w8a8_a3_dp4_tp8_search_v4`: DP4/TP8 is frozen before Session
-creation, and the Agent receives a fixed-topology identity rather than a list
-of topology candidates. Only serving parameters consume the active budget.
+Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The current production
+runtime is `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`: DP4/TP8 is frozen before
+Session creation, and the Agent receives a fixed-topology identity rather than
+a list of topology candidates. The generic `config.yaml` retains Search V4 as
+an explicit framework route; it is not the active production Session.
 
 The completed `glm52_w8a8_a3_topology_campaign_v4`, `topology_campaign.py`,
 DP2/TP16 and the topology Campaign remain integrated but dormant behind
@@ -126,15 +124,17 @@ and 16 MiB blocks, waits for completion, and then launches vLLM with lazy mmap
 so the broken background prefetch cannot race model loading. Requested and
 effective strategies, files, bytes, seconds, shards/s, and GiB/s are archived.
 
-The server-autonomous fixed route uses the isolated persistent lease
-`vllmtkb-auto-fixed-dp4tp8-v2-20260817-2x16npu`; it does not share historical
-leases or process slots.
+The production server-autonomous route uses `decode_priority_v2.sh`, a private
+ignored lease overlay, and the isolated `runtime_decode_priority_v2_live` root.
+It must not share a process slot with another dispatcher.
 
 ## Benchmark modes
 
 `config.yaml` keeps multiple benchmark implementations:
 
-- `aligned_fast_c32_v2` (default): the copied and immutable
+- `decode_only_c32_v1` (production): one fixed `decode-256-2048` C32 workload,
+  with output throughput as primary and TTFT/TPOT P50/P90 reporting;
+- `aligned_fast_c32_v2` (generic Search-V4 default): the copied and immutable
   `tuning-fast-c32-v2` suite, four frozen C32 workloads with complete output
   throughput, TTFT and TPOT reporting. Its 600-second target is planning
   metadata and never truncates the fixed suite;
@@ -174,12 +174,16 @@ If a round ends without metrics, Codex performs a separate failure analysis:
 
 - proven parameter validation/OOM failure: generate a corrected full candidate;
 - transient platform/network/HCCL failure: retry the same candidate;
-- image, dependency, runtime bug, benchmark bug, or unknown cause: pause for
-  human review instead of making an unsafe change.
+- image, dependency, runtime bug, benchmark bug, or unknown cause: collect full
+  evidence and request a schema-constrained Agent recovery decision. Retry or a
+  Search-Limits/Recovery-Registry correction remains automatic when evidence
+  supports it; pause only for a proven immutable external dependency.
 
 Failure recovery prompts, evidence, JSONL events, decisions, and retry/adjusted
-parameters are retained in the failed round. Three repeated infrastructure
-failures trigger a safety pause.
+parameters are retained in the failed round. Retry counters remain audit and
+resource-safety signals; the production hard-terminal-only contract does not
+turn an otherwise recoverable failure into a human pause merely because an old
+soft counter was reached.
 
 The controller also detects terminal KTP states when `MASTER_DONE` is missing,
 enforces `round_timeout_minutes`, prevents concurrent controller instances and
@@ -194,13 +198,15 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-The W8A8 default strategy is `hierarchical_agentic_guided_v5`. The Controller
-selects the semantic layer during ordered coverage, while the Agent owns the
-exact parameters, values, parameter count and justified companions; cross-layer
-refinement is fully Agent-owned. It makes `max_model_len` a normal Active axis,
-permits evidence-backed one-to-four parameter experiments, remembers hard failures
-as exact conditional combinations, measures the Agent's 65/25/10 exploration mix,
-and leaves the final cross-layer intent and parameter choice to the Agent.
+The production strategy is `decode_priority_agentic_v1`. The Controller selects
+only the semantic layer during ordered List 2 and List 1.3 coverage, while the
+Agent owns exact parameters, values, parameter count and justified companions;
+cross-layer refinement is fully Agent-owned. It makes `max_model_len` a normal
+Active axis, permits evidence-backed one-to-four parameter experiments, imports
+the compatible A1-A15 history, and remembers hard failures as exact conditional
+combinations. Optional List 1.2/1.1 changes have no Session quota but still need
+mechanism/history evidence. `hierarchical_agentic_guided_v5` remains the generic
+Search-V4 strategy for a separate Session.
 `best_anchor_coverage_v2` remains an integrated opt-in strategy. It anchors each
 proposal to the highest-scoring configuration that passed the deterministic
 baseline-relative throughput and latency gate. Its evidence bundle includes
@@ -251,8 +257,9 @@ reject overrides so an existing experiment cannot drift.
 
 Benchmark selection is an independent frozen axis. `benchmark_profiles.yaml`
 maps a stable profile name to one complete definition in `config.yaml`.
-`aligned_fast_c32_v2` is the formal default; `aligned_fast_c32_v1` and
-`aligned_l1_v4` remain opt-in.
+`decode_only_c32_v1` is the production profile selected by the V2 dispatcher.
+`aligned_fast_c32_v2` remains the generic Search-V4 default; `aligned_fast_c32_v1`
+and `aligned_l1_v4` remain opt-in.
 A new Session may use `-BenchmarkProfile`; resume and
 retry reject Benchmark overrides so measurements from different contracts are
 never silently mixed.

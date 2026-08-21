@@ -1,6 +1,6 @@
 # A8 Fast Agentic V2 自动调优链路
 
-> 历史版本。当前新 Session 默认使用 [A8 Frontier Agentic V3](A8_FRONTIER_AGENTIC_V3.md)；V2 仅作为显式回退保留。
+> 历史版本。当前生产入口见 [CURRENT_DEFAULTS.md](CURRENT_DEFAULTS.md)；本文仅用于复现旧 Session。
 
 版本标识：`a8-fast-agentic-v2-20260814`
 

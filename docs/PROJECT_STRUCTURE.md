@@ -59,15 +59,16 @@ Session/00_search_space/ 中冻结的场景参数画像子集
 如果镜像中的 vLLM/vllm-ascend commit 变化，必须重建或迁移共享画像；如果只是模型、
 量化或拓扑变化，则使用同一源码画像重新做场景召回和编译，不能继承旧场景的历史最优值。
 
-## 两个场景的固定入口
+## 场景与生产入口
 
 | 场景 | 总配置 | 基线 | 当前状态 |
 |---|---|---|---|
-| W8A8 2×16 NPU DP2/TP16 | `scenarios/glm52-w8a8-a3-2n-dp2-tp16/scenario.yaml` | `b0_deployable_64k.yaml` | integrated |
+| W8A8 2×16 NPU DP4/TP8 Decode-only | `server_autonomous/config.dp4_tp8.decode_priority_v2.yaml` | `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml` | production |
+| W8A8 2×16 NPU DP2/TP16 | `scenarios/glm52-w8a8-a3-2n-dp2-tp16/scenario.yaml` | `b0_deployable_64k.yaml` | integrated historical |
 | W4A8C8 1×16 NPU DP2-local/TP8 | `scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/scenario.yaml` | `a0_glm52_w4a8c8_existing_tuned.yaml` | planned |
 
-`scenario.yaml` 是唯一需要先看的索引，不重复保存所有底层文件。执行下面的命令可以
-解析并列出其引用的每个真实文件：
+通用场景使用 `scenario.yaml` 作为索引；当前生产 Decode V2 由专用 dispatcher 和
+继承配置固定，不能用通用场景脚本恢复。通用场景可用下列命令列出引用文件：
 
 ```powershell
 .\scripts\scenario.ps1 -Action artifacts -Name glm52-w8a8-a3-2n-dp2-tp16

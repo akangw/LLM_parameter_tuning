@@ -1,10 +1,10 @@
 # 架构与数据流
 
-> 2026-08-18 当前默认为固定 DP4/TP8、A8 DP4 派生基线、28/75 自动空间、
-> guided-v4 Agent 自主选参与 fast-C32-v2 固定基准。Topology Campaign V4 已实现但
-> 不介入当前主流程。本文后续出现的 B0、DP2、22/80、
-> `hierarchical_throughput_v1` 或 `aligned_l1_v4` 默认描述属于保留的旧路线；
-> 当前权威设计见 [A8_FRONTIER_AGENTIC_V3.md](A8_FRONTIER_AGENTIC_V3.md)。
+> 当前生产链路是 Decode Priority V2：固定 DP4/TP8、A10F1 专家锚点、
+> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 与
+> `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 配置、DP2、旧 A8 Fast/Frontier
+> 和 Topology Campaign 都是显式参考路线。当前权威入口见
+> [CURRENT_DEFAULTS.md](CURRENT_DEFAULTS.md)。
 
 ## 系统边界
 
@@ -38,19 +38,19 @@ flowchart LR
 
 ## Search Limits
 
-当前 W8A8 新 Session 默认使用独立自动注册表：
+当前生产 V2 Session 使用独立自动注册表：
 
 ```text
 340 ParameterYAML
 → 225 场景召回
 → 自动 registry.generated.yaml
 → 142 自动 Registry 参数
-→ 103 Tunable：28 Active + 75 Reserve
-→ 39 Fixed + 0 Compiler Rejected
+→ 100 Tunable：25 Active + 75 Reserve
+→ 42 Fixed + 0 Compiler Rejected
 ```
 
-新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。当前自动路径的
-22 个 Active 是：
+新 Session 会重新编译并把结果冻结到自身 `00_search_space/`。生产 V2 的
+25 个 Active 是：
 
 ```text
 max_num_seqs
@@ -59,39 +59,36 @@ max_num_batched_tokens
 gpu_memory_utilization
 compilation_mode
 num_speculative_tokens
+enable_chunked_prefill
 async_scheduling
 enable_expert_parallel
-speculative_config__method
-long_prefill_token_threshold
-mlapo
 fused_mc2
 enable_balance_scheduling
 enable_reduce_sample
 speculative_config__enforce_eager
-speculative_config__attention_backend
 cudagraph_capture_sizes
-VLLM_ASCEND_ENABLE_BATCH_MEMCPY
+max_cudagraph_capture_size
 TASK_QUEUE_ENABLE
+speculative_config__disable_padded_drafter_batch
 additional_config__ascend_compilation_config__fuse_allreduce_rms
 additional_config__prefill_comm_compute_overlap
 additional_config__ascend_compilation_config__enable_static_kernel
 additional_config__ascend_compilation_config__enable_npugraph_ex
 additional_config__ascend_compilation_config__fuse_norm_quant
-compilation_enable_sp
 enable_prefix_caching
 flashcomm1
 disable_hybrid_kv_cache_manager
 ```
 
-`automatic_registry_a8_frontier_v4` 是固定 DP4/TP8 Session 的统一默认，不读取人工注册表，而是从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表；`curated_registry_v1` 保留为复用人工审计 `registry.yaml` 的显式可选路线。当前注册表为 30 Active + 73 Reserve。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 联合选择；在 Full Decode Graph 且有效 SP（显式 `compilation_enable_sp` 或 FlashComm1）生效时，Controller 提交前强制校验 `K+1` 与 TP 必须互相整除，并校验归一化后的图列表至少保留一个 TP 倍数、图上限与 scheduler budget。历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时，才可在新 Session 边界轮换 Reserve 轴。休眠的 `glm52_w8a8_a3_topology_campaign_v4` 未来恢复时仍使用拓扑隔离的失败和 best anchor，不跨 DP/TP 初始化。
+`automatic_registry_decode_priority_v2` 从召回画像、固定源码、版本化兼容覆盖和确定性组合约束生成注册表。MTP 深度、CUDAGraph 列表和最大图尺寸由 Agent 选择；在 Full Decode Graph 且有效 SP（显式 `compilation_enable_sp` 或 FlashComm1）生效时，Controller 提交前强制校验 `K+1` 与 TP 必须互相整除，并校验归一化后的图列表至少保留一个 TP 倍数、图上限与 scheduler budget。历史只有在 Benchmark、镜像、源码和完整拓扑身份均匹配时才能导入。通用 `automatic_registry_a8_frontier_v4`、人工 `curated_registry_v1` 和休眠 Topology Campaign 仍可显式选择，但不介入生产 V2。
 
 探索预算按成功测量轮的实际候选参数差异计数，不读取该轮结束后为下一轮生成的 Agent 决策。负收益分支回到 `best_accepted_anchor` 只更新 Controller 状态，不消耗探索配额，也不重复提交 Benchmark；从该锚点提出的新变化才计入参数数目和网格步长。Session 停止时写出 `final_selection.json`，并把历史最优已接受候选固化为最终配置，同时保留最后测量轮用于审计。
 
 Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量总配额。Agent 可在跨层阶段自主回访，也可在有明确耦合依据时把次级参数作为当前有序层的 companion；有序层本身仍必须至少包含一个层内变化。该开放只移除探索治理限制，不绕过候选值域、完整配置不变量、确定性非法组合过滤和重复失败候选隔离。
 
-自动替代路径当前 Controller 编译结果为：103 Tunable（28 Active + 75 Reserve）→ 39 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
+生产 V2 当前 Controller 冻结结果为：100 Tunable（25 Active + 75 Reserve）→ 42 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
 
-当前正式 decode-only 自治任务不使用上述通用 V4 默认，而由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v1.yaml` 显式固定：DP4/TP8 runtime、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 与 `decode_only_c32_v1`。恢复同一 Session 时继续使用其冻结身份；规则或策略版本发生变化时，先优雅结束旧轮次，再建立继承兼容历史的新 Session，不能把新旧冻结配置混在同一个 Session 中。
+当前正式 decode-only 自治任务由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v2.yaml` 显式固定：DP4/TP8 runtime、A10F1 基线、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1`、`decode_only_c32_v1` 和 V2 历史种子。恢复同一 Session 时继续使用其冻结身份；规则或策略版本发生变化时，先优雅结束旧轮次，再建立继承兼容历史的新 Session，不能把新旧冻结配置混在同一个 Session 中。
 
 历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 
@@ -99,7 +96,7 @@ Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量
 
 ## 在线状态机
 
-- 当前默认从 A8 DP4/TP8 fixed-v3 建立新 Session 基线；B0 作为官方源码默认对照保留。
+- 当前生产 V2 从 A10F1 重新测量并建立本 Session 基线；旧 A8/B0 只作历史对照。
 - Codex 从最佳已验收锚点出发提出候选。
 - 第一层使用画像和关系证据判断候选是否合理。
 - 第二层由 Python 强制执行白名单、参数组合、网格预算、重复候选和历史隔离。

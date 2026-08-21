@@ -1,4 +1,7 @@
-# Decode Priority V1
+# Decode Priority V1/V2 Runbook
+
+> 当前生产入口是 V2。下方 V1 身份与启动门槛只用于解释冻结历史，不能用于管理
+> 活动 V2 Session；V2 的准确入口和命令见本文最后一节。
 
 ## Frozen experiment identity
 
@@ -49,9 +52,9 @@ Code, benchmark assets, Controller state and experiment output are contained by
    automatic stop: the Agent continues while meaningful untested hypotheses or
    frontier uncertainty remain. Failed or incomplete rounds do not satisfy it.
 
-## Start gate
+## V1 historical start gate
 
-The package is intentionally not running. Before launch:
+V1 已经结束并保持只读。以下步骤只保留为历史审计，不应再次启动同一 Lease：
 
 1. Synchronize the reviewed local payload to the isolated server project
    `vllmtkb-decode-priority-v1`.
@@ -95,3 +98,22 @@ compatible attempted-history entries in `decode_priority_history_seed_v2.json`.
 The V1 Session remains immutable. V2 remeasures A10F1 as its own baseline, then
 lets the updated Agent strategy explore List 2 and evidence-backed List 1
 companions without the obsolete four-measurement secondary quota.
+
+V2 frozen identity:
+
+- Runtime: `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`
+- Baseline: `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml`
+- History: `decode_priority_history_seed_v2.json`
+- Search/strategy/benchmark: unchanged names, but frozen again into the V2 Session
+
+All production lifecycle commands must go through the V2 dispatcher:
+
+```bash
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+bash "$AUTO/decode_priority_v2.sh" service supervisor-status
+bash "$AUTO/decode_priority_v2.sh" status
+```
+
+The ignored overlay is `config.dp4_tp8.decode_priority_v2.local.yaml` and must
+extend `config.dp4_tp8.decode_priority_v2.yaml`. Never use the V1 or generic
+dispatcher against the V2 Lease.

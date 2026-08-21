@@ -1,6 +1,8 @@
 # Auto vLLM Parameter
 
-> 第一次阅读只看 [业务链路总览](pipeline/README.md)：参数知识 → Agent 调参 → Benchmark。准备运行时再从 [场景目录](scenarios/README.md) 选择 W8A8/W4A8C8，并阅读 [可迁移快速启动](docs/PORTABLE_QUICKSTART.md)。
+> 交接当前生产任务先看 [交接清单](docs/HANDOFF.md) 和
+> [当前生产默认](docs/CURRENT_DEFAULTS.md)。理解通用业务链再看
+> [业务链路总览](pipeline/README.md)：参数知识 → Agent 调参 → Benchmark。
 
 > GLM-5.2-W4A8C8 单节点 DP2-local2/TP8 已建立独立 planned 适配路线，现有调优脚本作为 A0，详见 [W4A8C8 A0 场景](docs/GLM52_W4A8C8_A0.md)。该路线使用独立本地 Runtime Root、远端项目、Lease、Session、缓存和实验产物，不改变 W8A8 默认链路。
 
@@ -14,7 +16,10 @@
 - 参数画像、Tags、场景召回、人工注册表和自动注册表知识产物均已建立。
 - 新 Session 会重新编译并冻结自己的 Search Limits；在线权威结果只保存在该 Session 的 `00_search_space/`。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
-- 当前正式基线是 DP4/TP8 的 A8 派生固定基线 `a8_glm52_w8a8_dp4_tp8_fixed_v3.yaml`；`B0-deployable` 仅保留为官方源码默认对照与其他 Runtime Adapter 的显式入口。
+- 当前生产服务器自治路线是 Decode Priority V2：固定 DP4/TP8，以
+  `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml` 重新测量历史最佳 A10F1，
+  使用 `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 和
+  `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 和 B0/A8 路线保留为显式参考。
 
 README 不公开具体实验分数、吞吐、延迟、逐轮候选或当前 Session
 状态；这些数据只保存在对应 Session 的受管产物中，并通过状态和导出命令按需查看。
@@ -83,11 +88,11 @@ cd .\tuning_pipeline
 python -m workflow.registry_builder.full_pipeline --dry-run
 ```
 
-它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。`automatic_registry_a8_frontier_v4` 现为固定 DP4/TP8 Fast-C32 的统一默认（30 Active + 73 Reserve），包含 MTP K=1–4、K+1/TP8 约束下的 CUDAGraph 模板以及条件化 TASK_QUEUE 候选；V3、V2、原 `automatic_registry_v1` 和人工审计的 `curated_registry_v1` 保留为显式可选路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。当前生产 V2 使用 `automatic_registry_decode_priority_v2`，冻结结果为 25 Active + 75 Reserve + 42 Fixed；通用 `automatic_registry_a8_frontier_v4`、旧 V3/V2、`automatic_registry_v1` 和人工 `curated_registry_v1` 均保留为显式路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
 
 ### 更换 Ascend 模型、镜像、量化或拓扑
 
-模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前默认适配包是 `glm52_w8a8_a3_dp4_tp8_search_v4`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8，并从 Guided-V4 的实测最佳锚点续跑。
+模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前生产适配包是 `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8，并从 A10F1 建立新 Session 基线。
 
 新组合先生成 `planned` 适配包：
 
@@ -120,7 +125,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
-本地与服务器自治当前默认运行时统一为 `glm52_w8a8_a3_dp4_tp8_search_v4`：DP4/TP8 在 Session 创建前锁定，主流程执行 `Guided-V4 实测 incumbent + automatic_registry_a8_frontier_v4 + hierarchical_agentic_guided_v5 + aligned_fast_c32_v2`。DP2/TP16、旧 frontier-v3/guided-v4 和拓扑 Campaign 均保留为显式选择，不介入默认主流程，也不与新 Session 混写冻结身份。历史说明见 [`FIXED_DP2_TP16_V4.md`](docs/FIXED_DP2_TP16_V4.md)、[`FIXED_DP4_TP8_V1.md`](docs/FIXED_DP4_TP8_V1.md)；未来恢复拓扑搜索见 [`TOPOLOGY_CAMPAIGN_V4.md`](docs/TOPOLOGY_CAMPAIGN_V4.md)。
+当前生产服务器自治运行时为 `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A10F1 + automatic_registry_decode_priority_v2 + decode_priority_agentic_v1 + decode_only_c32_v1`。根 `config.yaml` 的 Guided-V4/Fast-C32 组合仍是通用框架入口，但不管理活动生产 Session。DP2/TP16、旧 frontier/guided 和拓扑 Campaign 均为显式历史路线，分类见 [`docs/README.md`](docs/README.md)。
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -134,9 +139,9 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 | 接口 | 启动参数 | 当前选项 | 定义位置 |
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
-| Search-Space 构建 | `-SearchSpaceProfile` | `automatic_registry_a8_frontier_v4`（默认）、`automatic_registry_a8_frontier_v3`、`automatic_registry_a8_agentic_v2`、`automatic_registry_v1`、`curated_registry_v1` | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | `hierarchical_agentic_guided_v5`（默认）、`hierarchical_agentic_guided_v4`、`hierarchical_agentic_frontier_v3`、`hierarchical_agentic_topology_v2`、`hierarchical_throughput_v1`、`best_anchor_coverage_v2/v3` | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
-| Benchmark | `-BenchmarkProfile` | `aligned_fast_c32_v2`（默认）、`aligned_fast_c32_v1`、`aligned_l1_v4`、`vllm_bench_public_v1`、`custom_adapter_v1` | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+| Search-Space 构建 | `-SearchSpaceProfile` | 生产：`automatic_registry_decode_priority_v2`；通用/历史 Profile 仍可在新 Session 显式选择 | `tuning_pipeline/workflow/search_space_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | 生产：`decode_priority_agentic_v1`；其他策略只用于独立新 Session | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | 生产：`decode_only_c32_v1`；其他 Benchmark 不能与其跨口径比较 | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是
 Runtime Adapter 的执行后端，不改变上述四个调优接口。
@@ -155,13 +160,13 @@ Runtime Adapter、四个接口、失败重试、规则兜底和 V2/V3 差异统�
 |---|---|---|---|
 | Lease 准入（仅服务器自治默认启用） | 双节点暂时不是 `2/2 Ready`、心跳缺失或平台正在重调度 | 最多等待 7200 秒，每 30 秒检查；状态检查与提交之间出现 protocol-v2 心跳竞态时，同一候选和 run ID 最多重试 12 次 | 不提交新一轮；只有超时、资源被其他白名单外任务占用或身份矛盾才暂停 |
 | 资源隔离 | 任一 `blocked_lease_names` 仍占用资源，或当前槽位未空闲 | 不等待、不抢占、不重叠提交 | 立即失败关闭 |
-| 候选生成 | Agent 候选越过白名单、网格距离、组合约束或证据要求 | 最多重新选参 2 次 | 暂停，禁止提交非法候选 |
-| Agent 协议 | API/CLI 瞬断、空响应、非 JSON，或输出附带 Schema 禁止的说明性字段 | 同一实验轮最多重试 4 次；仅剥离明确禁止的多余元数据并记录审计，不改参数值、不补字段 | 协议重试耗尽后由服务守护最多恢复 Controller 6 次，随后才暂停人工检查 |
+| 候选生成 | Agent 候选越过白名单、网格距离、组合约束或证据要求 | 同一决策最多重新生成 5 次；非法候选从不提交 | 连续生成失败记为 Controller 错误，由进程守护重新读取已完成轮次并分析，不重跑 Benchmark |
+| Agent 协议 | API/CLI 瞬断、空响应、非 JSON，或输出附带 Schema 禁止的说明性字段 | 同一决策最多重试 4 次；仅剥离明确禁止的多余元数据并记录审计，不改参数值、不补字段 | 转为可恢复 Controller 错误；连续控制面崩溃由独立的 10 次环保护停止，避免程序自身无限崩溃 |
 | Benchmark | 单 Case、完整运行或指标编译发生已知可恢复错误（含未知 GuideLLM/ServeBench 错误） | 只要 `SERVICE_READY` 且无服务侧危险签名，先在仍运行的同一服务上：Case 最多 2 次、运行/指标各最多 3 次、完整矩阵共享最多 3 次；退出后仍由 Controller 保持同候选恢复 | 保存每次失败产物；仅 OOM/HCCL/EngineCore、参数非法、身份/权限/路径错误等禁止误套 Benchmark 重试 |
-| 未知实验故障 | 确定性规则无法归类或无法给出修复 | Codex+DeepSeek 读取完整证据；若 Agent 仍想暂停但没有明确人工依赖，Controller 自动改为有预算的原参数诊断重跑；也可执行 Search Limits 内的最小参数修正 | 禁止 Agent 改镜像、拓扑、路径、Benchmark 或系统文件；明确人工依赖或预算耗尽才暂停 |
-| 恢复总预算 | 多种恢复策略连续触发 | 瞬态同候选最多 6 次、Agent 诊断性重跑最多 2 次、参数修正最多 4 次，且同一失败链总计最多 10 个恢复轮 | 达到任一上限才暂停，防止 32 NPU 无限空耗 |
-| Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变，最多额外提交 2 次 | 暂停人工处理，避免无限消耗 NPU |
-| 服务守护 | Controller 进程意外退出 | systemd/Supervisor 按服务策略重启；已有运行轮次从冻结状态恢复；已完成 Benchmark 的轮次从 Agent 分析处续接，不重跑测评 | 明确不可恢复或超过恢复预算的 `paused_*`、终态、状态不一致或保留 STOP 标记时退出码 78，禁止盲目重启 |
+| 未知实验故障 | 确定性规则无法归类或无法给出修复 | Agent 读取完整证据；若它想暂停但没有证明人工依赖，Controller 改为原参数诊断重跑，或接受 Search Limits/Recovery Registry 内有证据的修正 | 禁止 Agent 改镜像、拓扑、路径、Benchmark 或系统文件；只有证明硬终止条件才暂停 |
+| 恢复计数 | 多种恢复策略连续触发 | 同候选、诊断、参数修正和总恢复轮均独立计数并写入审计 | 生产 V2 的 `hard_terminal_only=true` 使这些计数不构成人工暂停条件；它们用于解释失败链，不截断自治 |
+| Controller 同候选恢复 | Pod、网络、HCCL、端口或超时等瞬态故障 | 参数不变并继续重试；每轮重新收集证据，允许 Agent 改走有依据的参数修复 | 只有硬终止证据或连续 10 次 Controller 自身崩溃环才停止；基础设施失败不淘汰候选 |
+| 服务守护 | Controller 进程意外退出 | systemd/Supervisor 按服务策略重启；已有运行轮次从冻结状态恢复；已完成 Benchmark 的轮次从 Agent 分析处续接，不重跑测评 | 明确硬终止的 `paused_for_human`、连续 10 次 Controller 崩溃环、终态、状态不一致或保留 STOP 标记时停止盲目重启 |
 | 状态与提交事务 | 写状态时掉电、状态文件损坏，或远端提交成功后 Controller 突然退出 | `state.json` 原子替换并保留同版本备份；提交前持久化 intent，提交后立即落盘 task/run 身份；重启时先对账再继续 | 主状态与备份都损坏，或无法证明远端提交身份时失败关闭，禁止猜测性重复提交 |
 | 控制面读故障 | SSH/本地传输暂断、远端产物查询失败 | 单轮原地重试 3 次，仍失败则标为可恢复 Controller I/O 错误，由 Supervisor 走有上限恢复 | 不修改候选、不重跑已完成 Benchmark |
 | DP 前端握手超时 | `SERVICE_READY` 前出现精确的五分钟 front-end response timeout，且 Lease 为一活跃一退出、没有 OOM/参数非法/HCCL 证据 | 归类为瞬态进程协调故障，保持候选走基础设施重试预算 | 任一危险签名存在时不套用该规则，转完整失败分析 |
@@ -174,9 +179,9 @@ Benchmark，或日志已把启动失败明确归因到候选参数/组合并经 
 `--replay-unmeasured-candidate round_NNN_label`，命令会保留原轮和被替代轮的审计
 文件，且拒绝回放已经 Benchmark 或已被参数证据淘汰的候选。
 
-若旧版本已因确定性可恢复故障进入 `paused_for_human`，服务器自治入口可执行
-`service.sh auto-retry-paused` 后再启动 Supervisor/systemd。请求只会在 Controller
-重新匹配白名单签名且重试预算未耗尽时被消费；新 Task/Run/轮次会原子写回状态。
+若旧版本已因确定性可恢复故障进入 `paused_for_human`，Decode V2 服务器自治入口可执行
+`decode_priority_v2.sh service auto-retry-paused` 后再启动 Supervisor/systemd。Controller
+会重新做 Agent 分析与硬终止校验；新 Task/Run/轮次会原子写回状态。
 
 默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。
 

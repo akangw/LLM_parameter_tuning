@@ -2,7 +2,7 @@
 
 版本标识：`a8-frontier-agentic-v3-20260814`
 
-这是已归档的固定 DP2/TP16 frontier-v3 方案；当前默认已切换为固定 DP4/TP8 的 guided-v4。本文保留用于解释旧 Session 的冻结身份，不能当作新 Session 默认。V3 的目标不是穷举，而是在确定性硬约束内允许 Agent 做高风险、可解释、可复现的组合探索。
+这是已归档的固定 DP2/TP16 frontier-v3 方案。当前生产入口见 [CURRENT_DEFAULTS.md](CURRENT_DEFAULTS.md)；本文保留用于解释旧 Session 的冻结身份，不能当作新 Session 默认。V3 的目标不是穷举，而是在确定性硬约束内允许 Agent 做高风险、可解释、可复现的组合探索。
 
 ## 固定身份
 

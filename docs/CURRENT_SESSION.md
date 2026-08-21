@@ -1,21 +1,23 @@
-# 当前实验状态
+# 当前实验状态入口
 
-GitHub 只分发代码、配置模板和可复现知识，不发布具体实验分数、吞吐、
-延迟、候选参数、逐轮故障、Lease 身份或 Session 标识。README 和本页因此
-不维护运行中的实验摘要，避免把容易过期的运行细节当成项目默认事实。
-
-实际状态以对应运行环境中的受管 Session 为准：
-
-```powershell
-# 本地 → 服务器模式
-.\scripts\status.ps1
-```
+Git 不保存易过期的轮次状态和性能数字。当前生产 Session 使用
+`decode_priority_v2.sh` 和独立的 `runtime_decode_priority_v2_live/`；真实状态只从
+服务器受管状态读取：
 
 ```bash
-# 服务器自治模式
-bash tuning_pipeline/workflow/continuous/server_autonomous/status.sh
+cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1
+AUTO=tuning_pipeline/workflow/continuous/server_autonomous
+bash "$AUTO/decode_priority_v2.sh" service supervisor-status
+bash "$AUTO/decode_priority_v2.sh" status
 ```
 
-需要交接实验时，使用 Session 导出/导入能力传递完整审计产物；不要把结果
-手工复制进公开 README。B0 定义、Search Limits、Agent 策略和 Benchmark
-身份仍会冻结在每个 Session 中，保证结果可追溯。
+当前 V2 的第 0 轮会有意重新测量 A10F1，建立本 Session 的可比基线；这不是
+重复搜索。基线成功后才进入 List 2。V2 冻结了 A1–A15 的兼容历史，Agent 可见
+旧候选、指标和归因失败，Controller 也会拒绝再次提交已经覆盖的完整候选。
+
+以下重复属于正常行为：新 Session 基线复测、潜在新 best 的确认测量、没有产生
+有效指标的基础设施故障重试。参数归因失败和已有有效测量不会被当作新探索重复。
+
+不要把运行中的 `state.json`、Lease、API Key 或完整性能结果提交到 Git。交接当前
+实验时应保留服务器运行目录，并用上述命令查看；需要跨服务器迁移时再使用受控的
+Session 导出/导入能力。
