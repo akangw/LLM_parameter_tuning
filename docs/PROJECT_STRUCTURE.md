@@ -63,11 +63,11 @@ Session/00_search_space/ 中冻结的场景参数画像子集
 
 | 场景 | 总配置 | 基线 | 当前状态 |
 |---|---|---|---|
-| W8A8 2×16 NPU DP4/TP8 Decode-only | `server_autonomous/config.dp4_tp8.decode_priority_v2.yaml` | `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml` | production |
+| W8A8 2×16 NPU DP4/TP8 Decode-only | `server_autonomous/config.dp4_tp8.decode_priority_v3.yaml` | `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml` | production |
 | W8A8 2×16 NPU DP2/TP16 | `scenarios/glm52-w8a8-a3-2n-dp2-tp16/scenario.yaml` | `b0_deployable_64k.yaml` | integrated historical |
 | W4A8C8 1×16 NPU DP2-local/TP8 | `scenarios/glm52-w4a8c8-a3-1n-dp2-tp8/scenario.yaml` | `a0_glm52_w4a8c8_existing_tuned.yaml` | planned |
 
-通用场景使用 `scenario.yaml` 作为索引；当前生产 Decode V2 由专用 dispatcher 和
+通用场景使用 `scenario.yaml` 作为索引；当前生产 Decode V3 由专用 dispatcher 和
 继承配置固定，不能用通用场景脚本恢复。通用场景可用下列命令列出引用文件：
 
 ```powershell

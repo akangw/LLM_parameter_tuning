@@ -16,10 +16,10 @@
 - 参数画像、Tags、场景召回、人工注册表和自动注册表知识产物均已建立。
 - 新 Session 会重新编译并冻结自己的 Search Limits；在线权威结果只保存在该 Session 的 `00_search_space/`。
 - 在线闭环：已完成真实远端提交、服务启动、完整 Aligned-L1、结果回收、Agent 选参和 OOM 隔离。
-- 当前生产服务器自治路线是 Decode Priority V2：固定 DP4/TP8，以
-  `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml` 重新测量历史最佳 A10F1，
-  使用 `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 和
-  `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 和 B0/A8 路线保留为显式参考。
+- 当前生产服务器自治路线是 Decode Priority V3：固定 DP4/TP8，以
+  `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml` 重新测量历史最佳 A10F1，
+  使用 `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v2` 和
+  `decode_only_c32_v2`。通用 Guided-V4/Fast-C32 和 B0/A8 路线保留为显式参考。
 
 README 不公开具体实验分数、吞吐、延迟、逐轮候选或当前 Session
 状态；这些数据只保存在对应 Session 的受管产物中，并通过状态和导出命令按需查看。
@@ -88,11 +88,11 @@ cd .\tuning_pipeline
 python -m workflow.registry_builder.full_pipeline --dry-run
 ```
 
-它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。当前生产 V2 使用 `automatic_registry_decode_priority_v2`，冻结结果为 25 Active + 75 Reserve + 42 Fixed；通用 `automatic_registry_a8_frontier_v4`、旧 V3/V2、`automatic_registry_v1` 和人工 `curated_registry_v1` 均保留为显式路线。生成结果会冻结到 Session。完整使用方式见 [`registry_builder/README.md`](tuning_pipeline/workflow/registry_builder/README.md)。
+它会输出自动 `registry.generated.yaml` 以及 Active / Reserve / Fixed / Rejected Search Limits。当前生产 V3 继续使用 `automatic_registry_decode_priority_v2`，冻结结果为 25 Active + 75 Reserve + 42 Fixed；通用 `automatic_registry_a8_frontier_v4`、旧路线、`automatic_registry_v1` 和人工 `curated_registry_v1` 均保留为显式路线。生成结果会冻结到 Session。
 
 ### 更换 Ascend 模型、镜像、量化或拓扑
 
-模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前生产适配包是 `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8，并从 A10F1 建立新 Session 基线。
+模型、镜像和拓扑不再作为互相独立的零散字段迁移。`Runtime Adapter` 将模型家族/变体/权重格式、镜像 Digest 与源码 commit、Topology Profile、Executor Profile、Scenario、基线、Search-Space、Benchmark 和策略组合成一个可校验身份。当前生产适配包是 `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`：GLM-5.2 W8A8、A3、两节点 × 16 NPU、固定 DP4/TP8，并用稳定Decode Benchmark V2从A10F1建立新Session基线。
 
 新组合先生成 `planned` 适配包：
 
@@ -125,7 +125,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 
 ### 切换 Search-Space、Agent 策略与 Benchmark
 
-当前生产服务器自治运行时为 `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A10F1 + automatic_registry_decode_priority_v2 + decode_priority_agentic_v1 + decode_only_c32_v1`。根 `config.yaml` 的 Guided-V4/Fast-C32 组合仍是通用框架入口，但不管理活动生产 Session。DP2/TP16、旧 frontier/guided 和拓扑 Campaign 均为显式历史路线，分类见 [`docs/README.md`](docs/README.md)。
+当前生产服务器自治运行时为 `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A10F1 + automatic_registry_decode_priority_v2 + decode_priority_agentic_v2 + decode_only_c32_v2`。Benchmark同服务执行3次C32正式测量并取中位数，旧口径指标只作定性历史。根 `config.yaml` 的 Guided-V4/Fast-C32 组合仍是通用框架入口。
 
 ```powershell
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
@@ -140,8 +140,8 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 |---|---|---|---|
 | 参数画像路线 | `-PortraitMode` | `migrate`、`rebuild` | `scripts/migrate_versions.py` |
 | Search-Space 构建 | `-SearchSpaceProfile` | 生产：`automatic_registry_decode_priority_v2`；通用/历史 Profile 仍可在新 Session 显式选择 | `tuning_pipeline/workflow/search_space_profiles.yaml` |
-| Agent 选参策略 | `-StrategyProfile` | 生产：`decode_priority_agentic_v1`；其他策略只用于独立新 Session | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
-| Benchmark | `-BenchmarkProfile` | 生产：`decode_only_c32_v1`；其他 Benchmark 不能与其跨口径比较 | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
+| Agent 选参策略 | `-StrategyProfile` | 生产：`decode_priority_agentic_v2`；其他策略只用于独立新 Session | `tuning_pipeline/workflow/continuous/strategy_profiles.yaml` |
+| Benchmark | `-BenchmarkProfile` | 生产：`decode_only_c32_v2`；其他 Benchmark 不能与其跨口径比较 | `tuning_pipeline/workflow/continuous/benchmark_profiles.yaml` |
 
 资源执行后端通过配置选择：默认 `ktp_lab`，外部系统使用 `executor_adapter`。它是
 Runtime Adapter 的执行后端，不改变上述四个调优接口。
@@ -180,7 +180,7 @@ Benchmark，或日志已把启动失败明确归因到候选参数/组合并经 
 文件，且拒绝回放已经 Benchmark 或已被参数证据淘汰的候选。
 
 若旧版本已因确定性可恢复故障进入 `paused_for_human`，Decode V2 服务器自治入口可执行
-`decode_priority_v2.sh service auto-retry-paused` 后再启动 Supervisor/systemd。Controller
+`decode_priority_v3.sh service auto-retry-paused` 后再启动 Supervisor/systemd。Controller
 会重新做 Agent 分析与硬终止校验；新 Task/Run/轮次会原子写回状态。
 
 默认 Windows→服务器主链路不启用 Lease 长等待，行为保持不变。服务器自治的参数位于 `server_autonomous/config.yaml`；完整服务启动、停止标记、日志和恢复命令见 [服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)。

@@ -1,6 +1,6 @@
 # Decode-only 自治调优硬规则总表
 
-本文汇总当前 `decode-256-2048`、DP=4/TP=8、固定 Ascend 镜像自治链路中，会在提交前、进程启动前或状态迁移前**强制拦截**的规则。生产入口是 `server_autonomous/config.dp4_tp8.decode_priority_v2.yaml`：runtime=`glm52_w8a8_a3_dp4_tp8_decode_priority_v2`、Search Limits=`automatic_registry_decode_priority_v2`、策略=`decode_priority_agentic_v1`、Benchmark=`decode_only_c32_v1`。V2 继承 V1 配置并替换 A10F1 基线与完整历史；它不收录收益倾向、推荐组合和 Agent 软提示。
+本文汇总当前 `decode-256-2048`、DP=4/TP=8、固定 Ascend 镜像自治链路中，会在提交前、进程启动前或状态迁移前**强制拦截**的规则。生产入口是 `server_autonomous/config.dp4_tp8.decode_priority_v3.yaml`：runtime=`glm52_w8a8_a3_dp4_tp8_decode_priority_v3`、Search Limits=`automatic_registry_decode_priority_v2`、策略=`decode_priority_agentic_v2`、Benchmark=`decode_only_c32_v2`。旧Session保持冻结，旧指标不与新Benchmark数值混算。
 
 `K` 表示 MTP 每轮预生成的候选 token 数，`K+1` 表示一次验证 decode 实际处理的 token 位置数。
 

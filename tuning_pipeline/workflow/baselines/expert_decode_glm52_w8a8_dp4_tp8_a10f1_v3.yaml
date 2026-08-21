@@ -1,0 +1,59 @@
+schema_version: 1
+baseline_id: expert-decode-glm52-w8a8-dp4-tp8-a10f1-v3
+status: approved_candidate_requires_decode_v2_remeasurement
+launch_profile: explicit_candidate
+
+purpose: >-
+  Start the stable Decode Benchmark V2 campaign from the A10F1 parameter
+  incumbent. V1 measurements remain qualitative history and are never used as
+  the numerical baseline for V2 comparisons.
+
+source:
+  lineage_session: cjx_glm52_dp4_tp8_decode_priority_v1_20260820_040532
+  lineage_round: round_012_a10f1
+  measurement_status: legacy_decode_v1_reference_only
+
+target_identity:
+  model_contract: glm-5.2-w8a8
+  topology_profile: a3_dp4_tp8
+  benchmark_profile: decode_only_c32_v2
+
+reference_parameters:
+  max_num_seqs: 80
+  max_model_len: 64000
+  max_num_batched_tokens: 4096
+  gpu_memory_utilization: 0.90
+  compilation_mode: FULL_DECODE_ONLY
+  num_speculative_tokens: 3
+  enable_chunked_prefill: true
+  async_scheduling: true
+  enable_expert_parallel: true
+  cudagraph_capture_sizes: [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128]
+  max_cudagraph_capture_size: 128
+  disable_hybrid_kv_cache_manager: null
+  speculative_config__enforce_eager: null
+  enable_balance_scheduling: false
+  enable_reduce_sample: false
+  fused_mc2: 2
+  flashcomm1: true
+  enable_prefix_caching: false
+  TASK_QUEUE_ENABLE: 1
+  speculative_config__disable_padded_drafter_batch: false
+  additional_config__prefill_comm_compute_overlap: false
+  additional_config__ascend_compilation_config__enable_static_kernel: false
+  additional_config__ascend_compilation_config__enable_npugraph_ex: true
+  additional_config__ascend_compilation_config__fuse_allreduce_rms: true
+  additional_config__ascend_compilation_config__fuse_norm_quant: true
+  long_prefill_token_threshold: 0
+  compilation_enable_sp: false
+  speculative_config__method: mtp
+
+legacy_reference:
+  benchmark_profile: decode_only_c32_v1
+  output_token_throughput: 952.2130021249346
+  ttft_p50_ms: 895.7626819610596
+  ttft_p90_ms: 1333.5318565368652
+  tpot_p50_ms: 26.285314350388944
+  tpot_p90_ms: 30.968650244176388
+  comparable_to_decode_only_c32_v2: false
+  required_action: measure_as_new_session_baseline

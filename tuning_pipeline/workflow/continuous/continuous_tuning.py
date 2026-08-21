@@ -4574,6 +4574,7 @@ class Controller:
             return {"enabled": False}
         return {
             "enabled": True,
+            "confirm_all_new_bests": bool(raw.get("confirm_all_new_bests", False)),
             "lower_gain_percent": float(
                 policy.get("minimum_throughput_gain_percent", 3.0)
             ),
@@ -4595,7 +4596,7 @@ class Controller:
     def confirmation_requirement(
         self, history: list[dict[str, Any]]
     ) -> dict[str, Any] | None:
-        """Request one extra run only for a marginal candidate that could be best."""
+        """Request the configured repeat evidence for a candidate that could be best."""
         confirmation = self.aligned_confirmation_policy()
         if not confirmation.get("enabled") or len(history) < 2:
             return None
@@ -4606,7 +4607,10 @@ class Controller:
         if not assessment.get("eligible_as_improvement"):
             return None
         gain = float(assessment["throughput_gain_percent"])
-        if gain >= float(confirmation["upper_gain_percent"]):
+        if (
+            not confirmation.get("confirm_all_new_bests", False)
+            and gain >= float(confirmation["upper_gain_percent"])
+        ):
             return None
         current_score = self.primary_performance_score(current)
         prior_anchor = self.best_accepted_anchor(history[:-1])
@@ -4635,8 +4639,8 @@ class Controller:
                 "required_successful_measurements"
             ],
             "reason": (
-                "candidate is a new best but its gain lies inside the selective "
-                "confirmation band"
+                "candidate is a new best and the frozen policy requires an "
+                "independent service-level confirmation"
             ),
         }
 
@@ -4672,8 +4676,9 @@ class Controller:
             representative = measurements[-1][0]
             gain = float(measurements[-1][1].get("throughput_gain_percent", math.inf))
             required = 1
-            if confirmation.get("enabled") and gain < float(
-                confirmation["upper_gain_percent"]
+            if confirmation.get("enabled") and (
+                confirmation.get("confirm_all_new_bests", False)
+                or gain < float(confirmation["upper_gain_percent"])
             ):
                 required = int(confirmation["required_successful_measurements"])
             if len(measurements) < required:

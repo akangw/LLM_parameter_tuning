@@ -2197,6 +2197,37 @@ class ControllerTests(unittest.TestCase):
             any(item.get("round") == "round_017_a15" for item in history)
         )
 
+    def test_decode_priority_v3_remeasures_a10f1_with_stable_benchmark(self) -> None:
+        raw = tuning.load_config(
+            tuning.HERE
+            / "server_autonomous"
+            / "config.dp4_tp8.decode_priority_v3.yaml"
+        )
+        raw, runtime = tuning.resolve_runtime_profile(raw, tuning.KB_ROOT)
+        raw = tuning.apply_topology_baseline_binding(raw)
+        raw = tuning.resolve_initial_baseline_definition(raw, tuning.KB_ROOT)
+        tuning.validate_runtime_selections(raw)
+        with tempfile.TemporaryDirectory() as temporary:
+            resolved, _ = resolve_search_limits(
+                raw,
+                project_root=tuning.KB_ROOT,
+                archive_root=Path(temporary),
+            )
+        self.assertEqual(
+            "glm52_w8a8_a3_dp4_tp8_decode_priority_v3", runtime["profile"]
+        )
+        self.assertEqual("decode_only_c32_v2", resolved["benchmark"]["profile"])
+        self.assertEqual("decode_priority_agentic_v2", resolved["strategy"]["profile"])
+        self.assertEqual(
+            3, resolved["benchmark"]["aligned_l1_decode_only_v2"]["repetitions"]
+        )
+        strategies = tuning.load_yaml(tuning.HERE / "strategy_profiles.yaml")
+        self.assertEqual(
+            3,
+            strategies["strategies"]["decode_priority_agentic_v2"]
+            ["measurement_policy"]["aligned_l1"]["minimum_repetitions"],
+        )
+
     def test_decode_priority_counts_only_successful_secondary_measurements(self) -> None:
         configured = config()
         configured["strategy"]["profile"] = "decode_priority_agentic_v1"
@@ -2388,6 +2419,29 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual("core-fixed-matrix", suite["阶段"][0]["标识"])
         self.assertEqual(1, suite["阶段"][0]["最大错误数"])
+
+    def test_decode_only_v2_uses_three_formal_repetitions_without_serial_warmup(self) -> None:
+        configured = tuning.load_yaml(tuning.HERE / "config.yaml")
+        definition = configured["benchmark"]["aligned_l1_decode_only_v2"]
+        suite_path = (
+            tuning.HERE
+            / "benchmark_assets"
+            / "decode-only-c32-v2"
+            / "spec"
+            / "suites"
+            / definition["suite"]
+        )
+        suite = tuning.load_yaml(suite_path)
+        point = suite["阶段"][0]["测试点"][0]
+        self.assertEqual(3, definition["repetitions"])
+        self.assertEqual(1, definition["expected_formal_cases"])
+        self.assertEqual(32, point["并发"])
+        self.assertEqual(64, point["正式请求数"])
+        self.assertEqual(0, point["预热请求数"])
+        self.assertEqual(
+            definition["suite_sha256"],
+            hashlib.sha256(suite_path.read_bytes()).hexdigest(),
+        )
 
     def test_frozen_continuation_history_is_visible_to_agent_and_dedupe(self) -> None:
         controller = tuning.Controller(config())
@@ -2773,6 +2827,30 @@ class ControllerTests(unittest.TestCase):
             "measurement_role": "search",
         }
         self.assertIsNone(controller.confirmation_requirement([baseline, strong]))
+
+        stable_config = config()
+        stable_config["strategy"]["profile"] = "decode_priority_agentic_v2"
+        stable_config["benchmark"]["profile"] = "decode_only_c32_v2"
+        stable_controller = tuning.Controller(stable_config)
+
+        def stable_payload(score: float) -> dict:
+            result = payload(score)
+            result["l1"]["repetition_count"] = 3
+            return result
+
+        stable_baseline = {**baseline, "metrics": stable_payload(100.0)}
+        stable_strong = {**strong, "metrics": stable_payload(104.0)}
+        requirement = stable_controller.confirmation_requirement(
+            [stable_baseline, stable_strong]
+        )
+        self.assertIsNotNone(requirement)
+        self.assertEqual("round_003_a2", requirement["candidate_round"])
+        self.assertEqual(
+            "round_000_b0",
+            stable_controller.best_accepted_anchor(
+                [stable_baseline, stable_strong]
+            )["round"],
+        )
 
     def test_hierarchical_strategy_treats_aligned_latency_as_advisory(self) -> None:
         configured = tuning.load_yaml(tuning.HERE / "config.yaml")

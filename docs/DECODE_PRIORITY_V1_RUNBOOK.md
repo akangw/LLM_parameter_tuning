@@ -1,6 +1,6 @@
 # Decode Priority V1/V2 Runbook
 
-> 当前生产入口是 V2。下方 V1 身份与启动门槛只用于解释冻结历史，不能用于管理
+> 当前生产入口是 V3。下方 V1/V2 身份与启动门槛只用于解释冻结历史，不能用于管理
 > 活动 V2 Session；V2 的准确入口和命令见本文最后一节。
 
 ## Frozen experiment identity
@@ -89,31 +89,31 @@ lab:
   lease_name: REAL_FRESH_LEASE_NAME
 ```
 
-## V2 continuation after A15
+## V3 stable-Benchmark continuation
 
-The reviewed continuation uses `decode_priority_v2.sh` and the isolated
-`runtime_decode_priority_v2_live` root. It starts from measured best anchor
-`round_012_a10f1` rather than the inferior final A15 branch, and freezes all 28
-compatible attempted-history entries in `decode_priority_history_seed_v2.json`.
-The V1 Session remains immutable. V2 remeasures A10F1 as its own baseline, then
-lets the updated Agent strategy explore List 2 and evidence-backed List 1
-companions without the obsolete four-measurement secondary quota.
+The reviewed continuation uses `decode_priority_v3.sh` and the isolated
+`runtime_decode_priority_v3_live` root. It starts from the A10F1 parameter anchor
+`round_012_a10f1` rather than the inferior final A15 branch, and freezes compatible
+V1/V2 attempts in `decode_priority_history_seed_v3.json`. Earlier Sessions remain
+immutable. V3 remeasures A10F1 with Decode Benchmark V2 (three formal C32 runs,
+median aggregation), then continues List 2 and evidence-backed List 1 exploration.
 
-V2 frozen identity:
+V3 frozen identity:
 
-- Runtime: `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`
-- Baseline: `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml`
-- History: `decode_priority_history_seed_v2.json`
-- Search/strategy/benchmark: unchanged names, but frozen again into the V2 Session
+- Runtime: `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`
+- Baseline: `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml`
+- History: `decode_priority_history_seed_v3.json`
+- Search: `automatic_registry_decode_priority_v2`
+- Strategy/Benchmark: `decode_priority_agentic_v2` / `decode_only_c32_v2`
 
-All production lifecycle commands must go through the V2 dispatcher:
+All production lifecycle commands must go through the V3 dispatcher:
 
 ```bash
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
-bash "$AUTO/decode_priority_v2.sh" service supervisor-status
-bash "$AUTO/decode_priority_v2.sh" status
+bash "$AUTO/decode_priority_v3.sh" service supervisor-status
+bash "$AUTO/decode_priority_v3.sh" status
 ```
 
-The ignored overlay is `config.dp4_tp8.decode_priority_v2.local.yaml` and must
-extend `config.dp4_tp8.decode_priority_v2.yaml`. Never use the V1 or generic
-dispatcher against the V2 Lease.
+The ignored overlay is `config.dp4_tp8.decode_priority_v3.local.yaml` and must
+extend `config.dp4_tp8.decode_priority_v3.yaml`. Never use an earlier or generic
+dispatcher against the V3 Lease.

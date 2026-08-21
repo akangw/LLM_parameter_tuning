@@ -20,7 +20,7 @@
 - `DEPENDENCIES.md`、`PORTABLE_QUICKSTART.md`、`LINUX_DOCKER_CONTROLLER.md`：迁移环境时使用。
 
 通用 `config.yaml` 的 Guided-V4/Fast-C32 组合是可复用框架入口，不等于当前生产
-Decode Priority V2。交接和恢复活动任务时始终使用 `decode_priority_v2.sh`。
+Decode Priority V3。交接和恢复活动任务时始终使用 `decode_priority_v3.sh`。
 
 ## 历史或未来显式路线
 

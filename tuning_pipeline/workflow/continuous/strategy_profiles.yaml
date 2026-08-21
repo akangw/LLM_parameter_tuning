@@ -238,6 +238,27 @@ strategies:
         frontier uncertainty remain. Startup failures and incomplete benchmark
         rounds do not satisfy this floor.
 
+  decode_priority_agentic_v2:
+    extends: decode_priority_agentic_v1
+    status: integrated
+    purpose: >-
+      Decode-priority V1 search policy paired with Decode Benchmark V2. Every
+      candidate contains three same-service formal repetitions, while every
+      apparent new best must also pass an independent service-level repeat.
+    measurement_policy:
+      latency_guardrail_mode: advisory
+      aligned_l1:
+        latency_guardrail_mode: advisory
+        require_all_repetitions: true
+        minimum_repetitions: 3
+        minimum_throughput_gain_percent: 1.0
+        maximum_single_workload_throughput_regression_percent: 100.0
+        confirmation:
+          enabled: true
+          confirm_all_new_bests: true
+          upper_gain_percent: 3.0
+          required_successful_measurements: 2
+
   hierarchical_agentic_guided_v5:
     extends: hierarchical_agentic_guided_v4
     status: integrated

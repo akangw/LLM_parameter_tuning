@@ -279,6 +279,41 @@ benchmark:
     primary_concurrency: 32
     workloads:
       decode-256-2048: {input_tokens: 256, output_tokens: 2048}
+  aligned_l1_decode_only_v2:
+    suite: 01_调优_Decode单场景-v2.yaml
+    suite_id: tuning-decode-only-c32-v2
+    suite_version: v2
+    phase: all
+    # Three formal C32 measurements run against one live service. The metrics
+    # adapter reports their median and preserves every raw repetition value.
+    repetitions: 3
+    expected_formal_cases: 1
+    case_retry_limit: 1
+    runtime_retry_limit: 2
+    metrics_retry_limit: 2
+    total_full_retry_limit: 2
+    served_model: glm-5
+    service_port: 8000
+    tokenizer: /models/share/GLM-5.2-w8a8
+    servebench_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/servebench-1.0.1-5f01dca
+    servebench_workspace: /mnt/host-model/slai/user-1-wangakang/wangakang/liuxin-workspace
+    servebench_version: 1.0.1
+    servebench_commit: 5f01dcafd9b4ce9c788d8f7c1a537d4b3ea83c73
+    docker_image: 10.1.30.201:31443/user-1-wangakang/vllm-ascend@sha256:46d8bbb49f90f0607a41f972b7d847b434e0cf0f86fce9164549a7fdf0033112
+    guidellm_activation: /tools/runtime/activations/nightly-main-a3/guidellm.sh
+    spec_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-decode-only-c32-v2/spec
+    dataset_root: /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190/workflow/auto/vendor/benchmark-tuning-fast-c32-v2/datasets
+    suite_sha256: 845ea5fad2ad531aff9ed87166ba32cb89314cd0ee6cc268769ece14dc9f54a6
+    schema_files_sha256:
+      schemas/servebench-suite-v1.schema.json: 09a32226d46ab73a0ec634a0b1467bd6fe2c2115621b6954e036047e5c24a564
+    tokenizer_files_sha256:
+      tokenizer.json: 19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d
+      tokenizer_config.json: 98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc
+    dataset_manifests_sha256:
+      tuning-structured-decode-256-2048-v1/manifest.json: d50b2c466153f74e0a0c00f7f94dd6d8baa9e780d3f5f3fed53a6dfcc02e76a0
+    primary_concurrency: 32
+    workloads:
+      decode-256-2048: {input_tokens: 256, output_tokens: 2048}
   # Portable public option. Select with --benchmark-profile
   # vllm_bench_public_v1; it uses only the vllm CLI already in the serving image.
   vllm_bench_public:

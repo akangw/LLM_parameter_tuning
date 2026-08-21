@@ -13,4 +13,9 @@ TARGET_VENDOR="${REPO_ROOT}/workflow/auto/vendor"
 }
 mkdir -p "${TARGET_VENDOR}"
 cp --archive --no-clobber "${SOURCE_VENDOR}/." "${TARGET_VENDOR}/"
+python3 "${SCRIPT_DIR}/prepare_decode_only_benchmark.py" \
+  --allowed-root "${REPO_ROOT}" \
+  --source-spec-root "${TARGET_VENDOR}/benchmark-tuning-fast-c32-v2/spec" \
+  --target-spec-root "${TARGET_VENDOR}/benchmark-tuning-decode-only-c32-v2/spec" \
+  --suite-overlay "${REPO_ROOT}/tuning_pipeline/workflow/continuous/benchmark_assets/decode-only-c32-v2/spec/suites/01_调优_Decode单场景-v2.yaml"
 echo "Immutable Benchmark assets seeded without changing the existing project."

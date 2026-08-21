@@ -49,7 +49,7 @@ Runtime Adapter.
 
 ## Search-Space profiles
 
-The production V2 dispatcher selects `automatic_registry_decode_priority_v2`.
+The production V3 dispatcher selects `automatic_registry_decode_priority_v2`.
 It freezes 25 Active axes, 75 Reserve axes and 42 Fixed contracts from tagged
 portraits, pinned source evidence and deterministic Decode compatibility policy,
 then imports only identity-matched A1-A15 history. The generic Search-V4 config
@@ -60,7 +60,7 @@ only when creating a Session.
 The effective candidate contains:
 
 - 25 active tunable parameters and 75 auditable reserve parameters in the
-  production Decode V2 compilation;
+  production Decode V3 compilation;
 - `async_scheduling` as a coupled derived companion when the curated MTP token
   axis is enabled after B0;
 - the remaining single-value runtime-contract parameters as fixed fields;
@@ -104,7 +104,7 @@ Ascend runtime does not expose the required upstream CLI contract, so
 fields. A candidate that attempts to enable EPLB is rejected before submission.
 
 Each lease node requests 80 CPU, 800Gi memory, and 16 NPU. The current production
-runtime is `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`: DP4/TP8 is frozen before
+runtime is `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`: DP4/TP8 is frozen before
 Session creation, and the Agent receives a fixed-topology identity rather than
 a list of topology candidates. The generic `config.yaml` retains Search V4 as
 an explicit framework route; it is not the active production Session.
@@ -124,15 +124,15 @@ and 16 MiB blocks, waits for completion, and then launches vLLM with lazy mmap
 so the broken background prefetch cannot race model loading. Requested and
 effective strategies, files, bytes, seconds, shards/s, and GiB/s are archived.
 
-The production server-autonomous route uses `decode_priority_v2.sh`, a private
-ignored lease overlay, and the isolated `runtime_decode_priority_v2_live` root.
+The production server-autonomous route uses `decode_priority_v3.sh`, a private
+ignored lease overlay, and the isolated `runtime_decode_priority_v3_live` root.
 It must not share a process slot with another dispatcher.
 
 ## Benchmark modes
 
 `config.yaml` keeps multiple benchmark implementations:
 
-- `decode_only_c32_v1` (production): one fixed `decode-256-2048` C32 workload,
+- `decode_only_c32_v2` (production): one fixed `decode-256-2048` C32 workload,
   with output throughput as primary and TTFT/TPOT P50/P90 reporting;
 - `aligned_fast_c32_v2` (generic Search-V4 default): the copied and immutable
   `tuning-fast-c32-v2` suite, four frozen C32 workloads with complete output
@@ -198,7 +198,7 @@ language portraits for every active Search Limits parameter, and the frozen
 runtime-rule state. Every actual Agent change archives a fresh full portrait
 recall for the changed parameters and their one-hop relations.
 
-The production strategy is `decode_priority_agentic_v1`. The Controller selects
+The production strategy is `decode_priority_agentic_v2`. The Controller selects
 only the semantic layer during ordered List 2 and List 1.3 coverage, while the
 Agent owns exact parameters, values, parameter count and justified companions;
 cross-layer refinement is fully Agent-owned. It makes `max_model_len` a normal
@@ -257,7 +257,7 @@ reject overrides so an existing experiment cannot drift.
 
 Benchmark selection is an independent frozen axis. `benchmark_profiles.yaml`
 maps a stable profile name to one complete definition in `config.yaml`.
-`decode_only_c32_v1` is the production profile selected by the V2 dispatcher.
+`decode_only_c32_v2` is the production profile selected by the V3 dispatcher.
 `aligned_fast_c32_v2` remains the generic Search-V4 default; `aligned_fast_c32_v1`
 and `aligned_l1_v4` remain opt-in.
 A new Session may use `-BenchmarkProfile`; resume and

@@ -1,8 +1,8 @@
 # 架构与数据流
 
-> 当前生产链路是 Decode Priority V2：固定 DP4/TP8、A10F1 专家锚点、
-> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 与
-> `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 配置、DP2、旧 A8 Fast/Frontier
+> 当前生产链路是 Decode Priority V3：固定 DP4/TP8、A10F1 专家锚点、
+> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v2` 与
+> `decode_only_c32_v2`。通用 Guided-V4/Fast-C32 配置、DP2、旧 A8 Fast/Frontier
 > 和 Topology Campaign 都是显式参考路线。当前权威入口见
 > [CURRENT_DEFAULTS.md](CURRENT_DEFAULTS.md)。
 
@@ -38,7 +38,7 @@ flowchart LR
 
 ## Search Limits
 
-当前生产 V2 Session 使用独立自动注册表：
+当前生产 V3 Session 使用独立自动注册表：
 
 ```text
 340 ParameterYAML
@@ -88,7 +88,7 @@ Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量
 
 生产 V2 当前 Controller 冻结结果为：100 Tunable（25 Active + 75 Reserve）→ 42 Fixed + 0 Compiler Rejected。硬失败按完整组合隔离，不再全局删除单值。
 
-当前正式 decode-only 自治任务由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v2.yaml` 显式固定：DP4/TP8 runtime、A10F1 基线、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1`、`decode_only_c32_v1` 和 V2 历史种子。恢复同一 Session 时继续使用其冻结身份；规则或策略版本发生变化时，先优雅结束旧轮次，再建立继承兼容历史的新 Session，不能把新旧冻结配置混在同一个 Session 中。
+当前正式 decode-only 自治任务由 `workflow/continuous/server_autonomous/config.dp4_tp8.decode_priority_v3.yaml` 显式固定：DP4/TP8 runtime、A10F1 基线、`automatic_registry_decode_priority_v2`、`decode_priority_agentic_v2`、`decode_only_c32_v2` 和 V3 历史种子。V2 Benchmark移除无效串行长预热，同服务执行3次C32正式测量并取中位数；旧口径指标不得参与新Session判优。
 
 历史驱动轮换只接受 Benchmark 定义、镜像 Digest 和两个源码 commit 全部一致的 Session；不匹配的历史与上一版选择会失败关闭。
 
@@ -96,7 +96,7 @@ Decode Priority 策略不再为 List 1.2/List 1.1 次级参数设置成功测量
 
 ## 在线状态机
 
-- 当前生产 V2 从 A10F1 重新测量并建立本 Session 基线；旧 A8/B0 只作历史对照。
+- 当前生产 V3 从 A10F1 重新测量并建立本 Session 基线；旧 A8/B0 只作历史对照。
 - Codex 从最佳已验收锚点出发提出候选。
 - 第一层使用画像和关系证据判断候选是否合理。
 - 第二层由 Python 强制执行白名单、参数组合、网格预算、重复候选和历史隔离。

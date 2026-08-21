@@ -1,9 +1,9 @@
 # 运行与恢复
 
 > 当前生产任务：固定 `DP4/TP8` 的
-> `glm52_w8a8_a3_dp4_tp8_decode_priority_v2`；使用 A10F1 基线、
-> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v1` 和
-> `decode_only_c32_v1`。通用 Guided-V4/Fast-C32 与 Topology Campaign 只用于
+> `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`；使用 A10F1 基线、
+> `automatic_registry_decode_priority_v2`、`decode_priority_agentic_v2` 和
+> `decode_only_c32_v2`。通用 Guided-V4/Fast-C32 与 Topology Campaign 只用于
 > 显式历史/框架路线，不能管理活动 V2 Session。
 
 ## 前置条件
@@ -23,8 +23,8 @@
 ```bash
 cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
-bash "$AUTO/decode_priority_v2.sh" service supervisor-status
-bash "$AUTO/decode_priority_v2.sh" status
+bash "$AUTO/decode_priority_v3.sh" service supervisor-status
+bash "$AUTO/decode_priority_v3.sh" status
 ```
 
 下面的 PowerShell 命令属于通用 Windows→服务器框架路线，不用于恢复活动 V2：
@@ -39,7 +39,7 @@ bash "$AUTO/decode_priority_v2.sh" status
 # 新建 Session
 .\一键启动.ps1 -NewSession
 
-# 以下是通用框架的显式历史/人工 Profile 示例，不用于当前生产 V2
+# 以下是通用框架的显式历史/人工 Profile 示例，不用于当前生产 V3
 .\一键启动.ps1 -NewSession -SearchSpaceProfile curated_registry_v1
 .\一键启动.ps1 -NewSession -SearchSpaceProfile automatic_registry_v1
 
@@ -121,7 +121,7 @@ ImagePull/ContainerCreating。
 ## 远端只读检查
 
 ```powershell
-ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1 && bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v2.sh status"
+ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1 && bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh status"
 ```
 
 远端正式运行目录之外的 `/mnt/host-model/slai/user-1-wangakang/wangakang` 内容只允许读取。

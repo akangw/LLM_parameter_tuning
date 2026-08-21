@@ -4,10 +4,11 @@ This mode runs the knowledge query, deterministic Controller, DeepSeek Agent,
 ktp-lab submission, Benchmark collection, and Session archive on the Linux
 server.  It is isolated from the default Windows-to-server chain.
 
-The current production decode-only A10F1 continuation uses `decode_priority_v2.sh`,
-`config.dp4_tp8.decode_priority_v2.yaml`, and the isolated
-`runtime_decode_priority_v2_live` root. It imports the complete compatible V1
-attempted history and never mutates the frozen V1 Session.
+The current production decode-only A10F1 continuation uses `decode_priority_v3.sh`,
+`config.dp4_tp8.decode_priority_v3.yaml`, and the isolated
+`runtime_decode_priority_v3_live` root. It imports compatible V1/V2 attempts as
+qualitative history, remeasures A10F1 with the stable Decode Benchmark V2, and
+never mutates the frozen earlier Sessions.
 
 The generic `config.yaml` reference still defines one fixed DP4/TP8 Session with the measured
 Guided-V4 incumbent baseline, `automatic_registry_a8_frontier_v4`,
@@ -17,7 +18,7 @@ production Session and must not be used to manage the same Lease.
 
 `dp4_tp8_search_v4.sh` is the explicit dispatcher for the generic V4 identity.
 The older DP4 v1-v3 dispatchers and fixed DP2 package remain reproducible
-historical entrypoints. None shares V2 runtime state.
+historical entrypoints. None shares V3 runtime state.
 
 ## Isolation contract
 
@@ -84,9 +85,9 @@ python3 -m pip install -r tuning_pipeline/requirements-server-autonomous.txt
 # Required only by the verified private aligned_l1_v4 profile.  Public
 # vllm_bench_public_v1 and custom Benchmark adapters do not use this source.
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
-bash "$AUTO/decode_priority_v2.sh" seed-assets
-bash "$AUTO/decode_priority_v2.sh" dry-run
-bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v2.sh service authorize-new-session
+bash "$AUTO/decode_priority_v3.sh" seed-assets
+bash "$AUTO/decode_priority_v3.sh" dry-run
+bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh service authorize-new-session
 ```
 
 `dry_run.sh` performs local generation and validation only. It does not query,
@@ -97,23 +98,23 @@ After the operator has confirmed that every `blocked_lease_names` entry is no
 longer active, create the isolated persistent Lease:
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" prepare-lease
-bash "$AUTO/decode_priority_v2.sh" preflight
+bash "$AUTO/decode_priority_v3.sh" prepare-lease
+bash "$AUTO/decode_priority_v3.sh" preflight
 ```
 
 `preflight.sh` validates the fixed DP4/TP8 runtime and idle Lease without
 submitting a candidate. Mutable state lives in
-`runtime_decode_priority_v2_live/`, so legacy runtime roots
+`runtime_decode_priority_v3_live/`, so legacy runtime roots
 cannot cause an accidental resume. When the dormant Campaign is explicitly
 re-enabled later, it must receive another isolated runtime root.
 
-Start or resume the current Decode Priority V2 Controller:
+Start or resume the current Decode Priority V3 Controller:
 
 ```bash
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
-bash "$AUTO/decode_priority_v2.sh" service supervisor-start
-bash "$AUTO/decode_priority_v2.sh" service supervisor-status
-bash "$AUTO/decode_priority_v2.sh" status
+bash "$AUTO/decode_priority_v3.sh" service supervisor-start
+bash "$AUTO/decode_priority_v3.sh" service supervisor-status
+bash "$AUTO/decode_priority_v3.sh" status
 ```
 
 The generic V4 dispatcher remains available only for a separate Session and Lease:
@@ -127,7 +128,7 @@ bash "$AUTO/dp4_tp8_search_v4.sh" start new
 bash "$AUTO/dp4_tp8_search_v4.sh" status
 ```
 
-The production V2 baseline exact values are owned by
+The production V3 baseline exact values are owned by
 `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v2.yaml`; documentation does not duplicate
 them. `prepare-lease` is intentionally not part of deployment or offline validation;
 run it only when a new live experiment is explicitly authorized.
@@ -143,7 +144,7 @@ First create the private environment file and replace its placeholder key:
 
 ```bash
 AUTO=tuning_pipeline/workflow/continuous/server_autonomous
-bash "$AUTO/decode_priority_v2.sh" service prepare-env
+bash "$AUTO/decode_priority_v3.sh" service prepare-env
 vi "$AUTO/.secrets/controller.env"
 chmod 600 "$AUTO/.secrets/controller.env"
 ```
@@ -153,10 +154,10 @@ chmod 600 "$AUTO/.secrets/controller.env"
 This provides crash recovery and, with user lingering enabled, reboot recovery:
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" service systemd-install
-bash "$AUTO/decode_priority_v2.sh" service systemd-start
-bash "$AUTO/decode_priority_v2.sh" service systemd-status
-bash "$AUTO/decode_priority_v2.sh" service systemd-logs 100
+bash "$AUTO/decode_priority_v3.sh" service systemd-install
+bash "$AUTO/decode_priority_v3.sh" service systemd-start
+bash "$AUTO/decode_priority_v3.sh" service systemd-status
+bash "$AUTO/decode_priority_v3.sh" service systemd-logs 100
 ```
 
 `systemd-install` deliberately does not start the experiment. On hosts where
@@ -173,9 +174,9 @@ Supervisor needs no system configuration in this mode; its socket, PID, config,
 and logs all stay below `runtime/service`:
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" service supervisor-install
-bash "$AUTO/decode_priority_v2.sh" service supervisor-start
-bash "$AUTO/decode_priority_v2.sh" service supervisor-status
+bash "$AUTO/decode_priority_v3.sh" service supervisor-install
+bash "$AUTO/decode_priority_v3.sh" service supervisor-start
+bash "$AUTO/decode_priority_v3.sh" service supervisor-status
 ```
 
 `supervisor-install` pins Supervisor 4.3.0 in the selected dispatcher's
@@ -188,7 +189,7 @@ itself must be registered with the host boot system; systemd user mode is the
 simpler supported route.
 
 For a legacy round paused by an older policy, run
-`bash "$AUTO/decode_priority_v2.sh" service auto-retry-paused` and then start the managed service.
+`bash "$AUTO/decode_priority_v3.sh" service auto-retry-paused` and then start the managed service.
 The one-shot request forces fresh Agent analysis against the current recovery
 contract. With `failure_recovery.hard_terminal_only=true`, retry counters are
 audit signals rather than pause gates; only a proven immutable external block
@@ -248,8 +249,8 @@ After an intentional stop, explicitly authorize a later start by archiving the
 retained marker (the command moves it; it does not delete evidence):
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" service authorize-resume
-bash "$AUTO/decode_priority_v2.sh" service systemd-start   # or supervisor-start
+bash "$AUTO/decode_priority_v3.sh" service authorize-resume
+bash "$AUTO/decode_priority_v3.sh" service systemd-start   # or supervisor-start
 ```
 
 The provided `systemd-restart` and `supervisor-restart` commands perform this
@@ -264,7 +265,7 @@ Controller has cleared the active task; the old run id and state are archived
 as audit evidence. Before the new service start, run:
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" service authorize-new-session
+bash "$AUTO/decode_priority_v3.sh" service authorize-new-session
 ```
 
 This command refuses active, paused, failed, or otherwise non-terminal state;
@@ -273,7 +274,7 @@ it accepts only `dry_run_complete`, `completed_by_agent`, or `tuning_complete`.
 Render both generated configurations without installing or starting anything:
 
 ```bash
-bash "$AUTO/decode_priority_v2.sh" service render
+bash "$AUTO/decode_priority_v3.sh" service render
 ```
 
 Generated service files and logs live under `runtime/service` and are excluded
@@ -283,7 +284,7 @@ which is also excluded from Git.
 Request a graceful stop:
 
 ```bash
-bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v2.sh stop
+bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh stop
 ```
 
 The stop marker is retained. To authorize a later restart, move it to a dated
