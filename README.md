@@ -70,7 +70,7 @@ API Key、SSH 凭据、模型权重、私有 Benchmark 资产、Lease 或历史 
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
   -Scenario .\path\to\scenario.yaml
 
-# W8A8 默认使用独立自动注册表；需要历史人工边界时显式切换 curated
+# 通用版本迁移示例使用 automatic_registry_v1；生产 Decode Priority V3 使用场景专属 automatic_registry_decode_priority_v2
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> `
   -SearchSpaceProfile automatic_registry_v1
 
@@ -79,7 +79,7 @@ $env:ANTHROPIC_API_KEY = "..."
 .\scripts\migrate-versions.ps1 -Vllm <vllm-ref> -VllmAscend <ascend-ref> -Provider anthropic
 ```
 
-画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择；召回到 Search Limits 的构建方式通过 `-SearchSpaceProfile automatic_registry_v1|curated_registry_v1` 选择。画像 Provider 当前支持 `codex`、`anthropic`。
+画像路线通过 `-PortraitMode migrate|rebuild` 选择；场景通过 `-Scenario` 选择；召回到 Search Limits 的构建方式通过 `-SearchSpaceProfile` 选择。`automatic_registry_v1` 与 `curated_registry_v1` 是通用/历史路线，当前生产 V3 固定为 `automatic_registry_decode_priority_v2`。画像 Provider 当前支持 `codex`、`anthropic`。
 
 Tags 召回到 Search Limits 之间另有一条独立的端到端自动化链路。它不读取或修改现有人工注册表，会自动完成语义归并、固定版本源码能力核验、场景兼容过滤、`unset/omit` 动作规范化、跨参数约束和通用注入校验，再调用现有 Search-Space Compiler。数值参数不再共用倍率边界：B0 前保留源码验证的临时候选，B0 成功后 Controller 从 `master.log` 读取实际生效值，并按参数专属策略重建候选域。这条兼容判定链只使用程序和 YAML 策略，不依赖 AI：
 
@@ -128,6 +128,7 @@ Kubernetes 或内部调度系统。适配器只负责资源准备、只读预检
 当前生产服务器自治运行时为 `glm52_w8a8_a3_dp4_tp8_decode_priority_v3`：DP4/TP8 在 Session 创建前锁定，主流程执行 `A10F1 + automatic_registry_decode_priority_v2 + decode_priority_agentic_v2 + decode_only_c32_v2`。Benchmark同服务执行3次C32正式测量并取中位数，旧口径指标只作定性历史。根 `config.yaml` 的 Guided-V4/Fast-C32 组合仍是通用框架入口。
 
 ```powershell
+# 以下均为“显式切换到其他路线”的示例，不是当前生产 V3 默认启动命令
 .\一键启动.ps1 -NewSession -StrategyProfile best_anchor_coverage_v3
 .\一键启动.ps1 -NewSession -AgentProvider anthropic
 .\一键启动.ps1 -NewSession -BenchmarkProfile vllm_bench_public_v1
@@ -338,10 +339,10 @@ python -m pip install -r .\tuning_pipeline\requirements-runtime.txt
 
 ### 2. Lease 是否需要重新创建
 
-先查看现有 Lease：
+先通过生产 V3 的版本化入口查看现有 Session、Controller 和 Lease 状态：
 
 ```powershell
-ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-418bd627-32c8cf190 && ktp-lab status --lease vllmtkb-418bd627-32c8cf190-glm52-a3-32npu"
+ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/vllmtkb-decode-priority-v1 && bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh status"
 ```
 
 按结果处理：
@@ -363,7 +364,14 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
 - 希望用当前全局配置和最新 Search Limits 开始一条新实验链；
 - 旧 Session 已结束或已经完成交接归档。
 
-确认 Lease 为 `idle=2` 后运行：
+当前生产 Decode Priority V3 不通过无参数 `一键启动.ps1` 创建；在服务器完成 `seed-assets`、`dry-run` 和 `preflight` 后，通过版本化 dispatcher 授权并启动。完整顺序见[服务器自治文档](tuning_pipeline/workflow/continuous/server_autonomous/README.md)：
+
+```bash
+bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh service authorize-new-session
+bash tuning_pipeline/workflow/continuous/server_autonomous/decode_priority_v3.sh service supervisor-start
+```
+
+下面的 `一键启动.ps1` 属于根 `config.yaml` 的通用 Windows→服务器入口；只有明确选择该通用路线、且对应 Lease 为 `idle=2` 时才运行：
 
 ```powershell
 # 后台运行
@@ -381,7 +389,7 @@ ssh hetao-npu "cd /mnt/host-model/slai/user-1-wangakang/wangakang/cjx-workspace/
   -SearchSpaceProfile curated_registry_v1
 ```
 
-当前生产 V3 的新 Session 从 `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml` 冻结的 A10F1 显式基线开始；基线先用 `decode_only_c32_v2` 重新测量，随后 Controller 才进入 Agent 选参和实验闭环。旧 A8/B0 基线只属于显式选择相应旧 Runtime 的 Session。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
+当前生产 V3 dispatcher 创建的新 Session 从 `expert_decode_glm52_w8a8_dp4_tp8_a10f1_v3.yaml` 冻结的 A10F1 显式基线开始；基线先用 `decode_only_c32_v2` 重新测量，随后 Controller 才进入 Agent 选参和实验闭环。旧 A8/B0 基线只属于显式选择相应旧 Runtime 的 Session。参数画像的 `migrate|rebuild` 属于离线知识构建，应在启动在线 Session 前通过 `scripts/migrate-versions.ps1` 单独选择和审计。
 
 如果本地已经存在旧 Session，先用相同选择执行新 Session 预检，避免普通
 `-CheckOnly` 自动检查旧 Session：
