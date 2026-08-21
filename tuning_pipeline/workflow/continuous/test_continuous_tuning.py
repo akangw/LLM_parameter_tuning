@@ -4208,6 +4208,7 @@ SLOT  service
         self.assertGreaterEqual(script.count("begin_captured_failure"), 6)
         self.assertNotIn("timeout --foreground", script)
         self.assertNotIn("hard budget", script)
+        self.assertIn("export BENCHMARK_PROFILE BENCHMARK_IDENTITY_JSON", script)
         retry_script = (
             tuning.HERE / "remote" / "run_servebench_attempt.sh"
         ).read_text(encoding="utf-8")
